@@ -37,9 +37,13 @@ export interface FakeScenario {
   creditsRemaining?: number;
   /** A key the fake accepts; any other key is answered 401. */
   validKey?: string;
+  /** Search answers differ per distinct query: query number k (in order of first appearance) answers world[k*perQuery .. (k+1)*perQuery), minus any host listed in the request's excludeDomains; with `ignoreExclude: true` NO exclusion is applied and EVERY query answers the SAME first `perQuery` world entries (a provider that ignores `excludeDomains`, used by T-C). */
+  searchByQuery?: { perQuery: number; ignoreExclude?: boolean };
+  overbill?: Partial<Record<"firecrawl" | "contextdev", number>>;
+  timeoutProvider?: Partial<Record<"firecrawl" | "contextdev", boolean>>;
 }
 
-export interface FakeCallLog { provider: "firecrawl" | "contextdev"; operation: "search" | "map" | "scrape" | "scrape_json" | "usage"; url: string; status: number; auth: string }
+export interface FakeCallLog { provider: "firecrawl" | "contextdev"; operation: "search" | "map" | "scrape" | "scrape_json" | "usage"; url: string; status: number; auth: string; query?: string; excluded?: string[] }
 
 export function defaultFakeWorld(count = 12): FakeCompany[] {
   return Array.from({ length: count }, (_, i) => {
@@ -73,6 +77,8 @@ const page = (company: FakeCompany, path: string): { markdown: string; links: st
 
 export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {}, log: FakeCallLog[] = []): FetchFn & { log: FakeCallLog[]; world: FakeCompany[] } {
   const find = (host: string) => world.find((c) => host === c.domain || host.endsWith(`.${c.domain}`));
+  const queryOrder = new Map<string, number>();
+  const searchPool = (query: string, exclude: unknown, fallbackLimit: number) => { if (!scenario.searchByQuery) return world.slice(0, fallbackLimit); const k = queryOrder.has(query) ? (queryOrder.get(query) as number) : queryOrder.size; queryOrder.set(query, k); const per = Math.max(1, Math.floor(scenario.searchByQuery.perQuery)); const ignore = scenario.searchByQuery.ignoreExclude === true; const skip = new Set(!ignore && Array.isArray(exclude) ? exclude.map((h) => String(h).toLowerCase()) : []); const start = ignore ? 0 : k * per; return world.slice(start, start + per).filter((c) => !skip.has(c.domain)); };
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
   const fn = (async (input: string, init?: RequestInit): Promise<Response> => {
@@ -81,10 +87,11 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
     const provider: "firecrawl" | "contextdev" = u.hostname.includes("firecrawl") ? "firecrawl" : "contextdev";
     const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
     const body = init?.body ? JSON.parse(String(init.body)) : {};
-    const record = (operation: FakeCallLog["operation"], status: number) => { log.push({ provider, operation, url, status, auth }); };
+    const record = (operation: FakeCallLog["operation"], status: number) => { log.push({ provider, operation, url, status, auth, ...(typeof body.query === "string" ? { query: body.query } : {}), ...(Array.isArray(body.excludeDomains) ? { excluded: body.excludeDomains } : {}) }); };
     const operation: FakeCallLog["operation"] = /credit-usage|org\/usage/.test(u.pathname) ? "usage" : /\/search$/.test(u.pathname) ? "search" : /\/map$|\/urls$/.test(u.pathname) ? "map" : body?.formats?.json || (Array.isArray(body?.formats) && body.formats.some((f: any) => f?.type === "json")) ? "scrape_json" : "scrape";
 
     if (scenario.validKey && auth !== `Bearer ${scenario.validKey}`) { record(operation, 401); return json(401, provider === "contextdev" ? { message: "unauthorized", error_code: "UNAUTHORIZED", request_id: "r" } : { success: false, error: "Unauthorized" }); }
+    if (scenario.timeoutProvider?.[provider]) { record(operation, 0); const timeout = new Error("timeout"); timeout.name = "TimeoutError"; throw timeout; }
     const forced = scenario.failProvider?.[provider];
     if (forced) { record(operation, forced); return json(forced, provider === "contextdev" ? { message: "failed", error_code: forced === 429 ? "RATE_LIMITED" : forced === 402 ? "USAGE_EXCEEDED" : "INTERNAL_ERROR", request_id: "r" } : { success: false, error: "failed" }); }
 
@@ -99,8 +106,8 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
       record(operation, 200);
       const empty = scenario.emptyProvider?.[provider];
       const limit = Math.max(1, Math.min(100, Number(body.limit ?? body.numResults ?? 10)));
-      const hits = empty ? [] : world.slice(0, limit).map((c) => ({ url: `https://www.${c.domain}/`, title: `${c.name} | الصفحة الرئيسية`, description: `موقع ${c.name}` }));
-      const credits = hits.length === 0 ? 0 : Math.ceil(hits.length / 10) * (provider === "firecrawl" ? 2 : 1);
+      const hits = empty ? [] : searchPool(String(body.query ?? ""), body.excludeDomains, limit).map((c) => ({ url: `https://www.${c.domain}/`, title: `${c.name} | الصفحة الرئيسية`, description: `موقع ${c.name}` }));
+      const credits = hits.length === 0 ? 0 : Math.ceil(hits.length / 10) * (provider === "firecrawl" ? 2 : 1) * (scenario.overbill?.[provider] ?? 1);
       return provider === "firecrawl"
         ? json(200, { success: true, data: { web: hits }, id: "s", creditsUsed: credits })
         : json(200, { results: hits, partial: false, query: body.query, key_metadata: { credits_consumed: credits, credits_remaining: 1000 }, request_id: "r" });

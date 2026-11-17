@@ -8,7 +8,7 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 import { GET as traceGet } from "../src/app/api/admin/job-trace/route";
-import { runChainChunk, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
+import { runChainChunk, type ChainChunkInput, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import { appendChunkTrace, readRoutingTrace, writeRoutingDecision } from "../src/lib/server/multiProvider/traceStore";
@@ -54,13 +54,17 @@ function harness(world: FakeCompany[], scenario: FakeScenario = {}) {
     emit: async (line) => { events.push(line); },
     trace: async (chunk) => { traces.push(chunk); },
     tregFn: async (): Promise<ProviderAdapterCallOutput> => ({ ok: true, httpStatus: 200, rows: world.slice(0, 10).map((c) => ({ company_name: c.name, website: `https://${c.domain}` })), nextCursor: null, costUsd: 0.00576, costMicro: 5760, tregCallId: "t" }),
+    jobSpend: async () => ({ usd: rec.spent(), calls: rec.rows.length }),
+    leaseHeld: async () => true,
+    jobStartedAtMs: async () => Date.now() - 1000,
+    newAttemptId: () => crypto.randomUUID(),
   };
   return { deps, events, traces, fetch, rec };
 }
-const input = (params: Record<string, any>, over: Partial<ProviderAdapterCallInput> = {}): ProviderAdapterCallInput => ({
+const input = (params: Record<string, any>, over: Partial<ChainChunkInput> = {}): ChainChunkInput => ({
   jobId: "job_trace_1", userId: "u1", step: 0, endpointId: "mp", capabilitySlug: CHAIN_CAPABILITY_SLUG, method: "POST", params, paginationStrategy: "cursor",
   cursor: null, pageSize: 10, remainingNeeded: params.count, targetVolumeMax: params.count, deliveredSoFar: 0, deadlineMs: Date.now() + 45_000,
-  unitPricePoints: (1 * 5500) / (1.15 * params.count), ...over,
+  unitPricePoints: (1 * 5500) / (1.15 * params.count), claimLeaseUntil: "2026-11-17T12:00:00.000000+00:00", startIndex: 0, ...over,
 });
 const params = (over: Record<string, any> = {}) => ({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), industry: "contracting", keyword: "contracting", country: "Egypt", countryIso: "EG", industryAr: "مقاولات", countryAr: "مصر", requiredFields: ["work_email"], count: 3, ...over });
 
@@ -68,9 +72,10 @@ async function runAll(h: ReturnType<typeof harness>, p: Record<string, any>, max
   const rows: Record<string, any>[] = [];
   let cursor: string | null = null;
   for (let step = 0; step < maxChunks; step += 1) {
-    const out: ProviderAdapterCallOutput = await runChainChunk(input(p, { cursor, step, remainingNeeded: Math.max(0, p.count - rows.length), deliveredSoFar: rows.length }), h.deps);
+    // each chunk carries its own step (deps.step defaults to 0, and the trace merge keeps ONE chunk per step: a job of several chunks lost all but the last)
+    const out: ProviderAdapterCallOutput = await runChainChunk(input(p, { cursor, step, remainingNeeded: Math.max(0, p.count - rows.length), deliveredSoFar: rows.length }), { ...h.deps, step });
     rows.push(...out.rows);
-    if (!out.ok || !out.nextCursor) break;
+    if (!out.ok || !out.nextCursor || rows.length >= p.count) break;
     cursor = out.nextCursor;
   }
   return rows;
@@ -106,7 +111,8 @@ describe("routing trace: what each stage did, per chunk, collected by the chain"
     expect(summary.totalCalls).toBe(h.rec.rows.length);
     // the job total equals the provider spend recorded for the job
     expect(summary.totalCostUsd).toBeCloseTo(h.rec.spent(), 6);
-    expect(summary.stoppedBy).toBe("target_reached");
+    // plan v9 :122: the runner never ends a job at N and emits no «target_reached» (chainRunner.ts: stoppedBy is budget | no_more_work | null); the harness stops at the count, so the last chunk has no stop
+    expect(summary.stoppedBy).toBe(null);
   });
 
   it("a reading stage that fails records the fallback to the other provider's reader (stage fallback)", async () => {
@@ -380,7 +386,8 @@ describe("flag ON in a preview with the fake world: the router sees ready provid
     vi.stubEnv("PRESSURE_FAKE_PROVIDER", "");
     vi.stubEnv("VERCEL_ENV", "production");
     const emptyClient: any = { from: () => { const b: any = { select: () => b, eq: () => b, in: () => b, gte: () => b, lt: () => b, maybeSingle: async () => ({ data: null, error: null }), then: (r: any) => Promise.resolve({ data: [], error: null }).then(r) }; return b; }, rpc: async () => ({ data: null, error: null }) };
-    const state = await loadRouterState(emptyClient);
+    // no real network in a test: a TREG key would make the router read the real treg.to health and balance (planRouting.ts :60, providerStatus.ts :270/:283); the throw is caught there
+    const state = await loadRouterState(emptyClient, { fetchFn: async () => { throw new Error("no network in tests"); } });
     expect(state.providers.firecrawl.dailyCapUsd).toBe(0);
     expect(state.providers.contextdev.keyPresent).toBe(false);
   });

@@ -67,6 +67,8 @@ export interface TregCallResult {
   chargedMicroReported?: number;
   /** TREG's answer reported NO charge (no header, no `_treg.charged_micro`) and there is no estimate: `costMicro` is a placeholder 0, not a reported zero. */
   costUnreported?: boolean;
+  /** costHeaderInvalid: the cost header was present but is not a plain non-negative integer, so costMicro is not a report. Absent for a well-formed or absent header. */
+  costHeaderInvalid?: true;
   /** The call was NOT made: the endpoint is on the hard block list (never callable) ... */
   blocked?: string;
   /** ... or the job's USD budget would have been passed. */
@@ -386,6 +388,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   if (resolvedKey) reportProviderHttpStatus("treg", response.status, resolvedKey.source);
   const headerCost = response.headers.get("x-treg-cost-micro");
   const headerMicro = headerCost === null ? null : (parseInt(headerCost || "0", 10) || 0);
+  const costHeaderInvalid = headerCost !== null && !/^\d+$/.test(headerCost.trim());
   const originalCostMicro = parseInt(response.headers.get("x-treg-original-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
@@ -487,5 +490,6 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     ...(bodyMicro !== null ? { chargedMicroReported: bodyMicro } : {}),
     // an answer that carries NO charge at all (no cost header, no `_treg.charged_micro`, no estimate): `costMicro` above is a placeholder 0, not a report (the spend gate settles it UNKNOWN)
     ...(headerMicro === null && bodyMicro === null && !costIsEstimate ? { costUnreported: true } : {}),
+    ...(costHeaderInvalid ? { costHeaderInvalid: true as const } : {}),
   };
 }

@@ -7,6 +7,7 @@ import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlat
 import { getBalance } from "../../../../lib/supabase/ledger";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { isDisposableGuestAccount } from "../../../../lib/server/guestIdentity";
+import { staleReleaseReasonAr, operatorReleaseReasonAr } from "../../../../lib/multiProvider/copy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     if (targetJobId) {
       const { data: specificJob, error: specificErr } = await adminClient
         .from("jobs")
-        .select("id, user_id, status, step, lease_until, updated_at")
+        .select("id, user_id, status, step, lease_until, updated_at, target_volume_max, delivered_units")
         .eq("id", targetJobId)
         .in("status", ["queued", "running"])
         .maybeSingle();
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
     } else {
       const { data, error: queryErr } = await adminClient
         .from("jobs")
-        .select("id, user_id, status, step, lease_until, updated_at")
+        .select("id, user_id, status, step, lease_until, updated_at, target_volume_max, delivered_units")
         .in("status", ["queued", "running"])
         .or(`lease_until.lt.${thirtyMinutesAgo},and(lease_until.is.null,updated_at.lt.${thirtyMinutesAgo})`);
 
@@ -67,9 +68,12 @@ export async function GET(req: NextRequest) {
 
     // 3. Atomically release each abandoned job (force = true, release-first, zero debit)
     for (const job of staleJobs || []) {
+      const targetN = Number(job.target_volume_max);
+      const started = Number(job.step) > 0 || job.status === "running";
+      const releaseMessageAr = started && Number.isSafeInteger(targetN) && targetN > 0 ? (targetJobId ? operatorReleaseReasonAr(targetN) : staleReleaseReasonAr(targetN)) : "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.";
       const { data: releaseData, error: relErr } = await adminClient.rpc("release_job_atomic", {
         p_job_id: job.id,
-        p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.",
+        p_error_message: releaseMessageAr,
         p_force: true,
       });
 

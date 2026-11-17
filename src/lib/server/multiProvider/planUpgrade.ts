@@ -1,5 +1,5 @@
 import { multiProviderEnabled } from "../../multiProvider/flag";
-import { CHAIN_CARD_LIMITS_AR, PLAN_LIMITS_AR, chainGoalLineAr, expectedTargetLineAr, whatWeCollectAr } from "../../multiProvider/copy";
+import { CHAIN_CARD_LIMITS_V2_AR, PLAN_LIMITS_AR, chainGoalLineAr, expectedTargetLineAr, whatWeCollectAr } from "../../multiProvider/copy";
 import { CHAIN_CAPABILITY_SLUG, isChainSlug } from "../../multiProvider/routes";
 import { buildAllowedRoutes } from "../../multiProvider/router";
 import type { RequiredField } from "../../multiProvider/types";
@@ -165,6 +165,6 @@ export function chainQuoteCopyFor(args: { item: { capabilitySlug?: string; param
     industry: args.item.params?.industryAr,
     country: args.item.params?.countryAr,
   });
-  const methodologyNotes = [expectedTargetLineAr({ asked, fitted }), ...CHAIN_CARD_LIMITS_AR].join(" ");
+  const methodologyNotes = [expectedTargetLineAr({ asked, fitted }), ...CHAIN_CARD_LIMITS_V2_AR].join(" ");
   return { summaryAr, methodologyNotes };
 }

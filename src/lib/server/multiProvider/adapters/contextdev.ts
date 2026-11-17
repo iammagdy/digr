@@ -47,6 +47,7 @@ export const contextDevAdapter: ProviderAdapter = {
         const numResults = Math.max(10, Math.min(100, Math.ceil(i.limit / 10) * 10));
         return runRecordedCall<SearchHit[]>({
           ctx, capability: capabilityById("contextdev.search") as CapabilityDef,
+          reserveUsd: Math.round(((capabilityById("contextdev.search") as CapabilityDef).costPerCallUsd ?? 0) * Math.ceil(numResults / ((capabilityById("contextdev.search") as CapabilityDef).unitsPerCall ?? 10)) * 1e6) / 1e6,
           request: { url: `${base()}/web/search`, method: "POST", headers: {}, body: { query: i.query.slice(0, 500), numResults, ...(i.country ? { country: i.country.toLowerCase().slice(0, 2) } : {}), ...(i.excludeDomains?.length ? { excludeDomains: i.excludeDomains.slice(0, 100) } : {}), timeoutOpts: TIMEOUT } },
           interpret: (a): InterpretedAnswer<SearchHit[]> => {
             if (!Array.isArray(a.json?.results)) return { status: "failed", data: null, units: 0, credits: creditsOf(a.json), errorCode: "unexpected_shape" };

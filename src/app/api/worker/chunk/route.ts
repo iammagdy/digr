@@ -36,8 +36,9 @@ import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidenc
 import { NextRequest, NextResponse, after } from "next/server";
 import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
 import { isChainSlug } from "../../../../lib/multiProvider/routes";
-import { chainShortfallReasonAr } from "../../../../lib/multiProvider/copy";
+import { chainShortfallReasonAr, chainZeroDeliveryReasonAr } from "../../../../lib/multiProvider/copy";
 import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
+import { MAX_STARTS_PER_STEP } from "../../../../lib/server/multiProvider/chainRunner";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
   verifyCronSecret,
@@ -838,6 +839,21 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
+    // Chain jobs only: a durable START MARKER per started invocation of this step (Storage decides existence, upsert:false), so a kill without a caught failure is still counted.
+    let chainStartIndex = 0;
+    if (isChainJob && !providerBudgetStopped && needsProvider) {
+      const markerBucket = adminClient.storage.from("partials");
+      let markerWritten = false;
+      for (let k = 0; k < MAX_STARTS_PER_STEP; k += 1) {
+        const made: any = await markerBucket.upload(`${jobId}/start_${currentStep}_${k}.json`, Buffer.from("{}", "utf-8"), { contentType: "application/json", upsert: false });
+        if (!made?.error) { chainStartIndex = k; markerWritten = true; break; }
+        const markerError: any = made.error;
+        const alreadyThere = String(markerError?.statusCode ?? markerError?.status ?? "") === "409" || /already exists|duplicate/i.test(String(markerError?.message ?? ""));
+        if (!alreadyThere) throw new Error("تعذّر تسجيل بدء الدفعة.");
+      }
+      if (!markerWritten) chainStartIndex = MAX_STARTS_PER_STEP;
+    }
+
     const providerCallStartedAt = Date.now();
     const rawAdapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
@@ -862,7 +878,7 @@ export async function POST(req: NextRequest) {
       ...(videoSelector ? { videoSelector } : {}),
       ...(reportStore ? { reportStore, axisModel: getAxisModel() } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
-      ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
+      ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}), claimLeaseUntil: typeof claimData?.lease_until === "string" ? claimData.lease_until : undefined, startIndex: chainStartIndex } : {}),
       // A model-planned job with a sensitive step: the account's access and purpose for the audited path (nothing for any other job).
       ...(spec.capabilitySlug === MODEL_PLAN_SLUG ? await modelPlanSensitiveContext(adminClient, userId, spec.params) : {}),
       ...(callBudget.ceilingUsd !== null ? { callBudget, callEstimateUsd: estimatedCostUsd } : {}),
@@ -1678,7 +1694,7 @@ export async function POST(req: NextRequest) {
     // A report chunk that browsed or classified (no comment row yet) made progress: the «empty pages» and «no progress» rules, which are about pages that bring nothing, do not apply to it;
     // the page ceiling still does, and the collector's own limits (calls, cost, stall) end the job.
     const reportChunkProgress = isReportJob && rawAdapterResult.reportProgress === true && acceptedRows.length === 0;
-    const pageCapReason = reportChunkProgress
+    const pageCapReason = isChainJob ? null : reportChunkProgress
       ? (currentStep + 1 >= maxPagesForJob(targetMax, effectivePageSize, "feed") ? "page_cap" as const : null)
       : evaluateProviderCallCap({
           pagesDone: currentStep + 1,
@@ -1720,7 +1736,9 @@ export async function POST(req: NextRequest) {
       }
       const heldShown = heldToReport(diagnosticTotal, uncertainRows.length);
       const accountJobEnded = isXAccountRequest(spec.params || {});
-      const emptyErrorAr = accountJobEnded && receivedFromSource > 0 && !reviewUnavailable
+      const emptyErrorAr = isChainJob
+        ? chainZeroDeliveryReasonAr({ target: Number(targetMax), stop: (((rawAdapterResult as any).chainStop ?? null) as any) })
+        : accountJobEnded && receivedFromSource > 0 && !reviewUnavailable
         ? xAccountZeroDeliveryAr({ received: receivedShown, held: heldShown, dateDropped: feedHasWindow && datesDroppedKnown ? datesDroppedTotal : 0, replies: diagnosticTotal?.rows.byReason.reply, reposts: diagnosticTotal?.rows.byReason.repost, otherAccount: diagnosticTotal?.rows.byReason.other_account })
         : reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
@@ -1828,6 +1846,7 @@ export async function POST(req: NextRequest) {
       ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),
       ...(reviewSampleSummary ? { reviewSample: reviewSampleSummary } : {}),
       totalDelivered: newDeliveredUnits,
+      ...(isChainJob ? { ...(typeof (rawAdapterResult as any).attemptId === "string" ? { attemptId: (rawAdapterResult as any).attemptId } : {}), ...((rawAdapterResult as any).chainStop ? { chainStop: (rawAdapterResult as any).chainStop } : {}), ...(Number((rawAdapterResult as any).chainSkippedOrigins) > 0 ? { chainSkippedOrigins: Number((rawAdapterResult as any).chainSkippedOrigins) } : {}) } : {}),
       rows: acceptedRows,
       uncertainRows,
       unreviewedRows,
@@ -1991,6 +2010,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Chain jobs only, winner only: re-publish the same step object to the canonical file (idempotent repair if a stale invocation overwrote it); one retry; a failure is tolerated.
+    if (isChainJob && !compData.already_completed) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const again: any = await adminClient.storage.from("partials").upload(`${jobId}/step_${currentStep}.json`, Buffer.from(JSON.stringify(partialData), "utf-8"), { contentType: "application/json", upsert: true });
+          if (!again?.error) break;
+        } catch { /* tolerated */ }
+      }
+    }
+
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
@@ -1998,6 +2027,8 @@ export async function POST(req: NextRequest) {
       const collectedUnreviewedRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
       let rawRowsCollected = 0;
+      let lastChainStop: string | null = null;
+      let lastChainSkipped = 0;
       let baselineExcludedCount = 0;
       let relevanceExcludedCount = 0;
       let dateExcludedTotal = 0;
@@ -2019,7 +2050,9 @@ export async function POST(req: NextRequest) {
         let stepObj: any = null;
         let stepCorrupt = false;
 
-        if (typeof partialsBucket.download === "function") {
+        if (isChainJob && s === currentStep && !compData.already_completed) {
+          stepObj = partialData;
+        } else if (typeof partialsBucket.download === "function") {
           const { data: blob, error: dlErr } = await partialsBucket.download(stepKey);
           if (!dlErr && blob) {
             try {
@@ -2066,6 +2099,8 @@ export async function POST(req: NextRequest) {
         }
 
         collectedRows.push(...stepObj.rows);
+        if (isChainJob && typeof stepObj.chainStop === "string") lastChainStop = stepObj.chainStop;
+        if (isChainJob && Number(stepObj.chainSkippedOrigins) > 0) lastChainSkipped = Number(stepObj.chainSkippedOrigins);
         if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
         if (Array.isArray(stepObj.unreviewedRows)) collectedUnreviewedRows.push(...stepObj.unreviewedRows);
         rawRowsCollected += Number(stepObj.rawRowsCount ?? stepObj.rows.length) || 0;
@@ -2550,7 +2585,7 @@ export async function POST(req: NextRequest) {
             : providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
             : isChainJob
-            ? chainShortfallReasonAr({ stop: ((rawAdapterResult as any).chainStop ?? null), callCap: callCapReason, excluded })
+            ? chainShortfallReasonAr({ stop: ((lastChainStop ?? (rawAdapterResult as any).chainStop ?? null) as any), callCap: callCapReason, excluded, skippedOrigins: lastChainSkipped })
             : callCapReason === "source_repeats"
             ? CALL_CAP_NOTE_AR.source_repeats
             : dateSentence

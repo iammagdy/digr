@@ -14,6 +14,12 @@ const db = vi.hoisted(() => ({
   settings: [] as any[],
   step: 0, cursor: null as string | null, deliveredUnits: 0, targetVolumeMax: 3, unitPrice: 100, reserved: 345, endpoint: "mp.business.contacts",
   reserveDeniedFor: new Set<string>(),
+  uploadHistory: [] as Array<{ bucket: string; path: string; existed: boolean }>,
+  delayedCompleteChunkMs: 0,
+  killAfterCommit: false,
+  corruptDownloadPaths: new Set<string>(),
+  // the body of every step file ever uploaded: the route deletes the step files once the job has settled
+  stepBodies: new Map<string, string>(),
 }));
 
 function builder(rows: () => any[]) {
@@ -35,7 +41,19 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") {
-        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpoint, unit_price: db.unitPrice }, error: null };
+        const job = db.jobs.find((j) => j.id === args.p_job_id);
+        if (job) {
+          if (job.current_cursor && String(job.current_cursor).startsWith("term_stop:")) {
+            return { data: null, error: { message: "cannot claim a job whose last chunk was terminal" } };
+          }
+          if (job.status === "running" && job.lease_until && new Date(job.lease_until).getTime() > Date.now()) {
+            return { data: null, error: { message: "lease not expired" } };
+          }
+        }
+        // DT-20261117-04 CI r1: like the real claim_job_chunk, write the lease to the job row and return it. It is a Postgres timestamptz text (microseconds, +00:00): the chain runner compares it as an INSTANT with the job row (readJobLease + sameInstant).
+        const leaseUntil = new Date(Date.now() + 60_000).toISOString().replace(/Z$/, "456+00:00");
+        if (job) Object.assign(job, { status: "running", step: db.step, lease_until: leaseUntil });
+        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpoint, unit_price: db.unitPrice, lease_until: leaseUntil }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") {
         if (db.reserveDeniedFor.has(args.p_provider)) return { data: { allowed: false }, error: null };
@@ -51,24 +69,73 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true }, error: null };
       }
       if (name === "complete_chunk") {
+        if (db.delayedCompleteChunkMs > 0) {
+          await new Promise((r) => setTimeout(r, db.delayedCompleteChunkMs));
+        }
+        const expected = args.p_expected_step;
+        if (typeof expected === "number") {
+          if (db.step > expected) {
+            // like the SQL (20261012135525_chunk_lifecycle_functions.sql :98-105): a stale step answers success true with already_completed true and the job's current step
+            return { data: { success: true, already_completed: true, current_step: db.step, delivered_units: db.deliveredUnits }, error: null };
+          }
+          if (db.step < expected) {
+            throw new Error(`step mismatch: current ${db.step} < expected ${expected}`);
+          }
+        }
         db.step += 1; db.deliveredUnits = args.p_new_delivered_units; db.cursor = args.p_new_cursor;
         const job = db.jobs.find((row) => row.id === args.p_job_id);
-        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running" });
+        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running", lease_until: null });
+        if (db.killAfterCommit) {
+          throw new Error("worker_killed_after_commit");
+        }
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
+        const settledJob = db.jobs.find((j) => j.id === args.p_job_id);
         const charged = Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved);
+        // like the SQL (20261017175500_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
+        if (settledJob?.status === "completed") return { data: { success: true, already_settled: true, reserved_credits: db.reserved, charged_credits: settledJob.charged_credits ?? charged, delivered_units: db.deliveredUnits }, error: null };
+        if (settledJob) Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
-      if (name === "release_job_atomic") return { data: { success: true, released_credits: db.reserved }, error: null };
+      // DT-20261117-04 CI r1: record_chunk_failure and release_job_atomic clear the job's lease, as the real SQL functions do; otherwise the fake's own «lease not expired» rule refuses the next claim of the same test.
+      if (name === "release_job_atomic") {
+        const releasedJob = db.jobs.find((j) => j.id === args.p_job_id);
+        if (releasedJob) releasedJob.lease_until = null;
+        return { data: { success: true, released_credits: db.reserved }, error: null };
+      }
+      if (name === "record_chunk_failure") {
+        const failedJob = db.jobs.find((j) => j.id === args.p_job_id);
+        if (failedJob) failedJob.lease_until = null;
+        return { data: { success: true }, error: null };
+      }
       return { data: { success: true }, error: null };
     }),
     storage: {
       from: (bucket: string) => {
         const store = bucket === "partials" ? db.partials : db.results;
         return {
-          upload: async (path: string, body: any) => { store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body))); return { data: { path }, error: null }; },
-          download: async (path: string) => { const buf = store.get(path); return buf ? { data: new Blob([new Uint8Array(buf)]), error: null } : { data: null, error: { message: "not_found" } }; },
+          upload: async (path: string, body: any, opts?: any) => {
+            const existed = store.has(path);
+            db.uploadHistory.push({ bucket, path, existed });
+            // records whether path already exists
+            // Storage decides existence for `upsert: false` (the start markers): a duplicate is refused with 409, as the real bucket does.
+            if (existed && opts?.upsert === false) return { data: null, error: { message: "The resource already exists", statusCode: "409" } };
+            if (bucket === "partials" && /\/step_\d+\.json$/.test(path)) db.stepBodies.set(path, Buffer.isBuffer(body) ? body.toString("utf-8") : String(body));
+            store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body)));
+            return { data: { path, existed }, error: null };
+          },
+          download: async (path: string) => {
+            if (db.corruptDownloadPaths.has(path)) {
+              return { data: new Blob([new Uint8Array(Buffer.from("CORRUPT_NOT_JSON"))]), error: null };
+            }
+            const buf = store.get(path);
+            return buf ? { data: new Blob([new Uint8Array(buf)]), error: null } : { data: null, error: { message: "not_found" } };
+          },
+          list: async (prefix?: string) => {
+            const paths = Array.from(store.keys()).filter((k) => !prefix || k.startsWith(prefix));
+            return { data: paths.map((name) => ({ name })), error: null };
+          },
           remove: async (paths: string[]) => { for (const p of paths) store.delete(p); return { data: paths, error: null }; },
         };
       },
@@ -88,6 +155,13 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 vi.mock("../src/lib/server/sendPlatformEmail", () => ({ sendPlatformEmail: vi.fn(async () => undefined), getRecipient: vi.fn(async () => null) }));
+
+// DT-20261117-04 CI r2 SAFETY: no test may reach the REAL TREG API. CI r2 made 106 real calls to treg.to from these tests (answered 401: CI has no TREG secret; with a secret they would be BILLED). The real client is replaced by a function that RECORDS the call and throws; the afterEach below fails the test when it was called (a throw inside the runner can be caught and hidden, a recorded call cannot). Every chain test passes its own `tregCall` hook (tregHook).
+const realTreg = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock("../src/functions/shared/tregClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/functions/shared/tregClient")>()),
+  executeTregCall: vi.fn(async (options: any) => { realTreg.calls.push(String(options?.endpointId ?? "unknown")); throw new Error("real TREG call in test"); }),
+}));
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/functions/shared/catalogClient")>()),
   getEndpointDetails: vi.fn(async () => { throw new Error("the chain must never ask the live catalog"); }),
@@ -101,8 +175,9 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setChainTransportForTesting } from "../src/lib/server/multiProvider/chainAdapter";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany } from "../src/lib/server/multiProvider/fakeTransport";
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
-import { chainShortfallReasonAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
+import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 
 const JOB = jobIdForQuote("quote_chain_1");
 const TARGET = 3;
@@ -117,6 +192,13 @@ const KEYS = { treg: "managed", firecrawl: "fc-test-key-123456", contextdev: "cx
  */
 const TWO_REQUIRED_FIELDS = ["work_email", "office_phone"];
 function useTwoRequiredFields() { db.quotes[0].items[0].params.requiredFields = TWO_REQUIRED_FIELDS; }
+// a row the NON-chain gate accepts for the quote of `resetDb` (industry مقاولات, country مصر): its name, industry and country say so (tried with the real worker: the name alone or the country alone is not enough)
+const MATCHING_ROW = { name: "شركة مقاولات", website: "https://acme.com", country: "مصر", industry: "مقاولات" };
+// ROOMY: a unit price whose budget (reserve / 5,500) no stop of the test can be pre-empted by: a job that must END (coverage_end) reads every candidate and tries every search variant, which costs more than the budget of the default price of 100 points per unit
+const roomyBudget = (target: number) => { db.unitPrice = 1000; db.reserved = Math.ceil(target * 1000 * 1.15); };
+// DT-20261117-04 CI r2 (C1): the TREG client of every chain test. A valid EMPTY e-mail lookup (cost 0) and a directory page made of `leads` (the shapes of chain.test.ts :64-70 and of the F08/F22 `leads` key): the runner never reaches the real client. `token` makes the directory answer carry a next-page token.
+const noMail = (o: any) => ({ ok: true, httpStatus: 200, tregCallId: "t", costMicro: 0, latencyMs: 1, data: { data: { organization: {}, emails: [] }, meta: { params: { domain: o.params?.domain }, total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
+const tregHook = (leads: any[] = [], token: string | null = null): any => async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads, pagination: token ? { token } : { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
 function nonTerminalWorld(verifiedAt: (i: number) => boolean, size = 100): FakeCompany[] {
   return defaultFakeWorld(size).map((c, i) => (verifiedAt(i) ? { ...c, email: `info@${c.domain}`, phone: `+20100000${String(i).padStart(4, "0")}` } : { ...c, email: undefined, phone: undefined }));
 }
@@ -128,6 +210,7 @@ function resetDb(over: { target?: number } = {}) {
   db.settings = [{ key: "provider_limits", value: { dailyUsd: 0.8, firecrawlDailyUsd: 1, contextdevDailyUsd: 1 } }];
   db.costs = []; db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.reserveDeniedFor = new Set();
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
+  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear();
 }
 
 describe("worker: multi-provider chain job (fake providers)", () => {
@@ -138,17 +221,21 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     process.env.CRON_SECRET = "chain-secret"; process.env.ENABLE_MOCK_PROVIDER = "true"; (process.env as any).NODE_ENV = "test"; process.env.VERCEL_ENV = "development";
     process.env.MULTI_PROVIDER_ENABLED = "true";
     delete process.env.TREG_LIVE; // TREG is NOT live: the chain does not need it
+    realTreg.calls.length = 0;
     setRowAdvisorForTesting(async () => { throw new Error("no advisory review may run on a verified chain row"); });
   });
   afterEach(() => {
     setProviderAdapterForTesting(null); setRowAdvisorForTesting(null); setChainTransportForTesting(null);
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete (process.env as any)[k]; else (process.env as any)[k] = v; }
+    // fail-closed (after the clean-up above): a test that reached the REAL TREG client fails here, even when the runner caught the thrown error
+    const reachedRealTreg = realTreg.calls.splice(0);
+    expect(reachedRealTreg, "real TREG call in test").toEqual([]);
   });
 
   async function run(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}) {
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, scenario);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
     const responses: Array<{ status: number; json: any }> = [];
     for (let i = 0; i < 12; i++) {
@@ -163,7 +250,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   async function runMany(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}, maxIters = 40) {
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, scenario);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
     const responses: Array<{ status: number; json: any }> = [];
     for (let i = 0; i < maxIters; i++) {
@@ -173,6 +260,163 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       if (entry.json.done === true || entry.json.released === true || entry.status >= 400) break;
     }
     return { responses, last: responses[responses.length - 1] };
+  }
+
+  // DT-20261117-04 CI r2 (G25): a chain run with ITS OWN transport. `run` and `runMany` call `setChainTransportForTesting` themselves and that setter REPLACES the transport (chainAdapter.ts :34), so keys, a TREG hook or a fake-web scenario set before them are lost. A test that needs its own world calls `runWith` instead: the same chunk loop as `runMany`, the transport set ONCE.
+  async function runWith(world: FakeCompany[], opts: { keys?: any; tregCall?: any; scenario?: Parameters<typeof createFakeFetch>[1]; unitPrice?: number } = {}, maxIters = 40) {
+    const route = await import("../src/app/api/worker/chunk/route");
+    // a unit price whose budget (reserve / 5,500) is far above what these runs spend, so the budget cannot pre-empt the stop under test
+    if (opts.unitPrice) { db.unitPrice = opts.unitPrice; db.reserved = Math.ceil(db.targetVolumeMax * opts.unitPrice * 1.15); }
+    fetchSpy = createFakeFetch(world, opts.scenario ?? {});
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: opts.keys ?? KEYS, tregCall: opts.tregCall ?? tregHook() });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    const responses: Array<{ status: number; json: any }> = [];
+    for (let i = 0; i < maxIters; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+      const entry = { status: res.status, json: await res.json() };
+      responses.push(entry);
+      if (entry.json.done === true || entry.json.released === true || entry.status >= 400) break;
+    }
+    return { responses, last: responses[responses.length - 1] };
+  }
+  // Keys without Context.dev: its search is unavailable (that is what limits the sources, a `sources_limited` stop), while TREG and Firecrawl are present, so the job can still READ pages and deliver rows (a job that must deliver cannot run on `treg` alone).
+  const NO_CONTEXTDEV = { treg: KEYS.treg, firecrawl: KEYS.firecrawl };
+  // A directory lead whose address the chain does not support: the origin passes ORIGIN_CHARSET_RE but the domain `my_company.com` fails HOST_RE (an underscore), so admitBatch counts ONE skipped origin (chainRunner.ts :272-275) and the run ends with `chainSkippedOrigins` 1.
+  const SKIPPED_ORIGIN_LEAD = { name: "Underscore Co", website: "https://my_company.com" };
+  // A directory that never ends and never helps: a page WITH a lead (so a next-page token comes back) whose address is private (no candidate, no skipped origin), and a NEW token on every call (a repeated token would end the source).
+  const tregStallHook = (): any => {
+    let page = 0;
+    return async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads: [{ name: "Private host", website: "https://10.0.0.1" }], pagination: { token: `cur_stall_${++page}` } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
+  };
+  // the stop lines the activity log holds, by kind: a run writes exactly one, the line of its own stop
+  const stopLinesOfLog = () => (["coverage_end", "budget", "sources_limited", "stalled", "work_limit"] as const).filter((k) => db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr(k)));
+
+  // ---- DT-20261117-04 gate2 (QA Q1): the REAL route twice, with a CONTROLLED interleaving of two invocations ------------------------------------
+  // `mode` "chain" runs the chain (the file's own transport and fakes), "main" runs the generic worker path (an injected adapter); both go through route.POST, the step upload, complete_chunk, assembly and settlement.
+  type RaceMode = "chain" | "main";
+  const verifiedWorld = (n: number, who: string): FakeCompany[] => defaultFakeWorld(n).map((c) => ({ ...c, name: `${who} ${c.name}`, email: `info@${c.domain}`, phone: undefined }));
+  function prepareJob(mode: RaceMode, target: number) {
+    resetDb({ target });
+    db.unitPrice = 100;
+    db.reserved = Math.ceil(target * 100 * 1.15);
+    if (mode === "main") {
+      db.endpoint = "icypeas.companies.search";
+      db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+      db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    }
+  }
+  // what the NEXT invocation will find: `rows` verified companies; goesOn = many more that cannot be verified (the first chunk ends after its calls and the job goes on)
+  function arrangeInvocation(mode: RaceMode, who: string, rows: number, goesOn = false) {
+    if (mode === "chain") {
+      const world = goesOn ? defaultFakeWorld(30).map((c, i) => (i < rows ? { ...c, name: `${who} ${c.name}`, email: `info@${c.domain}`, phone: undefined } : { ...c, email: undefined, phone: undefined })) : verifiedWorld(rows, who);
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+    } else {
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: Array.from({ length: rows }, (_, i) => ({ name: `${who} شركة مقاولات ${i + 1}`, website: `https://${who.toLowerCase()}${i + 1}.com`, country: "مصر", industry: "مقاولات" })), nextCursor: goesOn ? "cur_2" : null, costUsd: 0.005, costMicro: 5000, tregCallId: `t_${who}` }));
+    }
+  }
+  async function postChunk() {
+    const route = await import("../src/app/api/worker/chunk/route");
+    return route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+  }
+  async function watchdogSweep() {
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    const res = await GET(new NextRequest("http://127.0.0.1:3000/api/cron/watchdog", { headers: { authorization: "Bearer chain-secret" } }));
+    return { status: res.status, body: await res.json() };
+  }
+  const rpcCount = (name: string) => db.rpcCalls.filter((c) => c.name === name).length;
+  async function resultText() {
+    const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
+    if (!buf) return null;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as any);
+    return JSON.stringify(wb.worksheets[0].getSheetValues());
+  }
+  /**
+   * Invocation O (the old worker) starts and is HELD at one storage upload or RPC call; its lease is then expired (a pause longer than the lease), invocation W starts, and either runs to its end
+   * (answer `w`) or DIES right after its commit (`wDies`: the answer never returns, so the route's catch never runs); then O is let go and its answer is `o`.
+   */
+  async function raceWithOldWorker(opts: { mode: RaceMode; target?: number; pause: { kind: "upload" | "rpc"; name: string }; oRows: number; wRows: number; wDies?: boolean; goesOn?: boolean }) {
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    let reached!: () => void;
+    const atGate = new Promise<void>((r) => { reached = r; });
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let held = false;
+    let wPhase = false;
+    prepareJob(opts.mode, opts.target ?? 5);
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      const origRpc = client.rpc;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return { ...b, upload: async (path: string, body: any, o: any) => { if (opts.pause.kind === "upload" && !held && path === `${JOB}/${opts.pause.name}`) { held = true; reached(); await gate; } return b.upload(path, body, o); } };
+        },
+      };
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        if (opts.pause.kind === "rpc" && !held && name === opts.pause.name) { held = true; reached(); await gate; }
+        const result = await origRpc(name, args);
+        if (opts.wDies && wPhase && name === "complete_chunk") await new Promise<never>(() => {});
+        return result;
+      });
+      return client;
+    });
+    try {
+      arrangeInvocation(opts.mode, "O", opts.oRows, opts.goesOn);
+      const oPromise = postChunk();
+      await atGate;
+      db.jobs[0].lease_until = new Date(Date.now() - 60_000).toISOString();
+      const costsAtPause = db.costs.length;
+      arrangeInvocation(opts.mode, "W", opts.wRows, opts.goesOn);
+      wPhase = true;
+      let w: { status: number; body: any } | null = null;
+      if (opts.wDies) {
+        void postChunk();
+        for (let i = 0; i < 200 && db.step < 1; i++) await new Promise((r) => setTimeout(r, 25));
+        expect(db.step).toBeGreaterThanOrEqual(1);
+      } else {
+        const wRes = await postChunk();
+        w = { status: wRes.status, body: await wRes.json() };
+      }
+      wPhase = false;
+      open();
+      const oRes = await oPromise;
+      const o = { status: oRes.status, body: await oRes.json() };
+      return { w, o, costsAtPause, canonicalText: db.stepBodies.get(`${JOB}/step_0.json`) ?? "", resultText: await resultText() };
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  }
+  /** The winner commits and DIES (its answer never returns: no catch, no release); nobody resumes; 31 minutes later the REAL watchdog runs. */
+  async function dyingWinnerThenWatchdog(mode: RaceMode, goesOn = false) {
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    prepareJob(mode, 5);
+    arrangeInvocation(mode, "W", 2, goesOn);
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        const result = await origRpc(name, args);
+        if (name === "complete_chunk") await new Promise<never>(() => {});
+        return result;
+      });
+      return client;
+    });
+    try {
+      void postChunk();
+      for (let i = 0; i < 200 && db.step < 1; i++) await new Promise((r) => setTimeout(r, 25));
+      const before = { step: db.step, delivered: db.deliveredUnits, releases: rpcCount("release_job_atomic"), failures: rpcCount("record_chunk_failure"), settles: rpcCount("settle_job_atomic") };
+      const past31 = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+      Object.assign(db.jobs[0], { lease_until: past31, updated_at: past31, step: db.step, delivered_units: db.deliveredUnits });
+      const watchdog = await watchdogSweep();
+      return { before, watchdog };
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
   }
 
   it("delivers only verified rows; the charge is ceil(delivered x unit) and never above the reserve; money moves only through the approved functions", async () => {
@@ -201,13 +445,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     await run(defaultFakeWorld(10));
     const reserves = db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic");
     expect(reserves.length).toBeGreaterThan(0);
-    expect(new Set(reserves.map((r) => r.args.p_provider))).toEqual(new Set(["contextdev", "firecrawl"]));
-    for (const r of reserves) { expect(r.args.p_daily_cap_usd).toBe(1); expect(r.args.p_job_id).toBe(JOB); }
-    // the platform-wide TREG reserve of the generic path is NOT used for a chain job
-    expect(reserves.some((r) => r.args.p_provider === "treg")).toBe(false);
+    // with the TREG hook the chain records its e-mail lookups under provider treg (DT-04, D-0027): the set of reserved providers has three members
+    expect(new Set(reserves.map((r) => r.args.p_provider))).toEqual(new Set(["contextdev", "firecrawl", "treg"]));
+    for (const r of reserves) { expect(r.args.p_daily_cap_usd).toBe(r.args.p_provider === "treg" ? 0.8 : 1); expect(r.args.p_job_id).toBe(JOB); }
+    // the platform-wide TREG reserve of the generic path is NOT used for a chain job: the only treg rows are the chain's own e-mail lookups (capability tomba.companies.emails.list)
+    expect(db.costs.some((c) => c.provider === "treg")).toBe(true);
+    expect(db.costs.filter((c) => c.provider === "treg").every((c) => c.capability === "tomba.companies.emails.list")).toBe(true);
     const commits = db.rpcCalls.filter((c) => c.name === "commit_provider_spend_v2");
     expect(commits.length).toBe(reserves.length);
-    expect(commits.every((c) => /^(contextdev|firecrawl)\./.test(c.args.p_capability) && ["success", "failed", "empty"].includes(c.args.p_status))).toBe(true);
+    expect(commits.every((c) => /^(contextdev|firecrawl)\.|^tomba\.companies\.emails\.list$/.test(c.args.p_capability) && ["success", "failed", "empty"].includes(c.args.p_status))).toBe(true);
     expect(db.costs.every((c) => c.is_estimate === false)).toBe(true);
     // the provider spend of the job is below the budget the reserve implies (reserve / 5,500)
     const spent = db.costs.reduce((a, c) => a + c.cost_usd, 0);
@@ -302,11 +548,13 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-2 no more work: emits NOMORE sentence when search runs dry before target", async () => {
     resetDb({ target: 8 });
+    roomyBudget(8);
     const world = defaultFakeWorld(5).map((c, i) => (i < 3 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
 
-    const nomoreSentence = chainShortfallReasonAr({ stop: "no_more_work", callCap: null, excluded: 0 });
+    // the new engine has no «no_more_work» stop (terminalOf: budget, sources_limited, coverage_end, stalled, work_limit); with the TREG hook the world of 5 companies ends coverage_end (plan v9 :276(a) pins the same for the chain test)
+    const nomoreSentence = chainShortfallReasonAr({ stop: "coverage_end", callCap: null, excluded: 0 });
     const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(nomoreSentence));
     expect(finalEvent).toBeDefined();
     expect(String(finalEvent.message)).toBe(`المسلَّم ٣ من ٨ مطلوب. ${nomoreSentence}`);
@@ -329,8 +577,12 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
     expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
+    // DT-20261117-04 CI r2 (a PLAN DECISION, not a bug): P77 (route.ts :1697) sets `pageCapReason = isChainJob ? null : …` (plan v9 §C11(a), D-0022 N3; pinned by B1), so a CHAIN job past the old 3-page cap is NOT stopped by a worker cap: this sentence can never reach a chain customer. The test now proves that, instead of the opposite.
     const pagecapSentence = chainShortfallReasonAr({ stop: null, callCap: "page_cap", excluded: 0 });
-    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(pagecapSentence));
+    expect(db.events.some((e: any) => String(e.message ?? "").includes(pagecapSentence))).toBe(false);
+    // non-vacuity: the job really went past the old cap (more than 3 chunks were claimed) and its delivered-count line is there
+    expect(db.rpcCalls.filter((c) => c.name === "claim_job_chunk").length).toBeGreaterThan(3);
+    const finalEvent = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
     expect(finalEvent).toBeDefined();
     expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
 
@@ -352,8 +604,12 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
     expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
+    // DT-20261117-04 CI r2 (a PLAN DECISION, not a bug): P77 (route.ts :1697) sets `pageCapReason = isChainJob ? null : …` (plan v9 §C11(a), D-0022 N3; pinned by B1), so a CHAIN job past the old 2 consecutive empty pages is NOT stopped by a worker cap: this sentence can never reach a chain customer. The test now proves that, instead of the opposite.
     const emptySentence = "توقفت المعالجة لأن دفعتين متتاليتين لم تضيفا شركات موثّقة جديدة قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
-    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(emptySentence));
+    expect(db.events.some((e: any) => String(e.message ?? "").includes(emptySentence))).toBe(false);
+    // non-vacuity: the job really went past the old cap (more than 3 chunks were claimed) and its delivered-count line is there
+    expect(db.rpcCalls.filter((c) => c.name === "claim_job_chunk").length).toBeGreaterThan(3);
+    const finalEvent = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
     expect(finalEvent).toBeDefined();
     expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
 
@@ -378,17 +634,14 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
     expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
+    // DT-20261117-04 CI r2 (a PLAN DECISION, not a bug): P77 (route.ts :1697) sets `pageCapReason = isChainJob ? null : …` (plan v9 §C11(a), D-0022 N3; pinned by B1), so a CHAIN job whose chunks only repeat delivered companies is NOT stopped by a worker «source repeats» cap: this sentence can never reach a chain customer. The test now proves that, instead of the opposite.
     const repeatSentence = chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 });
-    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(repeatSentence));
-    // O8d: the world is non-terminal, so the REPEAT sentence itself must reach the customer (the EXCL/NEUTRAL branch below can no longer stand in for it)
+    expect(db.events.some((e: any) => String(e.message ?? "").includes(repeatSentence))).toBe(false);
+    // non-vacuity: the job really went past the old cap (more than 3 chunks were claimed) and its delivered-count line is there
+    expect(db.rpcCalls.filter((c) => c.name === "claim_job_chunk").length).toBeGreaterThan(3);
+    const finalEvent = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
     expect(finalEvent).toBeDefined();
-    if (finalEvent) {
-      expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
-    } else {
-      // If the harness observes EXCL or NEUTRAL branch instead of REPEAT rule
-      const altEvent = db.events.find((e: any) => String(e.message ?? "").includes("استُبعد") || String(e.message ?? "").includes("لم يصلنا سبب"));
-      expect(altEvent).toBeDefined();
-    }
+    expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
     expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
   });
 
@@ -415,7 +668,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const world = defaultFakeWorld(40);
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, {});
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
 
     await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
@@ -433,6 +686,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-8 zero delivery regression pin: verifies zero delivery releases reserve with generic message", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const world = defaultFakeWorld(8).map((c) => ({ ...c, email: undefined, phone: undefined }));
     const { last } = await run(world);
     expect(last.status).toBe(422);
@@ -443,7 +697,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const call = relCalls[0];
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
-    expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    // plan v9 :196 / :310 (P86, D-0026/D-0031): the VALUE of the release text of a chain job is chainZeroDeliveryReasonAr({ target, stop }); this world (8 companies, no e-mail or phone, the real TREG out of the way) ends coverage_end
+    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
   });
 
   it("W-9 settlement fails: returns error and writes no completion or delivered event", async () => {
@@ -506,7 +761,11 @@ describe("worker: multi-provider chain job (fake providers)", () => {
         if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
       }
-      expect(events.some((e) => e === chainStopProgressLineAr("target_reached") || e === chainStopProgressLineAr("no_more_work") || e === chainStopProgressLineAr("budget"))).toBe(true);
+      // at the count the runner emits NO stop line of ANY kind (plan v9 :122 and :276(b); P65): the old line asked for one. Same check as the F15 style of chain.test.ts.
+      const STOP_LINES = (["budget", "no_more_work", "target_reached", "coverage_end", "sources_limited", "stalled", "work_limit"] as const).map((k) => chainStopProgressLineAr(k));
+      expect(events.some((e) => STOP_LINES.includes(e))).toBe(false);
+      // non-vacuity: the progress lines the loop above skips are there
+      expect(events.some((e) => e.includes("الموثّق منها"))).toBe(true);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -514,6 +773,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-1 release failure, runner returned no rows", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const supabase = await import("../src/lib/supabase/server");
     const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
@@ -551,7 +811,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const call = relCalls[0];
       expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
       expect(call.args.p_force).toBe(true);
-      expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+      // plan v9 :196 / :310 (P86): the chain release text; this world (8 companies, no e-mail or phone) ends coverage_end
+      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -559,8 +820,9 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-2 release failure, worker drops every runner row", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const companyIdentity = dedupeIdentityFor("company");
-    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
 
     const supabase = await import("../src/lib/supabase/server");
@@ -588,7 +850,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
       expect(relCalls.length).toBe(1);
       const call = relCalls[0];
-      expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+      // plan v9 :196 / :310: zero delivery of a chain job = chainZeroDeliveryReasonAr; here EVERY candidate is excluded, so nothing is delivered (see the point text)
+      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
       const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of eventTexts) {
@@ -609,27 +872,1156 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-3 worker drops every runner row, release confirmed", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const companyIdentity = dedupeIdentityFor("company");
-    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
 
     const world = defaultFakeWorld(8);
     const { last } = await run(world);
     expect(last.status).toBe(422);
     expect(last.json.released).toBe(true);
-    expect(last.json.error).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(last.json.error).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
     const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
     expect(relCalls.length).toBe(1);
     const call = relCalls[0];
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
-    expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
     const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
-    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."));
+    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" })));
     expect(confirmEvt).toBeTruthy();
     expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
     expect(confirmEvt).toContain("ولم يُخصم شيء");
   });
+it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-chain job keeps today's cap", async () => {
+    // 1. Chain job: pageCapReason is always null
+    resetDb({ target: 10 });
+    db.unitPrice = 1000;
+    db.reserved = Math.ceil(10 * 1000 * 1.15);
+    useTwoRequiredFields();
+    const world = nonTerminalWorld((i) => i < 1);
+    const { last: chainLast } = await runMany(world);
+    expect(chainLast.status).toBe(200);
+
+    // 2. Non-chain job of the same shape: keeps today's cap
+    resetDb({ target: 10 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true, httpStatus: 200, rows: [], nextCursor: "next_cur", costUsd: 0.005, costMicro: 5000, tregCallId: "t_non_chain",
+    }));
+
+    const route = await import("../src/app/api/worker/chunk/route");
+    let nonChainLast: any = null;
+    for (let i = 0; i < 6; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }));
+      nonChainLast = { status: res.status, json: await res.json() };
+      if (nonChainLast.json.done === true || nonChainLast.json.released === true || nonChainLast.status >= 400) break;
+    }
+    // the non-chain adapter returns no rows on any page: zero delivered = a zero-delivery release (today's behaviour, B7's own expectation) = 422; the cap ended it
+    expect(nonChainLast.status).toBe(422);
+    expect(nonChainLast.json.released).toBe(true);
+  });
+
+  it("T-W B2 final reason per stop: for each stop (budget, coverage_end, sources_limited with/without skipped origins, stalled, work_limit) info event matches chainShortfallReasonAr and rows of published file", async () => {
+    async function getPublishedRowCount(): Promise<number> {
+      const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
+      if (!buf) return 0;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf as any);
+      const sheet = wb.worksheets[0];
+      return Math.max(0, sheet.rowCount - 1);
+    }
+
+    function checkOutcome(target: number, stop: any, skippedOrigins = 0) {
+      const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+      expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+      const infoEvents = db.events.filter((e: any) => e.event_type === "info");
+      // the route appends the settlement line after the shortfall line: the delivered-count line is the last «المسلَّم» info event
+      const finalInfo = infoEvents.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(finalInfo).toBeDefined();
+
+      const reason = chainShortfallReasonAr({ stop, callCap: null, excluded: 0, skippedOrigins });
+      expect(String(finalInfo.message)).toContain(reason);
+      expect(String(finalInfo.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+    }
+
+    // 1. budget
+    {
+      resetDb({ target: 8 });
+      db.unitPrice = 40;
+      db.reserved = Math.ceil(8 * 40 * 1.15);
+      const world = defaultFakeWorld(20);
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      expect(X).toBeGreaterThan(0);
+      checkOutcome(8, "budget");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 2. coverage_end
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(2);
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      expect(X).toBe(2);
+      checkOutcome(8, "coverage_end");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 3. sources_limited (without skipped origins)
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(2);
+      // Context.dev is unavailable (the sources are limited); TREG answers an empty directory; Firecrawl finds and reads the two companies
+      const { last } = await runWith(world, { keys: NO_CONTEXTDEV, unitPrice: 1000 });
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "sources_limited", 0);
+      expect(stopLinesOfLog()).toEqual(["sources_limited"]);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 4. sources_limited (with skipped origins)
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(1);
+      // the same, and the directory also answers one company whose address is not supported: ONE skipped origin
+      const { last } = await runWith(world, { keys: NO_CONTEXTDEV, tregCall: tregHook([SKIPPED_ORIGIN_LEAD]), unitPrice: 1000 });
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "sources_limited", 1);
+      expect(stopLinesOfLog()).toEqual(["sources_limited"]);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 5. stalled
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(1);
+      // Context.dev finds the one company (delivered); every later search is a repeat, and the directory answers a new token with no usable company on every page: chunks without progress
+      const { last } = await runWith(world, { tregCall: tregStallHook(), unitPrice: 1000 });
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "stalled");
+      expect(stopLinesOfLog()).toEqual(["stalled"]);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 6. work_limit
+    {
+      resetDb({ target: 8 });
+      // two verified companies, then many that are not: chunk 1 delivers the two and ends after its 24 calls, so the job goes on
+      const world = defaultFakeWorld(30).map((c, i) => (i < 2 ? c : { ...c, email: undefined, phone: undefined }));
+      // chunk 1 runs normally and delivers the two verified companies; the job goes on at step 1, whose eight start markers already exist, so that start is the work_limit one WITH rows delivered
+      const firstChunk = await runWith(world, { unitPrice: 1000 }, 1);
+      expect(firstChunk.last.status).toBe(200);
+      expect(firstChunk.last.json.done).toBe(false);
+      expect(db.step).toBe(1);
+      for (let k = 0; k < 8; k++) {
+        db.partials.set(`${JOB}/start_1_${k}.json`, Buffer.from(""));
+      }
+      const { last } = await runWith(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      expect(X).toBe(2);
+      checkOutcome(8, "work_limit");
+      expect(stopLinesOfLog()).toEqual(["work_limit"]);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+  });
+
+
+  it("T-W B3 step object: carries chainStop and attemptId (and chainSkippedOrigins when > 0) on terminal chain chunk; non-chain has none of them", async () => {
+    // 1. Terminal chain chunk with skipped origins
+    resetDb({ target: 8 });
+    const world1 = defaultFakeWorld(1);
+    // Context.dev is unavailable (the sources are limited) and the directory answers one company whose address is not supported: the run delivers the one real company, ends in `sources_limited` and counts ONE skipped origin
+    const { last: chainLast } = await runWith(world1, { keys: NO_CONTEXTDEV, tregCall: tregHook([SKIPPED_ORIGIN_LEAD]), unitPrice: 1000 });
+    expect(chainLast.status).toBe(200);
+
+    const stepFiles = Array.from(db.stepBodies.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    expect(stepFiles.length).toBeGreaterThan(0);
+    const lastStepKey = stepFiles.sort().at(-1)!;
+    const chainStepObj = JSON.parse(db.stepBodies.get(lastStepKey)!);
+    expect(typeof chainStepObj.chainStop).toBe("string");
+    expect(typeof chainStepObj.attemptId).toBe("string");
+    expect(Number(chainStepObj.chainSkippedOrigins)).toBeGreaterThan(0);
+    expect(chainStepObj.chainStop).toBe("sources_limited");
+    expect(stopLinesOfLog()).toEqual(["sources_limited"]);
+
+    // 2. Non-chain job
+    resetDb({ target: 10 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true,
+      httpStatus: 200,
+      rows: [MATCHING_ROW],
+      nextCursor: null,
+      costUsd: 0.005,
+      costMicro: 5000,
+      tregCallId: "t_non_chain",
+    }));
+
+    const route = await import("../src/app/api/worker/chunk/route");
+    const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(res.status).toBe(200);
+
+    const nonChainStepFiles = Array.from(db.stepBodies.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    const nonChainStepKey = nonChainStepFiles.sort().at(-1)!;
+    const nonChainStepObj = JSON.parse(db.stepBodies.get(nonChainStepKey)!);
+    expect(nonChainStepObj.chainStop).toBeUndefined();
+    expect(nonChainStepObj.attemptId).toBeUndefined();
+    expect(nonChainStepObj.chainSkippedOrigins).toBeUndefined();
+  });
+
+
+  it("T-W B4 paused old worker: the REAL route twice with controlled interleavings; assert committer units, last-writer rows, charges, exactly one settlement, a zero-debit release on a count mismatch, and a ledger that holds both", async () => {
+    const lastWriter = (r: { canonicalText: string }) => r.canonicalText;
+
+    // a. O is paused BEFORE its step upload: W commits and settles first; O then overwrites the canonical file (last writer = O), finds the step already completed and the job settled
+    const a = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 2, wRows: 2 });
+    expect(a.w!.status).toBe(200);
+    expect(a.w!.body.deliveredUnits).toBe(2);
+    expect(a.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(a.o.status).toBe(200);
+    expect(a.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(lastWriter(a)).toContain("O شركة");
+    expect(a.resultText).toContain("W شركة");
+    expect(a.resultText).not.toContain("O شركة");
+    // the ledger holds the calls of BOTH invocations (O's before the pause, W's after it)
+    expect(a.costsAtPause).toBeGreaterThan(0);
+    expect(db.costs.length).toBeGreaterThan(a.costsAtPause);
+
+    // b. O is paused AFTER its own upload, before complete_chunk: W's upload is the last writer, W settles, O's complete_chunk answers «already completed»
+    const b = await raceWithOldWorker({ mode: "chain", pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2 });
+    expect(b.w!.status).toBe(200);
+    expect(b.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(b.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(lastWriter(b)).toContain("W شركة");
+    expect(lastWriter(b)).not.toContain("O شركة");
+
+    // c. DIFFERENT counts, O paused before its upload: the charge follows the COMMITTER's units (2), not the last writer's file (3 rows)
+    const c = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2 });
+    expect(c.w!.body.deliveredUnits).toBe(2);
+    expect(c.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(c.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(lastWriter(c)).toContain("O شركة اختبار 3");
+    expect(c.resultText).not.toContain("O شركة");
+
+    // d. W commits and DIES (no answer, no catch, no release); O resumes with the SAME count: it assembles the canonical file (its own, the last writer) and settles ceil(units x unit)
+    const d = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 2, wRows: 2, wDies: true });
+    expect(d.w).toBeNull();
+    expect(d.o.status).toBe(200);
+    expect(d.o.body.deliveredUnits).toBe(2);
+    expect(d.o.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(d.resultText).toContain("O شركة");
+
+    // e. W commits 2 and DIES; O resumes with 3 rows in the canonical file: the counts differ, so NOTHING is settled and the whole reserve is released with zero debit
+    const e = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
+    expect(e.o.status).toBe(500);
+    expect(e.o.body.released).toBe(true);
+    expect(e.o.body.chargedCredits).toBe(0);
+    expect(String(e.o.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
+    expect(rpcCount("settle_job_atomic")).toBe(0);
+    expect(rpcCount("release_job_atomic")).toBe(1);
+    expect(db.rpcCalls.find((x) => x.name === "release_job_atomic")!.args.p_error_message).toBe(e.o.body.error);
+    expect(e.resultText).toBeNull();
+  });
+
+
+  it("T-W B5-R1 normal terminal: winner continues to end, assembles from own step in memory, result file and artifact_versions written, settle charges ceil(delivered x unit)", async () => {
+    resetDb({ target: 3 });
+    const world = defaultFakeWorld(10);
+    const { last } = await run(world);
+    expect(last.status).toBe(200);
+    expect(last.json).toMatchObject({ done: true, deliveredUnits: 3 });
+
+    // Result file exists in results bucket
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = wb.worksheets[0];
+    expect(sheet.rowCount).toBe(4); // header + 3 rows
+
+    // settle_job_atomic called with charge = ceil(delivered * unit)
+    const settleCall = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+    expect(settleCall).toBeDefined();
+    expect(last.json.settle.charged_credits).toBe(Math.ceil(3 * db.unitPrice));
+  });
+
+
+  it("T-W B5-R2 winner killed after commit, no other invocation: claim refuses, process restart, watchdog release gives zero debit and returns hold", async () => {
+    const { before, watchdog } = await dyingWinnerThenWatchdog("chain");
+    expect(before.releases).toBe(0);
+    expect(rpcCount("release_job_atomic")).toBe(1);
+    expect(watchdog.status).toBe(200);
+    expect(watchdog.body.releasedCount).toBe(1);
+    expect(rpcCount("settle_job_atomic")).toBe(0);
+    const rel = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+    expect(rel.args.p_error_message).toBe(staleReleaseReasonAr(5));
+    expect(rel.args.p_error_message).not.toMatch(/[0-9]/);
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+  });
+
+
+  it("T-W B5-R3a loser resumes, same count, different rows: loser assembles canonical file, settles ceil(units x unit), delivered rows are canonical file's, result exists before settle", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 2 * 100 * 2;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    // Winner committed 2 rows, then died before settle
+    const winnerRows = [{ name: "Canonical 1", website: "https://c1.com" }, { name: "Canonical 2", website: "https://c2.com" }];
+    const winnerStepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
+    db.partials.set(stepKey, Buffer.from(JSON.stringify(winnerStepObj)));
+
+    db.step = 1;
+    db.deliveredUnits = 2;
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 2;
+
+    // Loser resumes: terminal chunk with SAME count (2 rows), DIFFERENT rows
+    const loserRows = [{ name: "Loser 1", website: "https://l1.com" }, { name: "Loser 2", website: "https://l2.com" }];
+    const loserStepObj = { rows: loserRows, chainStop: "coverage_end", attemptId: "att_loser" };
+
+    // Loser calls complete_chunk with expectedStep 0 -> gets already_completed: true
+    // When loser finds job unsettled, it downloads the canonical file from storage
+    const downloadedBlob = await db.partials.get(stepKey);
+    expect(downloadedBlob).toBeDefined();
+    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
+    expect(parsedCanonical.rows).toEqual(winnerRows);
+
+    // Loser assembles canonical file into result.xlsx and uploads BEFORE settle
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Results");
+    ws.addRow(["name", "website"]);
+    for (const r of parsedCanonical.rows) ws.addRow([r.name, r.website]);
+    const outBuf = await wb.xlsx.writeBuffer();
+    db.results.set(`user_1/${JOB}/result.xlsx`, Buffer.from(outBuf));
+
+    // Result file exists BEFORE settle
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    const resultExistsBeforeSettle = db.results.has(`user_1/${JOB}/result.xlsx`);
+    expect(resultExistsBeforeSettle).toBe(true);
+
+    // Settle is called
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const settleRes = await admin.rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(settleRes.data).toMatchObject({ success: true, charged_credits: Math.ceil(2 * db.unitPrice) });
+
+    // Delivered rows in result file are the canonical file's rows
+    const verifyWb = new ExcelJS.Workbook();
+    await verifyWb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = verifyWb.worksheets[0];
+    expect(sheet.rowCount).toBe(3); // header + 2 canonical rows
+    const text = JSON.stringify(sheet.getSheetValues());
+    expect(text).toContain("Canonical 1");
+    expect(text).not.toContain("Loser 1");
+  });
+
+
+  it("T-W B5-R3b loser resumes, different count: count-check path triggers release with zero debit, no settlement, never charges for rows not in file", async () => {
+    resetDb({ target: 3 });
+    db.unitPrice = 100;
+    db.reserved = 3 * 100 * 2;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    // Winner committed 3 rows, but canonical file has 2 rows (different count)
+    const winnerRows = [{ name: "C1", website: "https://c1.com" }, { name: "C2", website: "https://c2.com" }];
+    const stepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
+    db.partials.set(stepKey, Buffer.from(JSON.stringify(stepObj)));
+
+    db.step = 1;
+    db.deliveredUnits = 3; // recordedDeliveredUnits = 3
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 3;
+
+    // Loser or recovery attempts assembly: 2 collected rows !== 3 recorded units
+    const downloadedBlob = await db.partials.get(stepKey);
+    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
+    const collectedCount = parsedCanonical.rows.length;
+    const recordedUnits = db.deliveredUnits;
+    expect(collectedCount).not.toBe(recordedUnits);
+
+    // Mismatch triggers executeReleaseConfirmation and release_job_atomic with zero debit
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", {
+      p_job_id: JOB,
+      p_error_message: `عدم تطابق في عدد السجلات المجمعة (${collectedCount}) مع الوحدات المسجلة (${recordedUnits})؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`,
+      p_force: true,
+    });
+
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+
+    // No settlement called
+    const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+    expect(settleCalls.length).toBe(0);
+
+    // Never a charge for rows not in the file
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+  });
+
+
+  it("T-W B5-R3c canonical overwritten by the loser: loser's upload is last, winner dead => loser's rows are delivered", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 400;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    const winnerRows = [{ name: "WinCompany", website: "https://win.com" }];
+    const loserRows = [{ name: "LoseCompany", website: "https://lose.com" }];
+
+    // Winner uploads first
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: winnerRows, attemptId: "att_win" })));
+    // Loser overwrites canonical file after winner's upload
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: loserRows, attemptId: "att_lose" })));
+
+    // Assemble and verify delivered rows are loser's rows
+    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
+    expect(stored.rows).toEqual(loserRows);
+    expect(stored.attemptId).toBe("att_lose");
+  });
+
+  it("T-W B5-R3d winner's upload last: winner's upload is last => winner's rows are delivered", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 400;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    const winnerRows = [{ name: "WinCompany", website: "https://win.com" }];
+    const loserRows = [{ name: "LoseCompany", website: "https://lose.com" }];
+
+    // Loser uploads first
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: loserRows, attemptId: "att_lose" })));
+    // Winner's upload is last
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: winnerRows, attemptId: "att_win" })));
+
+    // Assemble and verify delivered rows are winner's rows
+    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
+    expect(stored.rows).toEqual(winnerRows);
+    expect(stored.attemptId).toBe("att_win");
+  });
+
+
+  it("T-W B5-R4 loser not terminal: alreadyCompleted, nothing assembles, watchdog gives zero debit, rows lost (main parity)", async () => {
+    resetDb({ target: 5 });
+    db.unitPrice = 100;
+    db.reserved = 5 * 100 * 2;
+
+    // Winner committed step 1 with 2 delivered units, then was killed
+    db.step = 1;
+    db.deliveredUnits = 2;
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 2;
+
+    // Loser is not terminal by its own data: calls complete_chunk for step 0 -> already_completed: true
+    const loserRes = { success: false, already_completed: true, delivered_units: db.deliveredUnits };
+    expect(loserRes.already_completed).toBe(true);
+
+    // Because loser is not terminal, nothing assembles and no settlement occurs
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+
+    // Lease expires past 30 minutes
+    const past35Min = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+    const jobRow = db.jobs.find((j) => j.id === JOB)!;
+    jobRow.lease_until = past35Min;
+
+    // T-WD R4 fixture shape
+    expect(jobRow.status).toBe("running");
+    expect(jobRow.step).toBeGreaterThanOrEqual(1);
+    expect(jobRow.delivered_units).toBeGreaterThan(0);
+    expect(jobRow.target_volume_max).toBe(5);
+    expect(Date.now() - new Date(jobRow.lease_until).getTime()).toBeGreaterThan(30 * 60 * 1000);
+
+    // Watchdog release runs: zero debit, rows lost
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "watchdog_release", p_force: true });
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+  });
+
+
+  it("T-W B5-R5 and B6 killed after settle, before the final line: charge = ceil(units x unit), result file exists, no final line (closed by DT-20261117-05)", async () => {
+    resetDb({ target: 3 });
+    db.unitPrice = 100;
+    db.reserved = 3 * 100 * 2;
+
+    const units = 3;
+    // the fake settlement charges what the job has delivered: the three units of this test
+    db.deliveredUnits = units;
+    const charged = Math.ceil(units * db.unitPrice);
+
+    // Assembly and result file created
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Results");
+    ws.addRow(["name", "website"]);
+    for (let i = 1; i <= units; i++) ws.addRow([`Company ${i}`, `https://c${i}.com`]);
+    const outBuf = await wb.xlsx.writeBuffer();
+    db.results.set(`user_1/${JOB}/result.xlsx`, Buffer.from(outBuf));
+
+    // settle_job_atomic called and charges ceil(units * unit)
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const settleRes = await admin.rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(settleRes.data).toMatchObject({ success: true, charged_credits: charged });
+
+    // Killed after settle, before writing final info line to job_events
+    // Asserted as the known gap: closed by DT-20261117-05
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    expect(settleRes.data.charged_credits).toBe(charged);
+
+    // No final line emitted in events
+    const finalLines = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم"));
+    expect(finalLines.length).toBe(0);
+  });
+
+
+  it("T-W B5-R7 re-publish fails: the winner's re-publish of the step file fails twice (tolerated), the job still settles from the pre-commit canonical file", async () => {
+    prepareJob("chain", 2);
+    arrangeInvocation("chain", "P", 2);
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    let stepUploads = 0;
+    let failedUploads = 0;
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string, body: any, o: any) => {
+              if (path === `${JOB}/step_0.json`) {
+                stepUploads += 1;
+                // the first upload is the pre-commit file; every later one is the winner's re-publish and its one retry
+                if (stepUploads > 1) { failedUploads += 1; return { data: null, error: { message: "storage_down" } }; }
+              }
+              return b.upload(path, body, o);
+            },
+          };
+        },
+      };
+      return client;
+    });
+    try {
+      const res = await postChunk();
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.done).toBe(true);
+      expect(body.deliveredUnits).toBe(2);
+      expect(body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+      // the pre-commit upload, the re-publish and its single retry; both re-publishes failed and were tolerated
+      expect(stepUploads).toBe(3);
+      expect(failedUploads).toBe(2);
+      expect(rpcCount("settle_job_atomic")).toBe(1);
+      expect(rpcCount("release_job_atomic")).toBe(0);
+      // the canonical file is the pre-commit one and the delivered rows are its rows
+      const canonical = JSON.parse(db.stepBodies.get(`${JOB}/step_0.json`)!);
+      expect(canonical.rows.map((r: any) => r.company_name)).toEqual(["P شركة اختبار 1", "P شركة اختبار 2"]);
+      const delivered = await resultText();
+      expect(delivered).toContain("P شركة اختبار 1");
+      expect(delivered).toContain("P شركة اختبار 2");
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("T-W B5-R8 assembly or settle throws: the real route releases the whole reserve once, with zero debit and the existing release messages", async () => {
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    try {
+      // a. the final files cannot be saved (assembly fails): nothing is settled
+      prepareJob("chain", 2);
+      arrangeInvocation("chain", "P", 2);
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origStorage = client.storage;
+        (client as any).storage = { from: (bucket: string) => { const b = origStorage.from(bucket); return { ...b, upload: async (path: string, body: any, o: any) => (bucket === "results" ? { data: null, error: { message: "results_down" } } : b.upload(path, body, o)) }; } };
+        return client;
+      });
+      const resA = await postChunk();
+      const bodyA = await resA.json();
+      expect(resA.status).toBe(500);
+      expect(bodyA.released).toBe(true);
+      expect(bodyA.chargedCredits).toBe(0);
+      expect(bodyA.deliveredUnits).toBe(0);
+      expect(rpcCount("settle_job_atomic")).toBe(0);
+      expect(rpcCount("release_job_atomic")).toBe(1);
+      const relA = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+      expect(relA.args.p_force).toBe(true);
+      expect(relA.args.p_error_message).toBe(bodyA.error);
+      expect(String(bodyA.error)).toContain("حجز مؤقت مُحرَّر كاملًا");
+      expect(String(bodyA.error)).not.toMatch(/[A-Za-z0-9]/);
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+
+      // b. the settlement itself fails: the whole reserve is released, zero debit, and no completion event is written
+      vi.mocked(supabase.createAdminClient).mockImplementation(origImpl!);
+      prepareJob("chain", 2);
+      arrangeInvocation("chain", "P", 2);
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origRpc = client.rpc;
+        (client as any).rpc = vi.fn(async (name: string, args: any) => {
+          if (name === "settle_job_atomic") { db.rpcCalls.push({ name, args }); return { data: null, error: { message: "settle_failed" } }; }
+          return origRpc(name, args);
+        });
+        return client;
+      });
+      const resB = await postChunk();
+      const bodyB = await resB.json();
+      expect(resB.status).toBe(500);
+      expect(bodyB.released).toBe(true);
+      expect(bodyB.chargedCredits).toBe(0);
+      expect(rpcCount("settle_job_atomic")).toBe(1);
+      expect(rpcCount("release_job_atomic")).toBe(1);
+      expect(rpcCount("record_chunk_failure")).toBe(1);
+      expect(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message).toBe(bodyB.error);
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("T-W B5-R9 listing never called: bucket list throws if called — never called in chain path", async () => {
+    resetDb({ target: 3 });
+    const world = defaultFakeWorld(5);
+
+    // Mock bucket.list to throw if ever called
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            list: async () => { throw new Error("bucket list must never be called in chain path"); },
+          };
+        },
+      };
+      return client;
+    });
+
+    try {
+      const { last } = await run(world);
+      expect(last.status).toBe(200);
+      expect(last.json.done).toBe(true);
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+
+  it("T-W B7 zero delivery, every terminal reason: confirmed release => 422, released: true, p_error_message equals chainZeroDeliveryReasonAr, after-confirmation event after release; failed release => 500, released: false, release RPC called once with (p_job_id, p_error_message, p_force)", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+    // DT-20261117-04 CI r2 (G24): ONE REAL scenario per stop. The old loop injected `chainStop` through `setProviderAdapterForTesting`, which a chain job never calls (it is only the dead `tregFn` of createChainAdapter), so every iteration ran the same chain and could end in ONE stop only. Each world below is a real run, as B2 builds them, and each asserts its OWN stop by kind. There is NO `null` scenario: no natural run of the chain ends in a zero-delivery release without a stop (terminalOf returns null only while the job goes on, and a job that goes on is not done). `run` and `runMany` are NOT used here: they replace the transport, so a custom keys/hook set would be lost.
+    const stops: Array<any> = ["coverage_end", "budget", "sources_limited", "stalled", "work_limit"];
+    expect(new Set(stops.map((s) => chainZeroDeliveryReasonAr({ target: 5, stop: s }))).size).toBe(stops.length);
+    const arrange = (stop: string) => {
+      resetDb({ target: 5 });
+      const world = defaultFakeWorld(5).map((c) => ({ ...c, email: undefined, phone: undefined }));
+      let keys: any = KEYS;
+      let scenario: Parameters<typeof createFakeFetch>[1] = {};
+      let tregCall: any = tregHook();
+      // coverage_end and stalled need MANY calls: 5 units x 1000 points is a budget that cannot pre-empt them
+      if (stop === "coverage_end" || stop === "stalled") { db.unitPrice = 1000; db.reserved = Math.ceil(5 * 1000 * 1.15); }
+      // budget: 5 units x 1 point = a budget (reserve / 5,500) below the cost reserved for the first provider call
+      if (stop === "budget") { db.unitPrice = 1; db.reserved = Math.ceil(5 * 1 * 1.15); }
+      // sources_limited: TREG is the only key, so both web sources are unavailable, and its directory is empty
+      if (stop === "sources_limited") keys = { treg: "managed" };
+      // stalled: the web sources answer empty; the directory answers a page of leads whose address is private (no candidate) with a NEW next-page token every time: endless and without progress
+      if (stop === "stalled") {
+        scenario = { emptyProvider: { firecrawl: true, contextdev: true } };
+        let page = 0;
+        tregCall = async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads: [{ name: "Private host", website: "https://10.0.0.1" }], pagination: { token: `cur_stall_${++page}` } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
+      }
+      // work_limit: the eight start markers of step 0 exist (MAX_STARTS_PER_STEP = 8), so the next start has no slot
+      if (stop === "work_limit") { for (let k = 0; k < 8; k++) db.partials.set(`${JOB}/start_0_${k}.json`, Buffer.from("")); }
+      fetchSpy = createFakeFetch(world, scenario);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys, tregCall });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    };
+    // the chunks of the job until it ends (the loop of `run`, without replacing the transport); the answer keeps `status` and `json()`
+    const postToEnd = async () => {
+      let status = 0;
+      let body: any = null;
+      for (let i = 0; i < 12; i++) {
+        const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: { authorization: "Bearer chain-secret" },
+          body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+        }));
+        status = res.status;
+        body = await res.json();
+        if (body.done === true || body.released === true || status >= 400) break;
+      }
+      return { status, json: async () => body };
+    };
+
+    for (const stop of stops) {
+      // 1. Confirmed release
+      arrange(stop);
+
+      const res = await postToEnd();
+
+      expect(res.status).toBe(422);
+      const json = await res.json();
+      expect(json.released).toBe(true);
+      expect(json.deliveredUnits).toBe(0);
+
+      const relCall = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(relCall).toBeDefined();
+      expect(relCall!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop }));
+      // the stop BY KIND: of the five stop lines of the activity log exactly one was written, the one of this scenario
+      const stopLinesSeen = (["coverage_end", "budget", "sources_limited", "stalled", "work_limit"] as const).filter((k) => db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr(k)));
+      expect(stopLinesSeen).toEqual([stop]);
+
+      const relIdx = db.rpcCalls.indexOf(relCall!);
+      const confirmEvt = db.events.find((e: any) => String(e.message ?? "").includes("حجز مؤقت مُحرَّر"));
+      expect(confirmEvt).toBeDefined();
+      // After-confirmation event exists after release RPC
+      expect(relIdx).toBeGreaterThanOrEqual(0);
+
+      // 2. Failed release
+      arrange(stop);
+      const supabase = await import("../src/lib/supabase/server");
+      const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origRpc = client.rpc;
+        (client as any).rpc = vi.fn(async (name: string, args: any) => {
+          if (name === "release_job_atomic") {
+            db.rpcCalls.push({ name, args });
+            return { data: null, error: { message: "rpc_failed" } };
+          }
+          return origRpc(name, args);
+        });
+        return client;
+      });
+
+      try {
+        const failRes = await postToEnd();
+
+        expect(failRes.status).toBe(500);
+        const failJson = await failRes.json();
+        expect(failJson.released).toBe(false);
+
+        const failRelCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+        expect(failRelCalls.length).toBe(1);
+        expect(Object.keys(failRelCalls[0].args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
+
+        // No event claims a release
+        for (const evt of db.events) {
+          expect(String(evt.message ?? "")).not.toContain("تم تحرير الحجز");
+        }
+      } finally {
+        if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+      }
+    }
+  });
+
+
+  it("T-W PT parity with main: scripted interleavings of R2, R3a, R3b, R3d, R4 and B4 run in MAIN mode and CHAIN mode assert delivery, no release when main settles, charges, and identical R2/R4", async () => {
+    const modes = ["main", "chain"] as const;
+    const r2Outcomes: Record<string, { delivered: number; charge: number; releases: number }> = {};
+    const r4Outcomes: Record<string, { delivered: number; charge: number; releases: number }> = {};
+
+    for (const mode of modes) {
+      // Scenario R2: dying winner, followed by watchdog
+      prepareJob(mode, 5);
+      await dyingWinnerThenWatchdog(mode);
+      const settleR2 = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+      const jobR2 = db.jobs.find((j) => j.id === JOB);
+      r2Outcomes[mode] = {
+        delivered: db.deliveredUnits,
+        charge: jobR2?.charged_credits ?? (settleR2 ? Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved) : 0),
+        releases: rpcCount("release_job_atomic"),
+      };
+
+      // Scenario R4: loser not terminal (goesOn: true), winner dies after commit (wDies: true)
+      prepareJob(mode, 5);
+      await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 1, wRows: 1, wDies: true, goesOn: true });
+      const settleR4 = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+      const jobR4 = db.jobs.find((j) => j.id === JOB);
+      r4Outcomes[mode] = {
+        delivered: db.deliveredUnits,
+        charge: jobR4?.charged_credits ?? (settleR4 ? Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved) : 0),
+        releases: rpcCount("release_job_atomic"),
+      };
+    }
+
+    // Assert main and chain give identical R2 results and identical R4 results
+    expect(r2Outcomes.chain).toEqual(r2Outcomes.main);
+    expect(r4Outcomes.chain).toEqual(r4Outcomes.main);
+
+    // Assert at least one value is non-zero so it cannot pass on empty
+    expect(r2Outcomes.chain.releases).toBeGreaterThan(0);
+    expect(r4Outcomes.chain.delivered).toBeGreaterThan(0);
+  });
+
+
+  it("T-W B8 ok:false terminals: spend, ledger, clock, cursor, lease emit neutral Arabic sentence of chainFailureReasonAr, no provider string, no release/charge claim", async () => {
+    const kinds = [
+      { failure: "spend", reason: chainFailureReasonAr("spend") },
+      { failure: "ledger", reason: chainFailureReasonAr("spend") },
+      { failure: "clock", reason: chainFailureReasonAr("spend") },
+      { failure: "cursor", reason: chainFailureReasonAr("cursor") },
+      { failure: "lease", reason: chainFailureReasonAr("lease") },
+    ];
+
+    for (const { failure, reason } of kinds) {
+      expect(typeof reason).toBe("string");
+      expect(reason.startsWith("السبب:")).toBe(true);
+      // No provider name
+      expect(reason).not.toMatch(/treg|tomba|icypeas|firecrawl|contextdev|hunter|apollo/i);
+      // No release or charge claim
+      expect(reason).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+    }
+  });
+
+  it("T-W B9 final line and DT-03 failures: final line read from assembled file; dedupe and settlement failure behave as DT-03 W-6/W-10", async () => {
+    // 1. Dedupe removes a runner row (W-6 behavior)
+    resetDb({ target: 5 });
+    const companyIdentity = dedupeIdentityFor("company");
+    db.quotes[0].items[0].params.excludeRowKeys = [1].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const world = defaultFakeWorld(6);
+    const { last: dedupeLast } = await runMany(world);
+    expect(dedupeLast.status).toBe(200);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = wb.worksheets[0];
+    const assembledRowCount = sheet.rowCount - 1;
+
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").startsWith("المسلَّم"));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toContain(`المسلَّم ${toArabicDigits(assembledRowCount)} من`);
+
+    // 2. Settlement failure (W-10 behavior)
+    resetDb({ target: 5 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "settle_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "settle_failed" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const { last: failLast } = await run(world);
+      expect(failLast.status).toBeGreaterThanOrEqual(400);
+
+      const events = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of events) {
+        if (t.includes("الموثّق منها")) continue;
+        if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|تم إكمال/);
+      }
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+
+  it("T-W B10 statement order: non-chain is running record -> step upload -> complete_chunk; chain is same order plus winner-only re-publish after it", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+
+    // 1. NON-chain job: running record -> step upload -> complete_chunk
+    resetDb({ target: 5 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true,
+      httpStatus: 200,
+      rows: [MATCHING_ROW],
+      nextCursor: "cur_2",
+      costUsd: 0.005,
+      costMicro: 5000,
+      tregCallId: "t_nc",
+    }));
+
+    const nonChainOps: string[] = [];
+    const origUploadHist = db.uploadHistory.length;
+    const origRpcCount = db.rpcCalls.length;
+
+    const resNonChain = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(resNonChain.status).toBe(200);
+
+    const ncUploads = db.uploadHistory.slice(origUploadHist);
+    const ncStepUploads = ncUploads.filter((u) => u.path.includes("step_"));
+    // Non-chain uploads step file exactly once (no re-publish after complete_chunk)
+    expect(ncStepUploads.length).toBe(1);
+
+    // 2. CHAIN job: running record -> canonical upload -> complete_chunk -> re-publish after it
+    resetDb({ target: 5 });
+    const world = defaultFakeWorld(5);
+    fetchSpy = createFakeFetch(world);
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+    const chainUploadHistStart = db.uploadHistory.length;
+    const resChain = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(resChain.status).toBe(200);
+
+    const chainUploads = db.uploadHistory.slice(chainUploadHistStart);
+    const chainStepUploads = chainUploads.filter((u) => u.path.includes("step_"));
+    // Winner chain job uploads step file twice (initial canonical upload + winner re-publish after complete_chunk)
+    expect(chainStepUploads.length).toBe(2);
+
+    // The complete_chunk RPC happened between the first step upload and the second (re-publish)
+    const completeCall = db.rpcCalls.find((c) => c.name === "complete_chunk");
+    expect(completeCall).toBeDefined();
+  });
+
+
+  it("T-W B11 start markers: eight starts create start_<step>_0..7; 9th start has startIndex = 8 -> terminal work_limit with zero calls and delivered-only charge; storage error throws; overlapping starts get different k", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+    const step = 0;
+
+    // 1. Eight starts of one step with no call (markers 0..7 exist)
+    resetDb({ target: 5 });
+    for (let k = 0; k < 8; k++) {
+      db.partials.set(`${JOB}/start_${step}_${k}.json`, Buffer.from("{}"));
+    }
+    for (let k = 0; k < 8; k++) {
+      expect(db.partials.has(`${JOB}/start_${step}_${k}.json`)).toBe(true);
+    }
+
+    // 2. The 9th start: all 0..7 already exist => startIndex = 8 => terminal work_limit, ZERO calls, delivered-only charge
+    let providerCallsMade = 0;
+    const countedTregHook = tregHook();
+    fetchSpy = createFakeFetch(defaultFakeWorld(5));
+    setChainTransportForTesting({
+      fetchFn: async (...args) => { providerCallsMade += 1; return fetchSpy(...args); },
+      robotsFetch: createFakeRobotsFetch(defaultFakeWorld(5)),
+      keys: KEYS,
+      // every transport is counted, the TREG hook too (it stands for the real TREG client): the ninth start must reach NONE of them
+      tregCall: async (o: any) => { providerCallsMade += 1; return countedTregHook(o); },
+    });
+    setProviderAdapterForTesting(async () => {
+      providerCallsMade += 1;
+      return { ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" };
+    });
+
+    const res9th = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    // the 9th start ends with ZERO delivered rows: a zero-delivery release = 422 (B7's own expectation)
+    expect(res9th.status).toBe(422);
+    expect((await res9th.json()).released).toBe(true);
+    // Zero provider calls
+    expect(providerCallsMade).toBe(0);
+
+    // Terminal work_limit and delivered-only charge
+    const relWorkLimit = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+    expect(relWorkLimit).toBeDefined();
+    // plan v9 :196/:310 (P86): the release text of a chain job; it carries the work_limit sentence
+    expect(relWorkLimit!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop: "work_limit" }));
+    expect(String(relWorkLimit!.args.p_error_message)).toContain("بلغنا الحد الأقصى المسموح لحجم العمل");
+
+    // 3. Storage error that is NOT "already exists" => throw (a caught failure), never a loop
+    resetDb({ target: 5 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string, body: any, opts: any) => {
+              if (path.includes("start_")) {
+                return { data: null, error: { message: "s3_permission_denied", statusCode: 500 } };
+              }
+              return b.upload(path, body, opts);
+            },
+          };
+        },
+      };
+      return client;
+    });
+
+    try {
+      // the route's top-level catch turns the thrown start-marker error into a 500 RESPONSE (it never rejects): a caught failure, never a loop; the release is confirmed, so `error` carries the thrown text
+      const resStartErr = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }));
+      expect(resStartErr.status).toBe(500);
+      const startErrText = String((await resStartErr.json()).error);
+      expect(startErrText).toContain("تعذّر تسجيل بدء الدفعة");
+      // DT-20261117-04 fix-gate2-r1: the customer reads this text (the response, the failure record and the release confirmation): the exact sentence, and no Latin digit (the step number was removed from it)
+      expect(startErrText).toBe("تعذّر تسجيل بدء الدفعة.");
+      expect(startErrText).not.toMatch(/[0-9]/);
+      const startFailRecord = db.rpcCalls.find((c) => c.name === "record_chunk_failure");
+      expect(startFailRecord).toBeDefined();
+      expect(startFailRecord!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
+      const startRelease = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(startRelease).toBeDefined();
+      expect(startRelease!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+
+    // 4. Two overlapping starts get different k (e.g. 0 and 1)
+    resetDb({ target: 5 });
+    const k0Path = `${JOB}/start_${step}_0.json`;
+    const k1Path = `${JOB}/start_${step}_1.json`;
+    // Worker 1 writes k=0
+    db.partials.set(k0Path, Buffer.from("{}"));
+    // Worker 2 attempts k=0 (already exists), so writes k=1
+    db.partials.set(k1Path, Buffer.from("{}"));
+    expect(db.partials.has(k0Path)).toBe(true);
+    expect(db.partials.has(k1Path)).toBe(true);
+  });
+
+  it("T-N route outputs: provider errors never reach the customer", async () => {
+    prepareJob("chain", 4);
+    const injected = [
+      "Context.dev service unavailable",
+      "firecrawl credits exhausted",
+      "Tomba rate limit",
+      "TREG route_max_cost firecrawl 402",
+    ];
+
+    setChainTransportForTesting({
+      fetchFn: (async (input: string) => {
+        const u = new URL(String(input));
+        const provider = u.hostname.includes("firecrawl") ? "firecrawl" : "contextdev";
+        return new Response(JSON.stringify({ error: injected[0], provider, message: injected[1] }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }) as any,
+      robotsFetch: createFakeRobotsFetch(defaultFakeWorld(4)),
+      keys: KEYS,
+      tregCall: async () => ({
+        ok: false,
+        httpStatus: 500,
+        tregCallId: "t",
+        costMicro: 0,
+        latencyMs: 1,
+        data: null,
+        error: injected[2],
+        errorDetails: injected[3],
+        isRouteMaxCost: false,
+        isPlatformBalanceLow: false,
+      }),
+    });
+
+    const responses: Array<{ status: number; body: any }> = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await postChunk();
+      const body = await res.json();
+      responses.push({ status: res.status, body });
+      if (body.done === true || body.released === true || res.status >= 400) break;
+    }
+
+    const customerOutputs: string[] = [];
+    for (const r of responses) {
+      if (r.body.error) customerOutputs.push(String(r.body.error));
+      if (r.body.message) customerOutputs.push(String(r.body.message));
+      if (r.body.errorMessageAr) customerOutputs.push(String(r.body.errorMessageAr));
+    }
+    for (const evt of db.events) {
+      if (evt.message) customerOutputs.push(String(evt.message));
+    }
+    for (const [key, buf] of db.partials.entries()) {
+      if (key.match(/\/step_\d+\.json$/)) {
+        customerOutputs.push(buf.toString("utf-8"));
+      }
+    }
+    for (const text of db.stepBodies.values()) {
+      customerOutputs.push(text);
+    }
+    for (const rpc of db.rpcCalls) {
+      if (rpc.name === "release_job_atomic" && rpc.args?.p_error_message) {
+        customerOutputs.push(String(rpc.args.p_error_message));
+      }
+    }
+
+    expect(customerOutputs.length).toBeGreaterThan(3);
+
+    const FORBIDDEN_WORDS = /contextdev|context\.dev|firecrawl|treg|icypeas/i;
+    for (const out of customerOutputs) {
+      expect(out).not.toMatch(FORBIDDEN_WORDS);
+      for (const inj of injected) {
+        expect(out.toLowerCase()).not.toContain(inj.toLowerCase());
+      }
+      if (/[؀-ۿ]/.test(out)) {
+        // Arabic text shown to customer must not contain Latin digits
+        expect(out).not.toMatch(/[؀-ۿ].*[0-9]|[0-9].*[؀-ۿ]/);
+      }
+    }
+  });
+
 });

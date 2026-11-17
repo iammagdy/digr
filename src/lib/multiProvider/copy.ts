@@ -67,9 +67,13 @@ export function budgetStopLineAr(delivered: number): string {
     : "توقفنا عند الحد المسموح لهذه المعالجة قبل العثور على سجلات موثّقة، ولن يُخصم أي رصيد.";
 }
 
-export function chainStopProgressLineAr(kind: "budget" | "no_more_work" | "target_reached"): string {
+export function chainStopProgressLineAr(kind: ChainRunnerStop): string {
   if (kind === "budget") return "توقفنا عند الحد المسموح لهذه المعالجة.";
   if (kind === "no_more_work") return "توقف البحث عند حدود هذه المعالجة الحالية.";
+  if (kind === "coverage_end") return "انتهت صيغ البحث المحددة لدينا في مصادر متاحة (٨ صيغ لكل مصدر بحث).";
+  if (kind === "sources_limited") return "توقفنا لأن بعض مصادر متاحة لم تكن متاحة أو لم تُجب أو بلغت حدّها المسموح.";
+  if (kind === "stalled") return "توقفنا لأن المعالجة لم تتقدم في الوقت المسموح.";
+  if (kind === "work_limit") return "توقفنا عند الحد الأقصى لحجم العمل المسموح لهذه المعالجة.";
   return "انتهى جمع الشركات الموثّقة لهذه المعالجة، وسيُعلن العدد النهائي بعد حفظ الملف النهائي.";
 }
 
@@ -78,6 +82,12 @@ export const CHAIN_CARD_LIMITS_AR: readonly string[] = [
   "قد لا يتوفر البريد الإلكتروني أو الهاتف لبعض الشركات، ولا نحتسب إلا الشركات التي تحققنا من الحقول المطلوبة فيها.",
   "لا نجمع عناوين المنازل ولا معلومات العائلة ولا الحسابات الخاصة ولا أي صفحة تتطلب تسجيل دخول.",
   "لا نضمن دقة تامة؛ نبذل أفضل جهد ممكن، وقد يكون عدد الشركات المسلَّمة أقل من المطلوب.",
+];
+
+export const CHAIN_CARD_LIMITS_V2_AR: readonly string[] = [
+  "نجمع بيانات التواصل المنشورة للعامة على المواقع الرسمية للشركات ومن مصادر بيانات تجارية متاحة.",
+  "عمودا النشاط والدولة في الملف يعكسان معايير بحثك، ولا يُتحقق منهما لكل شركة على حدة.",
+  ...CHAIN_CARD_LIMITS_AR.slice(1),
 ];
 
 export function chainGoalLineAr(args: { count: number; withEmail: boolean; withPhone: boolean; withDecisionMaker: boolean; industry?: string; country?: string }): string {
@@ -104,15 +114,23 @@ export function expectedTargetLineAr(args: { asked: number; fitted: number }): s
   return `العدد المستهدف تسليمه: ${fittedTxt} من أصل ${askedTxt} مطلوبة، لأن الحد الأقصى لحجز المهمة الواحدة لا يتسع لأكثر من ذلك. ${TAIL}`;
 }
 
-export type ChainRunnerStop = "budget" | "no_more_work" | "target_reached";
+export type ChainRunnerStop = "budget" | "no_more_work" | "target_reached" | "coverage_end" | "sources_limited" | "stalled" | "work_limit";
 
-export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; callCap: string | null; excluded: number }): string {
+export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; callCap: string | null; excluded: number; skippedOrigins?: number }): string {
   const excl = `استُبعد ${countPlainAr(args.excluded, "companies")} لأنه مكرر أو غير مطابق قبل اكتمال العدد.`;
   let primary: string | null = null;
   if (args.stop === "budget") {
     primary = "توقفنا عند الحد المسموح لتكلفة هذه المعالجة قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
   } else if (args.stop === "no_more_work") {
     primary = "توقفت المعالجة عند حدود البحث الحالية قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
+  } else if (args.stop === "coverage_end") {
+    primary = "السبب: أنهينا صيغ البحث المحددة لدينا في مصادر متاحة (٨ صيغ لكل مصدر بحث). هذا حدّ لنطاق بحثنا، ولا يعني أنه لا توجد شركات أخرى مطابقة.";
+  } else if (args.stop === "sources_limited") {
+    primary = "السبب: بعض مصادر متاحة لم تكن متاحة أو لم تُجب أو بلغت حدّها المسموح قبل اكتمال العدد، فلم نبحث فيها بالكامل، وقد توجد شركات أخرى مطابقة لم نصل إليها." + ((args.skippedOrigins ?? 0) > 0 ? ` وتخطينا ${countPlainAr(args.skippedOrigins ?? 0, "companies")} لأن عنوانها غير مدعوم.` : "");
+  } else if (args.stop === "stalled") {
+    primary = "السبب: لم تتقدم المعالجة في الوقت المسموح قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
+  } else if (args.stop === "work_limit") {
+    primary = "السبب: بلغنا الحد الأقصى المسموح لحجم العمل في هذه المعالجة (عدد عمليات البحث والقراءة أو مدتها أو عدد مرات إعادة التشغيل) قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
   } else if (args.callCap === "page_cap") {
     primary = "توقفت المعالجة عند الحد الأقصى لعدد الدفعات المسموح لهذا الطلب قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
   } else if (args.callCap === "empty_pages" || args.callCap === "no_progress") {
@@ -129,6 +147,24 @@ export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; cal
     return `${primary} ${excl}`;
   }
   return primary;
+}
+
+export function chainZeroDeliveryReasonAr(args: { target: number; stop: ChainRunnerStop | null }): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(args.target)} مطلوب. ${args.stop ? chainShortfallReasonAr({ stop: args.stop, callCap: null, excluded: 0 }) : "السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد."}`;
+}
+
+export function chainFailureReasonAr(kind: "spend" | "cursor" | "lease"): string {
+  if (kind === "spend") return "السبب: تعذّر التحقق من الحد المسموح لتكلفة هذا الطلب فتوقفنا احتياطًا قبل اكتمال العدد.";
+  if (kind === "cursor") return "السبب: تعذّر حفظ حالة البحث بشكل آمن فتوقفنا احتياطًا قبل اكتمال العدد.";
+  return "السبب: تعذّر التأكد من سلامة تنفيذ هذه المعالجة فتوقفنا احتياطًا قبل اكتمال العدد.";
+}
+
+export function staleReleaseReasonAr(target: number): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
+}
+
+export function operatorReleaseReasonAr(target: number): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
 }
 
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
@@ -149,4 +185,25 @@ export const ALL_CUSTOMER_STRINGS = (): string[] => [
   chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 }),
   chainShortfallReasonAr({ stop: null, callCap: null, excluded: 3 }),
   chainShortfallReasonAr({ stop: null, callCap: null, excluded: 0 }),
+  chainStopProgressLineAr("coverage_end"),
+  chainStopProgressLineAr("sources_limited"),
+  chainStopProgressLineAr("stalled"),
+  chainStopProgressLineAr("work_limit"),
+  ...CHAIN_CARD_LIMITS_V2_AR,
+  chainShortfallReasonAr({ stop: "coverage_end", callCap: null, excluded: 0 }),
+  chainShortfallReasonAr({ stop: "sources_limited", callCap: null, excluded: 0 }),
+  chainShortfallReasonAr({ stop: "sources_limited", callCap: null, excluded: 0, skippedOrigins: 2 }),
+  chainShortfallReasonAr({ stop: "stalled", callCap: null, excluded: 0 }),
+  chainShortfallReasonAr({ stop: "work_limit", callCap: null, excluded: 0 }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: null }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: "coverage_end" }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: "sources_limited" }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: "stalled" }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: "work_limit" }),
+  chainZeroDeliveryReasonAr({ target: 45, stop: "budget" }),
+  chainFailureReasonAr("spend"),
+  chainFailureReasonAr("cursor"),
+  chainFailureReasonAr("lease"),
+  staleReleaseReasonAr(45),
+  operatorReleaseReasonAr(45),
 ];

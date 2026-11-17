@@ -68,3 +68,31 @@ export async function readJobProviderSpendUsd(client: any, jobId: string): Promi
     return 0;
   }
 }
+
+export async function readJobProviderSpend(client: any, jobId: string): Promise<{ usd: number; calls: number }> {
+  const { data, error, truncated } = await selectAllRows(
+    () => client.from("provider_costs").select("cost_usd, provider").eq("job_id", jobId).in("provider", ["treg", "firecrawl", "contextdev"]),
+    { orderBy: "id" }
+  );
+  if (error || !Array.isArray(data) || truncated === true) {
+    throw new Error("job_spend_unreadable");
+  }
+  return { usd: sum(data), calls: data.length };
+}
+
+export async function readJobLease(client: any, jobId: string): Promise<{ step: number; status: string; leaseUntil: string | null }> {
+  const { data, error } = await client.from("jobs").select("step, status, lease_until").eq("id", jobId).maybeSingle();
+  if (error || !data || !Number.isFinite(Number(data.step))) {
+    throw new Error("job_lease_unreadable");
+  }
+  return { step: Number(data.step), status: String(data.status ?? ""), leaseUntil: typeof data.lease_until === "string" ? data.lease_until : null };
+}
+
+export async function readJobCreatedAtMs(client: any, jobId: string): Promise<number> {
+  const { data, error } = await client.from("jobs").select("created_at").eq("id", jobId).maybeSingle();
+  const parsed = data ? Date.parse(String(data.created_at)) : NaN;
+  if (error || !data || !Number.isFinite(parsed)) {
+    throw new Error("job_created_unreadable");
+  }
+  return parsed;
+}

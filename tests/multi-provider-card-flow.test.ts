@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { toArabicDigits } from "../src/lib/arabicDigits";
-import { CHAIN_CARD_LIMITS_AR } from "../src/lib/multiProvider/copy";
+import { CHAIN_CARD_LIMITS_V2_AR, expectedTargetLineAr } from "../src/lib/multiProvider/copy";
 import { chainQuoteCopyFor } from "../src/lib/server/multiProvider/planUpgrade";
 import { setRouterStateForTesting, setRouteChooserForTesting } from "../src/lib/server/multiProvider/planRouting";
 import { persistEditedQuoteMessage } from "../src/functions/shared/quoteMessagePersistence";
@@ -221,7 +221,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
     expect(card.summaryAr).toContain("شركة");
     expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
     expect(card.methodologyNotes).toContain("من أصل ٥٠");
-    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
     for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
       expect(card.methodologyNotes).not.toContain(forbidden);
     }
@@ -297,7 +297,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
     expect(card.summaryAr).toContain("شركة");
     expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
     expect(card.methodologyNotes).toContain("من أصل ٥٠");
-    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
     for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
       expect(card.methodologyNotes).not.toContain(forbidden);
     }
@@ -371,7 +371,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       expect(card.summaryAr).toContain("شركة");
       expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
       expect(card.methodologyNotes).toContain("من أصل ٥٠");
-      expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+      expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
       for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
         expect(card.methodologyNotes).not.toContain(forbidden);
       }
@@ -426,6 +426,29 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
 
     for (const key of ["items", "quotedPoints", "expectedPoints", "unitPricePoints", "targetVolumeMax"] as const) {
       expect(JSON.stringify(clonedCard[key])).toBe(JSON.stringify(originalCard[key]));
+    }
+  });
+
+  it("T-Card the approved five-sentence limit set is exactly what the card shows", () => {
+    const V2 = [
+      "نجمع بيانات التواصل المنشورة للعامة على المواقع الرسمية للشركات ومن مصادر بيانات تجارية متاحة.",
+      "عمودا النشاط والدولة في الملف يعكسان معايير بحثك، ولا يُتحقق منهما لكل شركة على حدة.",
+      "قد لا يتوفر البريد الإلكتروني أو الهاتف لبعض الشركات، ولا نحتسب إلا الشركات التي تحققنا من الحقول المطلوبة فيها.",
+      "لا نجمع عناوين المنازل ولا معلومات العائلة ولا الحسابات الخاصة ولا أي صفحة تتطلب تسجيل دخول.",
+      "لا نضمن دقة تامة؛ نبذل أفضل جهد ممكن، وقد يكون عدد الشركات المسلَّمة أقل من المطلوب.",
+    ] as const;
+    const item = { capabilitySlug: CHAIN_CAPABILITY_SLUG, params: { industryAr: "مقاولات", countryAr: "مصر", requiredFields: ["work_email"] }, targetVolumeMax: 10 };
+    expect([...CHAIN_CARD_LIMITS_V2_AR]).toEqual([...V2]);
+    for (const asked of [10, 20]) {
+      const copy = chainQuoteCopyFor({ item, askedCount: asked });
+      expect(copy).toBeTruthy();
+      const notes = copy!.methodologyNotes;
+      expect(notes).toBe(expectedTargetLineAr({ asked, fitted: 10 }) + " " + V2.join(" "));
+      const at = V2.map((s) => notes.indexOf(s));
+      expect(at.every((i) => i >= 0)).toBe(true);
+      expect(at[0]).toBeLessThan(at[1]);
+      expect(at[1]).toBeLessThan(at[2]);
+      expect(notes).not.toContain("صفحات التواصل وعن الشركة والفريق.");
     }
   });
 });

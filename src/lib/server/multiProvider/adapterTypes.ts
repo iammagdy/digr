@@ -26,6 +26,8 @@ export type ErrorCode =
   | "network" // no answer
   | "unexpected_shape" // an answer without the documented fields
   | "cap_reached" // the daily cap of this provider has no room for the call (nothing was sent)
+  | "budget_reached" // the job's own spend budget has no room for the call (nothing was sent)
+  | "ledger_unavailable" // the spend ledger could not be written or read (nothing was sent)
   | "policy_blocked"; // the data policy refused the page (robots, login, social network)
 
 export const RETRYABLE_ON_ANOTHER_PROVIDER: ReadonlySet<ErrorCode> = new Set(["insufficient_credits", "rate_limited", "timeout", "server_error", "network", "auth_rejected"]);
@@ -44,7 +46,7 @@ export interface CallRecord {
   keyRef?: { id: string; number: number; label: string; isMain: boolean } | null;
 }
 
-export interface Reservation { allowed: boolean; costId: number | null; reason?: "cap" | "error" }
+export interface Reservation { allowed: boolean; costId: number | null; reason?: "cap" | "error" | "budget" }
 
 /** The cost-recording hook. Implemented once (`callRecorder.ts`) over the approved reserve and commit functions; tests pass a fake. */
 export interface CallRecorder {
@@ -65,6 +67,8 @@ export interface AdapterContext {
   timeoutMs?: number;
   /** A call that is known to take longer than the provider's usual timeout (a parser reading 1,000 reviews takes up to 45 s) may raise the ceiling to this. */
   timeoutCapMs?: number;
+  /** Set ONLY by the chain runner (chainRunner.ts, chainCtxFor): strict ledger mode of runRecordedCall. Every other caller leaves it unset and gets today's behaviour. */
+  chainStrict?: boolean;
 }
 
 export interface OperationResult<T> {

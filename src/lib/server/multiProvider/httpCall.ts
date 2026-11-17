@@ -42,17 +42,19 @@ export async function runRecordedCall<T>(args: {
   capability: CapabilityDef;
   request: { url: string; method: "GET" | "POST"; headers: Record<string, string>; body?: unknown };
   interpret: (answer: HttpAnswer) => InterpretedAnswer<T>;
+  /** Strict (chain) mode only: what to reserve before the call (the largest the call can cost). Ignored unless ctx.chainStrict is true. */
+  reserveUsd?: number;
 }): Promise<OperationResult<T>> {
   const { ctx, capability, request } = args;
   const now = ctx.now ?? Date.now;
   const facts = PROVIDER_FACTS[capability.provider];
   const usdPerCredit = facts.usdPerCredit ?? 0;
   const timeoutMs = Math.min(ctx.timeoutMs && ctx.timeoutMs > 0 ? ctx.timeoutMs : facts.callTimeoutMs, ctx.timeoutCapMs && ctx.timeoutCapMs > 0 ? ctx.timeoutCapMs : facts.callTimeoutMs);
-  const estimatedUsd = round6(capability.costPerCallUsd ?? 0);
+  const estimatedUsd = ctx.chainStrict ? round6(args.reserveUsd ?? capability.costPerCallUsd ?? 0) : round6(capability.costPerCallUsd ?? 0);
 
   const reservation = await ctx.recorder.reserve({ provider: capability.provider, capabilityId: capability.id, estimatedUsd, jobId: ctx.jobId });
   if (!reservation.allowed) {
-    return { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs: 0, httpStatus: null, errorCode: "cap_reached", retryable: true };
+    return { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs: 0, httpStatus: null, errorCode: ctx.chainStrict ? (reservation.reason === "budget" ? "budget_reached" : reservation.reason === "error" ? "ledger_unavailable" : "cap_reached") : "cap_reached", retryable: true };
   }
 
   const started = now();
@@ -78,13 +80,13 @@ export async function runRecordedCall<T>(args: {
 
   let result: OperationResult<T>;
   if (!answer) {
-    result = { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs, httpStatus: null, errorCode, retryable: true };
+    result = { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: ctx.chainStrict ? estimatedUsd : 0, durationMs, httpStatus: null, errorCode, retryable: true };
   } else if (answer.httpStatus < 200 || answer.httpStatus >= 300) {
     const code = mapHttpError(answer.httpStatus, answer.json);
     // A failed call is charged only what the provider says it used (Context.dev reports credits_consumed on errors too); otherwise nothing.
     const credits = Number(answer.json?.key_metadata?.credits_consumed);
     const usedCredits = Number.isFinite(credits) && credits > 0 ? credits : 0;
-    result = { ok: false, status: "failed", data: null, units: 0, credits: usedCredits, costUsd: round6(usedCredits * usdPerCredit), durationMs, httpStatus: answer.httpStatus, errorCode: code, retryable: RETRYABLE_ON_ANOTHER_PROVIDER.has(code) };
+    result = { ok: false, status: "failed", data: null, units: 0, credits: usedCredits, costUsd: ctx.chainStrict && !(typeof answer.json?.key_metadata?.credits_consumed === "number" && Number.isFinite(answer.json.key_metadata.credits_consumed)) ? estimatedUsd : round6(usedCredits * usdPerCredit), durationMs, httpStatus: answer.httpStatus, errorCode: code, retryable: RETRYABLE_ON_ANOTHER_PROVIDER.has(code) };
   } else {
     const read = args.interpret(answer);
     const credits = read.credits !== null ? read.credits : read.status === "failed" ? 0 : (capability.creditsPerCall ?? 0);
@@ -94,7 +96,7 @@ export async function runRecordedCall<T>(args: {
       data: read.data,
       units: read.units,
       credits,
-      costUsd: round6(credits * usdPerCredit),
+      costUsd: ctx.chainStrict && (read.credits === null || !Number.isFinite(read.credits)) ? estimatedUsd : round6(credits * usdPerCredit),
       durationMs,
       httpStatus: answer.httpStatus,
       ...(read.errorCode ? { errorCode: read.errorCode } : {}),

@@ -4,12 +4,15 @@ import { resolveProviderKey } from "../providerKeys";
 import type { ProviderAdapterFn } from "../tregAdapter";
 import type { FetchFn } from "./adapterTypes";
 import { createCallRecorder } from "./callRecorder";
-import { runChainChunk, type ChainDeps } from "./chainRunner";
+import { runChainChunk, type ChainChunkInput, type ChainDeps } from "./chainRunner";
 import { getProviderTransport, getRobotsTransport } from "./fakeTransport";
 import { PREVIEW_WORLD_DAILY_CAP_USD } from "../../multiProvider/previewWorld";
-import { readJobProviderSpendUsd, resolveProviderDailyCapUsd } from "./providerCaps";
+import { readJobCreatedAtMs, readJobLease, readJobProviderSpend, readJobProviderSpendUsd, resolveProviderDailyCapUsd } from "./providerCaps";
 import { appendChunkTrace } from "./traceStore";
 import type { RobotsFetch } from "../../multiProvider/policy";
+import { executeTregCall } from "../../../functions/shared/tregClient";
+import { sameInstant } from "../../multiProvider/tregContacts";
+import { randomUUID } from "node:crypto";
 
 /**
  * The chain as a provider adapter for the worker: same input and output as every other adapter, so the worker's reserve, row gate,
@@ -25,7 +28,7 @@ export interface ChainAdapterEnv {
   tregFn: ProviderAdapterFn;
 }
 
-interface TestTransport { fetchFn?: FetchFn; robotsFetch?: RobotsFetch; keys?: Partial<Record<DataProviderId, string>> }
+interface TestTransport { fetchFn?: FetchFn; robotsFetch?: RobotsFetch; keys?: Partial<Record<DataProviderId, string>>; tregCall?: ChainDeps["tregCall"] }
 let testTransport: TestTransport | null = null;
 /** Test-only. Ignored in production: the network of a production deployment is never replaced. */
 export function setChainTransportForTesting(value: TestTransport | null): void { testTransport = value; }
@@ -54,6 +57,11 @@ export function createChainAdapter(env: ChainAdapterEnv): ProviderAdapterFn {
       recorder: createCallRecorder(env.adminClient, env.fakeMode ? { capFor: async (provider) => { const set = await resolveProviderDailyCapUsd(env.adminClient, provider).catch(() => 0); return set > 0 ? set : PREVIEW_WORLD_DAILY_CAP_USD; } } : {}),
       tregFn: env.tregFn,
       spentUsdSoFar: () => readJobProviderSpendUsd(env.adminClient, input.jobId),
+      jobSpend: () => readJobProviderSpend(env.adminClient, input.jobId),
+      jobStartedAtMs: () => readJobCreatedAtMs(env.adminClient, input.jobId),
+      tregCall: hooks?.tregCall ?? executeTregCall,
+      newAttemptId: () => randomUUID(),
+      leaseHeld: async () => { try { const lease = await readJobLease(env.adminClient, input.jobId); const until = Date.parse(String(lease.leaseUntil ?? "")); return lease.step === input.step && lease.status === "running" && sameInstant(lease.leaseUntil, (input as ChainChunkInput).claimLeaseUntil) && Number.isFinite(until) && until > Date.now() + 3000; } catch { return false; } },
       step: input.step,
       trace: async (chunk) => { await appendChunkTrace(env.adminClient, { jobId: input.jobId, quoteId: input.quoteId ?? null, chunk }); },
       emit: async (message, units) => {
