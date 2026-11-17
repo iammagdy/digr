@@ -434,7 +434,8 @@ describe("T-7 money and shape guards (source text)", () => {
 
     const tregClientSrc = readFileSync("src/functions/shared/tregClient.ts", "utf8");
     expect(countOccurrences(tregClientSrc, "costHeaderInvalid")).toBe(5);
-    expect(tregClientSrc.includes("costMicro: chargedMicro !== null ? chargedMicro :")).toBe(true);
+    // the result object of the TREG client keeps its cost line: `costMicro,` between `tregCallId,` and `latencyMs,` (the real text, identical at the base e21bcfb1)
+    expect(tregClientSrc.includes("    tregCallId,\n    costMicro,\n    latencyMs,\n    data: responseBody,")).toBe(true);
 
     const workerRouteSrc = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(countOccurrences(workerRouteSrc, "rpc(")).toBe(8);
