@@ -108,6 +108,19 @@ const JOB = jobIdForQuote("quote_chain_1");
 const TARGET = 3;
 const KEYS = { treg: "managed", firecrawl: "fc-test-key-123456", contextdev: "cx-test-key-123456" };
 
+/**
+ * O8d: a NON-TERMINAL fake world. The chain runner ends a job by itself («no_more_work») as soon as it has no candidate left, and the report puts that
+ * stop before any page/empty/repeat cap (copy.ts chainShortfallReasonAr). A cap sentence can therefore only reach the customer while candidates are still left
+ * after the chunk that trips the cap. Candidates = ceil(ceil(count / (0.5 x share)) x 0.5), share(email+phone) = 0.25 (routes.ts estimateRoute), so with
+ * TWO required fields and a target of 10 the chain discovers 40 candidates = chunks of 12, 12, 12, 4: after the 3rd chunk (the small-job page cap) 4 are left.
+ * `verifiedAt(i)` says which companies (by position = discovery order) have an email AND a phone on their own domain.
+ */
+const TWO_REQUIRED_FIELDS = ["work_email", "office_phone"];
+function useTwoRequiredFields() { db.quotes[0].items[0].params.requiredFields = TWO_REQUIRED_FIELDS; }
+function nonTerminalWorld(verifiedAt: (i: number) => boolean, size = 100): FakeCompany[] {
+  return defaultFakeWorld(size).map((c, i) => (verifiedAt(i) ? { ...c, email: `info@${c.domain}`, phone: `+20100000${String(i).padStart(4, "0")}` } : { ...c, email: undefined, phone: undefined }));
+}
+
 function resetDb(over: { target?: number } = {}) {
   const target = over.target ?? TARGET;
   db.jobs = [{ id: JOB, user_id: "user_1", status: "running", step: 0, current_cursor: null, delivered_units: 0, target_volume_max: target, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
@@ -306,9 +319,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-3 page cap: emits PAGECAP sentence when 3-page cap is reached", async () => {
     resetDb({ target: 10 });
-    const world = defaultFakeWorld(100).map((c, i) => (i % 10 === 0 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
+    // A price high enough that the budget never stops the job first; two required fields so 40 candidates are found and 4 are still left after the 3rd chunk (non-terminal).
+    db.unitPrice = 1000;
+    db.reserved = Math.ceil(10 * 1000 * 1.15);
+    useTwoRequiredFields();
+    const world = nonTerminalWorld((i) => i % 10 === 0);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
+    // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
+    expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
     const pagecapSentence = chainShortfallReasonAr({ stop: null, callCap: "page_cap", excluded: 0 });
     const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(pagecapSentence));
@@ -322,10 +341,16 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   });
 
   it("W-4 empty pages: emits EMPTY sentence when consecutive pages yield zero accepted rows", async () => {
-    resetDb({ target: 8 });
-    const world = defaultFakeWorld(10).map((c, i) => (i < 2 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
+    resetDb({ target: 10 });
+    db.unitPrice = 1000;
+    db.reserved = Math.ceil(10 * 1000 * 1.15);
+    useTwoRequiredFields();
+    // The first chunk verifies two companies; the 2nd and 3rd chunks add none while candidates are still left (non-terminal).
+    const world = nonTerminalWorld((i) => i < 2);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
+    // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
+    expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
     const emptySentence = "توقفت المعالجة لأن دفعتين متتاليتين لم تضيفا شركات موثّقة جديدة قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
     const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(emptySentence));
@@ -339,15 +364,24 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   });
 
   it("W-5 repeat: emits REPEAT sentence when consecutive chunks repeat already delivered companies", async () => {
-    resetDb({ target: 8 });
+    resetDb({ target: 10 });
+    db.unitPrice = 1000;
+    db.reserved = Math.ceil(10 * 1000 * 1.15);
+    useTwoRequiredFields();
+    // One company is delivered in the 1st chunk; the only verified company of each of the 2nd and 3rd chunks is one a first run already delivered
+    // (its identity is in the job's exclusion list, the same list the sample-first remainder uses): the last chunks bring only repeats while candidates are still left.
+    const world = nonTerminalWorld((i) => i === 0 || i === 12 || i === 24);
     const companyIdentity = dedupeIdentityFor("company");
-    db.quotes[0].items[0].params.excludeRowKeys = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
-    const world = defaultFakeWorld(10);
+    db.quotes[0].items[0].params.excludeRowKeys = [12, 24].map((i) => companyIdentity({ website: `https://${world[i].domain}` })!);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
+    // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
+    expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
     const repeatSentence = chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 });
     const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(repeatSentence));
+    // O8d: the world is non-terminal, so the REPEAT sentence itself must reach the customer (the EXCL/NEUTRAL branch below can no longer stand in for it)
+    expect(finalEvent).toBeDefined();
     if (finalEvent) {
       expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
     } else {

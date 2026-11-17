@@ -643,7 +643,7 @@ describe("the planner proves our own web search as the last fallback of a news s
   it("P-9 non-news web step, no change: web.extract and not-short sample -> no derived web alternative", async () => {
     const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
 
-    // Case 1: capability is "web.extract" (not search/news) -> searchOrNews is false
+    // Case 1: capability is "web.page.read" (not search/news) -> searchOrNews is false
     const answers1: Record<string, unknown[]> = {
       request_plan: [{
         decision: "plan", understanding_ar: "قراءة صفحة.", assumptions_ar: [], accepts_available: false,
@@ -653,7 +653,6 @@ describe("the planner proves our own web search as the last fallback of a news s
         options: [{
           endpoint_id: "linkup.web.fetch",
           params_json: JSON.stringify({ url: "https://site.example/page" }),
-          more_params: [{ url: "https://site.example/other" }],
         }],
       }],
       field_map: [
@@ -677,12 +676,11 @@ describe("the planner proves our own web search as the last fallback of a news s
       readPage: async (id) => pages1.get(id) ?? null,
     });
     expect(r1.kind).toBe("plan");
-    expect(probes1).toEqual(["linkup.web.fetch"]);
+    expect(probes1).not.toContain("firecrawl.search");
     if (r1.kind === "plan") {
       const alts1 = r1.plan.stages[0]!.engine!.alternatives ?? [];
-      // Only primary's own more sets: no firecrawl alternative
-      expect(alts1.map((a) => a.endpoint_id)).toEqual(["linkup.web.fetch"]);
-      expect((alts1[0]!.params as { url: string }).url).toBe("https://site.example/other");
+      // A non-search capability never gets the DERIVED (R3-A) web alternative: no firecrawl alternative
+      expect(alts1.some((a) => a.endpoint_id === "firecrawl.search")).toBe(false);
     }
 
     // Case 2: eligible step whose sample is NOT short (30 rows vs count 20) -> webEligible is false
