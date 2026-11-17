@@ -456,3 +456,62 @@ describe("copy API regression", () => {
     expect(typeof b).toBe("function");
   });
 });
+
+describe("chain: exact-N engine (DT-20261117-04)", () => {
+  it("T-A A1 exact-N with three providers delivers 30 rows strictly serial", async () => {
+    const world = defaultFakeWorld(60);
+    const scenario: FakeScenario = {
+      searchByQuery: { perQuery: 20 },
+    };
+    const h = harness(world, scenario, {
+      caps: { treg: 50, firecrawl: 50, contextdev: 50 },
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const origReserve = h.deps.recorder.reserve;
+    const origCommit = h.deps.recorder.commit;
+    h.deps.recorder.reserve = async (arg) => {
+      inFlight += 1;
+      if (inFlight > maxInFlight) maxInFlight = inFlight;
+      return origReserve(arg);
+    };
+    h.deps.recorder.commit = async (costId, record) => {
+      inFlight -= 1;
+      return origCommit(costId, record);
+    };
+
+    const origTreg = h.deps.tregCall;
+    h.deps.tregCall = async (options) => {
+      if (options.endpointId === "tomba.companies.emails.list") {
+        const domain = (options.params as any)?.domain ?? "fakeco1.net";
+        return {
+          ok: true,
+          httpStatus: 200,
+          tregCallId: `t-${domain}`,
+          costMicro: 1000,
+          latencyMs: 5,
+          data: {
+            data: {
+              organization: {},
+              emails: [{ email: `contact@${domain}`, first_name: "Test", last_name: "User", verification: { status: "valid" } }],
+            },
+            meta: { params: { domain }, total: 1 },
+          },
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        };
+      }
+      return origTreg!(options);
+    };
+
+    const { rows, last } = await runAll(h, params({ count: 30, budgetUsd: 10 }), 15);
+    expect(rows.length).toBe(30);
+    expect(last.ok).toBe(true);
+    expect(maxInFlight).toBe(1);
+    expect(h.rec.rows.length).toBeGreaterThanOrEqual(30);
+    for (const r of h.rec.rows) {
+      expect(["treg", "firecrawl", "contextdev"]).toContain(r.provider);
+      expect(r.estimate).toBe(false);
+    }
+  });
+});
