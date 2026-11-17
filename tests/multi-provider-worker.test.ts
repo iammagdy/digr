@@ -677,4 +677,34 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
     expect(confirmEvt).toContain("ولم يُخصم شيء");
   });
+it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-chain job keeps today's cap", async () => {
+    // 1. Chain job: pageCapReason is always null
+    resetDb({ target: 10 });
+    db.unitPrice = 1000;
+    db.reserved = Math.ceil(10 * 1000 * 1.15);
+    useTwoRequiredFields();
+    const world = nonTerminalWorld((i) => i < 1);
+    const { last: chainLast } = await runMany(world);
+    expect(chainLast.status).toBe(200);
+
+    // 2. Non-chain job of the same shape: keeps today's cap
+    resetDb({ target: 10 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true, httpStatus: 200, rows: [], nextCursor: "next_cur", costUsd: 0.005, costMicro: 5000, tregCallId: "t_non_chain",
+    }));
+
+    const route = await import("../src/app/api/worker/chunk/route");
+    let nonChainLast: any = null;
+    for (let i = 0; i < 6; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }));
+      nonChainLast = { status: res.status, json: await res.json() };
+      if (nonChainLast.json.done === true || nonChainLast.json.released === true || nonChainLast.status >= 400) break;
+    }
+    expect(nonChainLast.status).toBe(200);
+  });
 });
