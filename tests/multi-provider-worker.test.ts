@@ -1386,30 +1386,55 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
 
   it("T-W B7 zero delivery, every terminal reason: confirmed release => 422, released: true, p_error_message equals chainZeroDeliveryReasonAr, after-confirmation event after release; failed release => 500, released: false, release RPC called once with (p_job_id, p_error_message, p_force)", async () => {
     const route = await import("../src/app/api/worker/chunk/route");
-    const stops: Array<any> = ["coverage_end", "budget", "sources_limited", "stalled", "work_limit", null];
+    // DT-20261117-04 CI r2 (G24): ONE REAL scenario per stop. The old loop injected `chainStop` through `setProviderAdapterForTesting`, which a chain job never calls (it is only the dead `tregFn` of createChainAdapter), so every iteration ran the same chain and could end in ONE stop only. Each world below is a real run, as B2 builds them, and each asserts its OWN stop by kind. There is NO `null` scenario: no natural run of the chain ends in a zero-delivery release without a stop (terminalOf returns null only while the job goes on, and a job that goes on is not done). `run` and `runMany` are NOT used here: they replace the transport, so a custom keys/hook set would be lost.
+    const stops: Array<any> = ["coverage_end", "budget", "sources_limited", "stalled", "work_limit"];
+    expect(new Set(stops.map((s) => chainZeroDeliveryReasonAr({ target: 5, stop: s }))).size).toBe(stops.length);
+    const arrange = (stop: string) => {
+      resetDb({ target: 5 });
+      const world = defaultFakeWorld(5).map((c) => ({ ...c, email: undefined, phone: undefined }));
+      let keys: any = KEYS;
+      let scenario: Parameters<typeof createFakeFetch>[1] = {};
+      let tregCall: any = tregHook();
+      // coverage_end and stalled need MANY calls: 5 units x 1000 points is a budget that cannot pre-empt them
+      if (stop === "coverage_end" || stop === "stalled") { db.unitPrice = 1000; db.reserved = Math.ceil(5 * 1000 * 1.15); }
+      // budget: 5 units x 1 point = a budget (reserve / 5,500) below the cost reserved for the first provider call
+      if (stop === "budget") { db.unitPrice = 1; db.reserved = Math.ceil(5 * 1 * 1.15); }
+      // sources_limited: TREG is the only key, so both web sources are unavailable, and its directory is empty
+      if (stop === "sources_limited") keys = { treg: "managed" };
+      // stalled: the web sources answer empty; the directory answers a page of leads whose address is private (no candidate) with a NEW next-page token every time: endless and without progress
+      if (stop === "stalled") {
+        scenario = { emptyProvider: { firecrawl: true, contextdev: true } };
+        let page = 0;
+        tregCall = async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads: [{ name: "Private host", website: "https://10.0.0.1" }], pagination: { token: `cur_stall_${++page}` } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
+      }
+      // work_limit: the eight start markers of step 0 exist (MAX_STARTS_PER_STEP = 8), so the next start has no slot
+      if (stop === "work_limit") { for (let k = 0; k < 8; k++) db.partials.set(`${JOB}/start_0_${k}.json`, Buffer.from("")); }
+      fetchSpy = createFakeFetch(world, scenario);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys, tregCall });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    };
+    // the chunks of the job until it ends (the loop of `run`, without replacing the transport); the answer keeps `status` and `json()`
+    const postToEnd = async () => {
+      let status = 0;
+      let body: any = null;
+      for (let i = 0; i < 12; i++) {
+        const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: { authorization: "Bearer chain-secret" },
+          body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+        }));
+        status = res.status;
+        body = await res.json();
+        if (body.done === true || body.released === true || status >= 400) break;
+      }
+      return { status, json: async () => body };
+    };
 
     for (const stop of stops) {
       // 1. Confirmed release
-      resetDb({ target: 5 });
-      const world = defaultFakeWorld(5).map((c) => ({ ...c, email: undefined, phone: undefined }));
-      fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
-      setProviderAdapterForTesting(async () => ({
-        ok: true,
-        httpStatus: 200,
-        rows: [],
-        nextCursor: null,
-        costUsd: 0,
-        costMicro: 0,
-        tregCallId: "",
-        ...(stop ? { chainStop: stop } : {}),
-      }));
+      arrange(stop);
 
-      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
-        method: "POST",
-        headers: { authorization: "Bearer chain-secret" },
-        body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-      }));
+      const res = await postToEnd();
 
       expect(res.status).toBe(422);
       const json = await res.json();
@@ -1419,6 +1444,9 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const relCall = db.rpcCalls.find((c) => c.name === "release_job_atomic");
       expect(relCall).toBeDefined();
       expect(relCall!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop }));
+      // the stop BY KIND: of the five stop lines of the activity log exactly one was written, the one of this scenario
+      const stopLinesSeen = (["coverage_end", "budget", "sources_limited", "stalled", "work_limit"] as const).filter((k) => db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr(k)));
+      expect(stopLinesSeen).toEqual([stop]);
 
       const relIdx = db.rpcCalls.indexOf(relCall!);
       const confirmEvt = db.events.find((e: any) => String(e.message ?? "").includes("حجز مؤقت مُحرَّر"));
@@ -1427,7 +1455,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(relIdx).toBeGreaterThanOrEqual(0);
 
       // 2. Failed release
-      resetDb({ target: 5 });
+      arrange(stop);
       const supabase = await import("../src/lib/supabase/server");
       const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
       vi.mocked(supabase.createAdminClient).mockImplementation(() => {
@@ -1444,22 +1472,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       });
 
       try {
-        setProviderAdapterForTesting(async () => ({
-          ok: true,
-          httpStatus: 200,
-          rows: [],
-          nextCursor: null,
-          costUsd: 0,
-          costMicro: 0,
-          tregCallId: "",
-          ...(stop ? { chainStop: stop } : {}),
-        }));
-
-        const failRes = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
-          method: "POST",
-          headers: { authorization: "Bearer chain-secret" },
-          body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-        }));
+        const failRes = await postToEnd();
 
         expect(failRes.status).toBe(500);
         const failJson = await failRes.json();
