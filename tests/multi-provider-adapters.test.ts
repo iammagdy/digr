@@ -483,4 +483,104 @@ it("T-T P1-P3 wrapper-level fakes: thrown error, undefined, timeout, network fai
       expect(cBudget).toBe(ep.R);
     }
   });
+it("T-T P4 ambiguous statuses table (503, 302, 408, 409 always commit max(R, f))", async () => {
+    const endpoints = [
+      {
+        name: "runTregEmailLookup",
+        R: 8900,
+        run: async (result: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregEmailLookup({
+            tregCall: async () => result,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            domain: "example.com",
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        },
+      },
+      {
+        name: "runTregDirectoryPageDirect",
+        R: 5760,
+        run: async (result: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregDirectoryPageDirect({
+            tregCall: async () => result,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            rawParams: { domain: "example.com" },
+            cursor: null,
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        },
+      },
+    ];
+
+    const statuses = [503, 302, 408, 409];
+
+    for (const ep of endpoints) {
+      const R = ep.R;
+      const figures = [100, R, 20000];
+
+      for (const status of statuses) {
+        for (const f of figures) {
+          const expected = Math.max(R, f);
+
+          // (i) the cost header (costMicro)
+          const res1 = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: f, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(res1).toBe(expected);
+          expect(res1).toBeGreaterThanOrEqual(R);
+
+          // (ii) originalCostMicro with costMicro 0
+          const res2 = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: 0, originalCostMicro: f, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(res2).toBe(expected);
+          expect(res2).toBeGreaterThanOrEqual(R);
+
+          // (iii) chargedMicroReported
+          const res3 = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: 0, chargedMicroReported: f, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(res3).toBe(expected);
+          expect(res3).toBeGreaterThanOrEqual(R);
+
+          // (iv) header and body together with DIFFERENT values
+          const res4 = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: f, chargedMicroReported: 50, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(res4).toBe(expected);
+          expect(res4).toBeGreaterThanOrEqual(R);
+        }
+
+        // figure 0 => R
+        const resZero = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: 0, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+        expect(resZero).toBe(R);
+
+        // invalid figures (NaN, -1, 1.5, 2^60) => R
+        for (const inv of [NaN, -1, 1.5, Math.pow(2, 60)]) {
+          const resInv = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: inv as any, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(resInv).toBe(R);
+
+          // invalid field contributes nothing; valid sibling field still counts
+          const resInvSib = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: inv as any, chargedMicroReported: 20000, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(resInvSib).toBe(20000);
+        }
+
+        // header absent => R
+        const resAbsent = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+        expect(resAbsent).toBe(R);
+
+        // replay shape => max(R, original)
+        const resReplay = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: 0, originalCostMicro: 20000, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+        expect(resReplay).toBe(20000);
+      }
+    }
+  });
 });
