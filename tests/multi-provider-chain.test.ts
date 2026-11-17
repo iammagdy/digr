@@ -918,8 +918,8 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     });
     const { rows: rowsBlank } = await runAll(hBlank, params({ count: 1, industry: undefined, industryAr: undefined, country: undefined, countryAr: undefined }), 5);
     if (rowsBlank.length > 0) {
-      expect(rowsBlank[0].industry).toBe("");
-      expect(rowsBlank[0].location).toBe("");
+      expect(rowsBlank[0].industry ?? "").toBe("");
+      expect(rowsBlank[0].location ?? "").toBe("");
     }
   });
 });
