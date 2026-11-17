@@ -14,6 +14,10 @@ const db = vi.hoisted(() => ({
   settings: [] as any[],
   step: 0, cursor: null as string | null, deliveredUnits: 0, targetVolumeMax: 3, unitPrice: 100, reserved: 345, endpoint: "mp.business.contacts",
   reserveDeniedFor: new Set<string>(),
+  uploadHistory: [] as Array<{ bucket: string; path: string; existed: boolean }>,
+  delayedCompleteChunkMs: 0,
+  killAfterCommit: false,
+  corruptDownloadPaths: new Set<string>(),
 }));
 
 function builder(rows: () => any[]) {
@@ -35,6 +39,15 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") {
+        const job = db.jobs.find((j) => j.id === args.p_job_id);
+        if (job) {
+          if (job.current_cursor && String(job.current_cursor).startsWith("term_stop:")) {
+            return { data: null, error: { message: "cannot claim a job whose last chunk was terminal" } };
+          }
+          if (job.status === "running" && job.lease_until && new Date(job.lease_until).getTime() > Date.now()) {
+            return { data: null, error: { message: "lease not expired" } };
+          }
+        }
         return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpoint, unit_price: db.unitPrice }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") {
@@ -51,9 +64,24 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true }, error: null };
       }
       if (name === "complete_chunk") {
+        if (db.delayedCompleteChunkMs > 0) {
+          await new Promise((r) => setTimeout(r, db.delayedCompleteChunkMs));
+        }
+        const expected = args.p_expected_step;
+        if (typeof expected === "number") {
+          if (db.step > expected) {
+            return { data: { success: false, already_completed: true, delivered_units: db.deliveredUnits }, error: null };
+          }
+          if (db.step < expected) {
+            throw new Error(`step mismatch: current ${db.step} < expected ${expected}`);
+          }
+        }
         db.step += 1; db.deliveredUnits = args.p_new_delivered_units; db.cursor = args.p_new_cursor;
         const job = db.jobs.find((row) => row.id === args.p_job_id);
-        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running" });
+        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running", lease_until: null });
+        if (db.killAfterCommit) {
+          throw new Error("worker_killed_after_commit");
+        }
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
@@ -67,8 +95,24 @@ vi.mock("../src/lib/supabase/server", () => ({
       from: (bucket: string) => {
         const store = bucket === "partials" ? db.partials : db.results;
         return {
-          upload: async (path: string, body: any) => { store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body))); return { data: { path }, error: null }; },
-          download: async (path: string) => { const buf = store.get(path); return buf ? { data: new Blob([new Uint8Array(buf)]), error: null } : { data: null, error: { message: "not_found" } }; },
+          upload: async (path: string, body: any) => {
+            const existed = store.has(path);
+            db.uploadHistory.push({ bucket, path, existed });
+            // records whether path already exists
+            store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body)));
+            return { data: { path, existed }, error: null };
+          },
+          download: async (path: string) => {
+            if (db.corruptDownloadPaths.has(path)) {
+              return { data: new Blob([new Uint8Array(Buffer.from("CORRUPT_NOT_JSON"))]), error: null };
+            }
+            const buf = store.get(path);
+            return buf ? { data: new Blob([new Uint8Array(buf)]), error: null } : { data: null, error: { message: "not_found" } };
+          },
+          list: async (prefix?: string) => {
+            const paths = Array.from(store.keys()).filter((k) => !prefix || k.startsWith(prefix));
+            return { data: paths.map((name) => ({ name })), error: null };
+          },
           remove: async (paths: string[]) => { for (const p of paths) store.delete(p); return { data: paths, error: null }; },
         };
       },
@@ -128,6 +172,7 @@ function resetDb(over: { target?: number } = {}) {
   db.settings = [{ key: "provider_limits", value: { dailyUsd: 0.8, firecrawlDailyUsd: 1, contextdevDailyUsd: 1 } }];
   db.costs = []; db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.reserveDeniedFor = new Set();
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
+  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear();
 }
 
 describe("worker: multi-provider chain job (fake providers)", () => {
