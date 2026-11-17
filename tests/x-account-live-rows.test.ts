@@ -138,6 +138,11 @@ import { setReviewDailyGuardForTesting } from "../src/lib/server/reviewDailyGuar
 import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 import { summarizeActivityCounts } from "../src/lib/activityCounts";
 import { xAccountZeroDeliveryAr } from "../src/lib/server/zeroDeliveryDiagnostic";
+import { releaseTextAr } from "../src/lib/releaseText";
+
+function expectReleased(actual: unknown, expectedBase: string): void {
+  expect(actual).toBe(releaseTextAr(expectedBase, db.targetVolumeMax));
+}
 
 const ACCOUNT = { channel: "@elonmusk" };
 const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
@@ -273,8 +278,8 @@ describe("worker: the real rows of an X account", () => {
     expect(json.released).toBe(true);
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
     const message = String(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message);
-    expect(message).toBe(xAccountZeroDeliveryAr({ received: 7, held: 0, dateDropped: 0, replies: 5, reposts: 2 }));
-    expect(message).toBe("استلمنا ٧ سجلات من الحساب المطلوب، لكنها كلها ردود على منشورات أخرى أو إعادات نشر، وليست منشورات كتبها الحساب نفسه (ردود: ٥، إعادات نشر: ٢)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expectReleased(message, xAccountZeroDeliveryAr({ received: 7, held: 0, dateDropped: 0, replies: 5, reposts: 2 }));
+    expectReleased(message, "استلمنا ٧ سجلات من الحساب المطلوب، لكنها كلها ردود على منشورات أخرى أو إعادات نشر، وليست منشورات كتبها الحساب نفسه (ردود: ٥، إعادات نشر: ٢)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
     expect(message).not.toContain("موضوع طلبك");
     expect(message).not.toContain("أُحيل");
     expect(lines().some((line) => line.includes("لم يُسلَّم شيء") && line.includes("٥ ردًّا على منشورات أخرى") && line.includes("٢ إعادة نشر لمنشورات غيرها"))).toBe(true);

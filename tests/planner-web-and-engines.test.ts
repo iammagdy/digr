@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { loadTregCatalog, type CatalogEndpoint } from "../src/lib/treg/catalog";
 import { candidatesFor, directWebEndpoints, SEARCH_ENGINE_PLATFORMS } from "../agent/src/llmPlanner/catalogView";
 import { checkOptions, SCOUT_SHORT_SHARE } from "../agent/src/llmPlanner/planner";
 import { sourceLabelAr } from "../agent/src/methodology";
@@ -870,5 +870,133 @@ describe("the planner proves our own web search as the last fallback of a news s
     // Firecrawl derived options carry each distinct param set once: ["الذكاء الاصطناعي", "سدايا"]
     expect(fcAlts).toHaveLength(2);
     expect(fcAlts.map((a) => (a.params as { query: string }).query)).toEqual(["الذكاء الاصطناعي", "سدايا"]);
+  });
+});
+
+// ===== DT-20261117-06 T4: the planner tries the next tool inside today's probe bounds (plan N-1; v5 Q-1, Q-2) =====
+const T4_WEB = directWebEndpoints({ contextdev: true, firecrawl: false }); // ONE direct web tool (w = 1): the merged second web probe is not eligible
+const T4_PHRASES = ["الذكاء الاصطناعي", "سدايا", "رؤية السعودية"];
+const t4QueryName = (e: CatalogEndpoint): string | undefined => e.inputs.find((i) => /^(q|query|text)$/.test(i.name))?.name;
+const t4Params = (e: CatalogEndpoint, phrase: string): Record<string, unknown> => ({
+  ...Object.fromEntries(e.inputs.filter((i) => i.required).map((i) => [i.name, Array.isArray(i.enum) && i.enum.length > 0 ? i.enum[0] : i.example ?? "x"])),
+  [t4QueryName(e)!]: phrase,
+});
+/** the catalog news tools the planner itself offers for this step (same call as planner.ts chooseTools), in its order, without the direct web tool */
+const t4Offered = (): CatalogEndpoint[] => candidatesFor(catalog, null, "web", "web.search.news", 8, { web: T4_WEB }).filter((e) => !T4_WEB.some((w) => w.id === e.id) && t4QueryName(e) !== undefined);
+
+type T4Mode = "ok" | "bad" | "fail"; // ok: 5 readable items; bad: 5 items nothing in them can be mapped; fail: HTTP 503
+async function t4Run(script: (n: number, id: string) => T4Mode, tools: CatalogEndpoint[], opts: { web: boolean; lines?: string[] }) {
+  const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+  const stepPlan = { decision: "plan", understanding_ar: "أخبار عن الذكاء الاصطناعي.", assumptions_ar: [], accepts_available: false,
+    steps: [{ key: "news", title_ar: "الأخبار", platform: "web", capability: "web.search.news", parent: null, deliver: true, count: { total: 50, all: false }, topic: T4_PHRASES[0], search_terms: [T4_PHRASES[1], T4_PHRASES[2]] }] };
+  const choice = { options: tools.map((e) => ({ endpoint_id: e.id, params: t4Params(e, T4_PHRASES[0]!), more_params: [t4Params(e, T4_PHRASES[1]!), t4Params(e, T4_PHRASES[2]!)] })) };
+  const answers: Record<string, unknown[]> = { request_plan: [stepPlan], tool_choice: [choice] };
+  const MAP = { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] };
+  const modelCalls: Record<string, number> = {};
+  const recorded: Array<{ n: number; id: string; params: Record<string, unknown> }> = [];
+  const pages = new Map<string, unknown>();
+  let n = 0;
+  const result = await planWithLlm({ words: ["هات آخر ٥٠ خبر عن الذكاء الاصطناعي"], request: "", scoutAllowed: false }, {
+    model: async ({ tool }) => {
+      modelCalls[tool.name] = (modelCalls[tool.name] ?? 0) + 1;
+      if (tool.name === "field_map") return { input: MAP, costUsd: 0.001 };
+      const next = (answers[tool.name] ?? []).shift();
+      return next === undefined ? null : { input: next, costUsd: 0.001 };
+    },
+    catalog, access: null, today: "2026-11-16", ...(opts.web ? { webTools: T4_WEB } : {}),
+    onProgress: async (line) => { opts.lines?.push(line); },
+    probe: async (id, params) => {
+      n += 1; const call_id = `call_${n}`; recorded.push({ n, id, params });
+      const mode = script(n, id);
+      if (mode === "fail") return { ok: false as const, call_id, failed: true as const, http_status: 503, message: "503" };
+      const web = id === T4_WEB[0]!.id;
+      pages.set(call_id, mode === "bad"
+        ? { data: { results: Array.from({ length: 5 }, (_, k) => ({ zzz: `a${k}`, yyy: `b${k}` })) } }
+        : web ? { rows: Array.from({ length: 5 }, (_, k) => ({ title: `خبر ${k}`, url: `https://web.example/${k}` })) }
+        : { data: { results: Array.from({ length: 5 }, (_, k) => ({ title: `عنوان ${k}`, url: `https://site.example/${k}` })) } });
+      return { ok: true as const, call_id, http_status: 200, rows_in_page: 5, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
+    },
+    readPage: async (id) => pages.get(id) ?? null,
+  });
+  return { result, recorded, modelCalls };
+}
+
+describe("DT-20261117-06 T4 (i)-(iii): an unreadable answer moves on to the next option", () => {
+  it("T4(i) option 1 answers but is unreadable, option 2 maps: the step is served by option 2", async () => {
+    const [A, B] = t4Offered();
+    expect(A).toBeTruthy(); expect(B).toBeTruthy();
+    const { result, recorded } = await t4Run((_n, id) => (id === A!.id ? "bad" : "ok"), [A!, B!], { web: true });
+    expect(result.kind).toBe("plan");
+    if (result.kind !== "plan") return;
+    expect(recorded.slice(0, 2).map((c) => c.id)).toEqual([A!.id, B!.id]);
+    expect(result.plan.stages[0]!.endpoint_id).toBe(B!.id);
+  });
+
+  it("T4(ii) all three options answer but are unreadable: the existing unserved reason, three probes, no web call", async () => {
+    const [A, B, C] = t4Offered();
+    expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
+    const { result, recorded } = await t4Run((_n, id) => (id === T4_WEB[0]!.id ? "ok" : "bad"), [A!, B!, C!], { web: true });
+    expect(result.kind).toBe("cannot");
+    if (result.kind !== "cannot") return;
+    expect(result.reason_ar).toBe("لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر.");
+    expect(recorded.map((c) => c.id)).toEqual([A!.id, B!.id, C!.id]);
+  });
+
+  it("T4(iii) option 1 maps: one probe and one field-map ask", async () => {
+    const [A] = t4Offered();
+    expect(A).toBeTruthy();
+    const { result, recorded, modelCalls } = await t4Run(() => "ok", [A!], { web: false });
+    expect(result.kind).toBe("plan");
+    expect(recorded.map((c) => c.id)).toEqual([A!.id]);
+    expect(modelCalls.field_map).toBe(1);
+  });
+});
+
+describe("DT-20261117-06 T4(iv) CASE 1: the primary spends exactly 6, then both downstream blocks run inside their own 6", () => {
+  it("T4(iv) CASE 1: primary 503 x5 then a readable sixth call; second-tool block 3 calls; web block 1 call; total 10 <= 18", async () => {
+    const [A, B, C] = t4Offered();
+    expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
+    expect(T4_WEB).toHaveLength(1); // w = 1: the merged second web probe (otherWeb) is not eligible
+    const { result, recorded, modelCalls } = await t4Run((n, id) => (id === T4_WEB[0]!.id || n === 6 ? "ok" : "fail"), [A!, B!, C!], { web: true });
+    // the primary loop made EXACTLY 6 calls and never a 7th; C was not probed by the primary
+    expect(recorded.slice(0, 6).map((c) => c.id)).toEqual([A!.id, A!.id, A!.id, B!.id, B!.id, B!.id]);
+    expect(result.kind).toBe("plan");
+    if (result.kind !== "plan") return;
+    expect(result.plan.stages[0]!.endpoint_id).toBe(B!.id);
+    // second-tool block: next = A (the first option other than B): calls 7-9 are A's three sets, all failing, inside its own 6
+    expect(recorded.slice(6, 9).map((c) => c.id)).toEqual([A!.id, A!.id, A!.id]);
+    // web block: call 10 is the web tool on the topic phrase
+    expect(recorded[9]!.id).toBe(T4_WEB[0]!.id);
+    expect((recorded[9]!.params as { query?: unknown }).query).toBe(T4_PHRASES[0]);
+    // no 11th call: no second web probe, no scouting call (scoutAllowed false); total 10 <= 6 + 6 + 6 * 1
+    expect(recorded).toHaveLength(10);
+    expect(recorded.filter((c) => c.id === T4_WEB[0]!.id)).toHaveLength(1);
+    expect(recorded.filter((c) => c.id === C!.id)).toHaveLength(0);
+    // one field-map ask for B (primary) and one for the web tool; A's second-tool probe never answered
+    expect(modelCalls.field_map).toBe(2);
+  });
+});
+
+describe("DT-20261117-06 T4(iv) CASE 2: all 6 primary probes fail", () => {
+  it("T4(iv) CASE 2: exactly 6 calls, today's unserved reason, no downstream call, nothing «فشل» or Latin that a customer can read", async () => {
+    const [A, B, C] = t4Offered();
+    expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
+    const lines: string[] = [];
+    const { result, recorded, modelCalls } = await t4Run((n, id) => (n <= 6 && id !== T4_WEB[0]!.id ? "fail" : "ok"), [A!, B!, C!], { web: true, lines });
+    // exactly 6 calls; C, the second-tool block and the web tool are NEVER called; no field-map ask
+    expect(recorded.map((c) => c.id)).toEqual([A!.id, A!.id, A!.id, B!.id, B!.id, B!.id]);
+    expect(modelCalls.field_map ?? 0).toBe(0);
+    expect(result.kind).toBe("cannot");
+    if (result.kind !== "cannot") return;
+    expect(result.reason_ar).toBe("جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر.");
+    // the INTERNAL value (never shown) is asserted separately and is excluded from the Latin check (v5, Q-1)
+    expect(result.detail).toBe("no_step_served");
+    // CUSTOMER-VISIBLE text only: the result's reason, every progress line, and the sentence runMission builds from the reason
+    const sentence = `${result.reason_ar.trim().replace(/[.،\s]*$/u, ".")} لم يُخصم منك شيء.`;
+    for (const text of [result.reason_ar, sentence, ...lines]) {
+      expect(text).not.toMatch(/فشل/);
+      expect(text).not.toMatch(/[A-Za-z]/);
+    }
+    expect(recorded).toHaveLength(6); // 6 <= 18
   });
 });

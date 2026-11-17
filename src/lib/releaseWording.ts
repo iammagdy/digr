@@ -13,13 +13,18 @@ export function settlementEventAr(input: { reservedPoints: number; chargedPoints
   return `حجز مؤقت مُحرَّر كاملًا (${pointsAr(reserved, digits)})، ثم خُصم ثمن ما سُلّم فقط (${pointsAr(charged, digits)})، فيبقى في رصيدك ${pointsAr(back, digits)} من هذا الحجز.`;
 }
 
+/** `record_chunk_failure` (SQL) stores «Exceeded maximum retry attempts (5): <cause>» on the fifth failure; screens read the text through normalizeReleaseWording, which strips that English prefix. */
+export function stripRetryPrefix(t: string): string {
+  return t.replace(/^Exceeded maximum retry attempts \(\d+\):\s*/, "");
+}
+
 /**
  * A released hold is «حجز مؤقت مُحرَّر», always. Old job messages (stored before this rule, and written by the worker for failures) say
  * «تم إرجاع النقاط المحجوزة إلى رصيدك», «أُعيدت النقاط المحجوزة», «استرداد…»: the stored text is never rewritten; it is read through this on the
  * request cards and the activity panel, so the customer sees one wording and the ledger lines say the same.
  */
 export function normalizeReleaseWording(text: unknown): string {
-  return String(text ?? "")
+  return stripRetryPrefix(String(text ?? ""))
     // «تم إرجاع (كامل) النقاط المحجوزة (كاملة) (إلى رصيدك)» and its spellings
     .replace(/(?:تم\s+)?(?:إرجاع|ارجاع|استرداد|استرجاع|رد)\s+(?:كامل\s+)?(?:ال)?نقاط(?:ك)?\s+(?:ال)?محجوزة(?:\s+كاملة)?(?:\s+(?:إلى|الى|لـ?|في)\s*(?:رصيدك|حسابك))?/g, "حجز مؤقت مُحرَّر كاملًا")
     .replace(/(?:أُعيدت|أعيدت|رجعت)\s+(?:ال)?نقاط\s+(?:ال)?محجوزة(?:\s+كاملة)?(?:\s+(?:إلى|الى)\s+رصيدك)?/g, "حجز مؤقت مُحرَّر كاملًا")

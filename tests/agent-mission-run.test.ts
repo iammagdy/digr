@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 import { approveMission, repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
 import { AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD } from "../src/lib/agentMission/constants";
@@ -271,6 +272,54 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     expect(money.balance()).toBe(100_000);
     expect(money.jobs.get(approved.jobId)!.status).toBe("failed");
     expect(money.calls.map((c) => c.name)).toContain("release_job_atomic");
+  });
+
+  it("DT-06 T5 #9: a mission with no approved plan ends with the neutral Arabic text, in summary and event", async () => {
+    const store = createMemoryStore();
+    store.missions.set("msn_n9", newMission({ id: "msn_n9", user_id: USER_ID, request_text: "طلب بلا خطة معتمدة", status: "executing", plan: null }));
+    const t = setup([], store);
+    await runExecution(t.deps(createFakeDriver([])), store.missions.get("msn_n9")!);
+    const m = store.missions.get("msn_n9")!;
+    expect(m).toMatchObject({ status: "failed", error: "the mission has no approved plan or reserve", summary_ar: "تعذّر بدء تنفيذ طلبك لأن خطته المعتمدة أو حجزه غير مكتمل لدينا، ولم يُسلَّم منه شيء." });
+    expect(store.events.filter((e) => e.kind === "result").map((e) => e.message_ar)).toEqual(["تعذّر بدء تنفيذ طلبك لأن خطته المعتمدة أو حجزه غير مكتمل لدينا، ولم يُسلَّم منه شيء."]);
+    expect(m.summary_ar).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي|لم يُخصم/);
+  });
+
+  it("DT-06 T5 #10: a settlement or release the database refuses is told with no number of delivered items and no money claim", async () => {
+    for (const site of ["settlement", "release"] as const) {
+      const { store, money, mission } = await planned();
+      const refused = site === "settlement" ? "settle_job_atomic" : "release_job_atomic";
+      const realRpc = money.client.rpc.bind(money.client);
+      money.client.rpc = async (name: string, args: any) => (name === refused ? { error: { message: "job already settled" } } : realRpc(name, args));
+      if (site === "release") {
+        // the files cannot be saved, and the release that follows is refused too
+        const realPublish = store.publishResult.bind(store);
+        store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
+      }
+      const t = setup(execResponses(8, 10), store, money);
+      await runExecution({ ...t.deps(createFakeDriver(execScript(8, 10))), call: t.call as any }, mission);
+      const rows = mission.plan!.price.deliveredRows;
+      const expected = `تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(rows)} المطلوبة ولا قيمة الخصم.`;
+      const m = store.missions.get("msn_e1")!;
+      expect(m.status, site).toBe("failed");
+      expect(m.summary_ar, site).toBe(expected);
+      expect(store.events[store.events.length - 1], site).toMatchObject({ kind: "result", message_ar: expected });
+      expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي|لم يُخصم/);
+    }
+  });
+
+  it("DT-06 T5 #11: files not saved with the release confirmed read the (J) wording with N, in summary and event", async () => {
+    const { store, money, mission } = await planned();
+    const realPublish = store.publishResult.bind(store);
+    store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
+    const t = setup(execResponses(8, 10), store, money);
+    await runExecution({ ...t.deps(createFakeDriver(execScript(8, 10))), call: t.call as any }, mission);
+    const rows = mission.plan!.price.deliveredRows;
+    const expected = `المسلَّم ${toArabicDigits(0)} من ${toArabicDigits(rows)} مطلوب. السبب: تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+    const m = store.missions.get("msn_e1")!;
+    expect(m).toMatchObject({ status: "failed", summary_ar: expected, charged_points: 0, delivered_units: 0 });
+    expect(store.events.filter((e) => e.kind === "result").map((e) => e.message_ar)).toContain(expected);
+    expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي/);
   });
 
   it("execution calls stop at the execution budget (40% of the reserve's value) and the agent is told", async () => {
