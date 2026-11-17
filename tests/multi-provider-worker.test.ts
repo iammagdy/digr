@@ -1730,12 +1730,14 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
 
     // 2. The 9th start: all 0..7 already exist => startIndex = 8 => terminal work_limit, ZERO calls, delivered-only charge
     let providerCallsMade = 0;
+    const countedTregHook = tregHook();
     fetchSpy = createFakeFetch(defaultFakeWorld(5));
     setChainTransportForTesting({
       fetchFn: async (...args) => { providerCallsMade += 1; return fetchSpy(...args); },
       robotsFetch: createFakeRobotsFetch(defaultFakeWorld(5)),
       keys: KEYS,
-      tregCall: tregHook(),
+      // every transport is counted, the TREG hook too (it stands for the real TREG client): the ninth start must reach NONE of them
+      tregCall: async (o: any) => { providerCallsMade += 1; return countedTregHook(o); },
     });
     setProviderAdapterForTesting(async () => {
       providerCallsMade += 1;
