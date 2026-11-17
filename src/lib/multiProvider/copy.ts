@@ -67,9 +67,13 @@ export function budgetStopLineAr(delivered: number): string {
     : "توقفنا عند الحد المسموح لهذه المعالجة قبل العثور على سجلات موثّقة، ولن يُخصم أي رصيد.";
 }
 
-export function chainStopProgressLineAr(kind: "budget" | "no_more_work" | "target_reached"): string {
+export function chainStopProgressLineAr(kind: ChainRunnerStop): string {
   if (kind === "budget") return "توقفنا عند الحد المسموح لهذه المعالجة.";
   if (kind === "no_more_work") return "توقف البحث عند حدود هذه المعالجة الحالية.";
+  if (kind === "coverage_end") return "انتهت صيغ البحث المحددة لدينا في مصادر متاحة (٨ صيغ لكل مصدر بحث).";
+  if (kind === "sources_limited") return "توقفنا لأن بعض مصادر متاحة لم تكن متاحة أو لم تُجب أو بلغت حدّها المسموح.";
+  if (kind === "stalled") return "توقفنا لأن المعالجة لم تتقدم في الوقت المسموح.";
+  if (kind === "work_limit") return "توقفنا عند الحد الأقصى لحجم العمل المسموح لهذه المعالجة.";
   return "انتهى جمع الشركات الموثّقة لهذه المعالجة، وسيُعلن العدد النهائي بعد حفظ الملف النهائي.";
 }
 
