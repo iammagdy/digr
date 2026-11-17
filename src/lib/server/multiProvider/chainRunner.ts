@@ -505,6 +505,73 @@ export async function askTregDirectory(rc: ChainRunCtx): Promise<void> {
   }
 }
 
+export async function askWebVariant(rc: ChainRunCtx, provider: "firecrawl" | "contextdev"): Promise<void> {
+  const cap = capabilityById(provider === "firecrawl" ? "firecrawl.search" : "contextdev.search") as CapabilityDef;
+  const i = rc.state.wq[provider] ?? 0;
+  if (i >= CHAIN_RUN.variantsPerProvider) return;
+  const maxUsd = (cap.costPerCallUsd ?? 0) * Math.ceil(CHAIN_RUN.webAskLimit / (cap.unitsPerCall ?? 10));
+  const gate = await canStartCall(rc, maxUsd);
+  if (gate !== "ok") {
+    if (gate === "budget") rc.state.bd = 1;
+    return;
+  }
+  const queueHosts: string[] = [];
+  for (const c of rc.state.q) {
+    const d = companyDomain(c.u);
+    if (d && !queueHosts.includes(d)) queueHosts.push(d);
+  }
+  const seenAndQueue: string[] = [];
+  for (const h of [...rc.state.seen, ...queueHosts]) {
+    if (h && !seenAndQueue.includes(h)) seenAndQueue.push(h);
+  }
+  const exclude = [...SOCIAL_EXCLUDE, ...seenAndQueue].slice(0, CHAIN_RUN.excludeDomainsMax);
+  const res: OperationResult<SearchHit[]> = await ADAPTERS[provider].run(
+    "discover.web_search",
+    {
+      query: discoveryQueryVariants(rc.params)[i],
+      limit: CHAIN_RUN.webAskLimit,
+      country: rc.params.countryIso ?? (rc.params.country && /^[A-Za-z]{2}$/.test(rc.params.country) ? rc.params.country : undefined),
+      excludeDomains: exclude,
+    },
+    chainCtxFor(rc, provider),
+  );
+
+  if (res.errorCode === "cap_reached") {
+    if (!rc.state.cp.includes(provider)) rc.state.cp.push(provider);
+    return;
+  }
+  if (res.errorCode === "budget_reached") {
+    rc.state.bd = 1;
+    return;
+  }
+  if (res.errorCode === "ledger_unavailable") {
+    rc.stop.ledger = true;
+    return;
+  }
+
+  rc.state.wq[provider] = i + 1;
+  rc.state.sq += 1;
+  rc.state.dc += 1;
+  rc.chunkUsd += res.costUsd;
+
+  if (!res.ok) {
+    rc.state.ff[provider] = (rc.state.ff[provider] ?? 0) + 1;
+    if (rc.state.ff[provider] >= CHAIN_RUN.downAfterFailures && !rc.state.dn.includes(provider)) {
+      rc.state.dn.push(provider);
+    }
+  } else {
+    rc.state.ff[provider] = 0;
+    const candidates = candidatesFromSearch(res.data ?? []);
+    const adm = admitBatch(rc.state, candidates);
+    if (!adm.admitted) {
+      rc.state.tf = 1;
+    }
+  }
+
+  rc.trace.call("discover", provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
+}
+
+
 
 
 
