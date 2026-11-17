@@ -159,6 +159,14 @@ export function chainFailureReasonAr(kind: "spend" | "cursor" | "lease"): string
   return "السبب: تعذّر التأكد من سلامة تنفيذ هذه المعالجة فتوقفنا احتياطًا قبل اكتمال العدد.";
 }
 
+export function staleReleaseReasonAr(target: number): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
+}
+
+export function operatorReleaseReasonAr(target: number): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
+}
+
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
   whatWeCollectAr({ count: 50, withEmail: true, withPhone: true, withDecisionMaker: true, industry: "مقاولات", country: "مصر" }),
