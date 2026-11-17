@@ -908,10 +908,10 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     const { last: chainLast } = await runWith(world1, { keys: NO_CONTEXTDEV, tregCall: tregHook([SKIPPED_ORIGIN_LEAD]), unitPrice: 1000 });
     expect(chainLast.status).toBe(200);
 
-    const stepFiles = Array.from(db.partials.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    const stepFiles = Array.from(db.stepBodies.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
     expect(stepFiles.length).toBeGreaterThan(0);
     const lastStepKey = stepFiles.sort().at(-1)!;
-    const chainStepObj = JSON.parse(db.partials.get(lastStepKey)!.toString());
+    const chainStepObj = JSON.parse(db.stepBodies.get(lastStepKey)!);
     expect(typeof chainStepObj.chainStop).toBe("string");
     expect(typeof chainStepObj.attemptId).toBe("string");
     expect(Number(chainStepObj.chainSkippedOrigins)).toBeGreaterThan(0);
@@ -941,9 +941,9 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }));
     expect(res.status).toBe(200);
 
-    const nonChainStepFiles = Array.from(db.partials.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    const nonChainStepFiles = Array.from(db.stepBodies.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
     const nonChainStepKey = nonChainStepFiles.sort().at(-1)!;
-    const nonChainStepObj = JSON.parse(db.partials.get(nonChainStepKey)!.toString());
+    const nonChainStepObj = JSON.parse(db.stepBodies.get(nonChainStepKey)!);
     expect(nonChainStepObj.chainStop).toBeUndefined();
     expect(nonChainStepObj.attemptId).toBeUndefined();
     expect(nonChainStepObj.chainSkippedOrigins).toBeUndefined();
