@@ -302,6 +302,9 @@ export function admitBatch(state: ChainCursorV2, candidates: ChainCandidate[]): 
   return { admitted: true };
 }
 
+export interface ChainRunCtx { input: ChainChunkInput; deps: ChainDeps; params: ChainParams; route: RouteDef; budget: number; state: ChainCursorV2; attemptId: string; now: () => number; deadlineMs: number; hardEndMs: number; usd: number; calls: number; limits: { maxCalls: number; maxChunks: number; maxWallMs: number }; chunkCalls: number; chunkUsd: number; ordinal: number; trace: ChunkTraceCollector; stop: { spendUnreadable: boolean; ledger: boolean; workLimit: boolean; leaseLost: boolean; clockUnreadable: boolean; cursorOverflow: boolean }; rows: Record<string, any>[]; read: number; unverified: number; skipped: number; discoveredNow: number; fail: (messageAr: string, errorCode: string) => ProviderAdapterCallOutput }
+
+
 
 const MAX_CURSOR_CHARS = 8000;
 export const MAX_STARTS_PER_STEP = 8;
