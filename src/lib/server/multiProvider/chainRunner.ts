@@ -177,6 +177,25 @@ export function discoveryQueryVariants(params: ChainParams): string[] {
   return list;
 }
 
+export function workLimitsFor(count: number, requiredFields: RequiredField[], discoverCapId: string): { maxCalls: number; maxChunks: number; maxWallMs: number } {
+  const websiteShare = YIELD.websiteShare[discoverCapId] ?? 0.5;
+  const verified = verifiedShareFor(requiredFields);
+  const dprRaw = websiteShare * verified;
+  const dpr = dprRaw > 0 ? dprRaw : 0.01;
+  const results = Math.ceil(count / dpr - 1e-9);
+  const needCand = Math.ceil(results * websiteShare - 1e-9);
+  const needsDM = requiredFields.includes("decision_maker");
+  const needsContact = requiredFields.includes("work_email") || requiredFields.includes("office_phone");
+  const plainPages = needsContact || !needsDM ? YIELD.pagesPerCompany : 1;
+  const pages = plainPages + (needsDM ? 1 : 0);
+  const lookupCalls = 1;
+  const readCalls = needCand * (lookupCalls + pages);
+  const askCalls = Math.ceil(needCand / 5);
+  const maxCalls = 3 * (readCalls + askCalls) + 3 * (2 * 8 + 40);
+  return { maxCalls, maxChunks: 21 * maxCalls + 3, maxWallMs: 6 * 60 * 60 * 1000 };
+}
+
+
 
 function nameFromTitle(title: string, host: string): string {
   // «Utopia Pharmaceutical: Home» is «Utopia Pharmaceutical»; markdown symbols never stay in a name (see companyRowHygiene).
