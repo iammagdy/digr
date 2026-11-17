@@ -386,7 +386,8 @@ describe("flag ON in a preview with the fake world: the router sees ready provid
     vi.stubEnv("PRESSURE_FAKE_PROVIDER", "");
     vi.stubEnv("VERCEL_ENV", "production");
     const emptyClient: any = { from: () => { const b: any = { select: () => b, eq: () => b, in: () => b, gte: () => b, lt: () => b, maybeSingle: async () => ({ data: null, error: null }), then: (r: any) => Promise.resolve({ data: [], error: null }).then(r) }; return b; }, rpc: async () => ({ data: null, error: null }) };
-    const state = await loadRouterState(emptyClient);
+    // no real network in a test: a TREG key would make the router read the real treg.to health and balance (planRouting.ts :60, providerStatus.ts :270/:283); the throw is caught there
+    const state = await loadRouterState(emptyClient, { fetchFn: async () => { throw new Error("no network in tests"); } });
     expect(state.providers.firecrawl.dailyCapUsd).toBe(0);
     expect(state.providers.contextdev.keyPresent).toBe(false);
   });
