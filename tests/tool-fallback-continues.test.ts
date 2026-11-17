@@ -21,7 +21,7 @@ const specOf = (alternatives: EngineSpec["alternatives"]): EngineSpec => ({ endp
 const alt: NonNullable<EngineSpec["alternatives"]>[number] = { endpoint_id: B, params: { keyword: "x" }, cursor_param: "cursor", ...MAP, window: { kind: "range_params", from: "startDate", to: "endDate", format: "date" } };
 
 interface Call { endpoint: string; params: Record<string, unknown> }
-type Out = { rows: Array<Record<string, unknown>>; next?: string | null } | "fail" | "refused";
+type Out = { rows: Array<Record<string, unknown>>; next?: string | null } | "fail" | "refused" | "capped";
 
 /** A fake gateway: one handler per endpoint, every call recorded, every page saved the way the real gateway saves it. */
 function harness(handlers: Record<string, (params: Record<string, unknown>, n: number) => Out>, options: { redesign: boolean; planned: number; alternatives?: EngineSpec["alternatives"] }) {
@@ -37,6 +37,7 @@ function harness(handlers: Record<string, (params: Record<string, unknown>, n: n
       counts[endpoint] = (counts[endpoint] ?? 0) + 1;
       const out = handlers[endpoint](params, counts[endpoint]);
       if (out === "refused") return { ok: false as const, refused: "over_budget", message: "over budget" };
+      if (out === "capped") return { ok: false as const, refused: "daily_cap", message: "daily cap" };
       if (out === "fail") return { ok: false as const, failed: true, http_status: 500, message: "boom" };
       const callId = `call_${String((seq += 1)).padStart(4, "0")}`;
       await store.putFile("msn_fb", RAW_PATH(callId), JSON.stringify(out.rows), "application/json");
@@ -107,5 +108,87 @@ describe("the reserve edge", () => {
     const h = harness({ [A]: (_p: Record<string, unknown>, n: number): Out => (n === 1 ? { rows: page("a", 1, 20), next: "c2" } : "refused"), [B]: (): Out => "refused" }, { redesign: false, planned: 50, alternatives: [alt] });
     const { outcome } = await h.run();
     expect(outcome.stops.posts).toBe("budget");
+  });
+});
+
+describe("daily_cap continuation across families (T-4)", () => {
+  const A2 = "a2.search.posts";
+  const CTX = "contextdev.search";
+  const FC = "firecrawl.search";
+  const altOf = (endpoint: string): NonNullable<EngineSpec["alternatives"]>[number] => ({ endpoint_id: endpoint, params: { keyword: "x" }, cursor_param: "cursor", ...MAP });
+
+  it("T-4(1) A capped on its first call: skips same-family a2, contextdev continues to 50", async () => {
+    const h = harness({
+      [A]: (): Out => "capped",
+      [A2]: (): Out => { throw new Error("A2 must not be called"); },
+      [CTX]: (): Out => ({ rows: page("ctx", 1, 50) }),
+    }, { redesign: true, planned: 50, alternatives: [altOf(A2), altOf(CTX)] });
+    const { outcome, items } = await h.run();
+    expect(h.calls.some((c) => c.endpoint === A2)).toBe(false);
+    expect(items.acceptedRows("posts")).toHaveLength(50);
+    expect(outcome.stops.posts).toBe("target_reached");
+  });
+
+  it("T-4(2) cap on the second call: A page 1 ok, page 2 capped -> a2 never called, contextdev continues to 50", async () => {
+    const h = harness({
+      [A]: (_p, n): Out => (n === 1 ? { rows: page("a", 1, 20), next: "c2" } : "capped"),
+      [A2]: (): Out => { throw new Error("A2 must not be called"); },
+      [CTX]: (): Out => ({ rows: page("ctx", 1, 30) }),
+    }, { redesign: true, planned: 50, alternatives: [altOf(A2), altOf(CTX)] });
+    const { outcome, items } = await h.run();
+    expect(h.calls.some((c) => c.endpoint === A2)).toBe(false);
+    expect(items.acceptedRows("posts")).toHaveLength(50);
+    expect(outcome.stops.posts).toBe("target_reached");
+  });
+
+  it("T-4(3) cap A, fail B, skip A, continue C: a2 skipped although last result was failed, firecrawl delivers", async () => {
+    const h = harness({
+      [A]: (): Out => "capped",
+      [CTX]: (): Out => "fail",
+      [A2]: (): Out => { throw new Error("A2 must not be called"); },
+      [FC]: (): Out => ({ rows: page("fc", 1, 50) }),
+    }, { redesign: true, planned: 50, alternatives: [altOf(CTX), altOf(A2), altOf(FC)] });
+    const { outcome, items } = await h.run();
+    expect(h.calls.some((c) => c.endpoint === A2)).toBe(false);
+    expect(items.acceptedRows("posts")).toHaveLength(50);
+    expect(outcome.stops.posts).toBe("target_reached");
+  });
+
+  it("T-4(4) only same-family alternatives: ends daily_cap exactly as today, alternatives never called", async () => {
+    const h = harness({
+      [A]: (): Out => "capped",
+      [A2]: (): Out => { throw new Error("A2 must not be called"); },
+      [B]: (): Out => { throw new Error("B must not be called"); },
+    }, { redesign: true, planned: 50, alternatives: [altOf(A2), altOf(B)] });
+    const { outcome } = await h.run();
+    expect(h.calls.some((c) => c.endpoint === A2 || c.endpoint === B)).toBe(false);
+    expect(outcome.stops.posts).toBe("daily_cap");
+  });
+
+  it("T-4(5) redesign false: daily_cap, no alternative called", async () => {
+    const h = harness({
+      [A]: (): Out => "capped",
+      [CTX]: (): Out => { throw new Error("CTX must not be called"); },
+    }, { redesign: false, planned: 50, alternatives: [altOf(CTX)] });
+    const { outcome } = await h.run();
+    expect(h.calls.some((c) => c.endpoint === CTX)).toBe(false);
+    expect(outcome.stops.posts).toBe("daily_cap");
+  });
+
+  it("T-4(6) the web alternative also capped: ends daily_cap, each endpoint called at most once", async () => {
+    const h = harness({
+      [A]: (): Out => "capped",
+      [CTX]: (): Out => "capped",
+      [FC]: (): Out => "capped",
+    }, { redesign: true, planned: 50, alternatives: [altOf(CTX), altOf(FC)] });
+    const { outcome } = await h.run();
+    expect(outcome.stops.posts).toBe("daily_cap");
+    const counts = h.calls.reduce<Record<string, number>>((acc, c) => {
+      acc[c.endpoint] = (acc[c.endpoint] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(counts[A] ?? 0).toBeLessThanOrEqual(1);
+    expect(counts[CTX] ?? 0).toBeLessThanOrEqual(1);
+    expect(counts[FC] ?? 0).toBeLessThanOrEqual(1);
   });
 });

@@ -159,4 +159,25 @@ describe("web search, page scrape and people search through the same gateway", (
     await empty.web.peopleSearch({ query: "nobody at all here" });
     expect(empty.rec.rows[0].committedUsd).toBe(0);
   });
+
+  it("T-6i contextdev and firecrawl save equal pages: both save { rows: hits } with string url, title, description", async () => {
+    const hits = [
+      { url: "https://acme.example/1", title: "شركة أ", description: "وصف أ" },
+      { url: "https://acme.example/2", title: "شركة ب", description: "وصف ب" },
+    ];
+    const t = setup({ fake: { search: () => hits } });
+    const rCtx: any = await t.web.webSearch({ provider: "contextdev", query: "شركات تقنية في الرياض", limit: 10 });
+    const rFc: any = await t.web.webSearch({ provider: "firecrawl", query: "شركات تقنية في الرياض", limit: 10 });
+    expect(rCtx.ok).toBe(true);
+    expect(rFc.ok).toBe(true);
+
+    const savedCtx = JSON.parse((await t.store.getFile("msn_web00001", `raw/${rCtx.call_id}.json`))!);
+    const savedFc = JSON.parse((await t.store.getFile("msn_web00001", `raw/${rFc.call_id}.json`))!);
+    expect(savedCtx.rows).toEqual(savedFc.rows);
+    for (const row of savedFc.rows) {
+      expect(typeof row.url).toBe("string");
+      expect(typeof row.title).toBe("string");
+      expect(typeof row.description).toBe("string");
+    }
+  });
 });

@@ -1,6 +1,6 @@
 import { multiProviderEnabled } from "../../multiProvider/flag";
-import { PLAN_LIMITS_AR, whatWeCollectAr } from "../../multiProvider/copy";
-import { CHAIN_CAPABILITY_SLUG } from "../../multiProvider/routes";
+import { CHAIN_CARD_LIMITS_AR, PLAN_LIMITS_AR, chainGoalLineAr, expectedTargetLineAr, whatWeCollectAr } from "../../multiProvider/copy";
+import { CHAIN_CAPABILITY_SLUG, isChainSlug } from "../../multiProvider/routes";
 import { buildAllowedRoutes } from "../../multiProvider/router";
 import type { RequiredField } from "../../multiProvider/types";
 import { extractRequestIntent } from "../../requestIntent";
@@ -149,4 +149,22 @@ export async function maybeUpgradeToChainPlan<T extends UpgradeablePlanItem>(arg
     // Never let the optional path break a plan: the original plan stands.
     return unchanged;
   }
+}
+
+
+export function chainQuoteCopyFor(args: { item: { capabilitySlug?: string; params?: Record<string, any>; targetVolumeMax?: number }; askedCount: number }): { summaryAr: string; methodologyNotes: string } | null {
+  if (!isChainSlug(args.item.capabilitySlug)) return null;
+  const fitted = Math.max(1, Math.floor(Number(args.item.targetVolumeMax) || 1));
+  const asked = Math.max(fitted, Math.floor(Number(args.askedCount) || fitted));
+  const fields = normalizeRequiredFields(args.item.params?.requiredFields);
+  const summaryAr = chainGoalLineAr({
+    count: fitted,
+    withEmail: fields.includes("work_email"),
+    withPhone: fields.includes("office_phone"),
+    withDecisionMaker: fields.includes("decision_maker"),
+    industry: args.item.params?.industryAr,
+    country: args.item.params?.countryAr,
+  });
+  const methodologyNotes = [expectedTargetLineAr({ asked, fitted }), ...CHAIN_CARD_LIMITS_AR].join(" ");
+  return { summaryAr, methodologyNotes };
 }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import { createMemoryRecorder } from "./helpers/multiProviderFakes";
-import { routeCodeOf } from "../src/lib/multiProvider/routes";
-import { ALL_CUSTOMER_STRINGS } from "../src/lib/multiProvider/copy";
+import { HARD_LIMITS, routeCodeOf } from "../src/lib/multiProvider/routes";
+import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
 
 interface Harness { deps: ChainDeps; events: string[]; fetch: ReturnType<typeof createFakeFetch>; rec: ReturnType<typeof createMemoryRecorder>; tregCalls: number }
@@ -45,7 +46,7 @@ async function runAll(h: Harness, params: Record<string, any>, maxChunks = 12) {
   const rows: Record<string, any>[] = [];
   let cursor: string | null = null;
   let chunks = 0;
-  let last: ProviderAdapterCallOutput | null = null;
+  let last: Awaited<ReturnType<typeof runChainChunk>> | null = null;
   while (chunks < maxChunks) {
     last = await runChainChunk(baseInput(params, { cursor, step: chunks, remainingNeeded: Math.max(0, (params.count ?? 5) - rows.length), deliveredSoFar: rows.length }), h.deps);
     rows.push(...last.rows);
@@ -162,7 +163,7 @@ describe("chain: discover -> read public contact pages -> verify", () => {
     expect(rows).toEqual([]);
     expect(last.ok).toBe(true);
     expect(last.nextCursor).toBeNull();
-    expect(h.events.at(-1)).toContain("ولن يُخصم أي رصيد");
+    expect(h.events.at(-1)).toBe(chainStopProgressLineAr("no_more_work"));
   });
 
   it("nothing discoverable at all (every discovery provider empty or failing) ends the same way: zero delivered, no cursor", async () => {
@@ -241,5 +242,172 @@ describe("chain: discover -> read public contact pages -> verify", () => {
     expect(out.ok).toBe(false);
     expect(out.errorMessageAr).toMatch(/[؀-ۿ]/);
     expect(h.fetch.log).toHaveLength(0);
+  });
+});
+
+describe("chain: a provider daily cap hit in the middle of a run (today's runner)", () => {
+  it("T-3(1) enrichment mid-run cap: a provider daily cap hit in the middle of a run", async () => {
+    const h = harness(defaultFakeWorld(12));
+    let scrapeCalls = 0;
+    const origRecorder = h.deps.recorder;
+    h.deps.recorder = {
+      ...origRecorder,
+      async reserve(arg) {
+        if (arg.capabilityId.startsWith("firecrawl.scrape")) {
+          scrapeCalls += 1;
+          if (scrapeCalls >= 2) {
+            return { allowed: false, costId: null, reason: "cap" };
+          }
+        }
+        return origRecorder.reserve(arg);
+      },
+    };
+    const { rows } = await runAll(h, params({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), count: 3, budgetUsd: 1, requiredFields: ["work_email"] }));
+    expect(rows.length).toBe(3);
+    const fcRows = h.rec.rows.filter((r) => r.capabilityId === "firecrawl.scrape");
+    expect(fcRows.length).toBe(1);
+    const cxRows = h.rec.rows.filter((r) => r.capabilityId === "contextdev.scrape" && r.status === "success");
+    expect(cxRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("T-3(2) discovery mid-run cap: a provider daily cap hit in the middle of a run", async () => {
+    const world = defaultFakeWorld(20);
+    const h = harness(world);
+    let tregCalls = 0;
+    h.deps.tregFn = async (input) => {
+      tregCalls += 1;
+      const rows = world.slice(0, 10).map((c) => ({
+        company_name: c.name,
+        website: `https://${c.domain}`,
+        industry: "مقاولات",
+        country: "مصر",
+      }));
+      return {
+        ok: true,
+        httpStatus: 200,
+        rows,
+        nextCursor: tregCalls === 1 ? "p2" : null,
+        costUsd: 0.00576,
+        costMicro: 5760,
+        tregCallId: "t",
+      };
+    };
+    let tregReserveAttempts = 0;
+    const origRecorder = h.deps.recorder;
+    h.deps.recorder = {
+      ...origRecorder,
+      async reserve(arg) {
+        if (arg.provider === "treg") {
+          tregReserveAttempts += 1;
+          if (tregReserveAttempts >= 2) {
+            return { allowed: false, costId: null, reason: "cap" };
+          }
+        }
+        return origRecorder.reserve(arg);
+      },
+    };
+    const { rows, last } = await runAll(h, params({ routeCode: routeCodeOf("chain:treg>firecrawl"), count: 12, budgetUsd: 1, requiredFields: ["work_email"] }));
+    expect(rows.length).toBe(12);
+    expect(tregCalls).toBe(1);
+    expect(tregReserveAttempts).toBe(2);
+    const webSearchRow = h.rec.rows.find((r) => (r.capabilityId === "contextdev.search" || r.capabilityId === "firecrawl.search") && r.status === "success");
+    expect(webSearchRow).toBeDefined();
+    expect(h.events.some((e) => e.includes("فجرّبنا مصدرًا آخر"))).toBe(true);
+    expect(last.nextCursor).toBeNull();
+  });
+
+  it("T-3(3) all web providers capped: all web providers capped", async () => {
+    const h = harness(defaultFakeWorld(5), {}, { caps: { treg: 1, firecrawl: 0, contextdev: 0 } });
+    const origRecorder = h.deps.recorder;
+    h.deps.recorder = {
+      ...origRecorder,
+      async reserve(arg) {
+        if (arg.provider === "contextdev" || arg.provider === "firecrawl") {
+          return { allowed: false, costId: null, reason: "cap" };
+        }
+        return origRecorder.reserve(arg);
+      },
+    };
+    const { rows, last } = await runAll(h, params({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), count: 3 }));
+    expect(last.ok).toBe(true);
+    expect(rows.length).toBe(0);
+    expect(last.nextCursor).toBeNull();
+  });
+});
+
+describe("T-7 money and shape guards (source text)", () => {
+  it("T-7 source guards", () => {
+    const chainRunnerSrc = readFileSync("src/lib/server/multiProvider/chainRunner.ts", "utf8");
+    const countOccurrences = (str: string, substr: string) => str.split(substr).length - 1;
+    expect(countOccurrences(chainRunnerSrc, "reserveForUnits(params.count, Number(input.unitPricePoints)) / 5500")).toBe(1);
+    expect(countOccurrences(chainRunnerSrc, "rows.slice(0, Math.max(0, input.remainingNeeded))")).toBe(1);
+    expect(countOccurrences(chainRunnerSrc, "rowPassesGate(row, params.requiredFields)")).toBe(1);
+    expect(chainRunnerSrc.includes("chainFinishedLineAr")).toBe(true);
+    expect(chainRunnerSrc.includes("budgetStopLineAr")).toBe(true);
+
+    const workerRouteSrc = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
+    expect(countOccurrences(workerRouteSrc, "release_job_atomic")).toBe(1);
+    expect(workerRouteSrc.includes("p_job_id")).toBe(true);
+    expect(workerRouteSrc.includes("p_error_message")).toBe(true);
+    expect(workerRouteSrc.includes("p_force")).toBe(true);
+
+    expect(HARD_LIMITS).toEqual({ maxDiscoveryResults: 100, maxCandidates: 200, maxEnrichCalls: 420, maxDirectoryPages: 12 });
+  });
+});
+
+describe("copy API regression", () => {
+  it("T-2(b) runner terminal lines are neutral", async () => {
+    const h1 = harness(defaultFakeWorld(20));
+    await runAll(h1, params({ budgetUsd: 0.02, count: 8 }));
+    expect(h1.events.at(-1)).toBe(chainStopProgressLineAr("budget"));
+    expect(h1.events.at(-1)).toContain("توقفنا عند الحد المسموح");
+    expect(h1.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+
+    const h2 = harness(defaultFakeWorld(10));
+    await runAll(h2, params({ count: 3 }));
+    expect(h2.events.at(-1)).toBe(chainStopProgressLineAr("target_reached"));
+    expect(h2.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+
+    const h3 = harness(defaultFakeWorld(2));
+    await runAll(h3, params({ count: 8 }));
+    expect(h3.events.at(-1)).toBe(chainStopProgressLineAr("no_more_work"));
+    expect(h3.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+  });
+
+  it("T-2(c) additive chainStop field is present only on terminal chunks", async () => {
+    const h1 = harness(defaultFakeWorld(20));
+    const { last: last1 } = await runAll(h1, params({ budgetUsd: 0.02, count: 8 }));
+    expect(last1.chainStop).toBe("budget");
+    expect(last1.ok).toBe(true);
+    expect(last1.nextCursor).toBeNull();
+
+    const h2 = harness(defaultFakeWorld(10));
+    const { last: last2 } = await runAll(h2, params({ count: 3 }));
+    expect(last2.chainStop).toBe("target_reached");
+    expect(last2.ok).toBe(true);
+    expect(last2.nextCursor).toBeNull();
+
+    const h3 = harness(defaultFakeWorld(2));
+    const { last: last3 } = await runAll(h3, params({ count: 8 }));
+    expect(last3.chainStop).toBe("no_more_work");
+    expect(last3.ok).toBe(true);
+    expect(last3.nextCursor).toBeNull();
+
+    const h4 = harness(defaultFakeWorld(30));
+    const nonTerminal = await runChainChunk(baseInput(params({ count: 30 }), { step: 0 }), h4.deps);
+    expect("chainStop" in nonTerminal).toBe(false);
+    expect(nonTerminal.ok).toBe(true);
+    expect(nonTerminal.nextCursor).not.toBeNull();
+  });
+
+  it("T-2a copy API regression", () => {
+    expect(chainFinishedLineAr({ delivered: 3 })).toBe("اكتملت المعالجة: الموثّق منها ٣ سجلات.");
+    expect(chainFinishedLineAr({ delivered: 0 })).toBe("لم نجد سجلات موثّقة تطابق طلبك، ولن يُخصم أي رصيد.");
+    expect(budgetStopLineAr(2)).toBe("توقفنا عند الحد المسموح لهذه المعالجة، وسُلّم من الموثّق سجلين ويُحتسب هذا العدد فقط.");
+    expect(budgetStopLineAr(0)).toBe("توقفنا عند الحد المسموح لهذه المعالجة قبل العثور على سجلات موثّقة، ولن يُخصم أي رصيد.");
+    const a: (x: { delivered: number }) => string = chainFinishedLineAr;
+    const b: (d: number) => string = budgetStopLineAr;
+    expect(typeof a).toBe("function");
+    expect(typeof b).toBe("function");
   });
 });

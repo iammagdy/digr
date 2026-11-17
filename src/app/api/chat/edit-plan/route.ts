@@ -18,6 +18,7 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { editModelPlanQuote } from "@/lib/modelPlanner/editPlan";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
+import { chainQuoteCopyFor } from "@/lib/server/multiProvider/planUpgrade";
 
 export const dynamic = "force-dynamic";
 
@@ -224,6 +225,7 @@ export async function POST(req: NextRequest) {
       Number.isInteger(fullQuotedPoints) && fullQuotedPoints > 0 && fullQuotedPoints <= 10_000_000
       ? { exploration: { fullVolume, fullQuotedPoints } }
       : {};
+    const apiChain = Array.isArray((newQuote as any)?.items) && (newQuote as any).items.length === 1 ? chainQuoteCopyFor({ item: (newQuote as any).items[0], askedCount: Number((newQuote as any).requestedVolumeMax) || Number((newQuote as any).targetVolumeMax) || 1 }) : null; if (apiChain) { (newQuote as any).summaryAr = apiChain.summaryAr; (newQuote as any).methodologyNotes = apiChain.methodologyNotes; }
     const editedQuote: any = markEditedQuoteCurrent(newQuote);
     // The «فهمت أنك تريد …» sentence belongs to the plan as first made: an edited plan never carries it (its count, title and price may have changed).
     delete editedQuote.understoodAr;

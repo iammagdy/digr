@@ -1,4 +1,4 @@
-import { maybeUpgradeToChainPlan } from "../../lib/server/multiProvider/planUpgrade";
+import { chainQuoteCopyFor, maybeUpgradeToChainPlan } from "../../lib/server/multiProvider/planUpgrade";
 import { pointsAr } from "../../lib/pointsFormat";
 import { effectiveJobPointsCap } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
@@ -4080,6 +4080,7 @@ export class ChatHandler {
             managedQuote.summaryAr = fittedSummary;
             planOutput.summaryAr = fittedSummary;
           }
+          if (chainUpgrade.upgraded && managedQuote.items.length === 1) { const chainCopy = chainQuoteCopyFor({ item: managedQuote.items[0] as any, askedCount: managedQuote.requestedVolumeMax || plannedSocialVolume }); if (chainCopy) { managedQuote.summaryAr = chainCopy.summaryAr; planOutput.summaryAr = chainCopy.summaryAr; planOutput.methodologyNotes = chainCopy.methodologyNotes; } }
 
           planQuoteData = {
             quoteId: managedQuote.quoteId,
@@ -4397,6 +4398,7 @@ export class ChatHandler {
               quoteRpcMs += qEditDelta;
               quoteMs += qEditDelta;
               tQuoteMs = quoteMs;
+              const editedChain = managedQuote.items.length === 1 ? chainQuoteCopyFor({ item: managedQuote.items[0] as any, askedCount: managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax }) : null; if (editedChain) managedQuote.summaryAr = editedChain.summaryAr;
 
               planQuoteData = {
                 quoteId: managedQuote.quoteId,
@@ -4417,6 +4419,7 @@ export class ChatHandler {
                 outputFormats: managedQuote.outputFormats,
                 expiresAt: managedQuote.expiresAt,
               };
+              if (editedChain) planQuoteData.methodologyNotes = editedChain.methodologyNotes;
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${countPlainAr(managedQuote.targetVolumeMax, "records")}\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.pointsCapConstrained) {

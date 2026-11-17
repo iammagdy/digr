@@ -36,6 +36,7 @@ import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidenc
 import { NextRequest, NextResponse, after } from "next/server";
 import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
 import { isChainSlug } from "../../../../lib/multiProvider/routes";
+import { chainShortfallReasonAr } from "../../../../lib/multiProvider/copy";
 import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
@@ -2548,6 +2549,8 @@ export async function POST(req: NextRequest) {
             ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
             : providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
+            : isChainJob
+            ? chainShortfallReasonAr({ stop: ((rawAdapterResult as any).chainStop ?? null), callCap: callCapReason, excluded })
             : callCapReason === "source_repeats"
             ? CALL_CAP_NOTE_AR.source_repeats
             : dateSentence
