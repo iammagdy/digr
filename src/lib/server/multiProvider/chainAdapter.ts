@@ -57,6 +57,11 @@ export function createChainAdapter(env: ChainAdapterEnv): ProviderAdapterFn {
       recorder: createCallRecorder(env.adminClient, env.fakeMode ? { capFor: async (provider) => { const set = await resolveProviderDailyCapUsd(env.adminClient, provider).catch(() => 0); return set > 0 ? set : PREVIEW_WORLD_DAILY_CAP_USD; } } : {}),
       tregFn: env.tregFn,
       spentUsdSoFar: () => readJobProviderSpendUsd(env.adminClient, input.jobId),
+      jobSpend: () => readJobProviderSpend(env.adminClient, input.jobId),
+      jobStartedAtMs: () => readJobCreatedAtMs(env.adminClient, input.jobId),
+      tregCall: hooks?.tregCall ?? executeTregCall,
+      newAttemptId: () => randomUUID(),
+      leaseHeld: async () => { try { const lease = await readJobLease(env.adminClient, input.jobId); const until = Date.parse(String(lease.leaseUntil ?? "")); return lease.step === input.step && lease.status === "running" && sameInstant(lease.leaseUntil, (input as ChainChunkInput).claimLeaseUntil) && Number.isFinite(until) && until > Date.now() + 3000; } catch { return false; } },
       step: input.step,
       trace: async (chunk) => { await appendChunkTrace(env.adminClient, { jobId: input.jobId, quoteId: input.quoteId ?? null, chunk }); },
       emit: async (message, units) => {
