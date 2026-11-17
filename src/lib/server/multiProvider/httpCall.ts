@@ -54,7 +54,7 @@ export async function runRecordedCall<T>(args: {
 
   const reservation = await ctx.recorder.reserve({ provider: capability.provider, capabilityId: capability.id, estimatedUsd, jobId: ctx.jobId });
   if (!reservation.allowed) {
-    return { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs: 0, httpStatus: null, errorCode: "cap_reached", retryable: true };
+    return { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs: 0, httpStatus: null, errorCode: ctx.chainStrict ? (reservation.reason === "budget" ? "budget_reached" : reservation.reason === "error" ? "ledger_unavailable" : "cap_reached") : "cap_reached", retryable: true };
   }
 
   const started = now();
