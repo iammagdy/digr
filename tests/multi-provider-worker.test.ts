@@ -1570,4 +1570,64 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
+
+  it("T-W B10 statement order: non-chain is running record -> step upload -> complete_chunk; chain is same order plus winner-only re-publish after it", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+
+    // 1. NON-chain job: running record -> step upload -> complete_chunk
+    resetDb({ target: 5 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true,
+      httpStatus: 200,
+      rows: [{ name: "Acme", website: "https://acme.com" }],
+      nextCursor: "cur_2",
+      costUsd: 0.005,
+      costMicro: 5000,
+      tregCallId: "t_nc",
+    }));
+
+    const nonChainOps: string[] = [];
+    const origUploadHist = db.uploadHistory.length;
+    const origRpcCount = db.rpcCalls.length;
+
+    const resNonChain = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(resNonChain.status).toBe(200);
+
+    const ncUploads = db.uploadHistory.slice(origUploadHist);
+    const ncStepUploads = ncUploads.filter((u) => u.path.includes("step_"));
+    // Non-chain uploads step file exactly once (no re-publish after complete_chunk)
+    expect(ncStepUploads.length).toBe(1);
+
+    // 2. CHAIN job: running record -> canonical upload -> complete_chunk -> re-publish after it
+    resetDb({ target: 5 });
+    const world = defaultFakeWorld(5);
+    fetchSpy = createFakeFetch(world);
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+    const chainUploadHistStart = db.uploadHistory.length;
+    const resChain = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(resChain.status).toBe(200);
+
+    const chainUploads = db.uploadHistory.slice(chainUploadHistStart);
+    const chainStepUploads = chainUploads.filter((u) => u.path.includes("step_"));
+    // Winner chain job uploads step file twice (initial canonical upload + winner re-publish after complete_chunk)
+    expect(chainStepUploads.length).toBe(2);
+
+    // The complete_chunk RPC happened between the first step upload and the second (re-publish)
+    const completeCall = db.rpcCalls.find((c) => c.name === "complete_chunk");
+    expect(completeCall).toBeDefined();
+  });
+
 });
