@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { ALL_CUSTOMER_STRINGS } from "../src/lib/multiProvider/copy";
+import { ALL_CUSTOMER_STRINGS, chainFailureReasonAr, operatorReleaseReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { normalizeReleaseWording, stripRetryPrefix } from "../src/lib/releaseWording";
 import { PROVIDER_BUSY_AR, PROVIDER_GENERIC_FAILURE_AR, PROVIDER_INCOMPATIBLE_ANSWER_AR, PROVIDER_INPUT_REJECTED_AR, PROVIDER_ROUTE_COST_EXCEEDED_AR, PROVIDER_TARGET_NOT_FOUND_AR, PROVIDER_TIMEOUT_AR, PROVIDER_UNAVAILABLE_AR, isDeterministicFailureAr } from "../src/lib/providerFailureText";
@@ -34,9 +34,11 @@ describe("T1 releaseText (DT-20261117-06 M1)", () => {
     expect(trustedCauseAr(new CustomerReasonError("collection_unverified"))).toBe(REASON_AR.collection_unverified);
   });
 
-  it("T1 adapterStopError: only a reviewed constant of copy.ts is kept", () => {
-    const reviewed = ALL_CUSTOMER_STRINGS().find((s) => typeof s === "string" && s.length > 0)!;
-    expect(adapterStopError(reviewed).textAr).toBe(reviewed);
+  it("T1 adapterStopError: only the three release-free chain failure reasons of copy.ts are kept", () => {
+    for (const kind of ["spend", "cursor", "lease"] as const) {
+      const text = chainFailureReasonAr(kind);
+      expect(adapterStopError(text).textAr).toBe(text);
+    }
     for (const other of ["Tomba rate limit", "جملة عربية ليست ضمن النصوص المراجعة.", "", undefined, 7, `${PROVIDER_INPUT_REJECTED_AR} تومبا`]) expect(adapterStopError(other).textAr).toBe(REASON_AR.provider_unavailable);
   });
 
