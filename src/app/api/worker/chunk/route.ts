@@ -2008,6 +2008,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Chain jobs only, winner only: re-publish the same step object to the canonical file (idempotent repair if a stale invocation overwrote it); one retry; a failure is tolerated.
+    if (isChainJob && !compData.already_completed) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const again: any = await adminClient.storage.from("partials").upload(`${jobId}/step_${currentStep}.json`, Buffer.from(JSON.stringify(partialData), "utf-8"), { contentType: "application/json", upsert: true });
+          if (!again?.error) break;
+        } catch { /* tolerated */ }
+      }
+    }
+
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
