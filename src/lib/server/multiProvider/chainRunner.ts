@@ -252,6 +252,57 @@ export function decodeCursorAny(raw: string | null | undefined, aid: string): Ch
   return emptyCursorV2(aid);
 }
 
+export function admitBatch(state: ChainCursorV2, candidates: ChainCandidate[]): { admitted: boolean } {
+  if (candidates.length > CHAIN_RUN.queueBatchMax) {
+    state.tf = 1;
+    return { admitted: false };
+  }
+  const queueDomains = new Set(state.q.map((item) => companyDomain(item.u)).filter((d): d is string => d !== null));
+  const seenSet = new Set(state.seen);
+  const localDomains = new Set<string>();
+  const localList: ChainCandidateV2[] = [];
+  const newSeen: string[] = [];
+
+  for (const c of candidates) {
+    const domain = companyDomain(c.u);
+    if (domain === null || seenSet.has(domain) || queueDomains.has(domain) || localDomains.has(domain)) {
+      continue;
+    }
+    if (!ORIGIN_CHARSET_RE.test(c.u) || !HOST_RE.test(domain)) {
+      state.uo += 1;
+      continue;
+    }
+    const cleaned = stripControl(cleanCompanyName(c.n)).slice(0, 120);
+    if (!cleaned.trim()) {
+      state.uo += 1;
+      continue;
+    }
+    localList.push({ n: cleaned, u: c.u });
+    newSeen.unshift(domain);
+    localDomains.add(domain);
+  }
+
+  const wouldBe: ChainCursorV2 = {
+    ...state,
+    q: [...state.q, ...localList],
+    seen: [...newSeen, ...state.seen],
+    tp: state.tp + localList.length,
+  };
+
+  const enc = encodeCursorV2(wouldBe);
+  if (!enc.fits || utf8Bytes(wouldBe.q) > CHAIN_RUN.queueMaxBytes) {
+    state.tf = 1;
+    return { admitted: false };
+  }
+
+  state.q = enc.state.q;
+  state.seen = enc.state.seen;
+  state.tp = wouldBe.tp;
+  state.tr = enc.state.tr;
+  return { admitted: true };
+}
+
+
 const MAX_CURSOR_CHARS = 8000;
 export const MAX_STARTS_PER_STEP = 8;
 export const CHAIN_RUN = { chunkCalls: 24, variantsPerProvider: 8, queueBatchMax: 20, stallChunks: 3, downAfterFailures: 3, wasteBreakerMisses: 8, leaseMarginMs: 3000, noCallBeforeEndMs: 5000, noCompanyBeforeEndMs: 15000, hardEndAfterDeadlineMs: 5000, tregTimeoutCapMs: 10000, tregMinTimeoutMs: 2000, tregKeyPoolHops: 3, wallClockMs: 6 * 60 * 60 * 1000, cursorStateMaxBytes: 30000, cursorV2MaxChars: 40000, queueMaxBytes: 12000, tregCursorMaxEscapedBytes: 512, webAskLimit: 20, webQueryMaxChars: 300, excludeDomainsMax: 100, lookupFailuresOff: 3 } as const;
