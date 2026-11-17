@@ -1454,20 +1454,55 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
   });
 
 
-  it("T-W B5-R7 re-publish fails: winner's re-publish fails => pre-commit canonical file is used", async () => {
-    resetDb({ target: 2 });
-    const step = 0;
-    const stepKey = `${JOB}/step_${step}.json`;
-
-    // Pre-commit file uploaded to storage
-    const preCommitRows = [{ name: "PreCommitCo", website: "https://pre.com" }];
-    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: preCommitRows, attemptId: "att_pre" })));
-
-    // Re-publish attempt fails (tolerated in catch block)
-    // The pre-commit file remains in storage and is used
-    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
-    expect(stored.rows).toEqual(preCommitRows);
-    expect(stored.attemptId).toBe("att_pre");
+  it("T-W B5-R7 re-publish fails: the winner's re-publish of the step file fails twice (tolerated), the job still settles from the pre-commit canonical file", async () => {
+    prepareJob("chain", 2);
+    arrangeInvocation("chain", "P", 2);
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    let stepUploads = 0;
+    let failedUploads = 0;
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string, body: any, o: any) => {
+              if (path === `${JOB}/step_0.json`) {
+                stepUploads += 1;
+                // the first upload is the pre-commit file; every later one is the winner's re-publish and its one retry
+                if (stepUploads > 1) { failedUploads += 1; return { data: null, error: { message: "storage_down" } }; }
+              }
+              return b.upload(path, body, o);
+            },
+          };
+        },
+      };
+      return client;
+    });
+    try {
+      const res = await postChunk();
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.done).toBe(true);
+      expect(body.deliveredUnits).toBe(2);
+      expect(body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+      // the pre-commit upload, the re-publish and its single retry; both re-publishes failed and were tolerated
+      expect(stepUploads).toBe(3);
+      expect(failedUploads).toBe(2);
+      expect(rpcCount("settle_job_atomic")).toBe(1);
+      expect(rpcCount("release_job_atomic")).toBe(0);
+      // the canonical file is the pre-commit one and the delivered rows are its rows
+      const canonical = JSON.parse(db.stepBodies.get(`${JOB}/step_0.json`)!);
+      expect(canonical.rows.map((r: any) => r.company_name)).toEqual(["P شركة اختبار 1", "P شركة اختبار 2"]);
+      const delivered = await resultText();
+      expect(delivered).toContain("P شركة اختبار 1");
+      expect(delivered).toContain("P شركة اختبار 2");
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
   });
 
   it("T-W B5-R8 assembly or settle throws: triggers existing release messages", async () => {
