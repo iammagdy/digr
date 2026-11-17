@@ -186,3 +186,62 @@ export async function runTregCall(args: {
     durationMs,
   };
 }
+
+export async function runTregDirectoryPageDirect(args: {
+  tregCall?: (options: TregCallOptions) => Promise<TregCallResult>;
+  ctx: Pick<AdapterContext, "recorder" | "jobId" | "now">;
+  userId: string;
+  rawParams: Record<string, any>;
+  cursor: string | null;
+  keywordsOnly?: boolean;
+  idempotencyKey: string;
+  timeoutMs: number;
+}): Promise<TregCallOutcome & { rows: Record<string, any>[]; nextCursor: string | null }> {
+  const options: TregCallOptions = {
+    endpointId: TREG_DIRECTORY.endpointId,
+    method: "POST",
+    params: normalizeIcypeasCompanyParams(args.rawParams, TREG_DIRECTORY.pageSize, args.cursor, { keywordsOnly: args.keywordsOnly === true }),
+    userId: args.userId,
+    jobId: args.ctx.jobId ?? "",
+    idempotencyKey: args.idempotencyKey,
+    timeoutMs: args.timeoutMs,
+    callEstimateUsd: TREG_DIRECTORY.reservedUsd,
+    routeMaxCostUsd: TREG_DIRECTORY.headerCeilingUsd,
+  };
+  const parseSafe = (b: any) => {
+    try {
+      return parseIcypeasCompaniesResponse(b);
+    } catch {
+      return null;
+    }
+  };
+  const outcome = await runTregCall({
+    tregCall: args.tregCall,
+    ctx: args.ctx,
+    capabilityId: "treg.companies.search",
+    reservedUsd: TREG_DIRECTORY.reservedUsd,
+    options,
+    answerKindOf: (b) => {
+      const p = parseSafe(b);
+      return Array.isArray(p?.rows) ? (p.rows.length === 0 ? "empty" : "non_empty") : "unparsable";
+    },
+    unitsOf: (b) => {
+      const p = parseSafe(b);
+      return Array.isArray(p?.rows) ? p.rows.length : 0;
+    },
+  });
+  if (outcome.ok) {
+    const p = parseSafe(outcome.body);
+    return {
+      ...outcome,
+      rows: Array.isArray(p?.rows) ? p.rows : [],
+      nextCursor: typeof p?.nextCursor === "string" ? p.nextCursor : null,
+    };
+  }
+  return {
+    ...outcome,
+    rows: [],
+    nextCursor: null,
+  };
+}
+
