@@ -58,4 +58,50 @@ describe("T-E readTombaMailbox (synthetic fixtures)", () => {
     const invalidStatus = makeSyntheticFixture("example.com", { verification: { status: "invalid" } });
     expect(readTombaMailbox(invalidStatus, "example.com")).toBeNull();
   });
+it("T-E address rules: personal address, subdomains, other domain, personal domain, placeholder, masked, domain mismatch, and org flags result in MISS", () => {
+    const domain = "example.com";
+
+    // 1. Person's address (not generic type, not role mailbox)
+    const person = makeSyntheticFixture(domain, { email: `john.doe@${domain}`, type: "personal" });
+    expect(readTombaMailbox(person, domain)).toBeNull();
+
+    // 2. Subdomain
+    const subdomain = makeSyntheticFixture(domain, { email: `info@sub.${domain}` });
+    expect(readTombaMailbox(subdomain, domain)).toBeNull();
+
+    // 3. Another domain
+    const anotherDomain = makeSyntheticFixture(domain, { email: "info@anotherdomain.com" });
+    expect(readTombaMailbox(anotherDomain, domain)).toBeNull();
+
+    // 4. Personal domain
+    const personalDomain = makeSyntheticFixture("gmail.com", { email: "info@gmail.com" });
+    expect(readTombaMailbox(personalDomain, "gmail.com")).toBeNull();
+
+    // 5. Placeholder address
+    const placeholder = makeSyntheticFixture(domain, { email: `email@${domain}` });
+    expect(readTombaMailbox(placeholder, domain)).toBeNull();
+
+    // 6. Masked * address
+    const masked = makeSyntheticFixture(domain, { email: `in*o@${domain}` });
+    expect(readTombaMailbox(masked, domain)).toBeNull();
+
+    // 7. meta.params.domain different
+    const diffDomainFixture = makeSyntheticFixture("otherdomain.com");
+    expect(readTombaMailbox(diffDomainFixture, domain)).toBeNull();
+
+    // 8. accept_all true => MISS
+    const acceptAll = makeSyntheticFixture(domain);
+    acceptAll.data.organization.accept_all = true;
+    expect(readTombaMailbox(acceptAll, domain)).toBeNull();
+
+    // 9. webmail true => MISS
+    const webmail = makeSyntheticFixture(domain);
+    webmail.data.organization.webmail = true;
+    expect(readTombaMailbox(webmail, domain)).toBeNull();
+
+    // 10. disposable true => MISS
+    const disposable = makeSyntheticFixture(domain);
+    disposable.data.organization.disposable = true;
+    expect(readTombaMailbox(disposable, domain)).toBeNull();
+  });
 });
