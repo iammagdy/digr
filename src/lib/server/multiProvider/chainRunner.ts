@@ -383,6 +383,22 @@ export async function canStartCall(rc: ChainRunCtx, maxUsd: number): Promise<"ok
   return "ok";
 }
 
+export function chainCtxFor(rc: ChainRunCtx, provider: DataProviderId): AdapterContext {
+  const timeout = Math.max(1000, Math.min(PROVIDER_FACTS[provider].callTimeoutMs, rc.hardEndMs - rc.now()));
+  return {
+    apiKey: rc.deps.providerKeys[provider] ?? "",
+    fetchFn: rc.deps.fetchFn,
+    recorder: verifyingRecorder(rc),
+    jobId: rc.input.jobId,
+    now: rc.now,
+    chainStrict: true,
+    timeoutMs: timeout,
+    timeoutCapMs: timeout,
+  };
+}
+
+
+
 
 
 
