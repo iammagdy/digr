@@ -102,3 +102,43 @@ describe("T-WD the watchdog SWEEP path", () => {
     expectOneRelease(job as { id: string }, expected as string);
   });
 });
+
+const OPER_45 = "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
+
+describe("T-WD the TARGETED ?jobId= path chooses its own reason (plan v9)", () => {
+  it.each([
+    ["targeted fresh: running, step 1, lease not expired (no staleness filter on this path)", row({ id: "job_fresh_1", status: "running", step: 1, delivered_units: 10, target_volume_max: 45, updated_at: new Date(Date.now() - 60 * 1000).toISOString(), lease_until: new Date(Date.now() + 50 * 1000).toISOString() }), OPER_45],
+    ["targeted R2 (the path decides the reason, not the row)", row({ id: "job_wd_t2", status: "running", step: 3, delivered_units: 45, target_volume_max: 45 }), OPER_45],
+    ["targeted never claimed keeps today's literal", row({ id: "job_wd_t3", status: "queued", step: 0, delivered_units: 0, target_volume_max: 30 }), TODAY],
+    ["targeted invalid N keeps today's literal", row({ id: "job_wd_t4", status: "running", step: 3, target_volume_max: "abc" }), TODAY],
+  ])("T-WD %s", async (_name, job, expected) => {
+    state.specific = job;
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    const res = await GET(targetedRequest((job as { id: string }).id));
+    expect(res.status).toBe(200);
+    expectOneRelease(job as { id: string }, expected as string);
+    expect(state.rpc[0]!.args.p_error_message).not.toContain("توقفت المعالجة عن التقدم");
+    const wdQuery = state.jobsQueries.find((q) => q.includes(`select:${WD_SELECT}`));
+    expect(wdQuery).toBeDefined();
+    expect(wdQuery).toContain(`eq:id:${(job as { id: string }).id}`);
+    expect(wdQuery).toContain(`in:status:${JSON.stringify(["queued", "running"])}`);
+    expect(wdQuery).not.toContain("or");
+  });
+
+  it("T-WD both selects carry target_volume_max and delivered_units (list path and ?jobId= path)", async () => {
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    state.stale = [row({ status: "running", step: 3, delivered_units: 45, target_volume_max: 45 })];
+    await GET(sweepRequest());
+    const listQuery = state.jobsQueries.find((q) => q.includes(`select:${WD_SELECT}`));
+    expect(listQuery).toBeDefined();
+    expect(listQuery).toContain("or");
+    state.jobsQueries = []; state.rpc = [];
+    state.specific = row({ id: "job_wd_sel", status: "running", step: 3, delivered_units: 45, target_volume_max: 45 });
+    await GET(targetedRequest("job_wd_sel"));
+    const oneQuery = state.jobsQueries.find((q) => q.includes(`select:${WD_SELECT}`));
+    expect(oneQuery).toBeDefined();
+    expect(state.rpc[0]!.args.p_error_message).toBe(OPER_45);
+    expect(state.rpc[0]!.args.p_error_message).not.toBe(STALL_45);
+  });
+});
+
