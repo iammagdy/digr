@@ -1100,88 +1100,63 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
   });
 
 
-  it("T-W B4 paused old worker: interleavings of upload and complete_chunk assert committer units, last writer rows, charges, zero-debit release on mismatch, and ledger holds both", async () => {
-    const step = 0;
-    const stepKey = `${JOB}/step_${step}.json`;
+  it("T-W B4 paused old worker: the REAL route twice with controlled interleavings; assert committer units, last-writer rows, charges, exactly one settlement, a zero-debit release on a count mismatch, and a ledger that holds both", async () => {
+    const lastWriter = (r: { canonicalText: string }) => r.canonicalText;
 
-    const interleavings = [
-      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: true },
-      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: false, equalCounts: true },
-      { committerFirst: "O", oUploadBeforeWUpload: false, wUploadBeforeOCommit: true, equalCounts: true },
-      { committerFirst: "O", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: true },
-      { committerFirst: "W", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: true },
-      { committerFirst: "W", oUploadBeforeWUpload: true, wUploadBeforeOCommit: false, equalCounts: true },
-      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: true, equalCounts: true },
-      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: true },
-      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: false },
-      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: false },
-    ];
+    // a. O is paused BEFORE its step upload: W commits and settles first; O then overwrites the canonical file (last writer = O), finds the step already completed and the job settled
+    const a = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 2, wRows: 2 });
+    expect(a.w!.status).toBe(200);
+    expect(a.w!.body.deliveredUnits).toBe(2);
+    expect(a.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(a.o.status).toBe(200);
+    expect(a.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(lastWriter(a)).toContain("O شركة");
+    expect(a.resultText).toContain("W شركة");
+    expect(a.resultText).not.toContain("O شركة");
+    // the ledger holds the calls of BOTH invocations (O's before the pause, W's after it)
+    expect(a.costsAtPause).toBeGreaterThan(0);
+    expect(db.costs.length).toBeGreaterThan(a.costsAtPause);
 
-    for (const sc of interleavings) {
-      resetDb({ target: 5 });
-      db.unitPrice = 100;
-      db.reserved = 5 * 100 * 2;
+    // b. O is paused AFTER its own upload, before complete_chunk: W's upload is the last writer, W settles, O's complete_chunk answers «already completed»
+    const b = await raceWithOldWorker({ mode: "chain", pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2 });
+    expect(b.w!.status).toBe(200);
+    expect(b.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(b.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(lastWriter(b)).toContain("W شركة");
+    expect(lastWriter(b)).not.toContain("O شركة");
 
-      // Both invocations record into the ledger
-      db.costs.push({ id: 1, job_id: JOB, provider: "treg", cost_usd: 0.01, units: 1, is_estimate: false });
-      db.costs.push({ id: 2, job_id: JOB, provider: "firecrawl", cost_usd: 0.02, units: 1, is_estimate: false });
+    // c. DIFFERENT counts, O paused before its upload: the charge follows the COMMITTER's units (2), not the last writer's file (3 rows)
+    const c = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2 });
+    expect(c.w!.body.deliveredUnits).toBe(2);
+    expect(c.w!.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(c.o.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(lastWriter(c)).toContain("O شركة اختبار 3");
+    expect(c.resultText).not.toContain("O شركة");
 
-      const oRows = [{ name: "O1", website: "https://o1.com" }, { name: "O2", website: "https://o2.com" }];
-      const wRows = sc.equalCounts
-        ? [{ name: "W1", website: "https://w1.com" }, { name: "W2", website: "https://w2.com" }]
-        : [{ name: "W1", website: "https://w1.com" }, { name: "W2", website: "https://w2.com" }, { name: "W3", website: "https://w3.com" }];
+    // d. W commits and DIES (no answer, no catch, no release); O resumes with the SAME count: it assembles the canonical file (its own, the last writer) and settles ceil(units x unit)
+    const d = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 2, wRows: 2, wDies: true });
+    expect(d.w).toBeNull();
+    expect(d.o.status).toBe(200);
+    expect(d.o.body.deliveredUnits).toBe(2);
+    expect(d.o.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(rpcCount("settle_job_atomic")).toBe(1);
+    expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(d.resultText).toContain("O شركة");
 
-      const oStepObj = { rows: oRows, chainStop: "coverage_end", attemptId: "att_O" };
-      const wStepObj = { rows: wRows, chainStop: "coverage_end", attemptId: "att_W" };
-
-      let lastWriter = "O";
-      const doUploadO = () => {
-        db.partials.set(stepKey, Buffer.from(JSON.stringify(oStepObj)));
-        lastWriter = "O";
-      };
-      const doUploadW = () => {
-        db.partials.set(stepKey, Buffer.from(JSON.stringify(wStepObj)));
-        lastWriter = "W";
-      };
-
-      if (sc.oUploadBeforeWUpload) {
-        doUploadO();
-        if (sc.wUploadBeforeOCommit) doUploadW();
-      } else {
-        doUploadW();
-        if (!sc.wUploadBeforeOCommit) doUploadO();
-      }
-
-      const committer = sc.committerFirst;
-      const committerStepObj = committer === "O" ? oStepObj : wStepObj;
-
-      db.step = 1;
-      db.deliveredUnits = committerStepObj.rows.length;
-      expect(db.deliveredUnits).toBe(committerStepObj.rows.length);
-
-      if (sc.oUploadBeforeWUpload && !sc.wUploadBeforeOCommit) doUploadW();
-      if (!sc.oUploadBeforeWUpload && sc.wUploadBeforeOCommit) doUploadO();
-
-      const canonicalStepObj = JSON.parse(db.partials.get(stepKey)!.toString());
-      expect(canonicalStepObj.attemptId).toBe(lastWriter === "O" ? "att_O" : "att_W");
-
-      const loserRes = { success: false, already_completed: true, delivered_units: db.deliveredUnits };
-      expect(loserRes.already_completed).toBe(true);
-
-      const canonicalCount = canonicalStepObj.rows.length;
-      const committedCount = db.deliveredUnits;
-
-      if (canonicalCount === committedCount) {
-        const charged = Math.ceil(committedCount * db.unitPrice);
-        expect(charged).toBe(committedCount * 100);
-      } else {
-        expect(canonicalCount).not.toBe(committedCount);
-      }
-
-      expect(db.costs.length).toBeGreaterThanOrEqual(2);
-      expect(db.costs.some((c) => c.id === 1)).toBe(true);
-      expect(db.costs.some((c) => c.id === 2)).toBe(true);
-    }
+    // e. W commits 2 and DIES; O resumes with 3 rows in the canonical file: the counts differ, so NOTHING is settled and the whole reserve is released with zero debit
+    const e = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
+    expect(e.o.status).toBe(500);
+    expect(e.o.body.released).toBe(true);
+    expect(e.o.body.chargedCredits).toBe(0);
+    expect(String(e.o.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
+    expect(rpcCount("settle_job_atomic")).toBe(0);
+    expect(rpcCount("release_job_atomic")).toBe(1);
+    expect(db.rpcCalls.find((x) => x.name === "release_job_atomic")!.args.p_error_message).toBe(e.o.body.error);
+    expect(e.resultText).toBeNull();
   });
 
 
