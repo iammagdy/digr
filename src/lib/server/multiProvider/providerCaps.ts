@@ -79,3 +79,11 @@ export async function readJobProviderSpend(client: any, jobId: string): Promise<
   }
   return { usd: sum(data), calls: data.length };
 }
+
+export async function readJobLease(client: any, jobId: string): Promise<{ step: number; status: string; leaseUntil: string | null }> {
+  const { data, error } = await client.from("jobs").select("step, status, lease_until").eq("id", jobId).maybeSingle();
+  if (error || !data || !Number.isFinite(Number(data.step))) {
+    throw new Error("job_lease_unreadable");
+  }
+  return { step: Number(data.step), status: String(data.status ?? ""), leaseUntil: typeof data.lease_until === "string" ? data.lease_until : null };
+}
