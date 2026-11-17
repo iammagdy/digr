@@ -770,7 +770,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(settleIdx).toBeGreaterThanOrEqual(0);
 
       const infoEvents = db.events.filter((e: any) => e.event_type === "info");
-      const finalInfo = infoEvents[infoEvents.length - 1];
+      // the route appends the settlement line after the shortfall line: the delivered-count line is the last «المسلَّم» info event
+      const finalInfo = infoEvents.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(finalInfo).toBeDefined();
 
       const reason = chainShortfallReasonAr({ stop, callCap: null, excluded: 0, skippedOrigins });
@@ -791,7 +792,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const X = await getPublishedRowCount();
       expect(X).toBeGreaterThan(0);
       checkOutcome(8, "budget");
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
 
@@ -804,7 +805,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const X = await getPublishedRowCount();
       expect(X).toBe(2);
       checkOutcome(8, "coverage_end");
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
 
@@ -813,13 +814,13 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 8 });
       const world = defaultFakeWorld(2);
       fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" } });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" }, tregCall: tregHook() });
       setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
       const { last } = await runMany(world);
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "sources_limited", 0);
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
 
@@ -828,7 +829,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 8 });
       const world = defaultFakeWorld(1);
       fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" } });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" }, tregCall: tregHook([{ name: "   ", website: "https://skipped-origin.com" }]) });
       setProviderAdapterForTesting(async () => ({
         ok: true,
         httpStatus: 200,
@@ -842,7 +843,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "sources_limited", 1);
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
 
@@ -851,7 +852,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 8 });
       const world = defaultFakeWorld(1);
       fetchSpy = createFakeFetch(world, { emptyProvider: { firecrawl: true, contextdev: true } });
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook([], "cur_stall") });
       setProviderAdapterForTesting(async () => ({
         ok: true,
         httpStatus: 200,
@@ -865,7 +866,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "stalled");
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
 
@@ -874,13 +875,13 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 8 });
       const world = defaultFakeWorld(2);
       for (let k = 0; k < 8; k++) {
-        db.partials.set(`${JOB}/start_0_${k}`, Buffer.from(""));
+        db.partials.set(`${JOB}/start_0_${k}.json`, Buffer.from(""));
       }
       const { last } = await run(world);
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "work_limit");
-      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
   });
