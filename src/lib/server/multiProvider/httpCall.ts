@@ -80,7 +80,7 @@ export async function runRecordedCall<T>(args: {
 
   let result: OperationResult<T>;
   if (!answer) {
-    result = { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: 0, durationMs, httpStatus: null, errorCode, retryable: true };
+    result = { ok: false, status: "failed", data: null, units: 0, credits: 0, costUsd: ctx.chainStrict ? estimatedUsd : 0, durationMs, httpStatus: null, errorCode, retryable: true };
   } else if (answer.httpStatus < 200 || answer.httpStatus >= 300) {
     const code = mapHttpError(answer.httpStatus, answer.json);
     // A failed call is charged only what the provider says it used (Context.dev reports credits_consumed on errors too); otherwise nothing.
