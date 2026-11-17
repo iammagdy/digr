@@ -87,3 +87,12 @@ export async function readJobLease(client: any, jobId: string): Promise<{ step: 
   }
   return { step: Number(data.step), status: String(data.status ?? ""), leaseUntil: typeof data.lease_until === "string" ? data.lease_until : null };
 }
+
+export async function readJobCreatedAtMs(client: any, jobId: string): Promise<number> {
+  const { data, error } = await client.from("jobs").select("created_at").eq("id", jobId).maybeSingle();
+  const parsed = data ? Date.parse(String(data.created_at)) : NaN;
+  if (error || !data || !Number.isFinite(parsed)) {
+    throw new Error("job_created_unreadable");
+  }
+  return parsed;
+}
