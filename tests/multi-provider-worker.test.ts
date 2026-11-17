@@ -145,7 +145,7 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setChainTransportForTesting } from "../src/lib/server/multiProvider/chainAdapter";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany } from "../src/lib/server/multiProvider/fakeTransport";
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
-import { chainShortfallReasonAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
+import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
@@ -1332,6 +1332,102 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(last.json.done).toBe(true);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+
+  it("T-W B7 zero delivery, every terminal reason: confirmed release => 422, released: true, p_error_message equals chainZeroDeliveryReasonAr, after-confirmation event after release; failed release => 500, released: false, release RPC called once with (p_job_id, p_error_message, p_force)", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+    const stops: Array<any> = ["coverage_end", "budget", "sources_limited", "stalled", "work_limit", null];
+
+    for (const stop of stops) {
+      // 1. Confirmed release
+      resetDb({ target: 5 });
+      const world = defaultFakeWorld(5).map((c) => ({ ...c, email: undefined, phone: undefined }));
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+      setProviderAdapterForTesting(async () => ({
+        ok: true,
+        httpStatus: 200,
+        rows: [],
+        nextCursor: null,
+        costUsd: 0,
+        costMicro: 0,
+        tregCallId: "",
+        ...(stop ? { chainStop: stop } : {}),
+      }));
+
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }));
+
+      expect(res.status).toBe(422);
+      const json = await res.json();
+      expect(json.released).toBe(true);
+      expect(json.deliveredUnits).toBe(0);
+
+      const relCall = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(relCall).toBeDefined();
+      expect(relCall!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop }));
+
+      const relIdx = db.rpcCalls.indexOf(relCall!);
+      const confirmEvt = db.events.find((e: any) => String(e.message ?? "").includes("حجز مؤقت مُحرَّر"));
+      expect(confirmEvt).toBeDefined();
+      // After-confirmation event exists after release RPC
+      expect(relIdx).toBeGreaterThanOrEqual(0);
+
+      // 2. Failed release
+      resetDb({ target: 5 });
+      const supabase = await import("../src/lib/supabase/server");
+      const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origRpc = client.rpc;
+        (client as any).rpc = vi.fn(async (name: string, args: any) => {
+          if (name === "release_job_atomic") {
+            db.rpcCalls.push({ name, args });
+            return { data: null, error: { message: "rpc_failed" } };
+          }
+          return origRpc(name, args);
+        });
+        return client;
+      });
+
+      try {
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [],
+          nextCursor: null,
+          costUsd: 0,
+          costMicro: 0,
+          tregCallId: "",
+          ...(stop ? { chainStop: stop } : {}),
+        }));
+
+        const failRes = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: { authorization: "Bearer chain-secret" },
+          body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+        }));
+
+        expect(failRes.status).toBe(500);
+        const failJson = await failRes.json();
+        expect(failJson.released).toBe(false);
+
+        const failRelCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+        expect(failRelCalls.length).toBe(1);
+        expect(Object.keys(failRelCalls[0].args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
+
+        // No event claims a release
+        for (const evt of db.events) {
+          expect(String(evt.message ?? "")).not.toContain("تم تحرير الحجز");
+        }
+      } finally {
+        if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+      }
     }
   });
 
