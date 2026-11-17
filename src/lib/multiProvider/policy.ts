@@ -205,7 +205,7 @@ export async function checkRobots(pageUrl: string, fetchRobots: RobotsFetch, cac
 
 export type FieldStatus = "verified" | "unverified";
 
-export interface FoundEmail { value: string; status: FieldStatus; evidence: "mailto" | "page_text"; reason?: string }
+export interface FoundEmail { value: string; status: FieldStatus; evidence: "mailto" | "page_text" | "provider_listed"; reason?: string }
 export interface FoundPhone { value: string; status: FieldStatus; evidence: "tel_link" | "labelled_text" | "page_text"; reason?: string }
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/g;
