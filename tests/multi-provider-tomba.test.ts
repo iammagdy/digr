@@ -40,10 +40,10 @@ function makeSyntheticFixture(domain: string, emailOverrides: Record<string, any
 
 describe("T-E readTombaMailbox (synthetic fixtures)", () => {
   it("T-E accepted: valid role mailbox with generic type and valid verification is accepted", () => {
-    const fixture = makeSyntheticFixture("example.com");
-    const result = readTombaMailbox(fixture, "example.com");
+    const fixture = makeSyntheticFixture("fakeco1.net");
+    const result = readTombaMailbox(fixture, "fakeco1.net");
     expect(result).toEqual({
-      value: "info@example.com",
+      value: "info@fakeco1.net",
       status: "verified",
       evidence: "provider_listed",
     });
@@ -51,22 +51,22 @@ describe("T-E readTombaMailbox (synthetic fixtures)", () => {
 
   it("T-E status cases: missing, unknown, or invalid verification status results in MISS", () => {
     // Missing verification.status
-    const missingStatus = makeSyntheticFixture("example.com", { verification: {} });
-    expect(readTombaMailbox(missingStatus, "example.com")).toBeNull();
+    const missingStatus = makeSyntheticFixture("fakeco1.net", { verification: {} });
+    expect(readTombaMailbox(missingStatus, "fakeco1.net")).toBeNull();
 
-    const noVerification = makeSyntheticFixture("example.com", { verification: undefined });
-    expect(readTombaMailbox(noVerification, "example.com")).toBeNull();
+    const noVerification = makeSyntheticFixture("fakeco1.net", { verification: undefined });
+    expect(readTombaMailbox(noVerification, "fakeco1.net")).toBeNull();
 
     // verification.status === "unknown"
-    const unknownStatus = makeSyntheticFixture("example.com", { verification: { status: "unknown" } });
-    expect(readTombaMailbox(unknownStatus, "example.com")).toBeNull();
+    const unknownStatus = makeSyntheticFixture("fakeco1.net", { verification: { status: "unknown" } });
+    expect(readTombaMailbox(unknownStatus, "fakeco1.net")).toBeNull();
 
     // verification.status === "invalid"
-    const invalidStatus = makeSyntheticFixture("example.com", { verification: { status: "invalid" } });
-    expect(readTombaMailbox(invalidStatus, "example.com")).toBeNull();
+    const invalidStatus = makeSyntheticFixture("fakeco1.net", { verification: { status: "invalid" } });
+    expect(readTombaMailbox(invalidStatus, "fakeco1.net")).toBeNull();
   });
 it("T-E address rules: personal address, subdomains, other domain, personal domain, placeholder, masked, domain mismatch, and org flags result in MISS", () => {
-    const domain = "example.com";
+    const domain = "fakeco1.net";
 
     // 1. Person's address (not generic type, not role mailbox)
     const person = makeSyntheticFixture(domain, { email: `john.doe@${domain}`, type: "personal" });
@@ -85,8 +85,9 @@ it("T-E address rules: personal address, subdomains, other domain, personal doma
     expect(readTombaMailbox(personalDomain, "gmail.com")).toBeNull();
 
     // 5. Placeholder address
-    const placeholder = makeSyntheticFixture(domain, { email: `email@${domain}` });
-    expect(readTombaMailbox(placeholder, domain)).toBeNull();
+    // The ONE case that needs a placeholder DOMAIN (example.com is in PLACEHOLDER_DOMAINS, policy.ts): `email@<real domain>` is accepted by readTombaMailbox. Every other fixture of this file uses a real-looking domain, so that its null does not come from this rule.
+    const placeholder = makeSyntheticFixture("example.com", { email: "email@example.com" });
+    expect(readTombaMailbox(placeholder, "example.com")).toBeNull();
 
     // 6. Masked * address
     const masked = makeSyntheticFixture(domain, { email: `in*o@${domain}` });
@@ -112,7 +113,7 @@ it("T-E address rules: personal address, subdomains, other domain, personal doma
     expect(readTombaMailbox(disposable, domain)).toBeNull();
   });
 it("T-E malformed shapes: invalid data types, large lists, prototype pollution, hidden fields and error bodies result in MISS", () => {
-    const domain = "example.com";
+    const domain = "fakeco1.net";
 
     // 1. data.emails not an array
     const notArray = makeSyntheticFixture(domain);
