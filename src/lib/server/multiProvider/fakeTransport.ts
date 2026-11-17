@@ -107,7 +107,7 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
       const empty = scenario.emptyProvider?.[provider];
       const limit = Math.max(1, Math.min(100, Number(body.limit ?? body.numResults ?? 10)));
       const hits = empty ? [] : searchPool(String(body.query ?? ""), body.excludeDomains, limit).map((c) => ({ url: `https://www.${c.domain}/`, title: `${c.name} | الصفحة الرئيسية`, description: `موقع ${c.name}` }));
-      const credits = hits.length === 0 ? 0 : Math.ceil(hits.length / 10) * (provider === "firecrawl" ? 2 : 1);
+      const credits = hits.length === 0 ? 0 : Math.ceil(hits.length / 10) * (provider === "firecrawl" ? 2 : 1) * (scenario.overbill?.[provider] ?? 1);
       return provider === "firecrawl"
         ? json(200, { success: true, data: { web: hits }, id: "s", creditsUsed: credits })
         : json(200, { results: hits, partial: false, query: body.query, key_metadata: { credits_consumed: credits, credits_remaining: 1000 }, request_id: "r" });
