@@ -4,7 +4,20 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ALL_CUSTOMER_STRINGS, NO_ROUTE_AR, PLAN_LIMITS_AR, SOURCE_WORDING_AR, whatWeCollectAr } from "../src/lib/multiProvider/copy";
+import {
+  ALL_CUSTOMER_STRINGS,
+  NO_ROUTE_AR,
+  PLAN_LIMITS_AR,
+  SOURCE_WORDING_AR,
+  whatWeCollectAr,
+  CHAIN_CARD_LIMITS_V2_AR,
+  staleReleaseReasonAr,
+  operatorReleaseReasonAr,
+  chainFailureReasonAr,
+  chainZeroDeliveryReasonAr,
+  chainStopProgressLineAr,
+} from "../src/lib/multiProvider/copy";
+import { CAPABILITIES } from "../src/lib/multiProvider/catalog";
 import { STATUS_UNAVAILABLE_AR, STATUS_UNVERIFIED_AR, STATUS_VERIFIED_AR } from "../src/lib/multiProvider/policy";
 import { buildMultiProviderCapability } from "../src/functions/shared/multiProviderCapability";
 import { CHAIN_CAPABILITY_SLUG, ROUTE_DEFS, routeCodeOf } from "../src/lib/multiProvider/routes";
@@ -111,6 +124,99 @@ describe("customer-facing words of the multi-provider feature", () => {
     expect(exclReason).toContain("استُبعد ٣ شركات");
     expect(neutralReason).toBe("لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد.");
   });
+
+  it("T-N customer never sees a provider name in customer-visible strings, including real error paths", async () => {
+    // 1. Gather all customer strings
+    const gathered: string[] = [
+      ...ALL_CUSTOMER_STRINGS(),
+      ...CHAIN_CARD_LIMITS_V2_AR,
+      staleReleaseReasonAr(1),
+      staleReleaseReasonAr(45),
+      staleReleaseReasonAr(25000),
+      operatorReleaseReasonAr(1),
+      operatorReleaseReasonAr(45),
+      operatorReleaseReasonAr(25000),
+    ];
+
+    // Failure reasons and stops
+    const stops = ["budget", "coverage_end", "sources_limited", "stalled", "work_limit", "no_more_work", null] as const;
+    for (const stop of stops) {
+      gathered.push(chainShortfallReasonAr({ stop, callCap: null, excluded: 0 }));
+      gathered.push(chainShortfallReasonAr({ stop, callCap: null, excluded: 2 }));
+      gathered.push(chainShortfallReasonAr({ stop, callCap: null, excluded: 0, skippedOrigins: 2 }));
+      gathered.push(chainZeroDeliveryReasonAr({ target: 10, stop }));
+      if (stop) gathered.push(chainStopProgressLineAr(stop as any));
+    }
+
+    // ok:false terminals
+    for (const kind of ["spend", "cursor", "lease"] as const) {
+      gathered.push(chainFailureReasonAr(kind));
+    }
+
+    // 2. Simulated provider error strings that must NEVER leak to customer strings
+    const providerErrors = [
+      "Tomba rate limit",
+      "TREG route_max_cost firecrawl 402",
+      new Error("Context.dev unreachable").message,
+      JSON.stringify({ error: "Context.dev service unavailable", provider: "contextdev" }),
+      JSON.stringify({ error: "firecrawl credits exhausted", provider: "firecrawl" }),
+    ];
+
+    for (const errStr of providerErrors) {
+      for (const s of gathered) {
+        expect(s).not.toContain(errStr);
+      }
+    }
+
+    // 3. Delivered-row cells including source_page
+    const sampleCells = [
+      "شركة الأمل للمقاولات",
+      "info@alamal.com",
+      "+201000000001",
+      "https://alamal.com/contact", // source_page
+      "مصر",
+      "مقاولات",
+    ];
+    for (const cell of sampleCells) {
+      expect(cell).not.toMatch(/firecrawl|contextdev|context\.dev|treg|tomba|icypeas/i);
+    }
+
+    // 4. Forbidden regex
+    const FORBIDDEN_WORDS = /treg|tomba|icypeas|firecrawl|context\.?dev|hunter|apollo|blitz|aviato|enrichlayer|serp|reoon/i;
+
+    // Read catalog providers
+    const catalogPath = path.join(ROOT, "data/treg/treg_catalog_sellable.json");
+    const catalogData = JSON.parse(readFileSync(catalogPath, "utf-8"));
+    const catalogProviders = new Set<string>();
+    const endpoints = Array.isArray(catalogData) ? catalogData : catalogData.endpoints ?? [];
+    for (const ep of endpoints) {
+      if (ep.provider && typeof ep.provider === "string") {
+        catalogProviders.add(ep.provider.toLowerCase());
+      }
+    }
+
+    const capabilityWords = new Set<string>();
+    for (const cap of CAPABILITIES) {
+      if (cap.provider) capabilityWords.add(cap.provider.toLowerCase());
+      if (cap.id) capabilityWords.add(cap.id.toLowerCase());
+    }
+
+    // Assert none matches forbidden words, catalog providers, or capability words
+    for (const text of gathered) {
+      expect(text).not.toMatch(FORBIDDEN_WORDS);
+      for (const p of catalogProviders) {
+        if (p.length > 3) {
+          expect(text.toLowerCase()).not.toContain(p);
+        }
+      }
+      for (const c of capabilityWords) {
+        if (c.length > 3) {
+          expect(text.toLowerCase()).not.toContain(c);
+        }
+      }
+    }
+  });
+
 });
 
 // ---- customer routes and pages never carry the admin call-log fields -----------------------------------------------------------
