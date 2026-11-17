@@ -872,8 +872,14 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       };
       const v1Encoded = encodeChainCursor(v1State as any);
       expect(v1Encoded.length).toBeLessThanOrEqual(8000);
+      // The REAL v1 encoder trims `rest` to fit those 8000 characters (these fat Arabic i/l/d items: 80 become 60). The trimmed cursor converts WITHOUT loss.
+      const convertedTrimmed = decodeCursorAny(v1Encoded, "aid_v1");
+      expect(convertedTrimmed.q.length).toBe(decodeChainCursor(v1Encoded).rest.length);
+      expect(convertedTrimmed.q.length).toBeGreaterThan(0);
 
-      const converted = decodeCursorAny(v1Encoded, "aid_v1");
+      // RAW conversion (separate): a large in-flight v1 cursor as an older worker may still hold it, NOT trimmed: ALL `count` items are kept, in order, without i/l/d (the assertions below).
+      const v1Raw = Buffer.from(JSON.stringify(v1State), "utf8").toString("base64url");
+      const converted = decodeCursorAny(v1Raw, "aid_v1");
       expect(converted.v).toBe(2);
       expect(converted.q.length).toBe(count);
       for (let i = 0; i < count; i++) {
@@ -881,6 +887,14 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
         expect("i" in converted.q[i]).toBe(false);
         expect("l" in converted.q[i]).toBe(false);
         expect("d" in converted.q[i]).toBe(false);
+      }
+
+      // The REAL v2 encoder: the converted queue (all `count` items) re-encodes within the same 8000-character bound the v1 cursor had, fits its own limits, and round-trips.
+      const reencoded = encodeCursorV2(converted);
+      expect(reencoded.fits).toBe(true);
+      if (reencoded.fits) {
+        expect(reencoded.cursor.length).toBeLessThanOrEqual(8000);
+        expect(decodeCursorAny(reencoded.cursor, "aid_v1").q).toEqual(converted.q);
       }
     }
   });
