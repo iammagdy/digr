@@ -4,6 +4,8 @@ import { executeTregCall } from "../src/functions/shared/tregClient";
 import { executeTregCallWithRetry } from "../src/lib/server/tregAdapter";
 import { runTregEmailLookup, runTregDirectoryPageDirect } from "../src/lib/server/multiProvider/adapters/treg";
 import { classifyTregCost } from "../src/lib/server/multiProvider/adapters/treg";
+import { buildTregIdempotencyKey } from "../src/lib/server/multiProvider/adapters/treg";
+import { runRecordedCall } from "../src/lib/server/multiProvider/httpCall";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -1031,6 +1033,188 @@ it("T-T status sweep (100-599 x 6 figures x 3 answerKinds against independent ex
           expect(verdict.known).toBe(expected.known);
         }
       }
+    }
+  });
+it("T-T 3 crash at each stage followed by redo produces two ledger rows, never erases, never reuses old key", async () => {
+    for (const stage of ["a", "b", "c", "d"] as const) {
+      const rows: Array<{ id: number; key: string; status: string; committed?: boolean }> = [];
+      let rowId = 0;
+      const makeRecorder = () => ({
+        reserve: async () => {
+          rowId++;
+          rows.push({ id: rowId, key: currentKey, status: "reserved" });
+          return { allowed: true, costId: rowId };
+        },
+        commit: async (costId: number, rec: any) => {
+          const row = rows.find((r) => r.id === costId);
+          if (row) { row.status = rec.status; row.committed = true; }
+        },
+      });
+
+      let currentKey = buildTregIdempotencyKey({ jobId: "job_crash", attemptId: "att_1", ordinal: 1, kind: "mail" });
+      const key1 = currentKey;
+
+      if (stage === "a") {
+        try {
+          await runTregEmailLookup({
+            tregCall: async () => { throw new Error("crash_stage_a"); },
+            ctx: {
+              recorder: {
+                reserve: async () => {
+                  rowId++;
+                  rows.push({ id: rowId, key: currentKey, status: "reserved" });
+                  throw new Error("crash_stage_a_immediate");
+                },
+                commit: async () => {},
+              } as any,
+              jobId: "job_crash",
+            },
+            userId: "u1",
+            domain: "example.com",
+            idempotencyKey: key1,
+            timeoutMs: 100,
+          });
+        } catch { /* simulated crash */ }
+      } else if (stage === "b") {
+        try {
+          await runTregEmailLookup({
+            tregCall: async () => { throw new Error("crash_stage_b"); },
+            ctx: {
+              recorder: {
+                reserve: async () => {
+                  rowId++;
+                  rows.push({ id: rowId, key: currentKey, status: "reserved" });
+                  return { allowed: true, costId: rowId };
+                },
+                commit: async () => { throw new Error("crash_stage_b_commit"); },
+              } as any,
+              jobId: "job_crash",
+            },
+            userId: "u1",
+            domain: "example.com",
+            idempotencyKey: key1,
+            timeoutMs: 100,
+          });
+        } catch { /* simulated crash */ }
+      } else if (stage === "c" || stage === "d") {
+        const rec1 = makeRecorder();
+        await runTregEmailLookup({
+          tregCall: async () => ({
+            ok: false, httpStatus: 503, tregCallId: "c1", costMicro: 0, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false,
+          }),
+          ctx: { recorder: rec1 as any, jobId: "job_crash" },
+          userId: "u1",
+          domain: "example.com",
+          idempotencyKey: key1,
+          timeoutMs: 100,
+        });
+      }
+
+      currentKey = buildTregIdempotencyKey({ jobId: "job_crash", attemptId: "att_2", ordinal: 1, kind: "mail" });
+      const key2 = currentKey;
+      expect(key2).not.toBe(key1);
+
+      const rec2 = makeRecorder();
+      await runTregEmailLookup({
+        tregCall: async () => ({
+          ok: true, httpStatus: 200, tregCallId: "c2", costMicro: 8900, latencyMs: 10, data: { data: { emails: [] }, meta: { total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+        }),
+        ctx: { recorder: rec2 as any, jobId: "job_crash" },
+        userId: "u1",
+        domain: "example.com",
+        idempotencyKey: key2,
+        timeoutMs: 100,
+      });
+
+      expect(rows.length).toBe(2);
+      expect(rows[0].id).toBe(1);
+      expect(rows[1].id).toBe(2);
+      expect(rows[0].key).toBe(key1);
+      expect(rows[1].key).toBe(key2);
+    }
+  });
+
+  it("T-T 4 key rules (charset [A-Za-z0-9_-], length <= 120, unique across 1,000 keys)", () => {
+    const keyWithSpecial = buildTregIdempotencyKey({ jobId: "job!@#$%^&*()_+", attemptId: "att:1 2", ordinal: 3, kind: "dir" });
+    expect(/^[A-Za-z0-9_-]+$/.test(keyWithSpecial)).toBe(true);
+
+    const keyOk = buildTregIdempotencyKey({ jobId: "a".repeat(40), attemptId: "b".repeat(40), ordinal: 1, kind: "dir" });
+    expect(keyOk.length).toBeLessThanOrEqual(120);
+
+    expect(() => {
+      buildTregIdempotencyKey({ jobId: "a".repeat(80), attemptId: "b".repeat(80), ordinal: 1, kind: "dir" });
+    }).toThrow("treg_key_too_long");
+
+    const set = new Set<string>();
+    for (let i = 0; i < 1000; i++) {
+      const k = buildTregIdempotencyKey({ jobId: `job_${Math.floor(i / 10)}`, attemptId: `att_${i % 10}`, ordinal: i, kind: i % 2 === 0 ? "mail" : "dir" });
+      set.add(k);
+    }
+    expect(set.size).toBe(1000);
+  });
+
+  it("T-T 5 refusal reasons (cap/budget/error map to cap_reached/budget_reached/ledger_unavailable)", async () => {
+    const reasons = [
+      { reason: "cap", expected: "cap_reached" },
+      { reason: "budget", expected: "budget_reached" },
+      { reason: "error", expected: "ledger_unavailable" },
+    ] as const;
+
+    for (const { reason, expected } of reasons) {
+      const recorderFake = {
+        reserve: async () => ({ allowed: false, reason }),
+        commit: async () => {},
+      };
+
+      const mailOut = await runTregEmailLookup({
+        tregCall: async () => ({ ok: true } as any),
+        ctx: { recorder: recorderFake as any, jobId: "j" },
+        userId: "u",
+        domain: "example.com",
+        idempotencyKey: "k",
+        timeoutMs: 100,
+      });
+      expect(mailOut.ok).toBe(false);
+      expect(mailOut.refused).toBe(expected);
+
+      const dirOut = await runTregDirectoryPageDirect({
+        tregCall: async () => ({ ok: true } as any),
+        ctx: { recorder: recorderFake as any, jobId: "j" },
+        userId: "u",
+        rawParams: { domain: "example.com" },
+        cursor: null,
+        idempotencyKey: "k",
+        timeoutMs: 100,
+      });
+      expect(dirOut.ok).toBe(false);
+      expect(dirOut.refused).toBe(expected);
+    }
+
+    for (const { reason, expected } of reasons) {
+      const recorderFake = {
+        reserve: async () => ({ allowed: false, reason }),
+        commit: async () => {},
+      };
+      const ctx: any = {
+        recorder: recorderFake,
+        apiKey: "fake_key",
+        jobId: "j",
+        fetchFn: vi.fn(),
+        chainStrict: true,
+      };
+      const capability: any = {
+        id: "firecrawl.scrape",
+        provider: "firecrawl",
+        costPerCallUsd: 0.005,
+      };
+      const res = await runRecordedCall({
+        ctx,
+        capability,
+        request: { url: "http://example.com", method: "GET", headers: {} },
+        interpret: () => ({ ok: true, data: null, units: 0, credits: 0 }),
+      });
+      expect(res.ok).toBe(false);
+      expect(res.errorCode).toBe(expected);
     }
   });
 });
