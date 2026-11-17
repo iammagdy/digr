@@ -147,6 +147,13 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 vi.mock("../src/lib/server/sendPlatformEmail", () => ({ sendPlatformEmail: vi.fn(async () => undefined), getRecipient: vi.fn(async () => null) }));
+
+// DT-20261117-04 CI r2 SAFETY: no test may reach the REAL TREG API. CI r2 made 106 real calls to treg.to from these tests (answered 401: CI has no TREG secret; with a secret they would be BILLED). The real client is replaced by a function that RECORDS the call and throws; the afterEach below fails the test when it was called (a throw inside the runner can be caught and hidden, a recorded call cannot). Every chain test passes its own `tregCall` hook (tregHook).
+const realTreg = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock("../src/functions/shared/tregClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/functions/shared/tregClient")>()),
+  executeTregCall: vi.fn(async (options: any) => { realTreg.calls.push(String(options?.endpointId ?? "unknown")); throw new Error("real TREG call in test"); }),
+}));
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/functions/shared/catalogClient")>()),
   getEndpointDetails: vi.fn(async () => { throw new Error("the chain must never ask the live catalog"); }),
@@ -199,11 +206,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     process.env.CRON_SECRET = "chain-secret"; process.env.ENABLE_MOCK_PROVIDER = "true"; (process.env as any).NODE_ENV = "test"; process.env.VERCEL_ENV = "development";
     process.env.MULTI_PROVIDER_ENABLED = "true";
     delete process.env.TREG_LIVE; // TREG is NOT live: the chain does not need it
+    realTreg.calls.length = 0;
     setRowAdvisorForTesting(async () => { throw new Error("no advisory review may run on a verified chain row"); });
   });
   afterEach(() => {
     setProviderAdapterForTesting(null); setRowAdvisorForTesting(null); setChainTransportForTesting(null);
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete (process.env as any)[k]; else (process.env as any)[k] = v; }
+    // fail-closed (after the clean-up above): a test that reached the REAL TREG client fails here, even when the runner caught the thrown error
+    const reachedRealTreg = realTreg.calls.splice(0);
+    expect(reachedRealTreg, "real TREG call in test").toEqual([]);
   });
 
   async function run(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}) {
