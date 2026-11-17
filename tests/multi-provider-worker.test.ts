@@ -892,7 +892,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     resetDb({ target: 8 });
     const world1 = defaultFakeWorld(1);
     fetchSpy = createFakeFetch(world1);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world1), keys: { treg: "managed" } });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world1), keys: { treg: "managed" }, tregCall: tregHook([{ name: "   ", website: "https://skipped-origin.com" }]) });
     setProviderAdapterForTesting(async () => ({
       ok: true,
       httpStatus: 200,
