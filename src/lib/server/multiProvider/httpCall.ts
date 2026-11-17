@@ -42,6 +42,8 @@ export async function runRecordedCall<T>(args: {
   capability: CapabilityDef;
   request: { url: string; method: "GET" | "POST"; headers: Record<string, string>; body?: unknown };
   interpret: (answer: HttpAnswer) => InterpretedAnswer<T>;
+  /** Strict (chain) mode only: what to reserve before the call (the largest the call can cost). Ignored unless ctx.chainStrict is true. */
+  reserveUsd?: number;
 }): Promise<OperationResult<T>> {
   const { ctx, capability, request } = args;
   const now = ctx.now ?? Date.now;
