@@ -755,4 +755,63 @@ it("T-T P5-P6 definite status with invalid/unreported/estimate header or invalid
       expect(rNegCharged.known).toBe(false);
     }
   });
+it("T-T P7 definite status, positive figure: known costs, overbill commit, replay and largest wins", async () => {
+    const R = 8900;
+    // 200 + costMicro 100 => 100 (KNOWN; below R the difference is released)
+    const r1 = classifyTregCost({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 100, latencyMs: 10, data: {}, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "non_empty");
+    expect(r1).toEqual({ known: true, commitMicro: 100 });
+
+    // 200 + 8,900 => 8,900
+    const r2 = classifyTregCost({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 8900, latencyMs: 10, data: {}, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "non_empty");
+    expect(r2).toEqual({ known: true, commitMicro: 8900 });
+
+    // 200 + 20,000 => 20,000 and the ledger shows the overbill (D-0027) — asserted SEPARATELY from the unknown-cost cases
+    const rOverbill = classifyTregCost({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 20000, latencyMs: 10, data: {}, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "non_empty");
+    expect(rOverbill).toEqual({ known: true, commitMicro: 20000 });
+    expect(rOverbill.known).toBe(true);
+    expect(rOverbill.commitMicro).toBeGreaterThan(R); // overbill committed as known cost
+
+    // also verify wrapper commits overbill to the recorder
+    const commits: Array<{ costMicro: number; costUsd: number }> = [];
+    const recorder = {
+      reserve: async () => ({ allowed: true, costId: 1 }),
+      commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6), costUsd: rec.costUsd }); },
+    };
+    await runTregEmailLookup({
+      tregCall: async () => ({
+        ok: true, httpStatus: 200, tregCallId: "c", costMicro: 20000, latencyMs: 10, data: { data: { emails: [] }, meta: { total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      }),
+      ctx: { recorder: recorder as any, jobId: "j" },
+      userId: "u",
+      domain: "example.com",
+      idempotencyKey: "k",
+      timeoutMs: 100,
+    });
+    expect(commits).toHaveLength(1);
+    expect(commits[0].costMicro).toBe(20000); // overbill committed in ledger
+
+    // 402 + 100 => 100
+    const r402 = classifyTregCost({
+      ok: false, httpStatus: 402, tregCallId: "c", costMicro: 100, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "unparsable");
+    expect(r402).toEqual({ known: true, commitMicro: 100 });
+
+    // replay (costMicro 0, originalCostMicro 8900) on a 200 => ONE row at 8,900
+    const rReplay = classifyTregCost({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, originalCostMicro: 8900, latencyMs: 10, data: {}, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "non_empty");
+    expect(rReplay).toEqual({ known: true, commitMicro: 8900 });
+
+    // header 5000 + body chargedMicroReported 8900 => 8,900 (the largest wins)
+    const rLargest = classifyTregCost({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 5000, chargedMicroReported: 8900, latencyMs: 10, data: {}, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    }, R, "non_empty");
+    expect(rLargest).toEqual({ known: true, commitMicro: 8900 });
+  });
 });
