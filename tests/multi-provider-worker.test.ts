@@ -649,7 +649,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   it("R-2 release failure, worker drops every runner row", async () => {
     resetDb();
     const companyIdentity = dedupeIdentityFor("company");
-    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
 
     const supabase = await import("../src/lib/supabase/server");
@@ -677,7 +677,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
       expect(relCalls.length).toBe(1);
       const call = relCalls[0];
-      expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+      // plan v9 :196 / :310: zero delivery of a chain job = chainZeroDeliveryReasonAr; here EVERY candidate is excluded, so nothing is delivered (see the point text)
+      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
       const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of eventTexts) {
