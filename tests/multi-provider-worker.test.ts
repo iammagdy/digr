@@ -175,7 +175,7 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setChainTransportForTesting } from "../src/lib/server/multiProvider/chainAdapter";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany } from "../src/lib/server/multiProvider/fakeTransport";
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
-import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr } from "../src/lib/multiProvider/copy";
+import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
@@ -1182,49 +1182,16 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
 
 
   it("T-W B5-R2 winner killed after commit, no other invocation: claim refuses, process restart, watchdog release gives zero debit and returns hold", async () => {
-    resetDb({ target: 3 });
-    const world = defaultFakeWorld(5);
-    db.killAfterCommit = true;
-
-    const route = await import("../src/app/api/worker/chunk/route");
-    fetchSpy = createFakeFetch(world);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
-    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
-
-    // Winner runs and commits, then dies. The route's top-level catch (route.ts :2711-2740) turns EVERY thrown error into a 500 JSON, so «dies» is a 500 RESPONSE, not a rejection (CI r2: «promise resolved Response {status: 500} instead of rejecting»)
-    const killed = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
-      method: "POST",
-      headers: { authorization: "Bearer chain-secret" },
-      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-    }));
-    expect(killed.status).toBe(500);
-
-    // Commit succeeded in DB before kill
-    expect(db.step).toBeGreaterThanOrEqual(1);
-    expect(db.deliveredUnits).toBeGreaterThan(0);
-
-    // Simulate expired lease past 30 minutes
-    const past31Min = new Date(Date.now() - 31 * 60 * 1000).toISOString();
-    const jobRow = db.jobs.find((j) => j.id === JOB)!;
-    jobRow.lease_until = past31Min;
-    jobRow.step = db.step;
-    jobRow.delivered_units = db.deliveredUnits;
-
-    // T-WD R2 fixture shape
-    expect(jobRow.status).toBe("running");
-    expect(jobRow.step).toBeGreaterThanOrEqual(1);
-    expect(jobRow.delivered_units).toBeGreaterThan(0);
-    expect(jobRow.target_volume_max).toBe(TARGET);
-    expect(Date.now() - new Date(jobRow.lease_until).getTime()).toBeGreaterThan(30 * 60 * 1000);
-
-    // Process restart: the lease is past 30 minutes and the admin client below is a new one. `vi.resetModules()` is NOT called: it would give every later test a SECOND copy of the route and of chainAdapter, whose test hooks (`setChainTransportForTesting`, `setProviderAdapterForTesting`) were set on the first copy, so the later chain tests would run with no transport.
-
-    // Watchdog release runs: zero debit, hold returned, rows lost
-    const supabase = await import("../src/lib/supabase/server");
-    const admin = (supabase as any).createAdminClient();
-    const relRes = await admin.rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "watchdog_release", p_force: true });
-    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
-    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false); // rows lost
+    const { before, watchdog } = await dyingWinnerThenWatchdog("chain");
+    expect(before.releases).toBe(0);
+    expect(rpcCount("release_job_atomic")).toBe(1);
+    expect(watchdog.status).toBe(200);
+    expect(watchdog.body.releasedCount).toBe(1);
+    expect(rpcCount("settle_job_atomic")).toBe(0);
+    const rel = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+    expect(rel.args.p_error_message).toBe(staleReleaseReasonAr(5));
+    expect(rel.args.p_error_message).not.toMatch(/[0-9]/);
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
   });
 
 
