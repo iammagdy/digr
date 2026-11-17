@@ -4,12 +4,15 @@ import { resolveProviderKey } from "../providerKeys";
 import type { ProviderAdapterFn } from "../tregAdapter";
 import type { FetchFn } from "./adapterTypes";
 import { createCallRecorder } from "./callRecorder";
-import { runChainChunk, type ChainDeps } from "./chainRunner";
+import { runChainChunk, type ChainChunkInput, type ChainDeps } from "./chainRunner";
 import { getProviderTransport, getRobotsTransport } from "./fakeTransport";
 import { PREVIEW_WORLD_DAILY_CAP_USD } from "../../multiProvider/previewWorld";
-import { readJobProviderSpendUsd, resolveProviderDailyCapUsd } from "./providerCaps";
+import { readJobCreatedAtMs, readJobLease, readJobProviderSpend, readJobProviderSpendUsd, resolveProviderDailyCapUsd } from "./providerCaps";
 import { appendChunkTrace } from "./traceStore";
 import type { RobotsFetch } from "../../multiProvider/policy";
+import { executeTregCall } from "../../../functions/shared/tregClient";
+import { sameInstant } from "../../multiProvider/tregContacts";
+import { randomUUID } from "node:crypto";
 
 /**
  * The chain as a provider adapter for the worker: same input and output as every other adapter, so the worker's reserve, row gate,
