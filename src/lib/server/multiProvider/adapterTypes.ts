@@ -65,6 +65,8 @@ export interface AdapterContext {
   timeoutMs?: number;
   /** A call that is known to take longer than the provider's usual timeout (a parser reading 1,000 reviews takes up to 45 s) may raise the ceiling to this. */
   timeoutCapMs?: number;
+  /** Set ONLY by the chain runner (chainRunner.ts, chainCtxFor): strict ledger mode of runRecordedCall. Every other caller leaves it unset and gets today's behaviour. */
+  chainStrict?: boolean;
 }
 
 export interface OperationResult<T> {
