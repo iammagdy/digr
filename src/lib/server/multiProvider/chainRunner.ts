@@ -1,6 +1,6 @@
 import { capabilityById, isSellable, PROVIDER_FACTS } from "../../multiProvider/catalog";
 import {
-  budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr, discoveryEmptyLineAr, discoveryLineAr, enrichLineAr, skippedSitesLineAr, stageFallbackLineAr,
+  budgetStopLineAr, chainFailureReasonAr, chainFinishedLineAr, chainStopProgressLineAr, type ChainRunnerStop, discoveryEmptyLineAr, discoveryLineAr, enrichLineAr, skippedSitesLineAr, stageFallbackLineAr,
 } from "../../multiProvider/copy";
 import {
   buildContactRow, checkPublicBusinessUrl, checkRobots, companyDomain, extractEmails, extractPhones, extractProfileLink, linksFromMarkdown,
@@ -9,12 +9,16 @@ import {
 import { cleanCompanyName, cleanMarkdownText, isListOrArticleTitle, markForeignPhones, nonCompanyReasonAr } from "../../companyRowHygiene";
 import { isoCountryCodeFromName } from "../../planParameters";
 import { reserveForUnits } from "../../recordPricing";
-import { HARD_LIMITS, YIELD, estimateRoute, routeByCode } from "../../multiProvider/routes";
+import { HARD_LIMITS, YIELD, estimateRoute, routeByCode, verifiedShareFor } from "../../multiProvider/routes";
 import type { CapabilityDef, DataProviderId, RequiredField, RouteDef, RouteRequest } from "../../multiProvider/types";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput, ProviderAdapterFn } from "../tregAdapter";
-import { ADAPTERS, runTregDirectoryPage } from "./adapters";
-import type { AdapterContext, CallRecorder, FetchFn, OperationResult, SearchHit } from "./adapterTypes";
+import { ADAPTERS, runTregDirectoryPage, runTregDirectoryPageDirect, runTregEmailLookup, buildTregIdempotencyKey } from "./adapters";
+import type { AdapterContext, CallRecord, CallRecorder, CallStatus, FetchFn, OperationResult, SearchHit } from "./adapterTypes";
 import { ChunkTraceCollector, type ChunkTrace } from "../../multiProvider/trace";
+import { HOST_RE, ORIGIN_CHARSET_RE, TREG_DIRECTORY, TREG_EMAIL_LOOKUP, escapedBytes, readTombaMailbox, sameInstant, stripControl, utf8Bytes } from "../../multiProvider/tregContacts";
+import type { TregCallOptions, TregCallResult } from "../../../functions/shared/tregClient";
+import { KEYWORDS_ONLY_CURSOR_PREFIX, normalizeIcypeasCompanyParams } from "../tregAdapter";
+
 
 /**
  * Runs one chunk of a bounded chain: DISCOVER companies (a provider, with fallbacks) -> ENRICH each company from its public contact
