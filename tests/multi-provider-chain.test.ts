@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, workLimitsFor, encodeCursorV2, decodeCursorAny, emptyCursorV2, type ChainDeps, type ChainChunkInput, type ChainCursorV2 } from "../src/lib/server/multiProvider/chainRunner";
+import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, chainCtxFor, discoveryQueryVariants, workLimitsFor, encodeCursorV2, decodeCursorAny, emptyCursorV2, type ChainDeps, type ChainChunkInput, type ChainCursorV2 } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
 import { createMemoryRecorder } from "./helpers/multiProviderFakes";
+import { runRecordedCall } from "../src/lib/server/multiProvider/httpCall";
 import { HARD_LIMITS, routeCodeOf, estimateRoute, routeById } from "../src/lib/multiProvider/routes";
 import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
@@ -686,6 +687,73 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     const { rows, last } = await runAll(h, params({ count: 5, budgetUsd: 0.05 }), 5);
     expect(h.rec.rows.length).toBeGreaterThan(0);
     expect(h.rec.rows.every((r) => r.costUsd >= 0)).toBe(true);
+
+    // (1) a ledger row is reserved BEFORE every provider call and committed after it: at every web call a reservation is open, and every call has its own committed row
+    {
+      const hOrder = harness(world, {}, { keys: { firecrawl: "fc-test-key-123456", contextdev: "cx-test-key-123456" } });
+      let open = 0;
+      let fetches = 0;
+      let fetchesWithoutReservation = 0;
+      const realReserve = hOrder.deps.recorder.reserve;
+      const realCommit = hOrder.deps.recorder.commit;
+      hOrder.deps.recorder = {
+        reserve: async (a) => { const r = await realReserve(a); if (r.allowed) open += 1; return r; },
+        commit: async (id, rec) => { open -= 1; return realCommit(id, rec); },
+      };
+      const realFetch = hOrder.deps.fetchFn;
+      hOrder.deps.fetchFn = async (...args) => { fetches += 1; if (open < 1) fetchesWithoutReservation += 1; return realFetch(...args); };
+      await runAll(hOrder, params({ count: 3, budgetUsd: 1 }), 3);
+      expect(fetches).toBeGreaterThan(0);
+      expect(fetchesWithoutReservation).toBe(0);
+      expect(hOrder.rec.rows.length).toBe(fetches);
+      expect(hOrder.rec.rows.every((r) => r.estimate === false)).toBe(true);
+      expect(open).toBe(0);
+    }
+
+    // (2) exact-limit admission through the REAL chain context: a call whose reserve brings the job's spend to EXACTLY the budget is accepted, the next one is refused
+    {
+      const capability: any = { id: "firecrawl.scrape", provider: "firecrawl", costPerCallUsd: 0.005 };
+      const okFetch: any = async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      const interpret = () => ({ status: "success" as const, data: null, units: 0, credits: 4 });
+      const request = { url: "https://example.com/p", method: "GET" as const, headers: {} };
+      const callAt = async (mem: ReturnType<typeof createMemoryRecorder>, budget: number) => {
+        const rc: any = { input: { jobId: "j" }, deps: { recorder: mem.recorder, fetchFn: okFetch, providerKeys: { firecrawl: "k" }, jobSpend: async () => ({ usd: mem.spent(), calls: mem.rows.length }) }, budget, usd: 0, calls: 0, limits: { maxCalls: 100 }, chunkCalls: 0, stop: { workLimit: false, spendUnreadable: false }, now: Date.now, hardEndMs: Date.now() + 60_000 };
+        return runRecordedCall({ ctx: chainCtxFor(rc, "firecrawl"), capability, request, interpret, reserveUsd: 0.02 });
+      };
+      const mem = createMemoryRecorder();
+      const first = await callAt(mem, 0.04);
+      const second = await callAt(mem, 0.04);
+      const third = await callAt(mem, 0.04);
+      expect(first.costUsd).toBe(0.02);
+      expect(second.ok).toBe(true);
+      expect(mem.spent("firecrawl")).toBe(0.04);
+      expect(third.errorCode).toBe("budget_reached");
+      // the refused call's reservation is RELEASED: a row with cost 0, status failed (the spend stays 0.04)
+      expect(mem.rows.length).toBe(3);
+      expect(mem.rows[2].costUsd).toBe(0);
+      expect(mem.rows[2].status).toBe("failed");
+      // one micro-dollar over the budget is refused
+      const memOver = createMemoryRecorder();
+      await callAt(memOver, 0.039998);
+      const over = await callAt(memOver, 0.039998);
+      expect(over.errorCode).toBe("budget_reached");
+    }
+
+    // (3) overbill: a call that costs MORE than its reserve is committed at what the provider reported, and the NEXT call is refused
+    {
+      const hOver = harness(world, { overbill: { firecrawl: 3 } }, { keys: { firecrawl: "fc-test-key-123456" } });
+      const { last: lastOver } = await runAll(hOver, params({ routeCode: routeCodeOf("chain:firecrawl>firecrawl"), count: 5, budgetUsd: 0.025 }), 5);
+      expect(hOver.fetch.log.length).toBe(1);
+      // row 0 is the overbilled search, row 1 is the NEXT call's reservation, refused and released at cost 0 (no second request was sent)
+      expect(hOver.rec.rows.length).toBe(2);
+      expect(hOver.rec.rows[1].costUsd).toBe(0);
+      expect(hOver.rec.rows[1].status).toBe("failed");
+      expect(hOver.rec.rows[0].capabilityId).toBe("firecrawl.search");
+      expect(hOver.rec.rows[0].estimate).toBe(false);
+      expect(hOver.rec.rows[0].costUsd).toBeCloseTo(0.03, 6);
+      expect(hOver.rec.rows[0].costUsd).toBeGreaterThan(0.02);
+      expect(lastOver.chainStop).toBe("budget");
+    }
 
     // Job spend failing twice results in ok: false
     let spendFailures = 0;
