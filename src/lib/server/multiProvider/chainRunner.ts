@@ -1087,6 +1087,7 @@ export async function runChunkV2(rc: ChainRunCtx): Promise<ProviderAdapterCallOu
     }
   }
 
+  rc.trace.stage("verify", null, null).skipped += rc.skipped;
   const input = rc.input;
   const delivered = rc.rows.slice(0, Math.max(0, input.remainingNeeded));
   rc.state.out += delivered.length;
