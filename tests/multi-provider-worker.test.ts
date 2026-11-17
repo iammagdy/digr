@@ -464,17 +464,14 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     // non-terminal: the runner did not end the job itself (no «no more work» stop line), so the cap under test is what the customer reads
     expect(db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr("no_more_work"))).toBe(false);
 
+    // DT-20261117-04 CI r2 (a PLAN DECISION, not a bug): P77 (route.ts :1697) sets `pageCapReason = isChainJob ? null : …` (plan v9 §C11(a), D-0022 N3; pinned by B1), so a CHAIN job whose chunks only repeat delivered companies is NOT stopped by a worker «source repeats» cap: this sentence can never reach a chain customer. The test now proves that, instead of the opposite.
     const repeatSentence = chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 });
-    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(repeatSentence));
-    // O8d: the world is non-terminal, so the REPEAT sentence itself must reach the customer (the EXCL/NEUTRAL branch below can no longer stand in for it)
+    expect(db.events.some((e: any) => String(e.message ?? "").includes(repeatSentence))).toBe(false);
+    // non-vacuity: the job really went past the old cap (more than 3 chunks were claimed) and its delivered-count line is there
+    expect(db.rpcCalls.filter((c) => c.name === "claim_job_chunk").length).toBeGreaterThan(3);
+    const finalEvent = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم")).at(-1);
     expect(finalEvent).toBeDefined();
-    if (finalEvent) {
-      expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
-    } else {
-      // If the harness observes EXCL or NEUTRAL branch instead of REPEAT rule
-      const altEvent = db.events.find((e: any) => String(e.message ?? "").includes("استُبعد") || String(e.message ?? "").includes("لم يصلنا سبب"));
-      expect(altEvent).toBeDefined();
-    }
+    expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
     expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
   });
 
