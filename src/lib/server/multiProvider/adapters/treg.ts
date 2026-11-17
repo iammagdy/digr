@@ -107,3 +107,82 @@ export function classifyTregCost(result: TregCallResult | null | undefined, rese
   if (result.httpStatus >= 400 && result.httpStatus <= 499) return { known: true, commitMicro: 0 };
   return unknown();
 }
+
+export async function runTregCall(args: {
+  tregCall?: (options: TregCallOptions) => Promise<TregCallResult>;
+  ctx: Pick<AdapterContext, "recorder" | "jobId" | "now">;
+  capabilityId: string;
+  reservedUsd: number;
+  options: TregCallOptions;
+  answerKindOf: (body: any) => TregAnswerKind;
+  unitsOf: (body: any) => number;
+}): Promise<TregCallOutcome> {
+  const reservation = await args.ctx.recorder.reserve({
+    provider: "treg",
+    capabilityId: args.capabilityId,
+    estimatedUsd: args.reservedUsd,
+    jobId: args.ctx.jobId,
+  });
+  if (!reservation.allowed) {
+    const refused = reservation.reason === "budget" ? "budget_reached" : reservation.reason === "error" ? "ledger_unavailable" : "cap_reached";
+    return {
+      ok: false,
+      status: "failed",
+      httpStatus: null,
+      body: null,
+      committedUsd: 0,
+      known: true,
+      timedOut: false,
+      answerKind: "unparsable",
+      durationMs: 0,
+      refused,
+    };
+  }
+  const now = args.ctx.now ?? Date.now;
+  const started = now();
+  const call = args.tregCall ?? executeTregCall;
+  let result: TregCallResult | undefined;
+  let thrown: unknown;
+  try {
+    result = await call(args.options);
+  } catch (e) {
+    thrown = e ?? new Error("treg_call_failed");
+  }
+  const durationMs = Math.max(0, now() - started);
+  const body = result?.data ?? null;
+  const okAnswer = Boolean(result && result.ok && result.httpStatus >= 200 && result.httpStatus <= 299);
+  const answerKind = okAnswer ? args.answerKindOf(body) : "unparsable";
+  const verdict = classifyTregCost(result, Math.round(args.reservedUsd * 1e6), answerKind, thrown);
+  const units = okAnswer ? args.unitsOf(body) : 0;
+  const status: CallStatus = okAnswer ? (units > 0 ? "success" : "empty") : "failed";
+  try {
+    await args.ctx.recorder.commit(reservation.costId, {
+      provider: "treg",
+      capabilityId: args.capabilityId,
+      status,
+      units,
+      costUsd: verdict.commitMicro / 1e6,
+      durationMs,
+      jobId: args.ctx.jobId,
+    });
+  } catch {
+    /* the reserved row stays and counts */
+  }
+  const httpStatus = result?.httpStatus ?? null;
+  let errorCode: ErrorCode | undefined;
+  if (!okAnswer) {
+    errorCode = httpStatus !== null ? mapHttpError(httpStatus, { code: undefined }) : "network";
+  }
+  return {
+    ok: okAnswer,
+    status,
+    httpStatus,
+    ...(errorCode ? { errorCode } : {}),
+    body,
+    committedUsd: verdict.commitMicro / 1e6,
+    known: verdict.known,
+    timedOut: result?.timedOut === true,
+    answerKind,
+    durationMs,
+  };
+}
