@@ -293,10 +293,12 @@ const chainParams = (over: Record<string, any> = {}) => ({
             costMicro: 8900,
             latencyMs: 5,
             data: {
-              organization: { disposable: false, webmail: false, accept_all: false },
-              emails: [{ email: `person@${domain}`, type: "personal", verification: { status: "invalid" }, secret_field: "SECRET_LEAK_12345", phone: "+999111222" }],
+              data: {
+                organization: { disposable: false, webmail: false, accept_all: false },
+                emails: [{ email: `person@${domain}`, type: "personal", verification: { status: "invalid" }, secret_field: "SECRET_LEAK_12345", phone: "+999111222" }],
+              },
+              meta: { params: { domain }, total: 1 },
             },
-            meta: { params: { domain }, total: 1 },
             isRouteMaxCost: false,
             isPlatformBalanceLow: false,
           };
@@ -309,10 +311,12 @@ const chainParams = (over: Record<string, any> = {}) => ({
             costMicro: 8900,
             latencyMs: 5,
             data: {
-              organization: { disposable: false, webmail: false, accept_all: false },
-              emails: [{ email: `info@${domain}`, type: "generic", verification: { status: "valid" }, secret_field: "SECRET_LEAK_12345" }],
+              data: {
+                organization: { disposable: false, webmail: false, accept_all: false },
+                emails: [{ email: `info@${domain}`, type: "generic", verification: { status: "valid" }, secret_field: "SECRET_LEAK_12345" }],
+              },
+              meta: { params: { domain }, total: 1 },
             },
-            meta: { params: { domain }, total: 1 },
             isRouteMaxCost: false,
             isPlatformBalanceLow: false,
           };
@@ -325,10 +329,12 @@ const chainParams = (over: Record<string, any> = {}) => ({
             costMicro: 8900,
             latencyMs: 5,
             data: {
-              organization: { disposable: false, webmail: false, accept_all: false },
-              emails: [{ email: `unverified@${domain}`, type: "personal", verification: { status: "invalid" }, secret_field: "SECRET_LEAK_12345" }],
+              data: {
+                organization: { disposable: false, webmail: false, accept_all: false },
+                emails: [{ email: `unverified@${domain}`, type: "personal", verification: { status: "invalid" }, secret_field: "SECRET_LEAK_12345" }],
+              },
+              meta: { params: { domain }, total: 1 },
             },
-            meta: { params: { domain }, total: 1 },
             isRouteMaxCost: false,
             isPlatformBalanceLow: false,
           };
