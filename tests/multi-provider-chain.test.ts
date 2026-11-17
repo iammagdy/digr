@@ -218,7 +218,7 @@ describe("chain: discover -> read public contact pages -> verify", () => {
     expect(rows).toEqual([]);
     expect(last.ok).toBe(true);
     expect(last.nextCursor).toBeNull();
-    expect(h.events.at(-1)).toBe(chainStopProgressLineAr("no_more_work"));
+    expect(h.events.at(-1)).toBe(chainStopProgressLineAr("coverage_end"));
   });
 
   it("nothing discoverable at all (every discovery provider empty or failing) ends the same way: zero delivered, no cursor", async () => {
