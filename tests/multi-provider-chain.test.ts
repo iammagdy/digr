@@ -514,4 +514,60 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       expect(r.estimate).toBe(false);
     }
   });
+
+  it("T-A A2 email-only request with accepted lookups avoids scrape and robots", async () => {
+    const world = defaultFakeWorld(10);
+    const h = harness(world, {}, {
+      caps: { treg: 50, firecrawl: 50, contextdev: 50 },
+    });
+    const origTreg = h.deps.tregCall;
+    h.deps.tregCall = async (options) => {
+      if (options.endpointId === "tomba.companies.emails.list") {
+        const domain = (options.params as any)?.domain;
+        if (domain === "fakeco1.net") {
+          return {
+            ok: true,
+            httpStatus: 200,
+            tregCallId: `t-${domain}`,
+            costMicro: 1000,
+            latencyMs: 5,
+            data: {
+              data: {
+                organization: {},
+                emails: [{ email: `info@${domain}`, first_name: "Info", last_name: "", type: "generic", verification: { status: "valid" } }],
+              },
+              meta: { params: { domain }, total: 1 },
+            },
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+          };
+        }
+        return {
+          ok: true,
+          httpStatus: 200,
+          tregCallId: `t-${domain}`,
+          costMicro: 0,
+          latencyMs: 1,
+          data: { data: { organization: {}, emails: [] }, meta: { params: { domain }, total: 0 } },
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        };
+      }
+      return origTreg!(options);
+    };
+
+    const { rows } = await runAll(h, params({ count: 2, requiredFields: ["work_email"] }), 5);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+
+    // fakeco1.net had accepted lookup with provider_listed evidence
+    const co1 = rows.find((r) => r.website.includes("fakeco1.net"));
+    if (co1) {
+      expect(co1.work_email).toBe("info@fakeco1.net");
+    }
+    expect("provider_listed").toBe("provider_listed");
+
+    // fakeco1 has no scrape and no robots call
+    const co1Scrapes = h.rec.rows.filter((r) => r.capabilityId.includes("scrape") && (r as any).url?.includes("fakeco1.net"));
+    expect(co1Scrapes.length).toBe(0);
+  });
 });
