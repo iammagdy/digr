@@ -400,7 +400,8 @@ export function chainCtxFor(rc: ChainRunCtx, provider: DataProviderId): AdapterC
 
 export async function oneTregDirectoryAsk(rc: ChainRunCtx, kind: "dir" | "dirkw"): Promise<{ called: boolean; answered: boolean; zeroRows: boolean }> {
   rc.ordinal += 1;
-  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId: rc.attemptId, ordinal: rc.ordinal, kind });
+  const attemptId = rc.attemptId;
+  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId, ordinal: rc.ordinal, kind });
   const timeoutMs = Math.min(CHAIN_RUN.tregTimeoutCapMs, Math.floor((rc.hardEndMs - rc.now()) / (1 + CHAIN_RUN.tregKeyPoolHops)));
   if (timeoutMs < CHAIN_RUN.tregMinTimeoutMs) {
     return { called: false, answered: false, zeroRows: false };
@@ -629,7 +630,8 @@ export async function lookupEmail(rc: ChainRunCtx, domain: string): Promise<Foun
   }
 
   rc.ordinal += 1;
-  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId: rc.attemptId, ordinal: rc.ordinal, kind: "mail" });
+  const attemptId = rc.attemptId;
+  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId, ordinal: rc.ordinal, kind: "mail" });
   const timeoutMs = Math.min(CHAIN_RUN.tregTimeoutCapMs, Math.floor((rc.hardEndMs - rc.now()) / (1 + CHAIN_RUN.tregKeyPoolHops)));
   if (timeoutMs < CHAIN_RUN.tregMinTimeoutMs) {
     return null;
@@ -1053,6 +1055,86 @@ export async function startChunkV2(args: {
       discoveredNow: 0,
       fail: args.fail,
     },
+  };
+}
+
+export async function runChunkV2(rc: ChainRunCtx): Promise<ProviderAdapterCallOutput & { chainStop?: ChainRunnerStop; attemptId?: string; chainSkippedOrigins?: number }> {
+  const robotsCache = new Map<string, RobotsRules | "none" | "unreadable">();
+
+  while (
+    rc.now() < rc.deadlineMs - CHAIN_RUN.noCompanyBeforeEndMs &&
+    rc.rows.length < rc.input.remainingNeeded &&
+    terminalOf(rc) === null &&
+    !rc.stop.spendUnreadable &&
+    !rc.stop.ledger &&
+    !rc.stop.leaseLost &&
+    rc.chunkCalls < CHAIN_RUN.chunkCalls
+  ) {
+    if (rc.state.q.length === 0 && rc.state.dx === 0) {
+      await discoverOnce(rc);
+    } else if (rc.state.q.length > 0) {
+      const c = rc.state.q[0];
+      await processCompanyV2(rc, c, robotsCache);
+      if (rc.state.bd !== 1 && !rc.stop.leaseLost) {
+        rc.state.q.shift();
+      }
+    } else {
+      break;
+    }
+  }
+
+  const input = rc.input;
+  const delivered = rc.rows.slice(0, Math.max(0, input.remainingNeeded));
+  rc.state.out += delivered.length;
+  if (rc.read > 0 || delivered.length > 0) {
+    await rc.deps.emit(enrichLineAr({ read: rc.read, verified: delivered.length, unverified: rc.unverified, total: rc.state.out }), rc.state.out);
+  }
+  if (rc.skipped > 0) {
+    await rc.deps.emit(skippedSitesLineAr(rc.skipped), rc.state.out);
+  }
+  const progress = rc.read + rc.skipped > 0 || rc.discoveredNow > 0 || delivered.length > 0;
+  if (progress) {
+    rc.state.ix = 0;
+  } else {
+    rc.state.ix += 1;
+  }
+
+  if (rc.stop.spendUnreadable || rc.stop.ledger || rc.stop.clockUnreadable) {
+    return rc.fail(chainFailureReasonAr("spend"), "spend_unreadable");
+  }
+  if (rc.stop.leaseLost) {
+    return rc.fail(chainFailureReasonAr("lease"), "lease_lost");
+  }
+
+  const stop = terminalOf(rc);
+  let nextCursor: string | null = null;
+  if (stop) {
+    await rc.deps.emit(chainStopProgressLineAr(stop), rc.state.out);
+    nextCursor = null;
+  } else {
+    const enc = encodeCursorV2(rc.state);
+    if (!enc.fits) {
+      return rc.fail(chainFailureReasonAr("cursor"), "cursor_overflow");
+    }
+    nextCursor = enc.cursor;
+  }
+
+  const stoppedBy = stop === "budget" ? "budget" : stop ? "no_more_work" : null;
+  if (rc.deps.trace) {
+    await rc.deps.trace(rc.trace.finish({ at: new Date(rc.now()).toISOString(), delivered: delivered.length, costUsd: rc.chunkUsd, stoppedBy })).catch(() => {});
+  }
+
+  return {
+    ok: true,
+    httpStatus: 200,
+    rows: delivered,
+    nextCursor,
+    costUsd: Math.round(rc.chunkUsd * 1e6) / 1e6,
+    costMicro: Math.round(rc.chunkUsd * 1e6),
+    tregCallId: "",
+    attemptId: rc.attemptId,
+    ...(stop ? { chainStop: stop } : {}),
+    ...(stop && rc.state.uo > 0 ? { chainSkippedOrigins: rc.state.uo } : {}),
   };
 }
 
