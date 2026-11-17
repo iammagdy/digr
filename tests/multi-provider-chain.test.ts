@@ -775,4 +775,40 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       expect(resGiant.reason).toBe("cursor_overflow");
     }
   });
+
+  it("T-C v1 conversion pending items to v2 queue", () => {
+    for (const count of [80, 120]) {
+      const rest = Array.from({ length: count }, (_, i) => ({
+        n: `Company ${i}`,
+        u: `https://company${i}.com`,
+        i: "مقاولات",
+        l: "مصر",
+        d: "desc",
+      }));
+      const v1State = {
+        v: 1,
+        dc: 0,
+        ec: 0,
+        taken: 0,
+        rest,
+        seen: [],
+        tc: null,
+        dx: false,
+        out: 0,
+        ix: 0,
+      };
+      const v1Encoded = encodeChainCursor(v1State as any);
+      expect(v1Encoded.length).toBeLessThanOrEqual(8000);
+
+      const converted = decodeCursorAny(v1Encoded, "aid_v1");
+      expect(converted.v).toBe(2);
+      expect(converted.q.length).toBe(count);
+      for (let i = 0; i < count; i++) {
+        expect(converted.q[i]).toEqual({ n: `Company ${i}`, u: `https://company${i}.com` });
+        expect("i" in converted.q[i]).toBe(false);
+        expect("l" in converted.q[i]).toBe(false);
+        expect("d" in converted.q[i]).toBe(false);
+      }
+    }
+  });
 });
