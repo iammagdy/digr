@@ -907,6 +907,155 @@ export function terminalOf(rc: ChainRunCtx): ChainRunnerStop | null {
   return null;
 }
 
+export async function startChunkV2(args: {
+  input: ChainChunkInput;
+  deps: ChainDeps;
+  params: ChainParams;
+  route: RouteDef;
+  budget: number;
+  trace: ChunkTraceCollector;
+  fail: (messageAr: string, errorCode: string) => ProviderAdapterCallOutput;
+}): Promise<{ rc: ChainRunCtx } | { fail: ProviderAdapterCallOutput }> {
+  const { input, deps, params, route, budget, trace } = args;
+  const attemptId = (deps.newAttemptId ?? (() => globalThis.crypto.randomUUID()))();
+  if (!deps.jobSpend || !deps.leaseHeld || !deps.jobStartedAtMs) {
+    return { fail: args.fail(chainFailureReasonAr("lease"), "chain_deps_missing") };
+  }
+
+  if (input.startIndex !== undefined && input.startIndex >= MAX_STARTS_PER_STEP) {
+    const state = decodeCursorAny(input.cursor, attemptId);
+    state.n += 1;
+    const now = deps.now ?? Date.now;
+    const deadlineMs = input.deadlineMs ?? now() + 40_000;
+    const hardEndMs = deadlineMs + CHAIN_RUN.hardEndAfterDeadlineMs;
+    const discoverCapId = route.stages.find((s) => s.stage === "discover")?.capabilityIds[0] ?? "";
+    const limits = workLimitsFor(params.count, params.requiredFields, discoverCapId);
+    return {
+      rc: {
+        input,
+        deps,
+        params,
+        route,
+        budget,
+        state,
+        attemptId,
+        now,
+        deadlineMs,
+        hardEndMs,
+        startedMs: now(),
+        usd: 0,
+        calls: 0,
+        limits,
+        chunkCalls: 0,
+        chunkUsd: 0,
+        ordinal: 0,
+        trace,
+        stop: {
+          spendUnreadable: false,
+          ledger: false,
+          workLimit: true,
+          leaseLost: false,
+          clockUnreadable: false,
+          cursorOverflow: false,
+        },
+        rows: [],
+        read: 0,
+        unverified: 0,
+        skipped: 0,
+        discoveredNow: 0,
+        fail: args.fail,
+      },
+    };
+  }
+
+  if (!input.claimLeaseUntil) {
+    return { fail: args.fail(chainFailureReasonAr("lease"), "chain_lease_missing") };
+  }
+
+  const state = decodeCursorAny(input.cursor, attemptId);
+  state.n += 1;
+  if (deps.tregCall === undefined) {
+    if (!state.un.includes("treg")) state.un.push("treg");
+    state.tg = 1;
+  }
+
+  let spend: { usd: number; calls: number };
+  try {
+    spend = await deps.jobSpend();
+  } catch {
+    try {
+      spend = await deps.jobSpend();
+    } catch {
+      return { fail: args.fail(chainFailureReasonAr("spend"), "spend_unreadable") };
+    }
+  }
+
+  let startedMs: number;
+  try {
+    startedMs = await deps.jobStartedAtMs();
+  } catch {
+    try {
+      startedMs = await deps.jobStartedAtMs();
+    } catch {
+      return { fail: args.fail(chainFailureReasonAr("spend"), "clock_unreadable") };
+    }
+  }
+
+  const discoverCapId = route.stages.find((s) => s.stage === "discover")?.capabilityIds[0] ?? "";
+  const limits = workLimitsFor(params.count, params.requiredFields, discoverCapId);
+
+  let held = false;
+  try {
+    held = await deps.leaseHeld();
+  } catch {
+    held = false;
+  }
+  if (!held) {
+    return { fail: args.fail(chainFailureReasonAr("lease"), "lease_lost") };
+  }
+
+  const now = deps.now ?? Date.now;
+  const deadlineMs = input.deadlineMs ?? now() + 40_000;
+  const hardEndMs = deadlineMs + CHAIN_RUN.hardEndAfterDeadlineMs;
+
+  return {
+    rc: {
+      input,
+      deps,
+      params,
+      route,
+      budget,
+      state,
+      attemptId,
+      now,
+      deadlineMs,
+      hardEndMs,
+      startedMs,
+      usd: spend.usd,
+      calls: spend.calls,
+      limits,
+      chunkCalls: 0,
+      chunkUsd: 0,
+      ordinal: 0,
+      trace,
+      stop: {
+        spendUnreadable: false,
+        ledger: false,
+        workLimit: false,
+        leaseLost: false,
+        clockUnreadable: false,
+        cursorOverflow: false,
+      },
+      rows: [],
+      read: 0,
+      unverified: 0,
+      skipped: 0,
+      discoveredNow: 0,
+      fail: args.fail,
+    },
+  };
+}
+
 
 
 
