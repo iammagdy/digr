@@ -33,6 +33,8 @@ import { KEYWORDS_ONLY_CURSOR_PREFIX, normalizeIcypeasCompanyParams } from "../t
  *  - nothing delivered means `ok` with no rows and no next cursor: the worker settles zero and releases the whole reserve.
  */
 
+export type ChainChunkInput = ProviderAdapterCallInput & { claimLeaseUntil?: string; startIndex?: number };
+
 export interface ChainDeps {
   /** Usable providers at run time: a key is present (TREG holds its own key, so any non-empty marker means «present»). */
   providerKeys: Partial<Record<DataProviderId, string>>;
@@ -49,7 +51,14 @@ export interface ChainDeps {
   /** The worker's step number of this chunk (the trace is merged by step, so a retried chunk replaces itself). */
   step?: number;
   now?: () => number;
+  /** Strict chain mode (v6 §3.2-§3.9). OPTIONAL in the type so older harnesses compile; the runner ends with ok:false when one is missing. */
+  jobSpend?: () => Promise<{ usd: number; calls: number }>;
+  leaseHeld?: () => Promise<boolean>;
+  jobStartedAtMs?: () => Promise<number>;
+  tregCall?: (options: TregCallOptions) => Promise<TregCallResult>;
+  newAttemptId?: () => string;
 }
+
 
 export interface ChainCandidate { n: string; u: string; i?: string; l?: string; d?: string }
 
