@@ -2099,7 +2099,7 @@ export async function POST(req: NextRequest) {
               chargedCredits: 0,
               deliveredUnits: 0,
               jobId,
-              error: partialCorruptMsg,
+              error: rel.textAr ?? partialCorruptMsg,
               release: rel.data,
             },
             { status: 500 }
@@ -2139,7 +2139,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: mismatchMsg,
+            error: rel.textAr ?? mismatchMsg,
             release: rel.data,
           },
           { status: 500 }
@@ -2156,7 +2156,7 @@ export async function POST(req: NextRequest) {
         console.error("[worker:assembly_failed] reason=report_record_missing");
         const rel = await executeReleaseConfirmation(adminClient, jobId, reportLostMsg, claimTargetN);
         if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
-        return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: reportLostMsg, release: rel.data }, { status: 500 });
+        return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: rel.textAr ?? reportLostMsg, release: rel.data }, { status: 500 });
       }
       const reportPayload = reportRecord ? payloadFromState(reportRecord) : null;
 
@@ -2413,7 +2413,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: uploadFailReason,
+            error: rel.textAr ?? uploadFailReason,
             release: rel.data,
           },
           { status: 500 }
@@ -2462,7 +2462,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: avFailReason,
+            error: rel.textAr ?? avFailReason,
             release: rel.data,
           },
           { status: 500 }
