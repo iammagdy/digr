@@ -245,3 +245,35 @@ export async function runTregDirectoryPageDirect(args: {
   };
 }
 
+export async function runTregEmailLookup(args: {
+  tregCall?: (options: TregCallOptions) => Promise<TregCallResult>;
+  ctx: Pick<AdapterContext, "recorder" | "jobId" | "now">;
+  userId: string;
+  domain: string;
+  idempotencyKey: string;
+  timeoutMs: number;
+}): Promise<TregCallOutcome> {
+  const options: TregCallOptions = {
+    endpointId: TREG_EMAIL_LOOKUP.endpointId,
+    method: "GET",
+    params: { domain: args.domain, limit: TREG_EMAIL_LOOKUP.limit },
+    allowedParamKeys: [...TREG_EMAIL_LOOKUP.allowedParamKeys],
+    userId: args.userId,
+    jobId: args.ctx.jobId ?? "",
+    idempotencyKey: args.idempotencyKey,
+    timeoutMs: args.timeoutMs,
+    callEstimateUsd: TREG_EMAIL_LOOKUP.reservedUsd,
+    routeMaxCostUsd: TREG_EMAIL_LOOKUP.headerCeilingUsd,
+  };
+  return runTregCall({
+    tregCall: args.tregCall,
+    ctx: args.ctx,
+    capabilityId: "tomba.companies.emails.list",
+    reservedUsd: TREG_EMAIL_LOOKUP.reservedUsd,
+    options,
+    answerKindOf: tombaAnswerKind,
+    unitsOf: (b) => (Array.isArray(b?.data?.emails) ? b.data.emails.length : 0),
+  });
+}
+
+
