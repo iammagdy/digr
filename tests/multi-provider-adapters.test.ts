@@ -1214,7 +1214,7 @@ it("T-T 3 crash at each stage followed by redo produces two ledger rows, never e
         ctx,
         capability,
         request: { url: "http://example.com", method: "GET", headers: {} },
-        interpret: () => ({ ok: true, data: null, units: 0, credits: 0 }),
+        interpret: () => ({ status: "success", data: null, units: 0, credits: 0 }),
       });
       expect(res.ok).toBe(false);
       expect(res.errorCode).toBe(expected);
@@ -1262,7 +1262,7 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
       ctx: ctxUnset,
       capability: firecrawlCap,
       request: { url: "https://api.firecrawl.dev/v2/scrape", method: "POST", headers: {} },
-      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      interpret: () => ({ status: "success", data: null, units: 1, credits: 1 }),
       reserveUsd: 0.02,
     });
     expect(reservedAmounts[0]).toBe(0.005);
@@ -1273,7 +1273,7 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
       ctx: ctxUnset,
       capability: { id: "refuse_budget", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
       request: { url: "http://example.com", method: "GET", headers: {} },
-      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      interpret: () => ({ status: "success", data: null, units: 1, credits: 1 }),
     });
     expect(resBudget.errorCode).toBe("cap_reached");
 
@@ -1281,7 +1281,7 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
       ctx: ctxUnset,
       capability: { id: "refuse_error", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
       request: { url: "http://example.com", method: "GET", headers: {} },
-      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      interpret: () => ({ status: "success", data: null, units: 1, credits: 1 }),
     });
     expect(resError.errorCode).toBe("cap_reached");
 
@@ -1289,7 +1289,7 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
       ctx: ctxUnset,
       capability: { id: "refuse_cap", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
       request: { url: "http://example.com", method: "GET", headers: {} },
-      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      interpret: () => ({ status: "success", data: null, units: 1, credits: 1 }),
     });
     expect(resCap.errorCode).toBe("cap_reached");
 
@@ -1298,7 +1298,7 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
       ctx: ctxUnset,
       capability: ctxDevCap,
       request: { url: "https://api.context.dev/v1/web/scrape", method: "POST", headers: {} },
-      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      interpret: () => ({ status: "success", data: null, units: 1, credits: 1 }),
       reserveUsd: 0.05,
     });
     expect(reservedAmounts[reservedAmounts.length - 1]).toBe(0.001);
