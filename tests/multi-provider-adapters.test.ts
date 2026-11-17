@@ -895,14 +895,14 @@ it("T-T P8 explicit 0 header with valid empty answer commits 0, but non-empty or
     // Valid EMPTY directory (0 companies) => 0
     const cDirEmpty = await runDir({
       ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
-      data: { success: true, companies: [], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      data: { success: true, leads: [], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
     });
     expect(cDirEmpty).toBe(0);
 
     // NON-EMPTY directory with header 0 => R (5760)
     const cDirNonEmpty = await runDir({
       ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
-      data: { success: true, companies: [{ name: "Acme" }], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      data: { success: true, leads: [{ name: "Acme", website: "https://acme.example" }], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
     });
     expect(cDirNonEmpty).toBe(5760);
 
