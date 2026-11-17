@@ -28,7 +28,7 @@ export interface ChainAdapterEnv {
   tregFn: ProviderAdapterFn;
 }
 
-interface TestTransport { fetchFn?: FetchFn; robotsFetch?: RobotsFetch; keys?: Partial<Record<DataProviderId, string>> }
+interface TestTransport { fetchFn?: FetchFn; robotsFetch?: RobotsFetch; keys?: Partial<Record<DataProviderId, string>>; tregCall?: ChainDeps["tregCall"] }
 let testTransport: TestTransport | null = null;
 /** Test-only. Ignored in production: the network of a production deployment is never replaced. */
 export function setChainTransportForTesting(value: TestTransport | null): void { testTransport = value; }
