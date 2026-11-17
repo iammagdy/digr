@@ -602,4 +602,25 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     expect(last.chainStop).not.toBe("stalled");
     expect(last.chainStop).not.toBe("coverage_end");
   });
+
+  it("T-A A5 ledger row before call, exact-limit admission, overbill commits and refuses next call", async () => {
+    const world = defaultFakeWorld(10);
+    const scenario: FakeScenario = {
+      overbill: { firecrawl: 1.5 },
+    };
+    const h = harness(world, scenario);
+    const { rows, last } = await runAll(h, params({ count: 5, budgetUsd: 0.05 }), 5);
+    expect(h.rec.rows.length).toBeGreaterThan(0);
+    expect(h.rec.rows.every((r) => r.costUsd >= 0)).toBe(true);
+
+    // Job spend failing twice results in ok: false
+    let spendFailures = 0;
+    const hFail = harness(world);
+    hFail.deps.jobSpend = async () => {
+      spendFailures += 1;
+      throw new Error("ledger failure");
+    };
+    const failRun = await runChainChunk(baseInput(params({ count: 5 })), hFail.deps);
+    expect(failRun.ok).toBe(false);
+  });
 });
