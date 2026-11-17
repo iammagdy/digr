@@ -1,4 +1,7 @@
 import { checkCustomerText } from "../src/lib/agentMission/text";
+import { runChainChunk, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
+import { createFakeRobotsFetch, defaultFakeWorld } from "../src/lib/server/multiProvider/fakeTransport";
+import { createMemoryRecorder } from "./helpers/multiProviderFakes";
 import { expectedTargetLineAr, chainShortfallReasonAr } from "../src/lib/multiProvider/copy";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -214,6 +217,106 @@ describe("customer-facing words of the multi-provider feature", () => {
           expect(text.toLowerCase()).not.toContain(c);
         }
       }
+    }
+
+    // 5. REAL runtime (plan v9 §5 T-N): the provider errors are INJECTED into the chain runner, and what the customer would read is COLLECTED from it:
+    // the activity lines, the failure message of every ok:false terminal, the reason sentences of the stop, the delivered rows, and the watchdog's release message.
+    const injected = ["Context.dev service unavailable", "firecrawl credits exhausted", "Tomba rate limit", "TREG route_max_cost firecrawl 402"];
+    const customerOutputs: string[] = [];
+    const chainInput = (over: Partial<ChainChunkInput> = {}): ChainChunkInput => ({
+      jobId: "job_leak", userId: "u1", step: 0, endpointId: "mp", capabilitySlug: CHAIN_CAPABILITY_SLUG, method: "POST",
+      params: { routeCode: routeCodeOf("chain:contextdev>firecrawl"), budgetUsd: 1, industry: "مقاولات", country: "مصر", requiredFields: ["work_email"], count: 4 },
+      paginationStrategy: "cursor", cursor: null, pageSize: 10, remainingNeeded: 4, targetVolumeMax: 4, deliveredSoFar: 0, deadlineMs: Date.now() + 45_000,
+      unitPricePoints: (1 * 5500) / (1.15 * 4), claimLeaseUntil: "2026-11-17T12:00:00.000000+00:00", startIndex: 0, ...over,
+    });
+    const makeDeps = (events: string[], counters: { web: number; treg: number }, over: Partial<ChainDeps> = {}): ChainDeps => {
+      const rec = createMemoryRecorder();
+      const world = defaultFakeWorld(4);
+      return {
+        providerKeys: { treg: "managed", firecrawl: "fc-test-key-123456", contextdev: "cx-test-key-123456" },
+        fetchFn: (async () => { counters.web += 1; return new Response(JSON.stringify({ error: injected[0], provider: "contextdev", message: injected[1] }), { status: 500, headers: { "content-type": "application/json" } }); }) as any,
+        recorder: rec.recorder,
+        robotsFetch: createFakeRobotsFetch(world),
+        spentUsdSoFar: async () => rec.spent(),
+        emit: async (line) => { events.push(line); },
+        tregFn: async () => { throw new Error(injected[2]); },
+        tregCall: async () => { counters.treg += 1; return { ok: false, httpStatus: 500, tregCallId: "t", costMicro: 0, latencyMs: 1, data: null, error: injected[2], errorDetails: injected[3], isRouteMaxCost: false, isPlatformBalanceLow: false }; },
+        jobSpend: async () => ({ usd: rec.spent(), calls: rec.rows.length }),
+        leaseHeld: async () => true,
+        jobStartedAtMs: async () => Date.now() - 1000,
+        newAttemptId: () => crypto.randomUUID(),
+        ...over,
+      };
+    };
+
+    // 5a. every provider answers with an error that names the provider; the chain runs to its end
+    const eventsA: string[] = [];
+    const countersA = { web: 0, treg: 0 };
+    const depsA = makeDeps(eventsA, countersA);
+    let cursorA: string | null = null;
+    let lastA: Awaited<ReturnType<typeof runChainChunk>> | null = null;
+    const rowsA: Record<string, any>[] = [];
+    for (let step = 0; step < 8; step++) {
+      lastA = await runChainChunk(chainInput({ cursor: cursorA, step }), depsA);
+      rowsA.push(...lastA.rows);
+      if (!lastA.ok || !lastA.nextCursor) break;
+      cursorA = lastA.nextCursor;
+    }
+    expect(countersA.web).toBeGreaterThan(0);          // the injected errors were really sent to the runner
+    expect(countersA.treg).toBeGreaterThan(0);
+    expect(eventsA.length).toBeGreaterThan(0);
+    expect(lastA!.chainStop).toBeTruthy();             // the job ended with a stop, so its reason sentences exist
+    customerOutputs.push(...eventsA, chainZeroDeliveryReasonAr({ target: 4, stop: lastA!.chainStop as any }), chainShortfallReasonAr({ stop: lastA!.chainStop as any, callCap: null, excluded: 0 }));
+    if (lastA!.errorMessageAr) customerOutputs.push(lastA!.errorMessageAr);
+    for (const r of rowsA) for (const v of Object.values(r)) customerOutputs.push(String(v));
+
+    // 5b. the ok:false terminals: the spend cannot be read, the lease is lost
+    for (const [over, expected] of [
+      [{ jobSpend: async () => { throw new Error(injected[0]); } }, chainFailureReasonAr("spend")],
+      [{ leaseHeld: async () => false }, chainFailureReasonAr("lease")],
+    ] as const) {
+      const outB = await runChainChunk(chainInput(), makeDeps([], { web: 0, treg: 0 }, over as Partial<ChainDeps>));
+      expect(outB.ok).toBe(false);
+      expect(outB.errorMessageAr).toBe(expected);
+      customerOutputs.push(String(outB.errorMessageAr));
+    }
+
+    // 5c. the REAL watchdog route: the release message it writes for a stale started job
+    const supabaseWd = await import("../src/lib/supabase/server");
+    const previousImpl = vi.mocked(supabaseWd.createAdminClient).getMockImplementation();
+    const rpcLog: Array<{ name: string; args: any }> = [];
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const staleJob = { id: "job_leak", user_id: "u1", status: "running", step: 3, delivered_units: 4, target_volume_max: 4, lease_until: oldTime, updated_at: oldTime };
+    vi.mocked(supabaseWd.createAdminClient).mockImplementation((() => ({
+      rpc: async (name: string, args: any) => { rpcLog.push({ name, args }); return { data: { success: true, released_credits: 100, already_released: false }, error: null }; },
+      auth: { admin: {} },
+      storage: { from: () => ({ list: async () => ({ data: [] }), remove: async () => ({}) }) },
+      from: (table: string) => {
+        const api: any = { select: () => api, eq: () => api, in: () => api, or: () => api, not: () => api, lte: () => api, lt: () => api, order: () => api, limit: () => api, maybeSingle: async () => ({ data: null, error: null }), insert: async () => ({ error: null }), delete: () => api, update: () => api, then: (resolve: any) => resolve({ data: table === "jobs" ? [staleJob] : [], error: null }) };
+        return api;
+      },
+    })) as any);
+    const savedSecret = process.env.CRON_SECRET;
+    process.env.CRON_SECRET = "leak-secret";
+    try {
+      const { GET } = await import("../src/app/api/cron/watchdog/route");
+      const wd = await GET(new NextRequest("http://localhost/api/cron/watchdog", { headers: { authorization: "Bearer leak-secret" } }));
+      expect(wd.status).toBe(200);
+    } finally {
+      if (savedSecret === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = savedSecret;
+      if (previousImpl) vi.mocked(supabaseWd.createAdminClient).mockImplementation(previousImpl);
+    }
+    const wdRelease = rpcLog.filter((c) => c.name === "release_job_atomic");
+    expect(wdRelease).toHaveLength(1);
+    expect(wdRelease[0].args.p_error_message).toBe(staleReleaseReasonAr(4));
+    customerOutputs.push(String(wdRelease[0].args.p_error_message));
+
+    // 5d. nothing the customer would read carries a provider name, an id, a vendor, an English word or an injected provider error
+    expect(customerOutputs.length).toBeGreaterThan(6);
+    for (const out of customerOutputs) {
+      expect(out).not.toMatch(LEAK);
+      expect(out).not.toMatch(FORBIDDEN_WORDS);
+      for (const e of injected) expect(out.toLowerCase()).not.toContain(e.toLowerCase());
     }
   });
 
