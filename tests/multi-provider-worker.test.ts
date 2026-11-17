@@ -700,24 +700,24 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   it("R-3 worker drops every runner row, release confirmed", async () => {
     resetDb();
     const companyIdentity = dedupeIdentityFor("company");
-    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
 
     const world = defaultFakeWorld(8);
     const { last } = await run(world);
     expect(last.status).toBe(422);
     expect(last.json.released).toBe(true);
-    expect(last.json.error).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(last.json.error).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
     const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
     expect(relCalls.length).toBe(1);
     const call = relCalls[0];
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
-    expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
     const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
-    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."));
+    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" })));
     expect(confirmEvt).toBeTruthy();
     expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
     expect(confirmEvt).toContain("ولم يُخصم شيء");
