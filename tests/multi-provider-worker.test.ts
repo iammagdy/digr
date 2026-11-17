@@ -187,6 +187,8 @@ const KEYS = { treg: "managed", firecrawl: "fc-test-key-123456", contextdev: "cx
  */
 const TWO_REQUIRED_FIELDS = ["work_email", "office_phone"];
 function useTwoRequiredFields() { db.quotes[0].items[0].params.requiredFields = TWO_REQUIRED_FIELDS; }
+// ROOMY: a unit price whose budget (reserve / 5,500) no stop of the test can be pre-empted by: a job that must END (coverage_end) reads every candidate and tries every search variant, which costs more than the budget of the default price of 100 points per unit
+const roomyBudget = (target: number) => { db.unitPrice = 1000; db.reserved = Math.ceil(target * 1000 * 1.15); };
 // DT-20261117-04 CI r2 (C1): the TREG client of every chain test. A valid EMPTY e-mail lookup (cost 0) and a directory page made of `leads` (the shapes of chain.test.ts :64-70 and of the F08/F22 `leads` key): the runner never reaches the real client. `token` makes the directory answer carry a next-page token.
 const noMail = (o: any) => ({ ok: true, httpStatus: 200, tregCallId: "t", costMicro: 0, latencyMs: 1, data: { data: { organization: {}, emails: [] }, meta: { params: { domain: o.params?.domain }, total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
 const tregHook = (leads: any[] = [], token: string | null = null): any => async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads, pagination: token ? { token } : { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
@@ -411,6 +413,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-2 no more work: emits NOMORE sentence when search runs dry before target", async () => {
     resetDb({ target: 8 });
+    roomyBudget(8);
     const world = defaultFakeWorld(5).map((c, i) => (i < 3 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
@@ -548,6 +551,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-8 zero delivery regression pin: verifies zero delivery releases reserve with generic message", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const world = defaultFakeWorld(8).map((c) => ({ ...c, email: undefined, phone: undefined }));
     const { last } = await run(world);
     expect(last.status).toBe(422);
@@ -634,6 +638,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-1 release failure, runner returned no rows", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const supabase = await import("../src/lib/supabase/server");
     const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
@@ -680,6 +685,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-2 release failure, worker drops every runner row", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const companyIdentity = dedupeIdentityFor("company");
     const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
@@ -731,6 +737,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("R-3 worker drops every runner row, release confirmed", async () => {
     resetDb();
+    roomyBudget(TARGET);
     const companyIdentity = dedupeIdentityFor("company");
     const excluded = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     db.quotes[0].items[0].params.excludeRowKeys = excluded;
