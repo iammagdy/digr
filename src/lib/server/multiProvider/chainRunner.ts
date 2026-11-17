@@ -214,7 +214,7 @@ type ReadResult = OperationResult<any> & { capId: string };
 const TEAM_PROMPT = "List the people this page publicly lists as company leaders or owners, with their exact job titles. Return only what the page states.";
 const TEAM_SCHEMA = { type: "object", properties: { people: { type: "array", items: { type: "object", properties: { name: { type: "string" }, title: { type: "string" } }, required: ["name", "title"] } } }, required: ["people"] };
 
-export async function runChainChunk(input: ProviderAdapterCallInput, deps: ChainDeps): Promise<ProviderAdapterCallOutput & { chainStop?: "budget" | "no_more_work" | "target_reached" }> {
+export async function runChainChunk(input: ChainChunkInput, deps: ChainDeps): Promise<ProviderAdapterCallOutput & { chainStop?: ChainRunnerStop; attemptId?: string; chainSkippedOrigins?: number }> {
   const now = deps.now ?? Date.now;
   const fail = (messageAr: string, errorCode: string): ProviderAdapterCallOutput => ({ ok: false, httpStatus: 503, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode, errorMessageAr: messageAr });
 
