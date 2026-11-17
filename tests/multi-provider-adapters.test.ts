@@ -908,4 +908,72 @@ it("T-T P8 explicit 0 header with valid empty answer commits 0, but non-empty or
     });
     expect(cDirUnparsable).toBe(5760);
   });
+it("T-T P9-P10 402 route_max_cost, 402 and 429 with explicit header 0 commit 0; no header commits R; any other combination commits R", async () => {
+    const endpoints = [
+      { name: "runTregEmailLookup", R: 8900 },
+      { name: "runTregDirectoryPageDirect", R: 5760 },
+    ];
+
+    for (const { R } of endpoints) {
+      // P9: 402 route_max_cost with explicit header 0 => 0
+      const r402Route = classifyTregCost({
+        ok: false, httpStatus: 402, isRouteMaxCost: true, tregCallId: "c", costMicro: 0, latencyMs: 10, data: { error: "route_max_cost" }, isPlatformBalanceLow: false,
+      }, R, "unparsable");
+      expect(r402Route).toEqual({ known: true, commitMicro: 0 });
+
+      // 402 with explicit header 0 => 0
+      const r402 = classifyTregCost({
+        ok: false, httpStatus: 402, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, latencyMs: 10, data: { error: "payment_required" }, isPlatformBalanceLow: true,
+      }, R, "unparsable");
+      expect(r402).toEqual({ known: true, commitMicro: 0 });
+
+      // 429 with explicit header 0 => 0
+      const r429 = classifyTregCost({
+        ok: false, httpStatus: 429, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, latencyMs: 10, data: null, isPlatformBalanceLow: false,
+      }, R, "unparsable");
+      expect(r429).toEqual({ known: true, commitMicro: 0 });
+
+      // The same statuses with NO header (costUnreported: true) => R
+      const r402RouteNoHeader = classifyTregCost({
+        ok: false, httpStatus: 402, isRouteMaxCost: true, tregCallId: "c", costMicro: 0, costUnreported: true, latencyMs: 10, data: { error: "route_max_cost" }, isPlatformBalanceLow: false,
+      }, R, "unparsable");
+      expect(r402RouteNoHeader.commitMicro).toBe(R);
+      expect(r402RouteNoHeader.known).toBe(false);
+
+      const r402NoHeader = classifyTregCost({
+        ok: false, httpStatus: 402, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, costUnreported: true, latencyMs: 10, data: null, isPlatformBalanceLow: true,
+      }, R, "unparsable");
+      expect(r402NoHeader.commitMicro).toBe(R);
+      expect(r402NoHeader.known).toBe(false);
+
+      const r429NoHeader = classifyTregCost({
+        ok: false, httpStatus: 429, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, costUnreported: true, latencyMs: 10, data: null, isPlatformBalanceLow: false,
+      }, R, "unparsable");
+      expect(r429NoHeader.commitMicro).toBe(R);
+      expect(r429NoHeader.known).toBe(false);
+
+      // P10: any other combination => R
+      // Ambiguous statuses with explicit header 0 (500, 503, 408, 409, 302, 100) => R
+      for (const s of [500, 503, 408, 409, 302, 100]) {
+        const rOther = classifyTregCost({
+          ok: false, httpStatus: s, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, latencyMs: 10, data: null, isPlatformBalanceLow: false,
+        }, R, "unparsable");
+        expect(rOther.commitMicro).toBe(R);
+        expect(rOther.known).toBe(false);
+      }
+
+      // 200 with explicit header 0 and unparsable or non_empty answer => R
+      const r200Unparsable = classifyTregCost({
+        ok: true, httpStatus: 200, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, latencyMs: 10, data: null, isPlatformBalanceLow: false,
+      }, R, "unparsable");
+      expect(r200Unparsable.commitMicro).toBe(R);
+      expect(r200Unparsable.known).toBe(false);
+
+      const r200NonEmpty = classifyTregCost({
+        ok: true, httpStatus: 200, isRouteMaxCost: false, tregCallId: "c", costMicro: 0, latencyMs: 10, data: {}, isPlatformBalanceLow: false,
+      }, R, "non_empty");
+      expect(r200NonEmpty.commitMicro).toBe(R);
+      expect(r200NonEmpty.known).toBe(false);
+    }
+  });
 });
