@@ -788,7 +788,90 @@ export async function processCompanyV2(rc: ChainRunCtx, c: ChainCandidateV2, rob
   await websiteReadV2(rc, c, domain, provider ? [provider] : [], robotsCache);
 }
 
-async function websiteReadV2(rc: ChainRunCtx, c: ChainCandidateV2, domain: string, seeded: FoundEmail[], robotsCache: Map<string, RobotsRules | "none" | "unreadable">): Promise<void> {}
+const TEAM_URL = /team|leadership|management|about|people|founder|الفريق|الإدارة|من-?نحن/i;
+const readableUrl = (u: string) => { try { return decodeURIComponent(u); } catch { return u; } };
+
+async function websiteReadV2(rc: ChainRunCtx, c: ChainCandidateV2, domain: string, seeded: FoundEmail[], robotsCache: Map<string, RobotsRules | "none" | "unreadable">): Promise<void> {
+  const params = rc.params;
+  const input = rc.input;
+  if (!(await checkRobots(`${c.u}/`, rc.deps.robotsFetch, robotsCache)).allowed) {
+    rc.skipped += 1;
+    return;
+  }
+  const first = await readPageV2(rc, c.u);
+  if (first === "blocked") {
+    rc.skipped += 1;
+    return;
+  }
+  rc.read += 1;
+  const servedBy = first ? capabilityById(first.capId) : undefined;
+  const enrichTrace = () => rc.trace.stage("enrich", servedBy?.provider ?? null, servedBy?.id ?? null);
+  if (!first) {
+    rc.unverified += 1;
+    return;
+  }
+  enrichTrace().read += 1;
+  const homeData = first.data as { markdown: string; links: string[] };
+  // The page behind a company's address turned out to be a list or an article (its own first heading says so): not a company, not delivered, not charged.
+  if (isListOrArticleTitle(firstHeadingOf(homeData.markdown))) {
+    rc.unverified += 1;
+    rc.trace.stage("verify", null, null).unverified += 1;
+    return;
+  }
+  let links = [...(homeData.links || []), ...linksFromMarkdown(homeData.markdown)];
+  const emails: FoundEmail[] = [...seeded, ...extractEmails(homeData.markdown, links, domain).filter((e) => !seeded.some((s) => s.value === e.value))];
+  const countryIso = params.countryIso ?? (params.country ? isoCountryCodeFromName(params.country) : undefined);
+  // A number whose international prefix is another country's is not verified as this company's phone.
+  let phones: FoundPhone[] = markForeignPhones(extractPhones(homeData.markdown, links), countryIso);
+  let profile = extractProfileLink(homeData.markdown, links);
+  let sourcePage = c.u;
+  const needEmail = params.requiredFields.includes("work_email");
+  const needPhone = params.requiredFields.includes("office_phone");
+  const needDm = params.requiredFields.includes("decision_maker");
+  // A people-only request needs no contact page: the team page is the one to read.
+  const contactNeeded = needEmail || needPhone || !needDm;
+  const enough = () => !contactNeeded || ((!needEmail || emails.some((e) => e.status === "verified")) && (!needPhone || phones.some((p) => p.status === "verified")) && (needEmail || needPhone || emails.length + phones.length > 0));
+  if (!enough()) {
+    for (const page of pickContactPages(links, c.u, YIELD.pagesPerCompany - 1)) {
+      if (!(await checkRobots(page, rc.deps.robotsFetch, robotsCache)).allowed) continue;
+      const res = await readPageV2(rc, page);
+      if (!res || res === "blocked") continue;
+      const d = res.data as { markdown: string; links: string[] };
+      const more = [...(d.links || []), ...linksFromMarkdown(d.markdown)];
+      links = [...links, ...more];
+      for (const e of extractEmails(d.markdown, more, domain)) if (!emails.some((x) => x.value === e.value)) emails.push(e);
+      for (const p of markForeignPhones(extractPhones(d.markdown, more), countryIso)) if (!phones.some((x) => x.value === p.value)) phones.push(p);
+      profile = profile ?? extractProfileLink(d.markdown, more);
+      sourcePage = page;
+      if (enough()) break;
+    }
+  }
+  let decisionMakers: DecisionMaker[] = [];
+  if (needDm) {
+    // The team page is looked for in the links of EVERY page read so far (the home page or a contact page may be the one that links it).
+    const team = pickContactPages(links, c.u, 6).find((u) => TEAM_URL.test(readableUrl(u)));
+    if (team && (await checkRobots(team, rc.deps.robotsFetch, robotsCache)).allowed) {
+      const res = await readPageV2(rc, team, true);
+      if (res && res !== "blocked") {
+        decisionMakers = parseDecisionMakers((res.data as { json: unknown }).json);
+        if (decisionMakers.length > 0) sourcePage = team;
+      }
+    }
+  }
+  const facts: EnrichmentFacts = {
+    companyName: c.n,
+    website: c.u,
+    industry: params.industryAr ?? params.industry,
+    location: params.countryAr ?? params.country,
+    description: undefined,
+    emails,
+    phones,
+    profileLink: profile,
+    decisionMakers,
+    sourcePage,
+  };
+  finishCompanyRow(rc, facts);
+}
 
 
 
