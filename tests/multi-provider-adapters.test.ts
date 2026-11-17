@@ -814,4 +814,98 @@ it("T-T P7 definite status, positive figure: known costs, overbill commit, repla
     }, R, "non_empty");
     expect(rLargest).toEqual({ known: true, commitMicro: 8900 });
   });
+it("T-T P8 explicit 0 header with valid empty answer commits 0, but non-empty or unparsable commits R", async () => {
+    // 1. runTregEmailLookup (R = 8900)
+    const runLookup = async (result: any) => {
+      const commits: Array<{ costMicro: number }> = [];
+      const recorder = {
+        reserve: async () => ({ allowed: true, costId: 1 }),
+        commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+      };
+      await runTregEmailLookup({
+        tregCall: async () => result,
+        ctx: { recorder: recorder as any, jobId: "j" },
+        userId: "u",
+        domain: "example.com",
+        idempotencyKey: "k",
+        timeoutMs: 100,
+      });
+      return commits[0]?.costMicro;
+    };
+
+    // Valid EMPTY answer: tomba data.emails: [] and meta.total: 0 => 0
+    const cEmpty = await runLookup({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { data: { emails: [] }, meta: { total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cEmpty).toBe(0);
+
+    // NON-EMPTY answer with header 0 => R (8900)
+    const cNonEmpty = await runLookup({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { data: { emails: [{ email: "info@example.com" }] }, meta: { total: 1 } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cNonEmpty).toBe(8900);
+
+    // Unparsable: data.emails not an array => R (8900)
+    const cNotArray = await runLookup({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { data: { emails: "invalid" }, meta: { total: 0 } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cNotArray).toBe(8900);
+
+    // Unparsable: meta.total missing => R (8900)
+    const cMissingTotal = await runLookup({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { data: { emails: [] } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cMissingTotal).toBe(8900);
+
+    // Unparsable: malformed / non-object => R (8900)
+    const cMalformed = await runLookup({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: "malformed text", isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cMalformed).toBe(8900);
+
+    // 2. runTregDirectoryPageDirect (R = 5760)
+    const runDir = async (result: any) => {
+      const commits: Array<{ costMicro: number }> = [];
+      const recorder = {
+        reserve: async () => ({ allowed: true, costId: 1 }),
+        commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+      };
+      await runTregDirectoryPageDirect({
+        tregCall: async () => result,
+        ctx: { recorder: recorder as any, jobId: "j" },
+        userId: "u",
+        rawParams: { domain: "example.com" },
+        cursor: null,
+        idempotencyKey: "k",
+        timeoutMs: 100,
+      });
+      return commits[0]?.costMicro;
+    };
+
+    // Valid EMPTY directory (0 companies) => 0
+    const cDirEmpty = await runDir({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { success: true, companies: [], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cDirEmpty).toBe(0);
+
+    // NON-EMPTY directory with header 0 => R (5760)
+    const cDirNonEmpty = await runDir({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: { success: true, companies: [{ name: "Acme" }], pagination: { next: null } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cDirNonEmpty).toBe(5760);
+
+    // Unparsable body => R (5760)
+    const cDirUnparsable = await runDir({
+      ok: true, httpStatus: 200, tregCallId: "c", costMicro: 0, latencyMs: 10,
+      data: "not a valid companies response", isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+    expect(cDirUnparsable).toBe(5760);
+  });
 });
