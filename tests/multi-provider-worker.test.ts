@@ -1061,12 +1061,13 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
 
-    // Winner runs and commits, then throws/dies
-    await expect(route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+    // Winner runs and commits, then dies. The route's top-level catch (route.ts :2711-2740) turns EVERY thrown error into a 500 JSON, so «dies» is a 500 RESPONSE, not a rejection (CI r2: «promise resolved Response {status: 500} instead of rejecting»)
+    const killed = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
       method: "POST",
       headers: { authorization: "Bearer chain-secret" },
       body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-    }))).rejects.toThrow("worker_killed_after_commit");
+    }));
+    expect(killed.status).toBe(500);
 
     // Commit succeeded in DB before kill
     expect(db.step).toBeGreaterThanOrEqual(1);
