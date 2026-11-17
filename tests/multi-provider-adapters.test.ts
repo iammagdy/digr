@@ -18,7 +18,8 @@ import { createCallRecorder, __resetCallRecorderForTests } from "../src/lib/serv
 import type { AdapterContext } from "../src/lib/server/multiProvider/adapterTypes";
 import { createFakeFetch, defaultFakeWorld } from "../src/lib/server/multiProvider/fakeTransport";
 import { createMemoryRecorder } from "./helpers/multiProviderFakes";
-import { capabilitiesOfProvider } from "../src/lib/multiProvider/catalog";
+import { capabilitiesOfProvider, PROVIDER_FACTS } from "../src/lib/multiProvider/catalog";
+import { chainCtxFor } from "../src/lib/server/multiProvider/chainRunner";
 
 const world = defaultFakeWorld(5);
 const ctx = (fetchFn: any, recorder: any): AdapterContext => ({ apiKey: "SECRET-KEY-VALUE-123456", fetchFn, recorder, jobId: "job_1" });
@@ -1311,4 +1312,87 @@ it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGatew
     const matches = chainRunnerSrc.match(/chainStrict:\s*true/g) ?? [];
     expect(matches.length).toBe(1);
   });
+});
+
+it("T-H M02 strict mode: a FAILED call that reports no credits commits the reserved amount (plan v9 §3.11) and the next call's budget check sees it; non-strict stays 0; a reported number is used", async () => {
+  const capability: any = { id: "firecrawl.scrape", provider: "firecrawl", costPerCallUsd: 0.005 };
+  const usdPerCredit = PROVIDER_FACTS.firecrawl.usdPerCredit as number;
+  const http500 = (body: unknown): any => vi.fn(async () => new Response(JSON.stringify(body), { status: 500, headers: { "content-type": "application/json" } }));
+  const request = { url: "https://example.com/page", method: "GET" as const, headers: {} };
+  const interpret = () => { throw new Error("interpret must not run on a 500"); };
+  // the REAL chain context: its recorder reads the job's spend and refuses a call when the spend would pass the budget (chainRunner.ts verifyingRecorder)
+  const strictCtx = (mem: ReturnType<typeof createMemoryRecorder>, fetchFn: any, budget: number): AdapterContext => {
+    const rc: any = { input: { jobId: "j" }, deps: { recorder: mem.recorder, fetchFn, providerKeys: { firecrawl: "k" }, jobSpend: async () => ({ usd: mem.spent(), calls: mem.rows.length }) }, budget, usd: 0, calls: 0, limits: { maxCalls: 100 }, chunkCalls: 0, stop: { workLimit: false, spendUnreadable: false }, now: Date.now, hardEndMs: Date.now() + 60_000 };
+    return chainCtxFor(rc, "firecrawl");
+  };
+
+  // (a) strict + HTTP 500 + no credits_consumed: the commit carries the reserved amount
+  const memA = createMemoryRecorder();
+  const resA = await runRecordedCall({ ctx: strictCtx(memA, http500({ error: "boom" }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resA.ok).toBe(false);
+  expect(resA.credits).toBe(0);
+  expect(resA.costUsd).toBe(0.02);
+  expect(memA.rows.length).toBe(1);
+  expect(memA.rows[0].estimate).toBe(false);
+  expect(memA.rows[0].costUsd).toBe(0.02);
+  // a non-numeric report is the same
+  const memA2 = createMemoryRecorder();
+  const resA2 = await runRecordedCall({ ctx: strictCtx(memA2, http500({ key_metadata: { credits_consumed: "n/a" } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resA2.costUsd).toBe(0.02);
+
+  // (b) the NEXT call's budget check sees that spend: with a budget of 0.03, one failed call (0.02 committed) leaves no room for a second reserve of 0.02
+  const memB = createMemoryRecorder();
+  await runRecordedCall({ ctx: strictCtx(memB, http500({}), 0.03), capability, request, interpret, reserveUsd: 0.02 });
+  expect(memB.spent("firecrawl")).toBe(0.02);
+  const nextFetch = http500({});
+  const resB = await runRecordedCall({ ctx: strictCtx(memB, nextFetch, 0.03), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resB.errorCode).toBe("budget_reached");
+  expect(nextFetch).not.toHaveBeenCalled();
+
+  // (c) NOT strict + HTTP 500 + no credits: nothing is charged, as today
+  const memC = createMemoryRecorder();
+  const resC = await runRecordedCall({ ctx: { recorder: memC.recorder, apiKey: "k", jobId: "j", fetchFn: http500({ error: "boom" }) } as AdapterContext, capability, request, interpret });
+  expect(resC.costUsd).toBe(0);
+  expect(memC.rows[0].costUsd).toBe(0);
+
+  // (d) strict + HTTP 500 + credits_consumed 2: the reported number is used, not the reserve
+  const memD = createMemoryRecorder();
+  const resD = await runRecordedCall({ ctx: strictCtx(memD, http500({ key_metadata: { credits_consumed: 2 } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resD.credits).toBe(2);
+  expect(resD.costUsd).toBe(Math.round(2 * usdPerCredit * 1e6) / 1e6);
+  // a reported 0 is a number: it stays 0
+  const memD0 = createMemoryRecorder();
+  const resD0 = await runRecordedCall({ ctx: strictCtx(memD0, http500({ key_metadata: { credits_consumed: 0 } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resD0.costUsd).toBe(0);
+
+  // amended cases (go-M01-M02-amended):
+  // strict + HTTP 500 + credits_consumed = null commits reserved amount
+  const memNull = createMemoryRecorder();
+  const resNull = await runRecordedCall({ ctx: strictCtx(memNull, http500({ key_metadata: { credits_consumed: null } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resNull.costUsd).toBe(0.02);
+  expect(memNull.rows[0].costUsd).toBe(0.02);
+
+  // strict + HTTP 500 + credits_consumed = "" commits reserved amount
+  const memEmpty = createMemoryRecorder();
+  const resEmpty = await runRecordedCall({ ctx: strictCtx(memEmpty, http500({ key_metadata: { credits_consumed: "" } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resEmpty.costUsd).toBe(0.02);
+  expect(memEmpty.rows[0].costUsd).toBe(0.02);
+
+  // strict + HTTP 500 + credits_consumed = "   " commits reserved amount
+  const memSpaces = createMemoryRecorder();
+  const resSpaces = await runRecordedCall({ ctx: strictCtx(memSpaces, http500({ key_metadata: { credits_consumed: "   " } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resSpaces.costUsd).toBe(0.02);
+  expect(memSpaces.rows[0].costUsd).toBe(0.02);
+
+  // strict + HTTP 500 + credits_consumed = "2" (string) commits reserved amount
+  const memStr2 = createMemoryRecorder();
+  const resStr2 = await runRecordedCall({ ctx: strictCtx(memStr2, http500({ key_metadata: { credits_consumed: "2" } }), 1), capability, request, interpret, reserveUsd: 0.02 });
+  expect(resStr2.costUsd).toBe(0.02);
+  expect(memStr2.rows[0].costUsd).toBe(0.02);
+
+  // non-strict with null commits 0
+  const memCnull = createMemoryRecorder();
+  const resCnull = await runRecordedCall({ ctx: { recorder: memCnull.recorder, apiKey: "k", jobId: "j", fetchFn: http500({ key_metadata: { credits_consumed: null } }) } as AdapterContext, capability, request, interpret, reserveUsd: 0.02 });
+  expect(resCnull.costUsd).toBe(0);
+  expect(memCnull.rows[0].costUsd).toBe(0);
 });
