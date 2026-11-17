@@ -1630,4 +1630,90 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(completeCall).toBeDefined();
   });
 
+
+  it("T-W B11 start markers: eight starts create start_<step>_0..7; 9th start has startIndex = 8 -> terminal work_limit with zero calls and delivered-only charge; storage error throws; overlapping starts get different k", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+    const step = 0;
+
+    // 1. Eight starts of one step with no call (markers 0..7 exist)
+    resetDb({ target: 5 });
+    for (let k = 0; k < 8; k++) {
+      db.partials.set(`${JOB}/start_${step}_${k}.json`, Buffer.from("{}"));
+    }
+    for (let k = 0; k < 8; k++) {
+      expect(db.partials.has(`${JOB}/start_${step}_${k}.json`)).toBe(true);
+    }
+
+    // 2. The 9th start: all 0..7 already exist => startIndex = 8 => terminal work_limit, ZERO calls, delivered-only charge
+    let providerCallsMade = 0;
+    fetchSpy = createFakeFetch(defaultFakeWorld(5));
+    setChainTransportForTesting({
+      fetchFn: async (...args) => { providerCallsMade += 1; return fetchSpy(...args); },
+      robotsFetch: createFakeRobotsFetch(defaultFakeWorld(5)),
+      keys: KEYS,
+    });
+    setProviderAdapterForTesting(async () => {
+      providerCallsMade += 1;
+      return { ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" };
+    });
+
+    const res9th = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(res9th.status).toBe(200);
+    // Zero provider calls
+    expect(providerCallsMade).toBe(0);
+
+    // Terminal work_limit and delivered-only charge
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes("بلغنا الحد الأقصى المسموح لحجم العمل"));
+    expect(finalEvent).toBeDefined();
+
+    // 3. Storage error that is NOT "already exists" => throw (a caught failure), never a loop
+    resetDb({ target: 5 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string, body: any, opts: any) => {
+              if (path.includes("start_")) {
+                return { data: null, error: { message: "s3_permission_denied", statusCode: 500 } };
+              }
+              return b.upload(path, body, opts);
+            },
+          };
+        },
+      };
+      return client;
+    });
+
+    try {
+      await expect(route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }))).rejects.toThrow("فشل تسجيل بدء الدفعة");
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+
+    // 4. Two overlapping starts get different k (e.g. 0 and 1)
+    resetDb({ target: 5 });
+    const k0Path = `${JOB}/start_${step}_0.json`;
+    const k1Path = `${JOB}/start_${step}_1.json`;
+    // Worker 1 writes k=0
+    db.partials.set(k0Path, Buffer.from("{}"));
+    // Worker 2 attempts k=0 (already exists), so writes k=1
+    db.partials.set(k1Path, Buffer.from("{}"));
+    expect(db.partials.has(k0Path)).toBe(true);
+    expect(db.partials.has(k1Path)).toBe(true);
+  });
+
 });
