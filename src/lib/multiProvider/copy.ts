@@ -104,7 +104,7 @@ export function expectedTargetLineAr(args: { asked: number; fitted: number }): s
   return `العدد المستهدف تسليمه: ${fittedTxt} من أصل ${askedTxt} مطلوبة، لأن الحد الأقصى لحجز المهمة الواحدة لا يتسع لأكثر من ذلك. ${TAIL}`;
 }
 
-export type ChainRunnerStop = "budget" | "no_more_work" | "target_reached";
+export type ChainRunnerStop = "budget" | "no_more_work" | "target_reached" | "coverage_end" | "sources_limited" | "stalled" | "work_limit";
 
 export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; callCap: string | null; excluded: number }): string {
   const excl = `استُبعد ${countPlainAr(args.excluded, "companies")} لأنه مكرر أو غير مطابق قبل اكتمال العدد.`;
