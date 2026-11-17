@@ -68,3 +68,14 @@ export async function readJobProviderSpendUsd(client: any, jobId: string): Promi
     return 0;
   }
 }
+
+export async function readJobProviderSpend(client: any, jobId: string): Promise<{ usd: number; calls: number }> {
+  const { data, error, truncated } = await selectAllRows(
+    () => client.from("provider_costs").select("cost_usd, provider").eq("job_id", jobId).in("provider", ["treg", "firecrawl", "contextdev"]),
+    { orderBy: "id" }
+  );
+  if (error || !Array.isArray(data) || truncated === true) {
+    throw new Error("job_spend_unreadable");
+  }
+  return { usd: sum(data), calls: data.length };
+}
