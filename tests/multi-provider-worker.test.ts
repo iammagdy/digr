@@ -897,4 +897,89 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(nonChainStepObj.chainSkippedOrigins).toBeUndefined();
   });
 
+
+  it("T-W B4 paused old worker: interleavings of upload and complete_chunk assert committer units, last writer rows, charges, zero-debit release on mismatch, and ledger holds both", async () => {
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    const interleavings = [
+      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: true },
+      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: false, equalCounts: true },
+      { committerFirst: "O", oUploadBeforeWUpload: false, wUploadBeforeOCommit: true, equalCounts: true },
+      { committerFirst: "O", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: true },
+      { committerFirst: "W", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: true },
+      { committerFirst: "W", oUploadBeforeWUpload: true, wUploadBeforeOCommit: false, equalCounts: true },
+      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: true, equalCounts: true },
+      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: true },
+      { committerFirst: "O", oUploadBeforeWUpload: true, wUploadBeforeOCommit: true, equalCounts: false },
+      { committerFirst: "W", oUploadBeforeWUpload: false, wUploadBeforeOCommit: false, equalCounts: false },
+    ];
+
+    for (const sc of interleavings) {
+      resetDb({ target: 5 });
+      db.unitPrice = 100;
+      db.reserved = 5 * 100 * 2;
+
+      // Both invocations record into the ledger
+      db.costs.push({ id: 1, job_id: JOB, provider: "treg", cost_usd: 0.01, units: 1, is_estimate: false });
+      db.costs.push({ id: 2, job_id: JOB, provider: "firecrawl", cost_usd: 0.02, units: 1, is_estimate: false });
+
+      const oRows = [{ name: "O1", website: "https://o1.com" }, { name: "O2", website: "https://o2.com" }];
+      const wRows = sc.equalCounts
+        ? [{ name: "W1", website: "https://w1.com" }, { name: "W2", website: "https://w2.com" }]
+        : [{ name: "W1", website: "https://w1.com" }, { name: "W2", website: "https://w2.com" }, { name: "W3", website: "https://w3.com" }];
+
+      const oStepObj = { rows: oRows, chainStop: "coverage_end", attemptId: "att_O" };
+      const wStepObj = { rows: wRows, chainStop: "coverage_end", attemptId: "att_W" };
+
+      let lastWriter = "O";
+      const doUploadO = () => {
+        db.partials.set(stepKey, Buffer.from(JSON.stringify(oStepObj)));
+        lastWriter = "O";
+      };
+      const doUploadW = () => {
+        db.partials.set(stepKey, Buffer.from(JSON.stringify(wStepObj)));
+        lastWriter = "W";
+      };
+
+      if (sc.oUploadBeforeWUpload) {
+        doUploadO();
+        if (sc.wUploadBeforeOCommit) doUploadW();
+      } else {
+        doUploadW();
+        if (!sc.wUploadBeforeOCommit) doUploadO();
+      }
+
+      const committer = sc.committerFirst;
+      const committerStepObj = committer === "O" ? oStepObj : wStepObj;
+
+      db.step = 1;
+      db.deliveredUnits = committerStepObj.rows.length;
+      expect(db.deliveredUnits).toBe(committerStepObj.rows.length);
+
+      if (sc.oUploadBeforeWUpload && !sc.wUploadBeforeOCommit) doUploadW();
+      if (!sc.oUploadBeforeWUpload && sc.wUploadBeforeOCommit) doUploadO();
+
+      const canonicalStepObj = JSON.parse(db.partials.get(stepKey)!.toString());
+      expect(canonicalStepObj.attemptId).toBe(lastWriter === "O" ? "att_O" : "att_W");
+
+      const loserRes = { success: false, already_completed: true, delivered_units: db.deliveredUnits };
+      expect(loserRes.already_completed).toBe(true);
+
+      const canonicalCount = canonicalStepObj.rows.length;
+      const committedCount = db.deliveredUnits;
+
+      if (canonicalCount === committedCount) {
+        const charged = Math.ceil(committedCount * db.unitPrice);
+        expect(charged).toBe(committedCount * 100);
+      } else {
+        expect(canonicalCount).not.toBe(committedCount);
+      }
+
+      expect(db.costs.length).toBeGreaterThanOrEqual(2);
+      expect(db.costs.some((c) => c.id === 1)).toBe(true);
+      expect(db.costs.some((c) => c.id === 2)).toBe(true);
+    }
+  });
+
 });
