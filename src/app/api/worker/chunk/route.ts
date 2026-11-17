@@ -2583,7 +2583,7 @@ export async function POST(req: NextRequest) {
             : providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
             : isChainJob
-            ? chainShortfallReasonAr({ stop: ((rawAdapterResult as any).chainStop ?? null), callCap: callCapReason, excluded })
+            ? chainShortfallReasonAr({ stop: ((lastChainStop ?? (rawAdapterResult as any).chainStop ?? null) as any), callCap: callCapReason, excluded, skippedOrigins: lastChainSkipped })
             : callCapReason === "source_repeats"
             ? CALL_CAP_NOTE_AR.source_repeats
             : dateSentence
