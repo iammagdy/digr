@@ -1792,7 +1792,17 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
       }));
       expect(resStartErr.status).toBe(500);
-      expect(String((await resStartErr.json()).error)).toContain("تعذّر تسجيل بدء الدفعة");
+      const startErrText = String((await resStartErr.json()).error);
+      expect(startErrText).toContain("تعذّر تسجيل بدء الدفعة");
+      // DT-20261117-04 fix-gate2-r1: the customer reads this text (the response, the failure record and the release confirmation): the exact sentence, and no Latin digit (the step number was removed from it)
+      expect(startErrText).toBe("تعذّر تسجيل بدء الدفعة.");
+      expect(startErrText).not.toMatch(/[0-9]/);
+      const startFailRecord = db.rpcCalls.find((c) => c.name === "record_chunk_failure");
+      expect(startFailRecord).toBeDefined();
+      expect(startFailRecord!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
+      const startRelease = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(startRelease).toBeDefined();
+      expect(startRelease!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
