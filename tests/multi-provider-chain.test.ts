@@ -5,7 +5,7 @@ import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeComp
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
 import { createMemoryRecorder } from "./helpers/multiProviderFakes";
-import { HARD_LIMITS, routeCodeOf } from "../src/lib/multiProvider/routes";
+import { HARD_LIMITS, routeCodeOf, estimateRoute, routeById } from "../src/lib/multiProvider/routes";
 import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
 import { sameInstant } from "../src/lib/multiProvider/tregContacts";
@@ -398,6 +398,68 @@ describe("T-7 money and shape guards (source text)", () => {
     expect(workerRouteSrc.includes("p_force")).toBe(true);
 
     expect(HARD_LIMITS).toEqual({ maxDiscoveryResults: 100, maxCandidates: 200, maxEnrichCalls: 420, maxDirectoryPages: 12 });
+  });
+
+  it("T-G source guards", () => {
+    function firstArgsOfFail(src: string): string[] { const out: string[] = []; const re = /\bfail\(/g; let m: RegExpExecArray | null; while ((m = re.exec(src))) { let i = m.index + m[0].length; let depth = 0; let quote: string | null = null; let arg = ""; for (; i < src.length; i++) { const ch = src[i]!; if (quote) { arg += ch; if (ch === "\\") { i += 1; arg += src[i] ?? ""; } else if (ch === quote) quote = null; continue; } if (ch === '"' || ch === "'" || ch === "\u0060") { quote = ch; arg += ch; continue; } if (ch === "(" || ch === "[" || ch === "{") depth += 1; if (ch === ")" || ch === "]" || ch === "}") { if (depth === 0) break; depth -= 1; } if (ch === "," && depth === 0) break; arg += ch; } out.push(arg.trim()); } return out; }
+    const PURE_LITERAL = /^(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')$/;
+    const REVIEWED_CALL = /^(?:chainFailureReasonAr|chainZeroDeliveryReasonAr)\(\s*(?:"[^"\\\n]*"|'[^'\\\n]*')\s*\)$/;
+    const allowed = (a: string) => PURE_LITERAL.test(a) || REVIEWED_CALL.test(a);
+
+    const src = readFileSync("src/lib/server/multiProvider/chainRunner.ts", "utf8");
+    const countOccurrences = (str: string, substr: string) => str.split(substr).length - 1;
+    expect(countOccurrences(src, "reserveForUnits(params.count, Number(input.unitPricePoints)) / 5500")).toBe(1);
+    expect(countOccurrences(src, "rows.slice(0, Math.max(0, input.remainingNeeded))")).toBe(1);
+    expect(countOccurrences(src, "rowPassesGate(row, params.requiredFields)")).toBe(1);
+
+    expect(HARD_LIMITS).toEqual({ maxDiscoveryResults: 100, maxCandidates: 200, maxEnrichCalls: 420, maxDirectoryPages: 12 });
+
+    const routeSnapshots: Record<string, { estimatedJobUsd: number; budgetUsd: number }> = {
+      "chain:treg>firecrawl": { estimatedJobUsd: 0.7576, budgetUsd: 0.87124 },
+      "chain:treg>contextdev": { estimatedJobUsd: 0.4132, budgetUsd: 0.47518 },
+      "chain:firecrawl>firecrawl": { estimatedJobUsd: 0.6, budgetUsd: 0.69 },
+      "chain:firecrawl>contextdev": { estimatedJobUsd: 0.354, budgetUsd: 0.4071 },
+      "chain:contextdev>firecrawl": { estimatedJobUsd: 0.5254, budgetUsd: 0.60421 },
+      "chain:contextdev>contextdev": { estimatedJobUsd: 0.2794, budgetUsd: 0.32131 },
+    };
+    for (const [id, expected] of Object.entries(routeSnapshots)) {
+      const def = routeById(id);
+      expect(def).toBeDefined();
+      const est = estimateRoute(def!, { requiredFields: ["work_email"], count: 50 });
+      expect(est.estimatedJobUsd).toBeCloseTo(expected.estimatedJobUsd, 4);
+      expect(est.budgetUsd).toBeCloseTo(expected.budgetUsd, 4);
+    }
+
+    const tregClientSrc = readFileSync("src/functions/shared/tregClient.ts", "utf8");
+    expect(countOccurrences(tregClientSrc, "costHeaderInvalid")).toBe(4);
+    expect(tregClientSrc.includes("costMicro: chargedMicro !== null ? chargedMicro :")).toBe(true);
+
+    const workerRouteSrc = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
+    expect(countOccurrences(workerRouteSrc, "rpc(")).toBe(8);
+    expect(workerRouteSrc.includes("p_job_id")).toBe(true);
+    expect(workerRouteSrc.includes("p_error_message")).toBe(true);
+    expect(workerRouteSrc.includes("p_force")).toBe(true);
+
+    const watchdogRouteSrc = readFileSync("src/app/api/cron/watchdog/route.ts", "utf8");
+    expect(countOccurrences(watchdogRouteSrc, "rpc(")).toBe(1);
+    expect(watchdogRouteSrc.includes('"release_job_atomic"')).toBe(true);
+    expect(watchdogRouteSrc.includes("p_job_id: job.id")).toBe(true);
+    expect(watchdogRouteSrc.includes("p_force: true")).toBe(true);
+    expect(countOccurrences(watchdogRouteSrc, "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.")).toBe(1);
+
+    expect(countOccurrences(src, "chainStrict: true")).toBe(1);
+    expect((src.match(/ok: false/g) ?? []).length).toBe(1);
+    expect(/\bfail\([^)]*\$\{/.test(src)).toBe(false);
+    expect(/\bfail\([^)]*\b(error|detail|e\.message|err\.message)\b/.test(src)).toBe(false);
+
+    const firstArgs = firstArgsOfFail(src);
+    expect(firstArgs.length).toBeGreaterThan(0);
+    for (const a of firstArgs) expect(allowed(a), a).toBe(true);
+
+    expect(firstArgsOfFail('fail("prefix" + raw, "code")').every(allowed)).toBe(false);
+    expect(firstArgsOfFail('fail(`x ${raw}`, "code")').every(allowed)).toBe(false);
+    expect(firstArgsOfFail('fail(e.message, "code")').every(allowed)).toBe(false);
+    expect(firstArgsOfFail('fail(chainFailureReasonAr("spend"), "code")').every(allowed)).toBe(true);
   });
 });
 
