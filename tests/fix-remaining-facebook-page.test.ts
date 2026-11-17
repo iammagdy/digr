@@ -128,7 +128,7 @@ describe("B: a Facebook page named only by its display name is asked for its lin
 describe("B: a source that returns no rows is never charged (read from the worker)", () => {
   const worker = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
   it("the first page with nothing delivered releases the whole hold and answers with chargedCredits 0", () => {
-    const at = worker.indexOf("const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);");
+    const at = worker.indexOf("const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr, claimTargetN);");
     expect(at).toBeGreaterThan(0);
     const branch = worker.slice(at, at + 700);
     expect(branch).toContain("chargedCredits: 0");
