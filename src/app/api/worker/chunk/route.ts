@@ -839,6 +839,21 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
+    // Chain jobs only: a durable START MARKER per started invocation of this step (Storage decides existence, upsert:false), so a kill without a caught failure is still counted.
+    let chainStartIndex = 0;
+    if (isChainJob && !providerBudgetStopped && needsProvider) {
+      const markerBucket = adminClient.storage.from("partials");
+      let markerWritten = false;
+      for (let k = 0; k < MAX_STARTS_PER_STEP; k += 1) {
+        const made: any = await markerBucket.upload(`${jobId}/start_${currentStep}_${k}.json`, Buffer.from("{}", "utf-8"), { contentType: "application/json", upsert: false });
+        if (!made?.error) { chainStartIndex = k; markerWritten = true; break; }
+        const markerError: any = made.error;
+        const alreadyThere = String(markerError?.statusCode ?? markerError?.status ?? "") === "409" || /already exists|duplicate/i.test(String(markerError?.message ?? ""));
+        if (!alreadyThere) throw new Error(`فشل تسجيل بدء الدفعة (${currentStep}).`);
+      }
+      if (!markerWritten) chainStartIndex = MAX_STARTS_PER_STEP;
+    }
+
     const providerCallStartedAt = Date.now();
     const rawAdapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
