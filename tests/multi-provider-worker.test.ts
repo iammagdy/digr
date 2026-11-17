@@ -1699,7 +1699,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         method: "POST",
         headers: { authorization: "Bearer chain-secret" },
         body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-      }))).rejects.toThrow("فشل تسجيل بدء الدفعة");
+      }))).rejects.toThrow("تعذّر تسجيل بدء الدفعة");
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
