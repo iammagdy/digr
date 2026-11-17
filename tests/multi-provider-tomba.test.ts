@@ -356,7 +356,7 @@ const chainParams = (over: Record<string, any> = {}) => ({
     expect(tombaLookupCount).toBe(10);
 
     if (cursor) {
-      const state = decodeCursorAny(cursor);
+      const state = decodeCursorAny(cursor, "aid_tomba");
       expect(state.wm).toBeGreaterThanOrEqual(8);
       expect(state.tg).toBe(1);
     }
