@@ -147,6 +147,7 @@ import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeComp
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 
 const JOB = jobIdForQuote("quote_chain_1");
 const TARGET = 3;
@@ -707,4 +708,135 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
     expect(nonChainLast.status).toBe(200);
   });
+
+  it("T-W B2 final reason per stop: for each stop (budget, coverage_end, sources_limited with/without skipped origins, stalled, work_limit) info event matches chainShortfallReasonAr and rows of published file", async () => {
+    async function getPublishedRowCount(): Promise<number> {
+      const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
+      if (!buf) return 0;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf as any);
+      const sheet = wb.worksheets[0];
+      return Math.max(0, sheet.rowCount - 1);
+    }
+
+    function checkOutcome(target: number, stop: any, skippedOrigins = 0) {
+      const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+      expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+      const infoEvents = db.events.filter((e: any) => e.event_type === "info");
+      const finalInfo = infoEvents[infoEvents.length - 1];
+      expect(finalInfo).toBeDefined();
+
+      const reason = chainShortfallReasonAr({ stop, callCap: null, excluded: 0, skippedOrigins });
+      expect(String(finalInfo.message)).toContain(reason);
+      expect(String(finalInfo.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+    }
+
+    // 1. budget
+    {
+      resetDb({ target: 8 });
+      db.unitPrice = 40;
+      db.reserved = Math.ceil(8 * 40 * 1.15);
+      const world = defaultFakeWorld(20);
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      expect(X).toBeGreaterThan(0);
+      checkOutcome(8, "budget");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 2. coverage_end
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(2);
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      expect(X).toBe(2);
+      checkOutcome(8, "coverage_end");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 3. sources_limited (without skipped origins)
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(2);
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" } });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "sources_limited", 0);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 4. sources_limited (with skipped origins)
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(1);
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" } });
+      setProviderAdapterForTesting(async () => ({
+        ok: true,
+        httpStatus: 200,
+        rows: [{ name: "   ", website: "https://skipped-origin.com" }],
+        nextCursor: null,
+        costUsd: 0,
+        costMicro: 0,
+        tregCallId: "",
+      }));
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "sources_limited", 1);
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 5. stalled
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(1);
+      fetchSpy = createFakeFetch(world, { emptyProvider: { firecrawl: true, contextdev: true } });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+      setProviderAdapterForTesting(async () => ({
+        ok: true,
+        httpStatus: 200,
+        rows: [],
+        nextCursor: "cur_stall",
+        costUsd: 0,
+        costMicro: 0,
+        tregCallId: "",
+      }));
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "stalled");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+
+    // 6. work_limit
+    {
+      resetDb({ target: 8 });
+      const world = defaultFakeWorld(2);
+      for (let k = 0; k < 8; k++) {
+        db.partials.set(`${JOB}/start_0_${k}`, Buffer.from(""));
+      }
+      const { last } = await run(world);
+      expect(last.status).toBe(200);
+      const X = await getPublishedRowCount();
+      checkOutcome(8, "work_limit");
+      const finalInfo = db.events.filter((e: any) => e.event_type === "info").at(-1);
+      expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
+    }
+  });
+
 });
