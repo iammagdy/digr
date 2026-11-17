@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 import { executeTregCallWithRetry } from "../src/lib/server/tregAdapter";
+import { runTregEmailLookup, runTregDirectoryPageDirect } from "../src/lib/server/multiProvider/adapters/treg";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -390,6 +391,96 @@ it("T-T 1b unchanged-caller regression (for every scenario with well-formed or a
       expect(resRetry.costMicro).toBe(8900);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+it("T-T P1-P3 wrapper-level fakes: thrown error, undefined, timeout, network failure, invalid status, blocked, budgetStopped commit R", async () => {
+    const endpoints = [
+      {
+        name: "runTregEmailLookup",
+        R: 8900,
+        run: async (tregCall: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregEmailLookup({
+            tregCall,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            domain: "example.com",
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        },
+      },
+      {
+        name: "runTregDirectoryPageDirect",
+        R: 5760,
+        run: async (tregCall: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregDirectoryPageDirect({
+            tregCall,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            rawParams: { domain: "example.com" },
+            cursor: null,
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        },
+      },
+    ];
+
+    const baseResult = {
+      ok: false,
+      httpStatus: 503,
+      tregCallId: "call_err",
+      costMicro: 0,
+      latencyMs: 10,
+      data: null,
+      isRouteMaxCost: false,
+      isPlatformBalanceLow: false,
+    };
+
+    for (const ep of endpoints) {
+      // P1: thrown error
+      const cThrown = await ep.run(async () => { throw new Error("network explosion"); });
+      expect(cThrown).toBe(ep.R);
+
+      // P1: undefined result
+      const cUndef = await ep.run(async () => undefined);
+      expect(cUndef).toBe(ep.R);
+
+      // P2: timedOut
+      const cTimeout = await ep.run(async () => ({ ...baseResult, timedOut: true }));
+      expect(cTimeout).toBe(ep.R);
+
+      // P2: network_failure
+      const cNet = await ep.run(async () => ({ ...baseResult, error: "network_failure" }));
+      expect(cNet).toBe(ep.R);
+
+      // P2: httpStatus NaN
+      const cNan = await ep.run(async () => ({ ...baseResult, httpStatus: NaN }));
+      expect(cNan).toBe(ep.R);
+
+      // P2: httpStatus 1.5
+      const cFloat = await ep.run(async () => ({ ...baseResult, httpStatus: 1.5 }));
+      expect(cFloat).toBe(ep.R);
+
+      // P3: blocked: "x"
+      const cBlocked = await ep.run(async () => ({ ...baseResult, httpStatus: 400, blocked: "x" }));
+      expect(cBlocked).toBe(ep.R);
+
+      // P3: budgetStopped: true
+      const cBudget = await ep.run(async () => ({ ...baseResult, httpStatus: 400, budgetStopped: true }));
+      expect(cBudget).toBe(ep.R);
     }
   });
 });
