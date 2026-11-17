@@ -750,7 +750,9 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       nonChainLast = { status: res.status, json: await res.json() };
       if (nonChainLast.json.done === true || nonChainLast.json.released === true || nonChainLast.status >= 400) break;
     }
-    expect(nonChainLast.status).toBe(200);
+    // the non-chain adapter returns no rows on any page: zero delivered = a zero-delivery release (today's behaviour, B7's own expectation) = 422; the cap ended it
+    expect(nonChainLast.status).toBe(422);
+    expect(nonChainLast.json.released).toBe(true);
   });
 
   it("T-W B2 final reason per stop: for each stop (budget, coverage_end, sources_limited with/without skipped origins, stalled, work_limit) info event matches chainShortfallReasonAr and rows of published file", async () => {
