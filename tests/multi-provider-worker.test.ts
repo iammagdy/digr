@@ -91,7 +91,17 @@ vi.mock("../src/lib/supabase/server", () => ({
         const charged = Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved);
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
-      if (name === "release_job_atomic") return { data: { success: true, released_credits: db.reserved }, error: null };
+      // DT-20261117-04 CI r1: record_chunk_failure and release_job_atomic clear the job's lease, as the real SQL functions do; otherwise the fake's own «lease not expired» rule refuses the next claim of the same test.
+      if (name === "release_job_atomic") {
+        const releasedJob = db.jobs.find((j) => j.id === args.p_job_id);
+        if (releasedJob) releasedJob.lease_until = null;
+        return { data: { success: true, released_credits: db.reserved }, error: null };
+      }
+      if (name === "record_chunk_failure") {
+        const failedJob = db.jobs.find((j) => j.id === args.p_job_id);
+        if (failedJob) failedJob.lease_until = null;
+        return { data: { success: true }, error: null };
+      }
       return { data: { success: true }, error: null };
     }),
     storage: {
