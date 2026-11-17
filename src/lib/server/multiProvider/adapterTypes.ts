@@ -44,7 +44,7 @@ export interface CallRecord {
   keyRef?: { id: string; number: number; label: string; isMain: boolean } | null;
 }
 
-export interface Reservation { allowed: boolean; costId: number | null; reason?: "cap" | "error" }
+export interface Reservation { allowed: boolean; costId: number | null; reason?: "cap" | "error" | "budget" }
 
 /** The cost-recording hook. Implemented once (`callRecorder.ts`) over the approved reserve and commit functions; tests pass a fake. */
 export interface CallRecorder {
