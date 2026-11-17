@@ -657,4 +657,102 @@ it("T-T P4 sweep and property (500, 502, 504, 301, 304, 100 and full ambiguous s
       }
     }
   });
+it("T-T P5-P6 definite status with invalid/unreported/estimate header or invalid figure values commit R", async () => {
+    const endpoints = [
+      { name: "runTregEmailLookup", R: 8900 },
+      { name: "runTregDirectoryPageDirect", R: 5760 },
+    ];
+
+    for (const { R } of endpoints) {
+      for (const status of [200, 402, 429]) {
+        for (const answerKind of ["non_empty", "empty", "unparsable"] as const) {
+          const rInv = classifyTregCost({
+            ok: status === 200,
+            httpStatus: status,
+            tregCallId: "c",
+            costMicro: 0,
+            latencyMs: 10,
+            data: {},
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+            costHeaderInvalid: true,
+          }, R, answerKind);
+          expect(rInv.commitMicro).toBe(R);
+          expect(rInv.known).toBe(false);
+
+          const rUnrep = classifyTregCost({
+            ok: status === 200,
+            httpStatus: status,
+            tregCallId: "c",
+            costMicro: 0,
+            latencyMs: 10,
+            data: {},
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+            costUnreported: true,
+          }, R, answerKind);
+          expect(rUnrep.commitMicro).toBe(R);
+          expect(rUnrep.known).toBe(false);
+
+          const rEst = classifyTregCost({
+            ok: status === 200,
+            httpStatus: status,
+            tregCallId: "c",
+            costMicro: R,
+            latencyMs: 10,
+            data: {},
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+            costIsEstimate: true,
+          }, R, answerKind);
+          expect(rEst.commitMicro).toBe(R);
+          expect(rEst.known).toBe(false);
+        }
+      }
+
+      const invalidFigures = [NaN, Infinity, -1, 1.5, Math.pow(2, 60)];
+      for (const inv of invalidFigures) {
+        const r6 = classifyTregCost({
+          ok: true,
+          httpStatus: 200,
+          tregCallId: "c",
+          costMicro: inv,
+          latencyMs: 10,
+          data: {},
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        }, R, "empty");
+        expect(r6.commitMicro).toBe(R);
+        expect(r6.known).toBe(false);
+      }
+
+      const rOrigNan = classifyTregCost({
+        ok: true,
+        httpStatus: 200,
+        tregCallId: "c",
+        costMicro: 0,
+        originalCostMicro: NaN,
+        latencyMs: 10,
+        data: {},
+        isRouteMaxCost: false,
+        isPlatformBalanceLow: false,
+      }, R, "empty");
+      expect(rOrigNan.commitMicro).toBe(R);
+      expect(rOrigNan.known).toBe(false);
+
+      const rNegCharged = classifyTregCost({
+        ok: true,
+        httpStatus: 200,
+        tregCallId: "c",
+        costMicro: 0,
+        chargedMicroReported: -5,
+        latencyMs: 10,
+        data: {},
+        isRouteMaxCost: false,
+        isPlatformBalanceLow: false,
+      }, R, "empty");
+      expect(rNegCharged.commitMicro).toBe(R);
+      expect(rNegCharged.known).toBe(false);
+    }
+  });
 });
