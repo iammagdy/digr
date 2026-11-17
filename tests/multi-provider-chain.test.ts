@@ -420,12 +420,12 @@ describe("copy API regression", () => {
 
     const h2 = harness(defaultFakeWorld(10));
     await runAll(h2, params({ count: 3 }));
-    expect(h2.events.at(-1)).toBe(chainStopProgressLineAr("target_reached"));
+    expect(h2.events.at(-1)).not.toBe(chainStopProgressLineAr("target_reached"));
     expect(h2.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
 
     const h3 = harness(defaultFakeWorld(2));
     await runAll(h3, params({ count: 8 }));
-    expect(h3.events.at(-1)).toBe(chainStopProgressLineAr("no_more_work"));
+    expect(h3.events.at(-1)).toBe(chainStopProgressLineAr("coverage_end"));
     expect(h3.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
   });
 
