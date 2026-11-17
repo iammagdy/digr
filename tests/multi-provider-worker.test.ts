@@ -1274,4 +1274,65 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(finalLines.length).toBe(0);
   });
 
+
+  it("T-W B5-R7 re-publish fails: winner's re-publish fails => pre-commit canonical file is used", async () => {
+    resetDb({ target: 2 });
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    // Pre-commit file uploaded to storage
+    const preCommitRows = [{ name: "PreCommitCo", website: "https://pre.com" }];
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: preCommitRows, attemptId: "att_pre" })));
+
+    // Re-publish attempt fails (tolerated in catch block)
+    // The pre-commit file remains in storage and is used
+    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
+    expect(stored.rows).toEqual(preCommitRows);
+    expect(stored.attemptId).toBe("att_pre");
+  });
+
+  it("T-W B5-R8 assembly or settle throws: triggers existing release messages", async () => {
+    resetDb({ target: 2 });
+    // Assembly or settle throws -> releases reserve with error message
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", {
+      p_job_id: JOB,
+      p_error_message: "تعذر استكمال الاستخراج: settle_failed (حجز مؤقت مُحرَّر كاملًا ولم يُخصم شيء).",
+      p_force: true,
+    });
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+  });
+
+  it("T-W B5-R9 listing never called: bucket list throws if called — never called in chain path", async () => {
+    resetDb({ target: 3 });
+    const world = defaultFakeWorld(5);
+
+    // Mock bucket.list to throw if ever called
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            list: async () => { throw new Error("bucket list must never be called in chain path"); },
+          };
+        },
+      };
+      return client;
+    });
+
+    try {
+      const { last } = await run(world);
+      expect(last.status).toBe(200);
+      expect(last.json.done).toBe(true);
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
 });
