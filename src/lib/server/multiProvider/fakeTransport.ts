@@ -89,6 +89,7 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
     const operation: FakeCallLog["operation"] = /credit-usage|org\/usage/.test(u.pathname) ? "usage" : /\/search$/.test(u.pathname) ? "search" : /\/map$|\/urls$/.test(u.pathname) ? "map" : body?.formats?.json || (Array.isArray(body?.formats) && body.formats.some((f: any) => f?.type === "json")) ? "scrape_json" : "scrape";
 
     if (scenario.validKey && auth !== `Bearer ${scenario.validKey}`) { record(operation, 401); return json(401, provider === "contextdev" ? { message: "unauthorized", error_code: "UNAUTHORIZED", request_id: "r" } : { success: false, error: "Unauthorized" }); }
+    if (scenario.timeoutProvider?.[provider]) { record(operation, 0); const timeout = new Error("timeout"); timeout.name = "TimeoutError"; throw timeout; }
     const forced = scenario.failProvider?.[provider];
     if (forced) { record(operation, forced); return json(forced, provider === "contextdev" ? { message: "failed", error_code: forced === 429 ? "RATE_LIMITED" : forced === 402 ? "USAGE_EXCEEDED" : "INTERNAL_ERROR", request_id: "r" } : { success: false, error: "failed" }); }
 
