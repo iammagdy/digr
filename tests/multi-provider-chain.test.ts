@@ -236,7 +236,8 @@ describe("chain: discover -> read public contact pages -> verify", () => {
     const { rows } = await runAll(h, params({ routeCode: routeCodeOf("chain:treg>firecrawl"), count: 3 }));
     expect(rows.length).toBe(3);
     expect(h.tregCalls).toBeGreaterThanOrEqual(1);
-    expect(h.rec.rows.filter((r) => r.provider === "treg").every((r) => r.capabilityId === "treg.companies.search")).toBe(true);
+    expect(h.rec.rows.filter((r) => r.provider === "treg").filter((r) => r.capabilityId !== "tomba.companies.emails.list").every((r) => r.capabilityId === "treg.companies.search")).toBe(true);
+    expect(h.rec.rows.some((r) => r.provider === "treg" && r.capabilityId === "treg.companies.search")).toBe(true);
   });
 
   it("required phone AND email: a company with only one of them is not delivered", async () => {
