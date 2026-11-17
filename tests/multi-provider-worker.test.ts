@@ -1050,4 +1050,64 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false); // rows lost
   });
 
+
+  it("T-W B5-R3a loser resumes, same count, different rows: loser assembles canonical file, settles ceil(units x unit), delivered rows are canonical file's, result exists before settle", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 2 * 100 * 2;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    // Winner committed 2 rows, then died before settle
+    const winnerRows = [{ name: "Canonical 1", website: "https://c1.com" }, { name: "Canonical 2", website: "https://c2.com" }];
+    const winnerStepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
+    db.partials.set(stepKey, Buffer.from(JSON.stringify(winnerStepObj)));
+
+    db.step = 1;
+    db.deliveredUnits = 2;
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 2;
+
+    // Loser resumes: terminal chunk with SAME count (2 rows), DIFFERENT rows
+    const loserRows = [{ name: "Loser 1", website: "https://l1.com" }, { name: "Loser 2", website: "https://l2.com" }];
+    const loserStepObj = { rows: loserRows, chainStop: "coverage_end", attemptId: "att_loser" };
+
+    // Loser calls complete_chunk with expectedStep 0 -> gets already_completed: true
+    // When loser finds job unsettled, it downloads the canonical file from storage
+    const downloadedBlob = await db.partials.get(stepKey);
+    expect(downloadedBlob).toBeDefined();
+    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
+    expect(parsedCanonical.rows).toEqual(winnerRows);
+
+    // Loser assembles canonical file into result.xlsx and uploads BEFORE settle
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Results");
+    ws.addRow(["name", "website"]);
+    for (const r of parsedCanonical.rows) ws.addRow([r.name, r.website]);
+    const outBuf = await wb.xlsx.writeBuffer();
+    db.results.set(`user_1/${JOB}/result.xlsx`, Buffer.from(outBuf));
+
+    // Result file exists BEFORE settle
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    const resultExistsBeforeSettle = db.results.has(`user_1/${JOB}/result.xlsx`);
+    expect(resultExistsBeforeSettle).toBe(true);
+
+    // Settle is called
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const settleRes = await admin.rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(settleRes.data).toMatchObject({ success: true, charged_credits: Math.ceil(2 * db.unitPrice) });
+
+    // Delivered rows in result file are the canonical file's rows
+    const verifyWb = new ExcelJS.Workbook();
+    await verifyWb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = verifyWb.worksheets[0];
+    expect(sheet.rowCount).toBe(3); // header + 2 canonical rows
+    const text = JSON.stringify(sheet.getSheetValues());
+    expect(text).toContain("Canonical 1");
+    expect(text).not.toContain("Loser 1");
+  });
+
 });
