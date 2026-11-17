@@ -358,6 +358,32 @@ export function verifyingRecorder(rc: ChainRunCtx): CallRecorder {
   };
 }
 
+export async function canStartCall(rc: ChainRunCtx, maxUsd: number): Promise<"ok" | "time" | "chunk_calls" | "lease" | "budget"> {
+  if (rc.now() >= rc.deadlineMs - CHAIN_RUN.noCallBeforeEndMs) {
+    return "time";
+  }
+  if (rc.chunkCalls >= CHAIN_RUN.chunkCalls) {
+    return "chunk_calls";
+  }
+  let held = false;
+  try {
+    if (rc.deps.leaseHeld) {
+      held = await rc.deps.leaseHeld();
+    }
+  } catch {
+    held = false;
+  }
+  if (!held) {
+    rc.stop.leaseLost = true;
+    return "lease";
+  }
+  if (rc.usd + maxUsd > rc.budget + 1e-9) {
+    return "budget";
+  }
+  return "ok";
+}
+
+
 
 
 const MAX_CURSOR_CHARS = 8000;
