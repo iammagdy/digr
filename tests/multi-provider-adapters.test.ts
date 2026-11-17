@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { vi } from "vitest";
+import { executeTregCall } from "../src/functions/shared/tregClient";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -162,5 +164,200 @@ describe("the call recorder uses ONLY the approved SQL functions", () => {
     expect(await createCallRecorder(client, { capFor: async () => 1 }).reserve({ provider: "firecrawl", capabilityId: "x", estimatedUsd: 0.01, jobId: null })).toMatchObject({ allowed: false, reason: "cap" });
     const err = stub(() => ({ data: null, error: { code: "XX000", message: "boom" } }));
     expect(await createCallRecorder(err.client, { capFor: async () => 1 }).reserve({ provider: "contextdev", capabilityId: "x", estimatedUsd: 0.01, jobId: null })).toMatchObject({ allowed: false, reason: "error" });
+  });
+});
+
+describe("T-T TREG cost: the real client, the predicate, the wrappers", () => {
+  const baseTregOptions = (extra: Record<string, any> = {}) => ({
+    token: "test-token",
+    endpointId: "tomba.companies.emails.list",
+    method: "POST" as const,
+    params: { domain: "example.com" },
+    userId: "u1",
+    jobId: "j1",
+    stepId: "s0",
+    page: 1,
+    ...extra,
+  });
+
+  const stubResponse = (status: number, headers: Record<string, string> = {}, body: any = { ok: true }) => {
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    });
+  };
+
+  it("T-T 1a client result shape (asserts exact result shape across headers and errors)", async () => {
+    try {
+      // 1. Valid header 8900
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "8900" })));
+      const res1 = await executeTregCall(baseTregOptions());
+      expect(res1).toMatchObject({
+        ok: true,
+        httpStatus: 200,
+        costMicro: 8900,
+        isRouteMaxCost: false,
+      });
+      expect(res1.costIsEstimate).toBeUndefined();
+      expect(res1.costUnreported).toBeUndefined();
+      expect(res1.costHeaderInvalid).toBeUndefined();
+      expect(res1.originalCostMicro).toBeUndefined();
+      expect(res1.timedOut).toBeUndefined();
+
+      // 2. Valid header 0
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "0" })));
+      const res2 = await executeTregCall(baseTregOptions());
+      expect(res2).toMatchObject({
+        ok: true,
+        httpStatus: 200,
+        costMicro: 0,
+        isRouteMaxCost: false,
+      });
+      expect(res2.costIsEstimate).toBeUndefined();
+      expect(res2.costUnreported).toBeUndefined();
+      expect(res2.costHeaderInvalid).toBeUndefined();
+
+      // 3. Header absent + callEstimateUsd wired (⇒ costIsEstimate, costMicro 8900)
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, {})));
+      const res3 = await executeTregCall(baseTregOptions({ callEstimateUsd: "0.0089" }));
+      expect(res3).toMatchObject({
+        ok: true,
+        httpStatus: 200,
+        costIsEstimate: true,
+        costMicro: 8900,
+      });
+      expect(res3.costUnreported).toBeUndefined();
+      expect(res3.costHeaderInvalid).toBeUndefined();
+
+      // 4. Header absent + no estimate (⇒ costUnreported)
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, {})));
+      const res4 = await executeTregCall(baseTregOptions());
+      expect(res4).toMatchObject({
+        ok: true,
+        httpStatus: 200,
+        costUnreported: true,
+        costMicro: 0,
+      });
+      expect(res4.costIsEstimate).toBeUndefined();
+      expect(res4.costHeaderInvalid).toBeUndefined();
+
+      // 5. Header "abc", "", "12x", "-5", "1e3" (⇒ costHeaderInvalid)
+      for (const h of ["abc", "", "12x", "-5", "1e3"]) {
+        vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": h })));
+        const res5 = await executeTregCall(baseTregOptions());
+        expect(res5.costHeaderInvalid).toBe(true);
+      }
+
+      // 6. _treg.charged_micro in the body
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, {}, { _treg: { charged_micro: 5760 } })));
+      const res6 = await executeTregCall(baseTregOptions());
+      expect(res6).toMatchObject({
+        ok: true,
+        httpStatus: 200,
+        costMicro: 5760,
+        chargedMicroReported: 5760,
+      });
+      expect(res6.costUnreported).toBeUndefined();
+
+      // 7. 402 route_max_cost with and without a header
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(402, { "x-treg-cost-micro": "100" }, { error: "route_max_cost" })));
+      const res7a = await executeTregCall(baseTregOptions());
+      expect(res7a).toMatchObject({
+        ok: false,
+        httpStatus: 402,
+        isRouteMaxCost: true,
+        costMicro: 100,
+      });
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(402, {}, { error: "route_max_cost" })));
+      const res7b = await executeTregCall(baseTregOptions());
+      expect(res7b).toMatchObject({
+        ok: false,
+        httpStatus: 402,
+        isRouteMaxCost: true,
+        costMicro: 0,
+        costUnreported: true,
+      });
+
+      // 8. 409 with and without a header
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(409, { "x-treg-cost-micro": "500" })));
+      const res8a = await executeTregCall(baseTregOptions());
+      expect(res8a).toMatchObject({
+        ok: false,
+        httpStatus: 409,
+        costMicro: 500,
+      });
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(409, {})));
+      const res8b = await executeTregCall(baseTregOptions());
+      expect(res8b).toMatchObject({
+        ok: false,
+        httpStatus: 409,
+        costMicro: 0,
+        costUnreported: true,
+      });
+
+      // 9. 429
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(429, { "x-treg-cost-micro": "0" })));
+      const res9 = await executeTregCall(baseTregOptions());
+      expect(res9).toMatchObject({
+        ok: false,
+        httpStatus: 429,
+        costMicro: 0,
+      });
+
+      // 10. 503
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(503, { "x-treg-cost-micro": "2000" })));
+      const res10 = await executeTregCall(baseTregOptions());
+      expect(res10).toMatchObject({
+        ok: false,
+        httpStatus: 503,
+        costMicro: 2000,
+      });
+
+      // Replay originalCostMicro check
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "0", "x-treg-original-cost-micro": "8900" })));
+      const resReplay = await executeTregCall(baseTregOptions());
+      expect(resReplay).toMatchObject({
+        costMicro: 0,
+        originalCostMicro: 8900,
+      });
+
+      // 11. Stub throwing TimeoutError, AbortError, generic error
+      const timeoutErr = new Error("timeout");
+      timeoutErr.name = "TimeoutError";
+      vi.stubGlobal("fetch", vi.fn(async () => { throw timeoutErr; }));
+      const resTimeout = await executeTregCall(baseTregOptions());
+      expect(resTimeout).toMatchObject({
+        ok: false,
+        httpStatus: 503,
+        error: "network_failure",
+        timedOut: true,
+        costMicro: 0,
+      });
+
+      const abortErr = new Error("aborted");
+      abortErr.name = "AbortError";
+      vi.stubGlobal("fetch", vi.fn(async () => { throw abortErr; }));
+      const resAbort = await executeTregCall(baseTregOptions());
+      expect(resAbort).toMatchObject({
+        ok: false,
+        httpStatus: 503,
+        error: "network_failure",
+        timedOut: true,
+        costMicro: 0,
+      });
+
+      const genericErr = new Error("generic error");
+      vi.stubGlobal("fetch", vi.fn(async () => { throw genericErr; }));
+      const resGeneric = await executeTregCall(baseTregOptions());
+      expect(resGeneric).toMatchObject({
+        ok: false,
+        httpStatus: 503,
+        error: "network_failure",
+        timedOut: false,
+        costMicro: 0,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
