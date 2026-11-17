@@ -750,4 +750,29 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       }
     }
   });
+
+  it("T-C admission and rejection tests", async () => {
+    // 1. Forced cursor_overflow returns { fits: false, reason: "cursor_overflow" }
+    const stateOverflow: ChainCursorV2 = {
+      ...emptyCursorV2("aid"),
+      tc: '"'.repeat(300),
+    };
+    const resOverflow = encodeCursorV2(stateOverflow);
+    expect(resOverflow.fits).toBe(false);
+    if (!resOverflow.fits) {
+      expect(resOverflow.reason).toBe("cursor_overflow");
+    }
+
+    // 2. Queue batch exceeding queueMaxBytes (12,000 bytes) rejected whole
+    const giantQ = Array.from({ length: 200 }, () => ({ n: "x".repeat(100), u: "https://example.com/" + "y".repeat(100) }));
+    const stateGiant: ChainCursorV2 = {
+      ...emptyCursorV2("aid"),
+      q: giantQ,
+    };
+    const resGiant = encodeCursorV2(stateGiant);
+    expect(resGiant.fits).toBe(false);
+    if (!resGiant.fits) {
+      expect(resGiant.reason).toBe("cursor_overflow");
+    }
+  });
 });
