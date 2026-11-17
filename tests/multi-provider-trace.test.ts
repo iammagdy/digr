@@ -72,7 +72,8 @@ async function runAll(h: ReturnType<typeof harness>, p: Record<string, any>, max
   const rows: Record<string, any>[] = [];
   let cursor: string | null = null;
   for (let step = 0; step < maxChunks; step += 1) {
-    const out: ProviderAdapterCallOutput = await runChainChunk(input(p, { cursor, step, remainingNeeded: Math.max(0, p.count - rows.length), deliveredSoFar: rows.length }), h.deps);
+    // each chunk carries its own step (deps.step defaults to 0, and the trace merge keeps ONE chunk per step: a job of several chunks lost all but the last)
+    const out: ProviderAdapterCallOutput = await runChainChunk(input(p, { cursor, step, remainingNeeded: Math.max(0, p.count - rows.length), deliveredSoFar: rows.length }), { ...h.deps, step });
     rows.push(...out.rows);
     if (!out.ok || !out.nextCursor || rows.length >= p.count) break;
     cursor = out.nextCursor;
