@@ -68,9 +68,12 @@ export async function GET(req: NextRequest) {
 
     // 3. Atomically release each abandoned job (force = true, release-first, zero debit)
     for (const job of staleJobs || []) {
+      const targetN = Number(job.target_volume_max);
+      const started = Number(job.step) > 0 || job.status === "running";
+      const releaseMessageAr = started && Number.isSafeInteger(targetN) && targetN > 0 ? (targetJobId ? operatorReleaseReasonAr(targetN) : staleReleaseReasonAr(targetN)) : "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.";
       const { data: releaseData, error: relErr } = await adminClient.rpc("release_job_atomic", {
         p_job_id: job.id,
-        p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.",
+        p_error_message: releaseMessageAr,
         p_force: true,
       });
 
