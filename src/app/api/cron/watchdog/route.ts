@@ -7,6 +7,7 @@ import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlat
 import { getBalance } from "../../../../lib/supabase/ledger";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { isDisposableGuestAccount } from "../../../../lib/server/guestIdentity";
+import { staleReleaseReasonAr, operatorReleaseReasonAr } from "../../../../lib/multiProvider/copy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     if (targetJobId) {
       const { data: specificJob, error: specificErr } = await adminClient
         .from("jobs")
-        .select("id, user_id, status, step, lease_until, updated_at")
+        .select("id, user_id, status, step, lease_until, updated_at, target_volume_max, delivered_units")
         .eq("id", targetJobId)
         .in("status", ["queued", "running"])
         .maybeSingle();
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
     } else {
       const { data, error: queryErr } = await adminClient
         .from("jobs")
-        .select("id, user_id, status, step, lease_until, updated_at")
+        .select("id, user_id, status, step, lease_until, updated_at, target_volume_max, delivered_units")
         .in("status", ["queued", "running"])
         .or(`lease_until.lt.${thirtyMinutesAgo},and(lease_until.is.null,updated_at.lt.${thirtyMinutesAgo})`);
 
