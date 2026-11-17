@@ -204,4 +204,6 @@ export const ALL_CUSTOMER_STRINGS = (): string[] => [
   chainFailureReasonAr("spend"),
   chainFailureReasonAr("cursor"),
   chainFailureReasonAr("lease"),
+  staleReleaseReasonAr(45),
+  operatorReleaseReasonAr(45),
 ];
