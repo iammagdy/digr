@@ -12,7 +12,7 @@ import { reserveForUnits } from "../../recordPricing";
 import { HARD_LIMITS, YIELD, estimateRoute, routeByCode, verifiedShareFor } from "../../multiProvider/routes";
 import type { CapabilityDef, DataProviderId, RequiredField, RouteDef, RouteRequest } from "../../multiProvider/types";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput, ProviderAdapterFn } from "../tregAdapter";
-import { ADAPTERS, runTregDirectoryPage, runTregDirectoryPageDirect, runTregEmailLookup, buildTregIdempotencyKey } from "./adapters";
+import { ADAPTERS, runTregDirectoryPageDirect, runTregEmailLookup, buildTregIdempotencyKey } from "./adapters";
 import type { AdapterContext, CallRecord, CallRecorder, CallStatus, FetchFn, OperationResult, SearchHit } from "./adapterTypes";
 import { ChunkTraceCollector, type ChunkTrace } from "../../multiProvider/trace";
 import { HOST_RE, ORIGIN_CHARSET_RE, TREG_DIRECTORY, TREG_EMAIL_LOOKUP, escapedBytes, readTombaMailbox, sameInstant, stripControl, utf8Bytes } from "../../multiProvider/tregContacts";
@@ -1321,232 +1321,17 @@ export async function runChainChunk(input: ChainChunkInput, deps: ChainDeps): Pr
   if (Number.isFinite(input.targetVolumeMax) && input.targetVolumeMax > 0) params.count = Math.floor(input.targetVolumeMax);
   const request: RouteRequest = { industry: params.industry, country: params.country, keyword: params.keyword, count: params.count, requiredFields: params.requiredFields };
   const estimate = estimateRoute(route, request);
-  const state = decodeChainCursor(input.cursor);
   const discoverStage = route.stages.find((s) => s.stage === "discover");
   const enrichStage = route.stages.find((s) => s.stage === "enrich");
   const maxDiscoverCalls = estimate.stages.find((s) => s.stage === "discover")?.maxCalls ?? 1;
   const maxEnrichCalls = estimate.stages.find((s) => s.stage === "enrich")?.maxCalls ?? 0;
 
-  let chunkUsd = 0;
-  const spentBefore = await deps.spentUsdSoFar().catch(() => 0);
-  const trace = new ChunkTraceCollector(deps.step ?? 0, spentBefore);
   // The provider spend of the whole job may not pass the RESERVE the customer's points hold, expressed in provider cost: the reserve is
   // ceil(volume x unit price x 1.15) points and 5,500 points are the price of 1 USD of provider cost, so the budget is reserve / 5,500 USD
   // (the estimate plus the 15% buffer, rounded up with the whole-point price). Without a unit price the router's own estimate applies.
   const budget = Number(input.unitPricePoints) > 0 ? reserveForUnits(params.count, Number(input.unitPricePoints)) / 5500 : estimate.budgetUsd;
-  const canAfford = (cap: CapabilityDef) => budget - spentBefore - chunkUsd + 1e-12 >= (cap.costPerCallUsd ?? Infinity);
-  const usable = (cap: CapabilityDef | undefined): cap is CapabilityDef => Boolean(cap) && isSellable(cap) && Boolean(deps.providerKeys[(cap as CapabilityDef).provider]);
-  const ctxFor = (provider: DataProviderId): AdapterContext => ({ apiKey: deps.providerKeys[provider] ?? "", fetchFn: deps.fetchFn, recorder: deps.recorder, jobId: input.jobId, now: deps.now });
-  const track = (r: { costUsd: number }) => { chunkUsd += Math.max(0, r.costUsd || 0); };
-  let budgetStop = false;
-
-  // ---- DISCOVER -----------------------------------------------------------------------------------------------------------
-  let discoveredNow = 0;
-  if (state.rest.length === 0 && !state.dx && discoverStage) {
-    const wanted = Math.max(0, estimate.candidates - state.taken);
-    if (wanted <= 0 || state.dc >= maxDiscoverCalls) {
-      state.dx = true;
-    } else {
-      const caps = discoverStage.capabilityIds.map(capabilityById).filter(usable);
-      let got: ChainCandidate[] = [];
-      let attempted = false;
-      for (let k = 0; k < caps.length; k += 1) {
-        const cap = caps[k];
-        if (state.dc >= maxDiscoverCalls) break;
-        if (!canAfford(cap)) { budgetStop = true; break; }
-        attempted = true;
-        state.dc += 1;
-        let candidates: ChainCandidate[] = [];
-        if (cap.provider === "treg") {
-          const page = await runTregDirectoryPage({
-            tregFn: deps.tregFn,
-            input: { ...input, endpointId: "icypeas.companies.search", capabilitySlug: "icypeas-companies-search", method: "POST", paginationStrategy: "cursor", cursor: state.tc, pageSize: 10, params: { industry: params.industry, country: params.country, location: params.country, query: { keyword: { include: [params.keyword, params.industry].filter(Boolean) } } } },
-            ctx: { recorder: deps.recorder, jobId: input.jobId, now: deps.now },
-          });
-          chunkUsd += page.costUsd;
-          trace.call("discover", "treg", cap.id, { status: page.ok ? (page.rows.length > 0 ? "success" : "empty") : "failed", costUsd: page.costUsd, durationMs: 0 });
-          if (page.ok && page.rows.length > 0) {
-            candidates = candidatesFromDirectory(page.rows);
-            state.tc = page.nextCursor;
-            if (!page.nextCursor) state.dx = true;
-          }
-        } else {
-          const limit = Math.min(HARD_LIMITS.maxDiscoveryResults, Math.max(10, estimate.discoveryResults));
-          const res: OperationResult<SearchHit[]> = await ADAPTERS[cap.provider].run("discover.web_search", { query: buildDiscoveryQuery(params), limit, country: params.countryIso ?? (params.country && /^[A-Za-z]{2}$/.test(params.country) ? params.country : undefined), excludeDomains: SOCIAL_EXCLUDE }, ctxFor(cap.provider));
-          track(res);
-          trace.call("discover", cap.provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
-          if (res.ok && res.data && res.data.length > 0) {
-            candidates = candidatesFromSearch(res.data);
-            state.dx = true; // a search is one answer: it has no next page
-          }
-        }
-        if (candidates.length > 0) { got = candidates; break; }
-        // This provider failed or gave nothing usable: the next allowed one for the stage.
-        trace.fallback({ stage: "discover", fromCapabilityId: cap.id, toCapabilityId: caps[k + 1]?.id ?? null, reason: "no_usable_results" });
-        if (k < caps.length - 1) await deps.emit(stageFallbackLineAr(), state.out);
-        state.dx = false;
-      }
-      if (!attempted && !budgetStop) state.dx = true;
-      const seen = new Set(state.seen);
-      const unseen = got.filter((c) => { const d = companyDomain(c.u); return d !== null && !seen.has(d); });
-      const fresh = unseen.slice(0, wanted);
-      for (const c of fresh) { const d = companyDomain(c.u); if (d) { seen.add(d); state.seen.push(d); } }
-      state.rest.push(...fresh);
-      state.taken += fresh.length;
-      discoveredNow = fresh.length;
-      if (got.length > 0 && fresh.length >= 0) {
-        // The stage that delivered the candidates is the last one that was tried and answered.
-        const delivering = [...caps].reverse().find((c) => (trace.peek("discover", c.id)?.success ?? 0) > 0);
-        const t = delivering ? trace.peek("discover", delivering.id) : undefined;
-        if (delivering && t) { t.found += got.length; t.fresh += fresh.length; t.duplicate += got.length - unseen.length; }
-      }
-      if (attempted) {
-        if (got.length > 0) await deps.emit(discoveryLineAr({ found: got.length, fresh: fresh.length, duplicate: got.length - unseen.length, total: state.taken }), state.out);
-        else { await deps.emit(discoveryEmptyLineAr(), state.out); if (state.tc === null) state.dx = true; }
-      }
-      // Providers answered with nothing new and there is no further page: discovery is over.
-      if (got.length > 0 && fresh.length === 0 && state.tc === null) state.dx = true;
-      if (caps.length > 0 && got.length === 0 && state.dc >= maxDiscoverCalls) state.dx = true;
-    }
-  }
-
-  // ---- ENRICH + VERIFY ----------------------------------------------------------------------------------------------------
-  const rows: Record<string, any>[] = [];
-  let read = 0;
-  let unverified = 0;
-  let skipped = 0;
-  const robotsCache = new Map<string, RobotsRules | "none" | "unreadable">();
-  const perChunkLimit = Math.max(1, Math.floor(PROVIDER_FACTS.firecrawl.maxCallsPerChunk / YIELD.pagesPerCompany));
-  const queue = state.rest.splice(0, perChunkLimit);
-  const deadline = input.deadlineMs ?? now() + 40_000;
-  const leftover: ChainCandidate[] = [];
-
-  /** Reads a page with the stage's providers in order. "blocked" means the SITE refused: no other provider is tried. */
-  const readPage = async (url: string, structured = false): Promise<ReadResult | "blocked" | null> => {
-    let failed: CapabilityDef | null = null;
-    let failedReason = "";
-    const closeFallback = (to: CapabilityDef | null) => { if (failed) { trace.fallback({ stage: "enrich", fromCapabilityId: failed.id, toCapabilityId: to?.id ?? null, reason: failedReason }); failed = null; } };
-    for (const capId of enrichStage?.capabilityIds ?? []) {
-      const base = capabilityById(capId);
-      const cap = structured && base ? capabilityById(base.provider === "firecrawl" ? "firecrawl.scrape_json" : "contextdev.scrape_json") : base;
-      if (!usable(cap)) continue;
-      if (state.ec >= maxEnrichCalls) { closeFallback(null); return null; }
-      if (!canAfford(cap)) { budgetStop = true; closeFallback(null); return null; }
-      closeFallback(cap);
-      state.ec += 1;
-      const adapter = ADAPTERS[cap.provider];
-      const res: OperationResult<any> = structured
-        ? await adapter.run("page.read_structured", { url, prompt: TEAM_PROMPT, schema: TEAM_SCHEMA }, ctxFor(cap.provider))
-        : await adapter.run("page.read", { url }, ctxFor(cap.provider));
-      track(res);
-      trace.call("enrich", cap.provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
-      if (res.ok && res.status !== "empty") return Object.assign(res, { capId: cap.id });
-      if (res.errorCode === "blocked_site") return "blocked";
-      // not found / refused request: another provider would get the same answer. Anything else (a timeout, a busy provider, an empty page, a cap) tries the next provider.
-      if (res.errorCode === "not_found" || res.errorCode === "bad_request") return null;
-      failed = cap;
-      failedReason = res.errorCode ?? "empty";
-    }
-    closeFallback(null);
-    return null;
-  };
-
-  const TEAM_URL = /team|leadership|management|about|people|founder|الفريق|الإدارة|من-?نحن/i;
-  const readableUrl = (u: string) => { try { return decodeURIComponent(u); } catch { return u; } };
-
-  const processCandidate = async (c: ChainCandidate): Promise<void> => {
-    const domain = companyDomain(c.u);
-    if (!domain || !checkPublicBusinessUrl(c.u).ok) { skipped += 1; return; }
-    if (!(await checkRobots(`${c.u}/`, deps.robotsFetch, robotsCache)).allowed) { skipped += 1; return; }
-    const first = await readPage(c.u);
-    if (first === "blocked") { skipped += 1; return; }
-    read += 1;
-    const servedBy = first ? capabilityById(first.capId) : undefined;
-    const enrichTrace = () => trace.stage("enrich", servedBy?.provider ?? null, servedBy?.id ?? null);
-    if (!first) { unverified += 1; return; }
-    enrichTrace().read += 1;
-    const homeData = first.data as { markdown: string; links: string[] };
-    // The page behind a company's address turned out to be a list or an article (its own first heading says so): not a company, not delivered, not charged.
-    if (isListOrArticleTitle(firstHeadingOf(homeData.markdown))) { unverified += 1; trace.stage("verify", null, null).unverified += 1; return; }
-    let links = [...(homeData.links || []), ...linksFromMarkdown(homeData.markdown)];
-    const emails: FoundEmail[] = extractEmails(homeData.markdown, links, domain);
-    const countryIso = params.countryIso ?? (params.country ? isoCountryCodeFromName(params.country) : undefined);
-    // A number whose international prefix is another country's is not verified as this company's phone.
-    let phones: FoundPhone[] = markForeignPhones(extractPhones(homeData.markdown, links), countryIso);
-    let profile = extractProfileLink(homeData.markdown, links);
-    let sourcePage = c.u;
-    const needEmail = params.requiredFields.includes("work_email");
-    const needPhone = params.requiredFields.includes("office_phone");
-    const needDm = params.requiredFields.includes("decision_maker");
-    // A people-only request needs no contact page: the team page is the one to read.
-    const contactNeeded = needEmail || needPhone || !needDm;
-    const enough = () => !contactNeeded || ((!needEmail || emails.some((e) => e.status === "verified")) && (!needPhone || phones.some((p) => p.status === "verified")) && (needEmail || needPhone || emails.length + phones.length > 0));
-    if (!enough()) {
-      for (const page of pickContactPages(links, c.u, YIELD.pagesPerCompany - 1)) {
-        if (!(await checkRobots(page, deps.robotsFetch, robotsCache)).allowed) continue;
-        const res = await readPage(page);
-        if (!res || res === "blocked") continue;
-        const d = res.data as { markdown: string; links: string[] };
-        const more = [...(d.links || []), ...linksFromMarkdown(d.markdown)];
-        links = [...links, ...more];
-        for (const e of extractEmails(d.markdown, more, domain)) if (!emails.some((x) => x.value === e.value)) emails.push(e);
-        for (const p of markForeignPhones(extractPhones(d.markdown, more), countryIso)) if (!phones.some((x) => x.value === p.value)) phones.push(p);
-        profile = profile ?? extractProfileLink(d.markdown, more);
-        sourcePage = page;
-        if (enough()) break;
-      }
-    }
-    let decisionMakers: DecisionMaker[] = [];
-    if (needDm) {
-      // The team page is looked for in the links of EVERY page read so far (the home page or a contact page may be the one that links it).
-      const team = pickContactPages(links, c.u, 6).find((u) => TEAM_URL.test(readableUrl(u)));
-      if (team && (await checkRobots(team, deps.robotsFetch, robotsCache)).allowed) {
-        const res = await readPage(team, true);
-        if (res && res !== "blocked") { decisionMakers = parseDecisionMakers((res.data as { json: unknown }).json); if (decisionMakers.length > 0) sourcePage = team; }
-      }
-    }
-    const facts: EnrichmentFacts = { companyName: c.n, website: c.u, industry: c.i ?? params.industryAr ?? params.industry, location: c.l ?? params.countryAr ?? params.country, description: c.d, emails, phones, profileLink: profile, decisionMakers, sourcePage };
-    const row = buildContactRow(facts);
-    if (rowPassesGate(row, params.requiredFields)) { rows.push(row); trace.stage("verify", null, null).verified += 1; }
-    else { unverified += 1; trace.stage("verify", null, null).unverified += 1; }
-  };
-
-  // Two companies at a time (both providers limit concurrent requests per plan); one company's own pages are read one after the other.
-  let index = 0;
-  const lane = async () => {
-    while (index < queue.length) {
-      const c = queue[index++];
-      if (now() > deadline - 12_000 || budgetStop || state.ec >= maxEnrichCalls) { leftover.push(c); continue; }
-      await processCandidate(c);
-    }
-  };
-  if (enrichStage && queue.length > 0) await Promise.all(Array.from({ length: Math.min(PROVIDER_FACTS.firecrawl.maxConcurrentCalls, queue.length) }, lane));
-  else leftover.push(...queue);
-  state.rest.unshift(...leftover);
-
-  const delivered = rows.slice(0, Math.max(0, input.remainingNeeded));
-  state.out += delivered.length;
-  if (read > 0 || delivered.length > 0) await deps.emit(enrichLineAr({ read, verified: delivered.length, unverified, total: state.out }), state.out);
-  if (skipped > 0) await deps.emit(skippedSitesLineAr(skipped), state.out);
-
-  const processedAny = read + skipped > 0 || discoveredNow > 0;
-  state.ix = processedAny ? 0 : state.ix + 1;
-  const noMoreWork = (state.rest.length === 0 && state.dx) || (state.rest.length > 0 && state.ec >= maxEnrichCalls) || state.ix >= 3;
-  const finished = budgetStop || noMoreWork || input.deliveredSoFar + delivered.length >= params.count;
-  if (finished) await deps.emit(chainStopProgressLineAr(budgetStop ? "budget" : input.deliveredSoFar + delivered.length >= params.count ? "target_reached" : "no_more_work"), state.out);
-
-  const stoppedBy: ChunkTrace["stoppedBy"] = budgetStop ? "budget" : input.deliveredSoFar + delivered.length >= params.count ? "target_reached" : noMoreWork ? "no_more_work" : null;
-  trace.stage("verify", null, null).skipped += skipped;
-  if (deps.trace) await deps.trace(trace.finish({ at: new Date(now()).toISOString(), delivered: delivered.length, costUsd: chunkUsd, stoppedBy })).catch(() => {});
-
-  return {
-    ok: true,
-    httpStatus: 200,
-    rows: delivered,
-    nextCursor: finished ? null : encodeChainCursor(state),
-    costUsd: Math.round(chunkUsd * 1e6) / 1e6,
-    costMicro: Math.round(chunkUsd * 1e6),
-    tregCallId: "",
-    ...(finished && stoppedBy ? { chainStop: stoppedBy } : {}),
-  };
+  const trace = new ChunkTraceCollector(deps.step ?? 0, 0);
+  const started = await startChunkV2({ input, deps, params, route, budget, trace, fail });
+  if ("fail" in started) return started.fail;
+  return runChunkV2(started.rc);
 }
