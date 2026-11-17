@@ -4,6 +4,10 @@ import type { AdapterContext, CallStatus, ErrorCode, OperationInputs, OperationO
 import { RETRYABLE_ON_ANOTHER_PROVIDER } from "../adapterTypes";
 import { mapHttpError } from "../httpCall";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput, ProviderAdapterFn } from "../../tregAdapter";
+import { normalizeIcypeasCompanyParams } from "../../tregAdapter";
+import { executeTregCall, type TregCallOptions, type TregCallResult } from "../../../../functions/shared/tregClient";
+import { parseIcypeasCompaniesResponse } from "../../../../functions/shared/multiStepWorker";
+import { TREG_DIRECTORY, TREG_EMAIL_LOOKUP, tombaAnswerKind, type TregAnswerKind } from "../../../multiProvider/tregContacts";
 
 /**
  * TREG stays a first-class provider and the fallback. Its company directory is reached through the EXISTING adapter function
@@ -70,3 +74,5 @@ export async function runTregDirectoryPage(args: {
   } catch { /* best effort: the reserved estimate row stays and counts against the cap */ }
   return result;
 }
+
+export interface TregCallOutcome { ok: boolean; status: CallStatus; httpStatus: number | null; errorCode?: ErrorCode; body: any; committedUsd: number; known: boolean; refused?: "cap_reached" | "budget_reached" | "ledger_unavailable"; timedOut: boolean; answerKind: TregAnswerKind; durationMs: number }
