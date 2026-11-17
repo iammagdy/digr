@@ -250,6 +250,35 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     return { responses, last: responses[responses.length - 1] };
   }
 
+  // DT-20261117-04 CI r2 (G25): a chain run with ITS OWN transport. `run` and `runMany` call `setChainTransportForTesting` themselves and that setter REPLACES the transport (chainAdapter.ts :34), so keys, a TREG hook or a fake-web scenario set before them are lost. A test that needs its own world calls `runWith` instead: the same chunk loop as `runMany`, the transport set ONCE.
+  async function runWith(world: FakeCompany[], opts: { keys?: any; tregCall?: any; scenario?: Parameters<typeof createFakeFetch>[1]; unitPrice?: number } = {}, maxIters = 40) {
+    const route = await import("../src/app/api/worker/chunk/route");
+    // a unit price whose budget (reserve / 5,500) is far above what these runs spend, so the budget cannot pre-empt the stop under test
+    if (opts.unitPrice) { db.unitPrice = opts.unitPrice; db.reserved = Math.ceil(db.targetVolumeMax * opts.unitPrice * 1.15); }
+    fetchSpy = createFakeFetch(world, opts.scenario ?? {});
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: opts.keys ?? KEYS, tregCall: opts.tregCall ?? tregHook() });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    const responses: Array<{ status: number; json: any }> = [];
+    for (let i = 0; i < maxIters; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+      const entry = { status: res.status, json: await res.json() };
+      responses.push(entry);
+      if (entry.json.done === true || entry.json.released === true || entry.status >= 400) break;
+    }
+    return { responses, last: responses[responses.length - 1] };
+  }
+  // Keys without Context.dev: its search is unavailable (that is what limits the sources, a `sources_limited` stop), while TREG and Firecrawl are present, so the job can still READ pages and deliver rows (a job that must deliver cannot run on `treg` alone).
+  const NO_CONTEXTDEV = { treg: KEYS.treg, firecrawl: KEYS.firecrawl };
+  // A directory lead whose address the chain does not support: the origin passes ORIGIN_CHARSET_RE but the domain `my_company.com` fails HOST_RE (an underscore), so admitBatch counts ONE skipped origin (chainRunner.ts :272-275) and the run ends with `chainSkippedOrigins` 1.
+  const SKIPPED_ORIGIN_LEAD = { name: "Underscore Co", website: "https://my_company.com" };
+  // A directory that never ends and never helps: a page WITH a lead (so a next-page token comes back) whose address is private (no candidate, no skipped origin), and a NEW token on every call (a repeated token would end the source).
+  const tregStallHook = (): any => {
+    let page = 0;
+    return async (o: any) => (o.endpointId === "tomba.companies.emails.list" ? noMail(o) : { ok: true, httpStatus: 200, tregCallId: "t", costMicro: 5760, latencyMs: 1, data: { leads: [{ name: "Private host", website: "https://10.0.0.1" }], pagination: { token: `cur_stall_${++page}` } }, isRouteMaxCost: false, isPlatformBalanceLow: false });
+  };
+  // the stop lines the activity log holds, by kind: a run writes exactly one, the line of its own stop
+  const stopLinesOfLog = () => (["coverage_end", "budget", "sources_limited", "stalled", "work_limit"] as const).filter((k) => db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr(k)));
+
   it("delivers only verified rows; the charge is ceil(delivered x unit) and never above the reserve; money moves only through the approved functions", async () => {
     resetDb();
     const world = defaultFakeWorld(10).map((c, i) => (i === 0 ? { ...c, email: undefined, foreignEmail: "agency@other-agency.com" } : c));
@@ -813,13 +842,12 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     {
       resetDb({ target: 8 });
       const world = defaultFakeWorld(2);
-      fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" }, tregCall: tregHook() });
-      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
-      const { last } = await runMany(world);
+      // Context.dev is unavailable (the sources are limited); TREG answers an empty directory; Firecrawl finds and reads the two companies
+      const { last } = await runWith(world, { keys: NO_CONTEXTDEV, unitPrice: 1000 });
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "sources_limited", 0);
+      expect(stopLinesOfLog()).toEqual(["sources_limited"]);
       const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
@@ -828,21 +856,12 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     {
       resetDb({ target: 8 });
       const world = defaultFakeWorld(1);
-      fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: { treg: "managed" }, tregCall: tregHook([{ name: "   ", website: "https://skipped-origin.com" }]) });
-      setProviderAdapterForTesting(async () => ({
-        ok: true,
-        httpStatus: 200,
-        rows: [{ name: "   ", website: "https://skipped-origin.com" }],
-        nextCursor: null,
-        costUsd: 0,
-        costMicro: 0,
-        tregCallId: "",
-      }));
-      const { last } = await runMany(world);
+      // the same, and the directory also answers one company whose address is not supported: ONE skipped origin
+      const { last } = await runWith(world, { keys: NO_CONTEXTDEV, tregCall: tregHook([SKIPPED_ORIGIN_LEAD]), unitPrice: 1000 });
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "sources_limited", 1);
+      expect(stopLinesOfLog()).toEqual(["sources_limited"]);
       const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
@@ -851,21 +870,12 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     {
       resetDb({ target: 8 });
       const world = defaultFakeWorld(1);
-      fetchSpy = createFakeFetch(world, { emptyProvider: { firecrawl: true, contextdev: true } });
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook([], "cur_stall") });
-      setProviderAdapterForTesting(async () => ({
-        ok: true,
-        httpStatus: 200,
-        rows: [],
-        nextCursor: "cur_stall",
-        costUsd: 0,
-        costMicro: 0,
-        tregCallId: "",
-      }));
-      const { last } = await runMany(world);
+      // Context.dev finds the one company (delivered); every later search is a repeat, and the directory answers a new token with no usable company on every page: chunks without progress
+      const { last } = await runWith(world, { tregCall: tregStallHook(), unitPrice: 1000 });
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
       checkOutcome(8, "stalled");
+      expect(stopLinesOfLog()).toEqual(["stalled"]);
       const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
