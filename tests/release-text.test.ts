@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { ALL_CUSTOMER_STRINGS, chainFailureReasonAr, operatorReleaseReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
+import { SENSITIVE_NOT_VERIFIED_AR } from "../src/lib/treg/dataPolicy";
+import { PURPOSE_REQUIRED_AR, SENSITIVE_AUDIT_UNAVAILABLE_AR, SENSITIVE_LIMIT_AR, sensitiveRefusalAr } from "../src/lib/server/sensitiveAccess";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { normalizeReleaseWording, stripRetryPrefix } from "../src/lib/releaseWording";
 import { PROVIDER_BUSY_AR, PROVIDER_GENERIC_FAILURE_AR, PROVIDER_INCOMPATIBLE_ANSWER_AR, PROVIDER_INPUT_REJECTED_AR, PROVIDER_ROUTE_COST_EXCEEDED_AR, PROVIDER_TARGET_NOT_FOUND_AR, PROVIDER_TIMEOUT_AR, PROVIDER_UNAVAILABLE_AR, isDeterministicFailureAr } from "../src/lib/providerFailureText";
@@ -81,6 +83,59 @@ describe("T1 releaseText (DT-20261117-06 M1)", () => {
     expect(adapterStopError(near).textAr).toBe(REASON_AR.provider_unavailable);
   });
 
+  // FIX-1 (Gate 2 r1): a text that claims a release, a hold, a charge or a count never survives an adapter failure before a confirmed release.
+  const CLAIM_RX = /حجز|مُحرَّر|المسلَّم|خُصم|[٠-٩0-9]/;
+  it.each([45, 7, 1, 25000])("T1 FIX-1 stale and operator release texts (target %i) from an adapter map to the neutral provider constant", (target) => {
+    for (const text of [staleReleaseReasonAr(target), operatorReleaseReasonAr(target)]) {
+      expect(CLAIM_RX.test(text), text).toBe(true); // non-vacuity: these texts do claim a release and a count
+      const err = adapterStopError(text);
+      expect(err.textAr, text).toBe(REASON_AR.provider_unavailable);
+      expect(trustedCauseAr(err), text).toBe(REASON_AR.provider_unavailable);
+      expect(CLAIM_RX.test(trustedCauseAr(err)), text).toBe(false);
+    }
+  });
+
+  it("T1 FIX-1 fail closed: every copy.ts customer text except the three chain failure reasons maps to the neutral provider constant", () => {
+    const allowed = new Set((["spend", "cursor", "lease"] as const).map((kind) => chainFailureReasonAr(kind)));
+    const all = ALL_CUSTOMER_STRINGS();
+    expect(all.filter((text) => allowed.has(text))).toHaveLength(3);
+    for (const text of all) expect(adapterStopError(text).textAr, text).toBe(allowed.has(text) ? text : REASON_AR.provider_unavailable);
+  });
+  it("T1 FIX-1 no text that stays allowed claims a release, a hold, a charge or a count", () => {
+    const kept = [...(["spend", "cursor", "lease"] as const).map((kind) => chainFailureReasonAr(kind)), ...REVIEWED_ADAPTER_SENTENCES];
+    for (const text of kept) {
+      expect(adapterStopError(text).textAr, text).toBe(text);
+      expect(CLAIM_RX.test(text), text).toBe(false);
+    }
+  });
+
+  it("T1 QA#4 the verified-business refusal is kept as a reviewed reason, without its trailing money clause", () => {
+    const kept = "هذه الخدمة متاحة لحسابات الأعمال الموثّقة فقط؛ تواصل مع الدعم لتوثيق حسابك.";
+    expect(sensitiveRefusalAr("sensitive_not_allowed")).toBe(SENSITIVE_NOT_VERIFIED_AR); // the adapter's text is the policy constant
+    expect(SENSITIVE_NOT_VERIFIED_AR).toBe(`${kept.slice(0, -1)}، ولم يُحجز أي رصيد.`); // only that clause is dropped
+    const err = adapterStopError(SENSITIVE_NOT_VERIFIED_AR);
+    expect(err.textAr).toBe(kept);
+    expect(trustedCauseAr(err)).toBe(kept);
+    expect(kept).toContain("حسابات الأعمال الموثّقة");
+    expect(CLAIM_RX.test(kept)).toBe(false);
+    expect(checkCustomerText(kept).issues).toEqual([]);
+  });
+
+  it.each([
+    { name: "purpose required", refusal: "purpose_required" as const, constant: PURPOSE_REQUIRED_AR, tail: "، ولم يُحجز أي رصيد.", kept: "الغرض من الاستخدام مطلوب قبل اعتماد هذه الخدمة؛ اكتبه في جملة قصيرة." },
+    { name: "daily limit", refusal: "daily_limit" as const, constant: SENSITIVE_LIMIT_AR, tail: "، ولم يُخصم أي رصيد.", kept: "بلغ حسابك الحد اليومي لهذا النوع من الاستعلامات؛ يمكنك المتابعة غدًا." },
+    { name: "audit unavailable", refusal: "audit_unavailable" as const, constant: SENSITIVE_AUDIT_UNAVAILABLE_AR, tail: "، ولم يُخصم أي رصيد.", kept: "تعذّر تسجيل هذا الاستعلام الآن فلم يُنفَّذ؛ حاول لاحقًا." },
+    { name: "blocked", refusal: "blocked" as const, constant: sensitiveRefusalAr("blocked"), tail: "، ولم يُحجز أي رصيد.", kept: "هذه الخدمة غير متاحة حاليًا." },
+  ])("T1 D5 the $name refusal is kept as a reviewed reason, without its trailing money clause", ({ refusal, constant, tail, kept }) => {
+    expect(sensitiveRefusalAr(refusal)).toBe(constant); // the adapter's text is the refusal constant
+    expect(constant).toBe(`${kept.slice(0, -1)}${tail}`); // only that clause is dropped
+    const err = adapterStopError(constant);
+    expect(err.textAr).toBe(kept);
+    expect(trustedCauseAr(err)).toBe(kept);
+    expect(CLAIM_RX.test(kept)).toBe(false);
+    expect(checkCustomerText(kept).issues).toEqual([]);
+  });
+
   it("T1 every output passes the customer-text guard, has no «فشل», and is stable under normalizeReleaseWording", () => {
     const outs = [
       RELEASE_NEUTRAL_REASON_AR, RETRY_CAUSE_AR, ...Object.values(REASON_AR),
@@ -157,6 +212,11 @@ describe("T7 source guards (DT-20261117-06)", () => {
     expect(wording.split("\n").filter((l) => l.startsWith("import "))).toEqual(['import { pointsAr } from "./pointsFormat";']);
     expect(wording).not.toContain("releaseText");
     expect(releaseText).not.toContain("stripRetryPrefix");
+  });
+
+  it("T7 FIX-1 releaseText.ts admits adapter reasons from the three chain failure reasons only and no longer reads ALL_CUSTOMER_STRINGS", () => {
+    expect(releaseText).not.toContain("ALL_CUSTOMER_STRINGS");
+    expect(releaseText).toContain('chainFailureReasonAr("spend"), chainFailureReasonAr("cursor"), chainFailureReasonAr("lease")');
   });
 
   it("T7 (V-7, V-4) the adapter's composed sentence is the reviewed one exactly once, and the old settlement sentence is gone from runMission.ts", () => {
