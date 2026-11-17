@@ -41,6 +41,7 @@ export const firecrawlAdapter: ProviderAdapter = {
         const limit = Math.max(1, Math.min(100, Math.floor(i.limit)));
         return runRecordedCall<SearchHit[]>({
           ctx, capability: capabilityById("firecrawl.search") as CapabilityDef,
+          reserveUsd: Math.round(((capabilityById("firecrawl.search") as CapabilityDef).costPerCallUsd ?? 0) * Math.ceil(limit / ((capabilityById("firecrawl.search") as CapabilityDef).unitsPerCall ?? 10)) * 1e6) / 1e6,
           request: { url: `${base()}/search`, method: "POST", headers: {}, body: { query: i.query.slice(0, 500), limit, sources: ["web"], ...(i.country ? { country: i.country.toUpperCase() } : {}), ...(i.excludeDomains?.length ? { excludeDomains: i.excludeDomains.slice(0, 100) } : {}), timeout: 20000 } },
           interpret: (a): InterpretedAnswer<SearchHit[]> => {
             if (a.json?.success === false) return { status: "failed", data: null, units: 0, credits: null, errorCode: "unexpected_shape" };
