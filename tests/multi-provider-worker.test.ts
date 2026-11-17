@@ -1003,4 +1003,51 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(last.json.settle.charged_credits).toBe(Math.ceil(3 * db.unitPrice));
   });
 
+
+  it("T-W B5-R2 winner killed after commit, no other invocation: claim refuses, vi.resetModules(), watchdog release gives zero debit and returns hold", async () => {
+    resetDb({ target: 3 });
+    const world = defaultFakeWorld(5);
+    db.killAfterCommit = true;
+
+    const route = await import("../src/app/api/worker/chunk/route");
+    fetchSpy = createFakeFetch(world);
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+    // Winner runs and commits, then throws/dies
+    await expect(route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }))).rejects.toThrow("worker_killed_after_commit");
+
+    // Commit succeeded in DB before kill
+    expect(db.step).toBeGreaterThanOrEqual(1);
+    expect(db.deliveredUnits).toBeGreaterThan(0);
+
+    // Simulate expired lease past 30 minutes
+    const past31Min = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    const jobRow = db.jobs.find((j) => j.id === JOB)!;
+    jobRow.lease_until = past31Min;
+    jobRow.step = db.step;
+    jobRow.delivered_units = db.deliveredUnits;
+
+    // T-WD R2 fixture shape
+    expect(jobRow.status).toBe("running");
+    expect(jobRow.step).toBeGreaterThanOrEqual(1);
+    expect(jobRow.delivered_units).toBeGreaterThan(0);
+    expect(jobRow.target_volume_max).toBe(TARGET);
+    expect(Date.now() - new Date(jobRow.lease_until).getTime()).toBeGreaterThan(30 * 60 * 1000);
+
+    // Process restart
+    vi.resetModules();
+
+    // Watchdog release runs: zero debit, hold returned, rows lost
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "watchdog_release", p_force: true });
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false); // rows lost
+  });
+
 });
