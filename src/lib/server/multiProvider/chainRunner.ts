@@ -303,7 +303,7 @@ export function admitBatch(state: ChainCursorV2, candidates: ChainCandidate[]): 
   return { admitted: true };
 }
 
-export interface ChainRunCtx { input: ChainChunkInput; deps: ChainDeps; params: ChainParams; route: RouteDef; budget: number; state: ChainCursorV2; attemptId: string; now: () => number; deadlineMs: number; hardEndMs: number; usd: number; calls: number; limits: { maxCalls: number; maxChunks: number; maxWallMs: number }; chunkCalls: number; chunkUsd: number; ordinal: number; trace: ChunkTraceCollector; stop: { spendUnreadable: boolean; ledger: boolean; workLimit: boolean; leaseLost: boolean; clockUnreadable: boolean; cursorOverflow: boolean }; rows: Record<string, any>[]; read: number; unverified: number; skipped: number; discoveredNow: number; fail: (messageAr: string, errorCode: string) => ProviderAdapterCallOutput }
+export interface ChainRunCtx { input: ChainChunkInput; deps: ChainDeps; params: ChainParams; route: RouteDef; budget: number; state: ChainCursorV2; attemptId: string; now: () => number; deadlineMs: number; hardEndMs: number; startedMs: number; usd: number; calls: number; limits: { maxCalls: number; maxChunks: number; maxWallMs: number }; chunkCalls: number; chunkUsd: number; ordinal: number; trace: ChunkTraceCollector; stop: { spendUnreadable: boolean; ledger: boolean; workLimit: boolean; leaseLost: boolean; clockUnreadable: boolean; cursorOverflow: boolean }; rows: Record<string, any>[]; read: number; unverified: number; skipped: number; discoveredNow: number; fail: (messageAr: string, errorCode: string) => ProviderAdapterCallOutput }
 
 export function verifyingRecorder(rc: ChainRunCtx): CallRecorder {
   return {
@@ -871,6 +871,40 @@ async function websiteReadV2(rc: ChainRunCtx, c: ChainCandidateV2, domain: strin
     sourcePage,
   };
   finishCompanyRow(rc, facts);
+}
+
+export function terminalOf(rc: ChainRunCtx): ChainRunnerStop | null {
+  if (rc.state.q.length === 0 && (rc.state.dx === 1 || rc.state.bd === 1)) {
+    if (rc.state.bd === 1) {
+      return "budget";
+    }
+    const sourcesLimited =
+      rc.state.dn.length > 0 ||
+      rc.state.cp.length > 0 ||
+      rc.state.un.length > 0 ||
+      rc.state.tf === 1 ||
+      rc.state.uo > 0 ||
+      rc.state.tr === 1;
+    if (sourcesLimited) {
+      return "sources_limited";
+    }
+    return "coverage_end";
+  }
+  if (rc.state.bd === 1 && rc.state.q.length > 0) {
+    return "budget";
+  }
+  if (rc.state.ix >= CHAIN_RUN.stallChunks) {
+    return "stalled";
+  }
+  if (
+    rc.stop.workLimit ||
+    rc.calls > rc.limits.maxCalls ||
+    rc.state.n > rc.limits.maxChunks ||
+    rc.now() - rc.startedMs > rc.limits.maxWallMs
+  ) {
+    return "work_limit";
+  }
+  return null;
 }
 
 
