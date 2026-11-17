@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, workLimitsFor, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
+import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, workLimitsFor, encodeCursorV2, decodeCursorAny, type ChainDeps, type ChainChunkInput, type ChainCursorV2 } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
@@ -686,6 +686,67 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       for (const ev of h.events) {
         if (ev.includes("الموثّق منها")) continue;
         expect(ev).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
+      }
+    }
+  });
+
+  it("T-C worst complete state cursor encoding and bounds", () => {
+    const origin200 = "https://" + "a".repeat(192);
+    const tc512 = "t".repeat(512);
+    const tl512 = "l".repeat(512);
+    const seen300 = Array.from({ length: 300 }, (_, i) => `h${i}`.padEnd(96, "x") + ".com");
+
+    const sets = [
+      "\\".repeat(120),
+      '"'.repeat(120),
+      "\u4E00".repeat(120),
+      "\u200F\u0300\uD83D\uDE00\x00".repeat(30),
+    ];
+
+    for (const nameSample of sets) {
+      const q = Array.from({ length: 20 }, (_, i) => ({
+        n: nameSample,
+        u: origin200.slice(0, 190) + `${i}`.padStart(10, "0"),
+      }));
+      const state: ChainCursorV2 = {
+        v: 2,
+        n: 9999999999,
+        dc: 9999999999,
+        ec: 9999999999,
+        tp: 9999999999,
+        out: 9999999999,
+        ix: 9999999999,
+        sq: 9999999999,
+        uo: 9999999999,
+        tr: 0,
+        wm: 9999999999,
+        tg: 1,
+        dx: 1,
+        bd: 0,
+        tx: 0,
+        tf: 0,
+        aid: "attempt_worst_123",
+        q,
+        tc: tc512,
+        tl: tl512,
+        wq: { "contextdev.search": 9999999999 },
+        ff: { "firecrawl.search": 9999999999 },
+        dn: Array.from({ length: 25 }, (_, i) => `domain_${i}.com`),
+        cp: ["treg"],
+        un: [],
+        seen: [...seen300],
+      };
+
+      const res = encodeCursorV2(state);
+      expect(res.fits).toBe(true);
+      if (res.fits) {
+        expect(Buffer.byteLength(JSON.stringify(res.state))).toBeLessThanOrEqual(30000);
+        expect(res.cursor.length).toBeLessThanOrEqual(40000);
+        expect(Buffer.byteLength(JSON.stringify(res.state.q))).toBeLessThanOrEqual(12000);
+        expect(res.state.tr).toBe(1);
+        const decoded = decodeCursorAny(res.cursor, "attempt_worst_123");
+        expect(decoded.q.length).toBe(20);
+        expect(decoded.tr).toBe(1);
       }
     }
   });
