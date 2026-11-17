@@ -96,7 +96,7 @@ export async function runRecordedCall<T>(args: {
       data: read.data,
       units: read.units,
       credits,
-      costUsd: round6(credits * usdPerCredit),
+      costUsd: ctx.chainStrict && (read.credits === null || !Number.isFinite(read.credits)) ? estimatedUsd : round6(credits * usdPerCredit),
       durationMs,
       httpStatus: answer.httpStatus,
       ...(read.errorCode ? { errorCode: read.errorCode } : {}),
