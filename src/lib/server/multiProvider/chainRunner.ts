@@ -397,6 +397,86 @@ export function chainCtxFor(rc: ChainRunCtx, provider: DataProviderId): AdapterC
   };
 }
 
+export async function oneTregDirectoryAsk(rc: ChainRunCtx, kind: "dir" | "dirkw"): Promise<{ called: boolean; answered: boolean; zeroRows: boolean }> {
+  rc.ordinal += 1;
+  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId: rc.attemptId, ordinal: rc.ordinal, kind });
+  const timeoutMs = Math.min(CHAIN_RUN.tregTimeoutCapMs, Math.floor((rc.hardEndMs - rc.now()) / (1 + CHAIN_RUN.tregKeyPoolHops)));
+  if (timeoutMs < CHAIN_RUN.tregMinTimeoutMs) {
+    return { called: false, answered: false, zeroRows: false };
+  }
+  const gate = await canStartCall(rc, TREG_DIRECTORY.reservedUsd);
+  if (gate !== "ok") {
+    if (gate === "budget") rc.state.bd = 1;
+    return { called: false, answered: false, zeroRows: false };
+  }
+  const rawParams = {
+    industry: rc.params.industry,
+    country: rc.params.country,
+    location: rc.params.country,
+    query: { keyword: { include: [rc.params.keyword, rc.params.industry].filter((x): x is string => typeof x === "string" && Boolean(x)) } },
+  };
+  const cursor = kind === "dirkw"
+    ? (typeof rc.state.tc === "string" && rc.state.tc.startsWith(KEYWORDS_ONLY_CURSOR_PREFIX) ? rc.state.tc.slice(KEYWORDS_ONLY_CURSOR_PREFIX.length) : (typeof rc.state.tc === "string" ? rc.state.tc : null))
+    : (typeof rc.state.tc === "string" && !rc.state.tc.startsWith(KEYWORDS_ONLY_CURSOR_PREFIX) ? rc.state.tc : null);
+
+  const out = await runTregDirectoryPageDirect({
+    tregCall: rc.deps.tregCall,
+    ctx: { recorder: verifyingRecorder(rc), jobId: rc.input.jobId, now: rc.deps.now },
+    userId: rc.input.userId,
+    rawParams,
+    cursor,
+    keywordsOnly: kind === "dirkw",
+    idempotencyKey: key,
+    timeoutMs,
+  });
+
+  rc.chunkUsd += out.committedUsd;
+  if (out.refused === undefined) {
+    rc.state.dc += 1;
+  }
+  if (out.refused === "cap_reached") {
+    if (!rc.state.cp.includes("treg")) rc.state.cp.push("treg");
+  } else if (out.refused === "budget_reached") {
+    rc.state.bd = 1;
+  } else if (out.refused === "ledger_unavailable") {
+    rc.stop.ledger = true;
+  }
+
+  if (!out.ok && out.refused === undefined) {
+    rc.state.ff.treg = (rc.state.ff.treg ?? 0) + 1;
+    if (rc.state.ff.treg >= CHAIN_RUN.downAfterFailures && !rc.state.dn.includes("treg")) {
+      rc.state.dn.push("treg");
+    }
+  }
+
+  if (out.ok) {
+    rc.state.ff.treg = 0;
+    const candidates = candidatesFromDirectory(out.rows);
+    const prevTc = rc.state.tc;
+    const prevTl = rc.state.tl;
+    const prevTx = rc.state.tx;
+    if (out.nextCursor && (out.nextCursor === rc.state.tc || out.nextCursor === rc.state.tl || escapedBytes(out.nextCursor) > CHAIN_RUN.tregCursorMaxEscapedBytes)) {
+      rc.state.tf = 1;
+    } else {
+      rc.state.tl = rc.state.tc;
+      rc.state.tc = out.nextCursor ? (kind === "dirkw" ? KEYWORDS_ONLY_CURSOR_PREFIX + out.nextCursor : out.nextCursor) : null;
+      if (!out.nextCursor) {
+        rc.state.tx = 1;
+      }
+    }
+    const adm = admitBatch(rc.state, candidates);
+    if (!adm.admitted) {
+      rc.state.tc = prevTc;
+      rc.state.tl = prevTl;
+      rc.state.tx = prevTx;
+    }
+  }
+
+  rc.trace.call("discover", "treg", "treg.companies.search", { status: out.status, costUsd: out.committedUsd, durationMs: out.durationMs });
+  return { called: true, answered: out.ok, zeroRows: out.ok && out.rows.length === 0 };
+}
+
+
 
 
 
