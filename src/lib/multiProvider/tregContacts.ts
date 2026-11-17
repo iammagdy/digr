@@ -12,3 +12,34 @@ export const HOST_RE = /^[a-z0-9.-]{1,100}$/;
 export const stripControl = (raw: string): string => raw.replace(/[\u0000-\u001f\u007f]/g, "");
 export const utf8Bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value));
 export const escapedBytes = (s: string): number => Buffer.byteLength(JSON.stringify(s)) - 2;
+
+function parseInstantKey(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mon = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  const hh = parseInt(m[4], 10);
+  const mm = parseInt(m[5], 10);
+  const ss = parseInt(m[6], 10);
+  const fraction6 = (m[7] || "").padEnd(6, "0");
+  const tz = m[8];
+  let offsetMinutes = 0;
+  if (tz !== "Z") {
+    const sign = tz[0] === "-" ? -1 : 1;
+    const clean = tz.slice(1).replace(":", "");
+    const offH = parseInt(clean.slice(0, 2), 10);
+    const offM = clean.length >= 4 ? parseInt(clean.slice(2, 4), 10) : 0;
+    offsetMinutes = sign * (offH * 60 + offM);
+  }
+  const thatMs = Date.UTC(y, mon - 1, d, hh, mm, ss) - offsetMinutes * 60000;
+  const that = new Date(thatMs).toISOString().slice(0, 19);
+  return that + "." + fraction6;
+}
+
+export function sameInstant(a: unknown, b: unknown): boolean {
+  const keyA = parseInstantKey(a);
+  const keyB = parseInstantKey(b);
+  return keyA !== null && keyA === keyB;
+}
