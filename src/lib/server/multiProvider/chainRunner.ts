@@ -304,6 +304,60 @@ export function admitBatch(state: ChainCursorV2, candidates: ChainCandidate[]): 
 
 export interface ChainRunCtx { input: ChainChunkInput; deps: ChainDeps; params: ChainParams; route: RouteDef; budget: number; state: ChainCursorV2; attemptId: string; now: () => number; deadlineMs: number; hardEndMs: number; usd: number; calls: number; limits: { maxCalls: number; maxChunks: number; maxWallMs: number }; chunkCalls: number; chunkUsd: number; ordinal: number; trace: ChunkTraceCollector; stop: { spendUnreadable: boolean; ledger: boolean; workLimit: boolean; leaseLost: boolean; clockUnreadable: boolean; cursorOverflow: boolean }; rows: Record<string, any>[]; read: number; unverified: number; skipped: number; discoveredNow: number; fail: (messageAr: string, errorCode: string) => ProviderAdapterCallOutput }
 
+export function verifyingRecorder(rc: ChainRunCtx): CallRecorder {
+  return {
+    reserve: async (args) => {
+      const res = await rc.deps.recorder.reserve(args);
+      if (!res.allowed) return res;
+
+      const release = async () => {
+        try {
+          await rc.deps.recorder.commit(res.costId, {
+            provider: args.provider,
+            capabilityId: args.capabilityId,
+            status: "failed",
+            units: 0,
+            costUsd: 0,
+            durationMs: 0,
+            jobId: args.jobId,
+          } as CallRecord);
+        } catch {
+          // best effort
+        }
+      };
+
+      let spend: { usd: number; calls: number };
+      try {
+        if (!rc.deps.jobSpend) throw new Error("jobSpend_missing");
+        spend = await rc.deps.jobSpend();
+      } catch {
+        await release();
+        rc.stop.spendUnreadable = true;
+        return { allowed: false, costId: null, reason: "error" };
+      }
+
+      rc.usd = spend.usd;
+      rc.calls = spend.calls;
+
+      if (spend.usd > rc.budget + 1e-9) {
+        await release();
+        return { allowed: false, costId: null, reason: "budget" };
+      }
+      if (spend.calls > rc.limits.maxCalls) {
+        await release();
+        rc.stop.workLimit = true;
+        return { allowed: false, costId: null, reason: "budget" };
+      }
+
+      rc.chunkCalls += 1;
+      return res;
+    },
+    commit: async (costId, record) => {
+      return rc.deps.recorder.commit(costId, record);
+    },
+  };
+}
+
 
 
 const MAX_CURSOR_CHARS = 8000;
