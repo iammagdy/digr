@@ -291,6 +291,134 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   // the stop lines the activity log holds, by kind: a run writes exactly one, the line of its own stop
   const stopLinesOfLog = () => (["coverage_end", "budget", "sources_limited", "stalled", "work_limit"] as const).filter((k) => db.events.some((e: any) => String(e.message ?? "") === chainStopProgressLineAr(k)));
 
+  // ---- DT-20261117-04 gate2 (QA Q1): the REAL route twice, with a CONTROLLED interleaving of two invocations ------------------------------------
+  // `mode` "chain" runs the chain (the file's own transport and fakes), "main" runs the generic worker path (an injected adapter); both go through route.POST, the step upload, complete_chunk, assembly and settlement.
+  type RaceMode = "chain" | "main";
+  const verifiedWorld = (n: number, who: string): FakeCompany[] => defaultFakeWorld(n).map((c) => ({ ...c, name: `${who} ${c.name}`, email: `info@${c.domain}`, phone: undefined }));
+  function prepareJob(mode: RaceMode, target: number) {
+    resetDb({ target });
+    db.unitPrice = 100;
+    db.reserved = Math.ceil(target * 100 * 1.15);
+    if (mode === "main") {
+      db.endpoint = "icypeas.companies.search";
+      db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+      db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    }
+  }
+  // what the NEXT invocation will find: `rows` verified companies; goesOn = many more that cannot be verified (the first chunk ends after its calls and the job goes on)
+  function arrangeInvocation(mode: RaceMode, who: string, rows: number, goesOn = false) {
+    if (mode === "chain") {
+      const world = goesOn ? defaultFakeWorld(30).map((c, i) => (i < rows ? { ...c, name: `${who} ${c.name}`, email: `info@${c.domain}`, phone: undefined } : { ...c, email: undefined, phone: undefined })) : verifiedWorld(rows, who);
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+    } else {
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: Array.from({ length: rows }, (_, i) => ({ name: `${who} شركة مقاولات ${i + 1}`, website: `https://${who.toLowerCase()}${i + 1}.com`, country: "مصر", industry: "مقاولات" })), nextCursor: goesOn ? "cur_2" : null, costUsd: 0.005, costMicro: 5000, tregCallId: `t_${who}` }));
+    }
+  }
+  async function postChunk() {
+    const route = await import("../src/app/api/worker/chunk/route");
+    return route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+  }
+  async function watchdogSweep() {
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    const res = await GET(new NextRequest("http://127.0.0.1:3000/api/cron/watchdog", { headers: { authorization: "Bearer chain-secret" } }));
+    return { status: res.status, body: await res.json() };
+  }
+  const rpcCount = (name: string) => db.rpcCalls.filter((c) => c.name === name).length;
+  async function resultText() {
+    const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
+    if (!buf) return null;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as any);
+    return JSON.stringify(wb.worksheets[0].getSheetValues());
+  }
+  /**
+   * Invocation O (the old worker) starts and is HELD at one storage upload or RPC call; its lease is then expired (a pause longer than the lease), invocation W starts, and either runs to its end
+   * (answer `w`) or DIES right after its commit (`wDies`: the answer never returns, so the route's catch never runs); then O is let go and its answer is `o`.
+   */
+  async function raceWithOldWorker(opts: { mode: RaceMode; target?: number; pause: { kind: "upload" | "rpc"; name: string }; oRows: number; wRows: number; wDies?: boolean; goesOn?: boolean }) {
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    let reached!: () => void;
+    const atGate = new Promise<void>((r) => { reached = r; });
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    let held = false;
+    let wPhase = false;
+    prepareJob(opts.mode, opts.target ?? 5);
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      const origRpc = client.rpc;
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return { ...b, upload: async (path: string, body: any, o: any) => { if (opts.pause.kind === "upload" && !held && path === `${JOB}/${opts.pause.name}`) { held = true; reached(); await gate; } return b.upload(path, body, o); } };
+        },
+      };
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        if (opts.pause.kind === "rpc" && !held && name === opts.pause.name) { held = true; reached(); await gate; }
+        const result = await origRpc(name, args);
+        if (opts.wDies && wPhase && name === "complete_chunk") await new Promise<never>(() => {});
+        return result;
+      });
+      return client;
+    });
+    try {
+      arrangeInvocation(opts.mode, "O", opts.oRows, opts.goesOn);
+      const oPromise = postChunk();
+      await atGate;
+      db.jobs[0].lease_until = new Date(Date.now() - 60_000).toISOString();
+      const costsAtPause = db.costs.length;
+      arrangeInvocation(opts.mode, "W", opts.wRows, opts.goesOn);
+      wPhase = true;
+      let w: { status: number; body: any } | null = null;
+      if (opts.wDies) {
+        void postChunk();
+        for (let i = 0; i < 200 && db.step < 1; i++) await new Promise((r) => setTimeout(r, 25));
+        expect(db.step).toBeGreaterThanOrEqual(1);
+      } else {
+        const wRes = await postChunk();
+        w = { status: wRes.status, body: await wRes.json() };
+      }
+      wPhase = false;
+      open();
+      const oRes = await oPromise;
+      const o = { status: oRes.status, body: await oRes.json() };
+      return { w, o, costsAtPause, canonicalText: db.stepBodies.get(`${JOB}/step_0.json`) ?? "", resultText: await resultText() };
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  }
+  /** The winner commits and DIES (its answer never returns: no catch, no release); nobody resumes; 31 minutes later the REAL watchdog runs. */
+  async function dyingWinnerThenWatchdog(mode: RaceMode, goesOn = false) {
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    prepareJob(mode, 5);
+    arrangeInvocation(mode, "W", 2, goesOn);
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        const result = await origRpc(name, args);
+        if (name === "complete_chunk") await new Promise<never>(() => {});
+        return result;
+      });
+      return client;
+    });
+    try {
+      void postChunk();
+      for (let i = 0; i < 200 && db.step < 1; i++) await new Promise((r) => setTimeout(r, 25));
+      const before = { step: db.step, delivered: db.deliveredUnits, releases: rpcCount("release_job_atomic"), failures: rpcCount("record_chunk_failure"), settles: rpcCount("settle_job_atomic") };
+      const past31 = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+      Object.assign(db.jobs[0], { lease_until: past31, updated_at: past31, step: db.step, delivered_units: db.deliveredUnits });
+      const watchdog = await watchdogSweep();
+      return { before, watchdog };
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  }
+
   it("delivers only verified rows; the charge is ceil(delivered x unit) and never above the reserve; money moves only through the approved functions", async () => {
     resetDb();
     const world = defaultFakeWorld(10).map((c, i) => (i === 0 ? { ...c, email: undefined, foreignEmail: "agency@other-agency.com" } : c));
