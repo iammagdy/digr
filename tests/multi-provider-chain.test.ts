@@ -63,7 +63,7 @@ function harness(world: FakeCompany[], scenario: FakeScenario = {}, opts: { caps
           tregCallId: "t",
           costMicro: 0,
           latencyMs: 1,
-          data: { data: { organization: {}, emails: [] }, meta: { params: { domain: options.params.domain }, total: 0 } },
+          data: { data: { organization: {}, emails: [] }, meta: { params: { domain: options.params?.domain }, total: 0 } },
           isRouteMaxCost: false,
           isPlatformBalanceLow: false,
         };
