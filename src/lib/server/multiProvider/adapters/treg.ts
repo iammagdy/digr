@@ -98,5 +98,12 @@ export function classifyTregCost(result: TregCallResult | null | undefined, rese
   const s = result.httpStatus;
   const definite = (s >= 200 && s <= 299) || (s >= 400 && s <= 499 && s !== 408 && s !== 409);
   if (!definite) return unknown();
+  if (result.costHeaderInvalid === true || result.costUnreported === true || result.costIsEstimate === true) return unknown();
+  const figs6 = [result.costMicro, ...("originalCostMicro" in result ? [result.originalCostMicro] : []), ...("chargedMicroReported" in result ? [result.chargedMicroReported] : [])];
+  if (figs6.some((x) => !valid(x))) return unknown();
+  const knownMicro = Math.max(...(figs6 as number[]));
+  if (knownMicro > 0) return { known: true, commitMicro: knownMicro };
+  if (result.httpStatus >= 200 && result.httpStatus <= 299) return answerKind === "empty" ? { known: true, commitMicro: 0 } : unknown();
+  if (result.httpStatus >= 400 && result.httpStatus <= 499) return { known: true, commitMicro: 0 };
   return unknown();
 }
