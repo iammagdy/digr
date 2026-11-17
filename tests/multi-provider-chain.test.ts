@@ -593,4 +593,13 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     const { last: lastDown } = await runAll(hDown, params({ count: 5 }), 10);
     expect(lastDown.chainStop).toBe("sources_limited");
   });
+
+  it("T-A A4 refused queued read with 5 queued companies stops on budget", async () => {
+    const world = defaultFakeWorld(10);
+    const h = harness(world);
+    const { last } = await runAll(h, params({ budgetUsd: 0.005, count: 5 }));
+    expect(last.chainStop).toBe("budget");
+    expect(last.chainStop).not.toBe("stalled");
+    expect(last.chainStop).not.toBe("coverage_end");
+  });
 });
