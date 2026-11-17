@@ -108,10 +108,12 @@ vi.mock("../src/lib/supabase/server", () => ({
       from: (bucket: string) => {
         const store = bucket === "partials" ? db.partials : db.results;
         return {
-          upload: async (path: string, body: any) => {
+          upload: async (path: string, body: any, opts?: any) => {
             const existed = store.has(path);
             db.uploadHistory.push({ bucket, path, existed });
             // records whether path already exists
+            // Storage decides existence for `upsert: false` (the start markers): a duplicate is refused with 409, as the real bucket does.
+            if (existed && opts?.upsert === false) return { data: null, error: { message: "The resource already exists", statusCode: "409" } };
             store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body)));
             return { data: { path, existed }, error: null };
           },
