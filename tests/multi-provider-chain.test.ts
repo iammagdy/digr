@@ -376,6 +376,7 @@ describe("chain: a provider daily cap hit in the middle of a run (today's runner
     expect(last.ok).toBe(true);
     expect(rows.length).toBe(0);
     expect(last.nextCursor).toBeNull();
+    expect(last.chainStop).toBe("sources_limited");
   });
 });
 
