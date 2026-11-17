@@ -476,6 +476,36 @@ export async function oneTregDirectoryAsk(rc: ChainRunCtx, kind: "dir" | "dirkw"
   return { called: true, answered: out.ok, zeroRows: out.ok && out.rows.length === 0 };
 }
 
+export async function askTregDirectory(rc: ChainRunCtx): Promise<void> {
+  const kw = typeof rc.state.tc === "string" && rc.state.tc.startsWith(KEYWORDS_ONLY_CURSOR_PREFIX);
+  const first = await oneTregDirectoryAsk(rc, kw ? "dirkw" : "dir");
+
+  const rawParams = {
+    industry: rc.params.industry,
+    country: rc.params.country,
+    location: rc.params.country,
+    query: { keyword: { include: [rc.params.keyword, rc.params.industry].filter((x): x is string => typeof x === "string" && Boolean(x)) } },
+  };
+
+  const normalParsed = normalizeIcypeasCompanyParams(rawParams, 10, null);
+  const kwParsed = normalizeIcypeasCompanyParams(rawParams, 10, null, { keywordsOnly: true });
+
+  if (
+    first.called &&
+    first.zeroRows &&
+    !kw &&
+    rc.state.tc === null &&
+    rc.state.tx === 1 &&
+    Boolean(normalParsed.query?.industry) &&
+    (kwParsed.query?.keyword?.include?.length ?? 0) > 0 &&
+    !kwParsed.query?.industry
+  ) {
+    rc.state.tx = 0;
+    await oneTregDirectoryAsk(rc, "dirkw");
+  }
+}
+
+
 
 
 
