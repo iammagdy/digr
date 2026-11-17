@@ -84,6 +84,12 @@ export const CHAIN_CARD_LIMITS_AR: readonly string[] = [
   "لا نضمن دقة تامة؛ نبذل أفضل جهد ممكن، وقد يكون عدد الشركات المسلَّمة أقل من المطلوب.",
 ];
 
+export const CHAIN_CARD_LIMITS_V2_AR: readonly string[] = [
+  "نجمع بيانات التواصل المنشورة للعامة على المواقع الرسمية للشركات ومن مصادر بيانات تجارية متاحة.",
+  "عمودا النشاط والدولة في الملف يعكسان معايير بحثك، ولا يُتحقق منهما لكل شركة على حدة.",
+  ...CHAIN_CARD_LIMITS_AR.slice(1),
+];
+
 export function chainGoalLineAr(args: { count: number; withEmail: boolean; withPhone: boolean; withDecisionMaker: boolean; industry?: string; country?: string }): string {
   const fields = [
     "اسم الشركة",
