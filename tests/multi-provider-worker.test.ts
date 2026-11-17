@@ -75,7 +75,8 @@ vi.mock("../src/lib/supabase/server", () => ({
         const expected = args.p_expected_step;
         if (typeof expected === "number") {
           if (db.step > expected) {
-            return { data: { success: false, already_completed: true, delivered_units: db.deliveredUnits }, error: null };
+            // like the SQL (20261012135525_chunk_lifecycle_functions.sql :98-105): a stale step answers success true with already_completed true and the job's current step
+            return { data: { success: true, already_completed: true, current_step: db.step, delivered_units: db.deliveredUnits }, error: null };
           }
           if (db.step < expected) {
             throw new Error(`step mismatch: current ${db.step} < expected ${expected}`);
@@ -90,7 +91,11 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
+        const settledJob = db.jobs.find((j) => j.id === args.p_job_id);
         const charged = Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved);
+        // like the SQL (20261017175500_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
+        if (settledJob?.status === "completed") return { data: { success: true, already_settled: true, reserved_credits: db.reserved, charged_credits: settledJob.charged_credits ?? charged, delivered_units: db.deliveredUnits }, error: null };
+        if (settledJob) Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
       // DT-20261117-04 CI r1: record_chunk_failure and release_job_atomic clear the job's lease, as the real SQL functions do; otherwise the fake's own «lease not expired» rule refuses the next claim of the same test.
