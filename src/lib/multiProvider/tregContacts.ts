@@ -1,3 +1,6 @@
+import { isPersonalMailDomain, isPlausibleEmail, type FoundEmail } from "./policy";
+import { isRoleMailbox } from "../agentMission/people";
+
 /**
  * Strict, fail-closed helpers of the e-mail lookup and the chain's TREG directory calls.
  * catalog figure, unverified, owner-accepted under D-0027
@@ -55,4 +58,21 @@ export function tombaAnswerKind(body: unknown): TregAnswerKind {
   if (b.data.emails.length >= 1) return "non_empty";
   if (b.data.emails.length === 0 && typeof b?.meta?.total === "number" && b.meta.total === 0) return "empty";
   return "unparsable";
+}
+
+export function readTombaMailbox(body: unknown, requestedDomain: string): FoundEmail | null {
+  const want = requestedDomain.trim().toLowerCase().replace(/^www\./, "");
+  if (!body || typeof body !== "object") return null;
+  const b = body as any;
+  const metaDomain = typeof b?.meta?.params?.domain === "string" ? b.meta.params.domain.trim().toLowerCase().replace(/^www\./, "") : null;
+  if (metaDomain !== want) return null;
+  const org = b?.data?.organization;
+  if (!org || typeof org !== "object") return null;
+  if (org.disposable === true || org.webmail === true || org.accept_all === true) return null;
+  if (!Array.isArray(b?.data?.emails)) return null;
+
+  const rawEmails: any[] = b.data.emails;
+  const candidates = rawEmails.filter((e) => e && typeof e === "object" && typeof e.email === "string").slice(0, 50);
+
+  return null;
 }
