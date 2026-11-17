@@ -67,6 +67,8 @@ export interface TregCallResult {
   chargedMicroReported?: number;
   /** TREG's answer reported NO charge (no header, no `_treg.charged_micro`) and there is no estimate: `costMicro` is a placeholder 0, not a reported zero. */
   costUnreported?: boolean;
+  /** costHeaderInvalid: the cost header was present but is not a plain non-negative integer, so costMicro is not a report. Absent for a well-formed or absent header. */
+  costHeaderInvalid?: true;
   /** The call was NOT made: the endpoint is on the hard block list (never callable) ... */
   blocked?: string;
   /** ... or the job's USD budget would have been passed. */
