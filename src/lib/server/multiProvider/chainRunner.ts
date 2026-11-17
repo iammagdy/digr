@@ -84,6 +84,9 @@ export interface ChainCursor {
 
 const emptyCursor = (): ChainCursor => ({ v: 1, dc: 0, ec: 0, taken: 0, rest: [], seen: [], tc: null, dx: false, out: 0, ix: 0 });
 const MAX_CURSOR_CHARS = 8000;
+export const MAX_STARTS_PER_STEP = 8;
+export const CHAIN_RUN = { chunkCalls: 24, variantsPerProvider: 8, queueBatchMax: 20, stallChunks: 3, downAfterFailures: 3, wasteBreakerMisses: 8, leaseMarginMs: 3000, noCallBeforeEndMs: 5000, noCompanyBeforeEndMs: 15000, hardEndAfterDeadlineMs: 5000, tregTimeoutCapMs: 10000, tregMinTimeoutMs: 2000, tregKeyPoolHops: 3, wallClockMs: 6 * 60 * 60 * 1000, cursorStateMaxBytes: 30000, cursorV2MaxChars: 40000, queueMaxBytes: 12000, tregCursorMaxEscapedBytes: 512, webAskLimit: 20, webQueryMaxChars: 300, excludeDomainsMax: 100, lookupFailuresOff: 3 } as const;
+export const DISCOVERY_SUFFIX = ["", "contact us", "about us", "management team", "head office", "group", "profile", "services"] as const;
 
 export function encodeChainCursor(state: ChainCursor): string {
   const trimmed: ChainCursor = { ...state, seen: [...state.seen], rest: [...state.rest] };
