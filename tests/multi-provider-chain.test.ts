@@ -46,7 +46,7 @@ async function runAll(h: Harness, params: Record<string, any>, maxChunks = 12) {
   const rows: Record<string, any>[] = [];
   let cursor: string | null = null;
   let chunks = 0;
-  let last: ProviderAdapterCallOutput | null = null;
+  let last: Awaited<ReturnType<typeof runChainChunk>> | null = null;
   while (chunks < maxChunks) {
     last = await runChainChunk(baseInput(params, { cursor, step: chunks, remainingNeeded: Math.max(0, (params.count ?? 5) - rows.length), deliveredSoFar: rows.length }), h.deps);
     rows.push(...last.rows);
@@ -393,8 +393,8 @@ describe("copy API regression", () => {
     expect(last3.ok).toBe(true);
     expect(last3.nextCursor).toBeNull();
 
-    const h4 = harness(defaultFakeWorld(20));
-    const nonTerminal = await runChainChunk(baseInput(params({ count: 8 }), { step: 0 }), h4.deps);
+    const h4 = harness(defaultFakeWorld(30));
+    const nonTerminal = await runChainChunk(baseInput(params({ count: 30 }), { step: 0 }), h4.deps);
     expect("chainStop" in nonTerminal).toBe(false);
     expect(nonTerminal.ok).toBe(true);
     expect(nonTerminal.nextCursor).not.toBeNull();

@@ -106,7 +106,7 @@ describe("planner and engine end-to-end with Firecrawl after a mid-run cap", () 
         return { ok: false as const, failed: true, http_status: 500, message: "no treg call expected" };
       },
     };
-    const sources = createSourceGateway({ gateway, web, scope: stageScopeOf(plan), budget });
+    const sources = createSourceGateway({ gateway: gateway as any, web: web as any, scope: stageScopeOf(plan), budget });
 
     const outcome = await runEngine({
       items,

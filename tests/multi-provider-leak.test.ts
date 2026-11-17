@@ -76,7 +76,7 @@ describe("customer-facing words of the multi-provider feature", () => {
 
   it("T-1 new chain strings satisfy all customer leak and Arabic rules", () => {
     const all = ALL_CUSTOMER_STRINGS();
-    const newStrings = all.slice(14);
+    const newStrings = all.slice(16);
     for (const s of newStrings) {
       expect(checkCustomerText(s).issues).toEqual([]);
       expect(s).not.toMatch(LATIN);

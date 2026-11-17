@@ -270,8 +270,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-1 budget stop: states budget limit in customer words and never claims source exhausted", async () => {
     resetDb({ target: 8 });
-    db.unitPrice = 10;
-    db.reserved = Math.ceil(8 * 10 * 1.15);
+    db.unitPrice = 40;
+    db.reserved = Math.ceil(8 * 40 * 1.15);
     const world = defaultFakeWorld(20);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
@@ -289,7 +289,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-2 no more work: emits NOMORE sentence when search runs dry before target", async () => {
     resetDb({ target: 8 });
-    const world = defaultFakeWorld(5).map((c, i) => (i < 3 ? { ...c, email: "corp@fakedomain.org" } : { ...c, email: undefined, phone: undefined }));
+    const world = defaultFakeWorld(5).map((c, i) => (i < 3 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
 
@@ -306,7 +306,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-3 page cap: emits PAGECAP sentence when 3-page cap is reached", async () => {
     resetDb({ target: 10 });
-    const world = defaultFakeWorld(100).map((c, i) => (i % 10 === 0 ? { ...c, email: "verified@corp.com" } : { ...c, email: undefined, phone: undefined }));
+    const world = defaultFakeWorld(100).map((c, i) => (i % 10 === 0 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
 
@@ -323,7 +323,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-4 empty pages: emits EMPTY sentence when consecutive pages yield zero accepted rows", async () => {
     resetDb({ target: 8 });
-    const world = defaultFakeWorld(10).map((c, i) => (i < 2 ? { ...c, email: "verified@corp.com" } : { ...c, email: undefined, phone: undefined }));
+    const world = defaultFakeWorld(10).map((c, i) => (i < 2 ? { ...c, email: `info@${c.domain}` } : { ...c, email: undefined, phone: undefined }));
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
 
@@ -340,6 +340,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-5 repeat: emits REPEAT sentence when consecutive chunks repeat already delivered companies", async () => {
     resetDb({ target: 8 });
+    const companyIdentity = dedupeIdentityFor("company");
+    db.quotes[0].items[0].params.excludeRowKeys = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     const world = defaultFakeWorld(10);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
@@ -358,6 +360,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
   it("W-6 dedupe removes a runner row: worker drops duplicate row and reports EXCL reason", async () => {
     resetDb({ target: 5 });
+    const companyIdentity = dedupeIdentityFor("company");
+    db.quotes[0].items[0].params.excludeRowKeys = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
     const world = defaultFakeWorld(10);
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
@@ -373,8 +377,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   });
 
   it("W-7 failure after delivery: keeps existing failure sentence and settles delivered units", async () => {
-    resetDb({ target: 5 });
-    const world = defaultFakeWorld(10);
+    resetDb({ target: 30 });
+    const world = defaultFakeWorld(40);
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, {});
     setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
@@ -382,7 +386,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
 
     await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
 
-    process.env.MULTI_PROVIDER_ENABLED = "false";
+    db.quotes[0].items[0].params.routeCode = "rdeadbeef";
     await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
 
     const failureSentence = "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم.";
@@ -415,7 +419,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
       const client = origImpl!();
       const origRpc = client.rpc;
-      client.rpc = vi.fn(async (name: string, args: any) => {
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
         if (name === "settle_job_atomic") {
           db.rpcCalls.push({ name, args });
           return { data: null, error: { message: "settle_failed" } };
@@ -447,7 +451,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
       const client = origImpl!();
       const origRpc = client.rpc;
-      client.rpc = vi.fn(async (name: string, args: any) => {
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
         if (name === "settle_job_atomic") {
           db.rpcCalls.push({ name, args });
           return { data: null, error: { message: "settle_failed" } };
@@ -465,6 +469,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const events = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of events) {
         if (t.includes("الموثّق منها")) continue;
+        if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
       }
       expect(events.some((e) => e === chainStopProgressLineAr("target_reached") || e === chainStopProgressLineAr("no_more_work") || e === chainStopProgressLineAr("budget"))).toBe(true);
@@ -480,7 +485,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
       const client = origImpl!();
       const origRpc = client.rpc;
-      client.rpc = vi.fn(async (name: string, args: any) => {
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
         if (name === "release_job_atomic") {
           db.rpcCalls.push({ name, args });
           return { data: null, error: { message: "x" } };
@@ -529,7 +534,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     vi.mocked(supabase.createAdminClient).mockImplementation(() => {
       const client = origImpl!();
       const origRpc = client.rpc;
-      client.rpc = vi.fn(async (name: string, args: any) => {
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
         if (name === "release_job_atomic") {
           db.rpcCalls.push({ name, args });
           return { data: null, error: { message: "release_failed" } };

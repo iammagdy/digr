@@ -404,7 +404,7 @@ describe("the planner proves our own web search as the last fallback of a news s
           return { ok: true, call_id, http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
         }
         fcProbes1.push(id);
-        return { ok: false, call_id, http_status: 500, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
+        return { ok: false, call_id, http_status: 500, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id } as any;
       },
       readPage: async (id) => pages1.get(id) ?? null,
     });
@@ -440,7 +440,7 @@ describe("the planner proves our own web search as the last fallback of a news s
           return { ok: true, call_id, http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
         }
         fcProbes2.push(id);
-        return { ok: false, refused: "rate_limit", call_id, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
+        return { ok: false, refused: "rate_limit", call_id, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id } as any;
       },
       readPage: async (id) => pages2.get(id) ?? null,
     });
@@ -640,20 +640,20 @@ describe("the planner proves our own web search as the last fallback of a news s
     expect(/\bwebFallback\b(?!s)/.test(src)).toBe(false);
   });
 
-  it("P-9 non-news web step, no change: web.page.read and not-short sample -> no derived web alternative", async () => {
+  it("P-9 non-news web step, no change: web.extract and not-short sample -> no derived web alternative", async () => {
     const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
 
-    // Case 1: capability is "web.page.read" (not search/news) -> searchOrNews is false
+    // Case 1: capability is "web.extract" (not search/news) -> searchOrNews is false
     const answers1: Record<string, unknown[]> = {
       request_plan: [{
         decision: "plan", understanding_ar: "قراءة صفحة.", assumptions_ar: [], accepts_available: false,
-        steps: [{ key: "read_step", title_ar: "قراءة", platform: "web", capability: "web.page.read", parent: null, deliver: true, count: { total: 20, all: false }, topic: "صفحة الذكاء", search_terms: [] }],
+        steps: [{ key: "read_step", title_ar: "قراءة", platform: "web", capability: "web.extract", parent: null, deliver: true, count: { total: 20, all: false }, topic: "صفحة الذكاء", search_terms: [] }],
       }],
       tool_choice: [{
         options: [{
-          endpoint_id: "contextdev.search",
-          params_json: JSON.stringify({ query: "صفحة الذكاء" }),
-          more_params: [{ query: "مزيد" }],
+          endpoint_id: "linkup.web.fetch",
+          params_json: JSON.stringify({ url: "https://site.example/page" }),
+          more_params: [{ url: "https://site.example/other" }],
         }],
       }],
       field_map: [
@@ -677,12 +677,12 @@ describe("the planner proves our own web search as the last fallback of a news s
       readPage: async (id) => pages1.get(id) ?? null,
     });
     expect(r1.kind).toBe("plan");
-    expect(probes1).toEqual(["contextdev.search"]);
+    expect(probes1).toEqual(["linkup.web.fetch"]);
     if (r1.kind === "plan") {
       const alts1 = r1.plan.stages[0]!.engine!.alternatives ?? [];
       // Only primary's own more sets: no firecrawl alternative
-      expect(alts1.map((a) => a.endpoint_id)).toEqual(["contextdev.search"]);
-      expect((alts1[0]!.params as { query: string }).query).toBe("مزيد");
+      expect(alts1.map((a) => a.endpoint_id)).toEqual(["linkup.web.fetch"]);
+      expect((alts1[0]!.params as { url: string }).url).toBe("https://site.example/other");
     }
 
     // Case 2: eligible step whose sample is NOT short (30 rows vs count 20) -> webEligible is false
@@ -739,7 +739,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       tool_choice: [{
         options: [
           { endpoint_id: "octen.web.search.news", cursor_input: "count", params_json: JSON.stringify({ query: "الذكاء الاصطناعي في السعودية" }), more_params: [{ query: "سدايا" }] },
-          { endpoint_id: "tinyfish.web.search.news", cursor_input: "page", params_json: JSON.stringify({ query: "سدايا التقنية" }) },
+          { endpoint_id: "tinyfish.web.search.news", cursor_input: "page", params_json: JSON.stringify({ query: "سدايا التقنية", domain_type: "news" }) },
         ],
       }],
       field_map: [
@@ -797,7 +797,7 @@ describe("the planner proves our own web search as the last fallback of a news s
     expect(derived.every((a) => a.endpoint_id === "contextdev.search" || a.endpoint_id === "firecrawl.search")).toBe(true);
 
     // Two existing alternatives with equal endpoint_id and params but different cursor_param/map_code: BOTH kept
-    const uFake: any = { understanding_ar: "فهم", assumptions_ar: [] };
+    const uFake: any = { understanding_ar: "فهم", assumptions_ar: [], steps: [] };
     const builtStepFake: any = {
       step: { key: "step1", title_ar: "خطوة", platform: "web", capability: "web.search.news", parent: null, deliver: true, count: { total: 20, all: false } },
       option: {

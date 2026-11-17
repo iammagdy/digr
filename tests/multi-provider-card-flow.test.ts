@@ -1,4 +1,4 @@
-import { describe, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 import { CHAIN_CARD_LIMITS_AR } from "../src/lib/multiProvider/copy";
@@ -12,7 +12,7 @@ import { CHAIN_CAPABILITY_SLUG } from "../src/lib/multiProvider/routes";
 import type { ProviderState, RouterState } from "../src/lib/multiProvider/router";
 
 const state = vi.hoisted(() => ({
-  user: { id: "u1" } as { id: string } | null,
+  user: { id: "u1", email: "a@example.com", email_confirmed_at: "2026-10-01T00:00:00Z", user_metadata: {} } as Record<string, unknown> | null,
   quote: null as any,
   plans: [] as any[],
   messages: new Map<string, any>(),
@@ -44,8 +44,8 @@ vi.mock("../src/lib/agentMission/constants", async (importOriginal) => ({
 
 vi.mock("../src/functions/shared/quoteMessagePersistence", async (original) => ({
   ...(await original<any>()),
-  persistEditedQuoteMessage: vi.fn(async (_client: any, _convId: string, quote: any) => {
-    state.savedQuoteMessage = quote;
+  persistEditedQuoteMessage: vi.fn(async (_client: any, input: any) => {
+    state.savedQuoteMessage = input.quote;
   }),
 }));
 
@@ -171,7 +171,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
     process.env.MULTI_PROVIDER_ENABLED = "true";
     setRouterStateForTesting(stateOf());
     setRouteChooserForTesting(null);
-    state.user = { id: "u1" };
+    state.user = { id: "u1", email: "a@example.com", email_confirmed_at: "2026-10-01T00:00:00Z", user_metadata: {} };
     state.plans = [];
     state.savedQuoteMessage = null;
     state.messages.clear();
@@ -302,7 +302,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       expect(card.methodologyNotes).not.toContain(forbidden);
     }
 
-    const saved = state.savedQuoteMessage;
+    const saved = [...state.messages.values()].map((m: any) => m.quote).filter(Boolean).at(-1);
     expect(saved).toBeTruthy();
     expect(saved.summaryAr).toBe(card.summaryAr);
     expect(saved.methodologyNotes).toBe(card.methodologyNotes);
@@ -356,7 +356,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
         },
         body: JSON.stringify({
           conversationId: "conv_edit_quote",
-          message: "عدل العدد إلى 50 شركة",
+          message: "عدل الخطة واجعل العدد 50",
         }),
       });
       const res = await POST(req);
@@ -376,7 +376,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
         expect(card.methodologyNotes).not.toContain(forbidden);
       }
 
-      const saved = state.messages.get("conv_edit_quote")?.quote || state.savedQuoteMessage;
+      const saved = [...state.messages.values()].map((m: any) => m.quote).filter(Boolean).at(-1);
       expect(saved).toBeTruthy();
       expect(saved.summaryAr).toBe(card.summaryAr);
       expect(saved.methodologyNotes).toBe(card.methodologyNotes);

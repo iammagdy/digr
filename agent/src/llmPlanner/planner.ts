@@ -555,7 +555,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       deps.log?.(`llm_planner_web_fallback ${step.key} ${webTool.id} rows=${webRows.length}`);
     }
     const webIds = new Set((deps.webTools ?? []).map((w) => w.id));
-    const taken = new Set<string>([got.option.endpoint.id, ...(second ? [second.option.endpoint.id] : []), ...webFallbacks.map((w) => w.option.endpoint.id)]);
+    const taken = new Set<string>([got.option.endpoint.id, ...(second ? [second.option.endpoint.id] : []), ...(webTool && triedFirstWeb ? [webTool.id] : []), ...webFallbacks.map((w) => w.option.endpoint.id)]);
     const otherWeb = (deps.webTools ?? []).find((w) => !taken.has(w.id));
     const proven = webFallbacks[0] ?? (webIds.has(got.option.endpoint.id) ? { option: got.option, mapCode } : second && webIds.has(second.option.endpoint.id) ? second : undefined);
     if (otherWeb && webEligible && searchOrNews) {
