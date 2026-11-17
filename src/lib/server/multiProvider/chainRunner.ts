@@ -86,6 +86,40 @@ const emptyCursor = (): ChainCursor => ({ v: 1, dc: 0, ec: 0, taken: 0, rest: []
 export interface ChainCandidateV2 { n: string; u: string }
 export interface ChainCursorV2 { v: 2; n: number; dc: number; ec: number; tp: number; out: number; ix: number; sq: number; uo: number; tr: number; wm: number; tg: number; dx: number; bd: number; tx: number; tf: number; aid: string; q: ChainCandidateV2[]; tc: string | null; tl: string | null; wq: Record<string, number>; ff: Record<string, number>; dn: string[]; cp: string[]; un: string[]; seen: string[] }
 export const emptyCursorV2 = (aid = ""): ChainCursorV2 => ({ v: 2, n: 0, dc: 0, ec: 0, tp: 0, out: 0, ix: 0, sq: 0, uo: 0, tr: 0, wm: 0, tg: 0, dx: 0, bd: 0, tx: 0, tf: 0, aid, q: [], tc: null, tl: null, wq: {}, ff: {}, dn: [], cp: [], un: [], seen: [] });
+
+export function encodeCursorV2(state: ChainCursorV2): { fits: true; cursor: string; state: ChainCursorV2 } | { fits: false; reason: "cursor_overflow" } {
+  const copy: ChainCursorV2 = {
+    ...state,
+    q: [...state.q],
+    wq: { ...state.wq },
+    ff: { ...state.ff },
+    dn: [...state.dn],
+    cp: [...state.cp],
+    un: [...state.un],
+    seen: [...state.seen],
+  };
+  if (utf8Bytes(copy.q) > CHAIN_RUN.queueMaxBytes) {
+    return { fits: false, reason: "cursor_overflow" };
+  }
+  if (typeof copy.tc === "string" && escapedBytes(copy.tc) > 512) {
+    return { fits: false, reason: "cursor_overflow" };
+  }
+  if (typeof copy.tl === "string" && escapedBytes(copy.tl) > 512) {
+    return { fits: false, reason: "cursor_overflow" };
+  }
+  while (utf8Bytes(copy) > CHAIN_RUN.cursorStateMaxBytes && copy.seen.length > 0) {
+    copy.seen.pop();
+    copy.tr = 1;
+  }
+  if (utf8Bytes(copy) > CHAIN_RUN.cursorStateMaxBytes) {
+    return { fits: false, reason: "cursor_overflow" };
+  }
+  const cursor = Buffer.from(JSON.stringify(copy), "utf8").toString("base64url");
+  if (cursor.length > CHAIN_RUN.cursorV2MaxChars) {
+    return { fits: false, reason: "cursor_overflow" };
+  }
+  return { fits: true, cursor, state: copy };
+}
 const MAX_CURSOR_CHARS = 8000;
 export const MAX_STARTS_PER_STEP = 8;
 export const CHAIN_RUN = { chunkCalls: 24, variantsPerProvider: 8, queueBatchMax: 20, stallChunks: 3, downAfterFailures: 3, wasteBreakerMisses: 8, leaseMarginMs: 3000, noCallBeforeEndMs: 5000, noCompanyBeforeEndMs: 15000, hardEndAfterDeadlineMs: 5000, tregTimeoutCapMs: 10000, tregMinTimeoutMs: 2000, tregKeyPoolHops: 3, wallClockMs: 6 * 60 * 60 * 1000, cursorStateMaxBytes: 30000, cursorV2MaxChars: 40000, queueMaxBytes: 12000, tregCursorMaxEscapedBytes: 512, webAskLimit: 20, webQueryMaxChars: 300, excludeDomainsMax: 100, lookupFailuresOff: 3 } as const;
