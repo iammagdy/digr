@@ -169,6 +169,15 @@ export function buildDiscoveryQuery(params: ChainParams): string {
   return [params.keyword, params.industry, params.country, "company official website"].filter((p) => typeof p === "string" && p.trim()).join(" ").slice(0, 300);
 }
 
+export function discoveryQueryVariants(params: ChainParams): string[] {
+  const list: string[] = [buildDiscoveryQuery(params)];
+  for (let i = 1; i <= 7; i++) {
+    list.push([params.keyword, params.industry, params.country, DISCOVERY_SUFFIX[i]].filter((s): s is string => typeof s === "string" && s.trim().length > 0).join(" ").slice(0, CHAIN_RUN.webQueryMaxChars));
+  }
+  return list;
+}
+
+
 function nameFromTitle(title: string, host: string): string {
   // «Utopia Pharmaceutical: Home» is «Utopia Pharmaceutical»; markdown symbols never stay in a name (see companyRowHygiene).
   return cleanCompanyName(title, host);
