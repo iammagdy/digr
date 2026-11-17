@@ -428,4 +428,27 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       expect(JSON.stringify(clonedCard[key])).toBe(JSON.stringify(originalCard[key]));
     }
   });
+
+  it("T-Card the approved five-sentence limit set is exactly what the card shows", () => {
+    const V2 = [
+      "نجمع بيانات التواصل المنشورة للعامة على المواقع الرسمية للشركات ومن مصادر بيانات تجارية متاحة.",
+      "عمودا النشاط والدولة في الملف يعكسان معايير بحثك، ولا يُتحقق منهما لكل شركة على حدة.",
+      "لا نضمن دقة تامة؛ نبذل أفضل جهد ممكن، وقد يكون عدد الشركات المسلَّمة أقل من المطلوب.",
+      "تُسلَّم البيانات بصيغة CSV وXLSX جاهزة للاستخدام في حملات التواصل والبريد.",
+      "لا نتحمل مسؤولية طريقة استخدامك للبيانات أو الالتزام بالقوانين المعمول بها في نطاقك.",
+    ] as const;
+    const item = { capabilitySlug: CHAIN_CAPABILITY_SLUG, params: { industryAr: "مقاولات", countryAr: "مصر", requiredFields: ["work_email"] }, targetVolumeMax: 10 };
+    expect([...CHAIN_CARD_LIMITS_V2_AR]).toEqual([...V2]);
+    for (const asked of [10, 20]) {
+      const copy = chainQuoteCopyFor({ item, askedCount: asked });
+      expect(copy).toBeTruthy();
+      const notes = copy!.methodologyNotes;
+      expect(notes).toBe(expectedTargetLineAr({ asked, fitted: 10 }) + " " + V2.join(" "));
+      const at = V2.map((s) => notes.indexOf(s));
+      expect(at.every((i) => i >= 0)).toBe(true);
+      expect(at[0]).toBeLessThan(at[1]);
+      expect(at[1]).toBeLessThan(at[2]);
+      expect(notes).not.toContain("صفحات التواصل وعن الشركة والفريق.");
+    }
+  });
 });
