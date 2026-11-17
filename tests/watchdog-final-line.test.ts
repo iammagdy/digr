@@ -142,3 +142,15 @@ describe("T-WD the TARGETED ?jobId= path chooses its own reason (plan v9)", () =
   });
 });
 
+describe("T-WD the two sentences themselves", () => {
+  it.each([["sweep", staleReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء."], ["targeted", operatorReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء."]])("T-WD text %s", (_name, t, literal) => {
+    expect(t).toBe(literal);
+    expect(checkCustomerText(t).issues).toEqual([]);
+    expect(customerSafeText(t)).toBe(t);
+    expect(normalizeReleaseWording(t)).toBe(t);
+    for (const word of ["تلقائياً", "لتأخر التنفيذ", "لتجاوز المهلة الزمنية"]) expect(t).not.toContain(word);
+    expect(t).toContain("حجز مؤقت مُحرَّر");
+    expect(t).not.toMatch(PROVIDER_WORDS);
+  });
+});
+
