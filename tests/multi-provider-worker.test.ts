@@ -1073,7 +1073,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
   });
 
 
-  it("T-W B5-R2 winner killed after commit, no other invocation: claim refuses, vi.resetModules(), watchdog release gives zero debit and returns hold", async () => {
+  it("T-W B5-R2 winner killed after commit, no other invocation: claim refuses, process restart, watchdog release gives zero debit and returns hold", async () => {
     resetDb({ target: 3 });
     const world = defaultFakeWorld(5);
     db.killAfterCommit = true;
@@ -1109,8 +1109,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(jobRow.target_volume_max).toBe(TARGET);
     expect(Date.now() - new Date(jobRow.lease_until).getTime()).toBeGreaterThan(30 * 60 * 1000);
 
-    // Process restart
-    vi.resetModules();
+    // Process restart: the lease is past 30 minutes and the admin client below is a new one. `vi.resetModules()` is NOT called: it would give every later test a SECOND copy of the route and of chainAdapter, whose test hooks (`setChainTransportForTesting`, `setProviderAdapterForTesting`) were set on the first copy, so the later chain tests would run with no transport.
 
     // Watchdog release runs: zero debit, hold returned, rows lost
     const supabase = await import("../src/lib/supabase/server");
