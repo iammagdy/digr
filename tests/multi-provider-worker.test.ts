@@ -276,13 +276,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     await run(defaultFakeWorld(10));
     const reserves = db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic");
     expect(reserves.length).toBeGreaterThan(0);
-    expect(new Set(reserves.map((r) => r.args.p_provider))).toEqual(new Set(["contextdev", "firecrawl"]));
-    for (const r of reserves) { expect(r.args.p_daily_cap_usd).toBe(1); expect(r.args.p_job_id).toBe(JOB); }
-    // the platform-wide TREG reserve of the generic path is NOT used for a chain job
-    expect(reserves.some((r) => r.args.p_provider === "treg")).toBe(false);
+    // with the TREG hook the chain records its e-mail lookups under provider treg (DT-04, D-0027): the set of reserved providers has three members
+    expect(new Set(reserves.map((r) => r.args.p_provider))).toEqual(new Set(["contextdev", "firecrawl", "treg"]));
+    for (const r of reserves) { expect(r.args.p_daily_cap_usd).toBe(r.args.p_provider === "treg" ? 0.8 : 1); expect(r.args.p_job_id).toBe(JOB); }
+    // the platform-wide TREG reserve of the generic path is NOT used for a chain job: the only treg rows are the chain's own e-mail lookups (capability tomba.companies.emails.list)
+    expect(db.costs.some((c) => c.provider === "treg")).toBe(true);
+    expect(db.costs.filter((c) => c.provider === "treg").every((c) => c.capability === "tomba.companies.emails.list")).toBe(true);
     const commits = db.rpcCalls.filter((c) => c.name === "commit_provider_spend_v2");
     expect(commits.length).toBe(reserves.length);
-    expect(commits.every((c) => /^(contextdev|firecrawl)\./.test(c.args.p_capability) && ["success", "failed", "empty"].includes(c.args.p_status))).toBe(true);
+    expect(commits.every((c) => /^(contextdev|firecrawl)\.|^tomba\.companies\.emails\.list$/.test(c.args.p_capability) && ["success", "failed", "empty"].includes(c.args.p_status))).toBe(true);
     expect(db.costs.every((c) => c.is_estimate === false)).toBe(true);
     // the provider spend of the job is below the budget the reserve implies (reserve / 5,500)
     const spent = db.costs.reduce((a, c) => a + c.cost_usd, 0);
