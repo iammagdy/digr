@@ -60,6 +60,8 @@ export function tombaAnswerKind(body: unknown): TregAnswerKind {
   return "unparsable";
 }
 
+const ADDRESS_ONLY_RE = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
+
 export function readTombaMailbox(body: unknown, requestedDomain: string): FoundEmail | null {
   const want = requestedDomain.trim().toLowerCase().replace(/^www\./, "");
   if (!body || typeof body !== "object") return null;
@@ -74,5 +76,29 @@ export function readTombaMailbox(body: unknown, requestedDomain: string): FoundE
   const rawEmails: any[] = b.data.emails;
   const candidates = rawEmails.filter((e) => e && typeof e === "object" && typeof e.email === "string").slice(0, 50);
 
-  return null;
+  const accepted: { address: string; order: number }[] = [];
+  for (const cand of candidates) {
+    const address = String(cand.email).trim().toLowerCase();
+    if (!ADDRESS_ONLY_RE.test(address) || address.includes("*")) continue;
+    if (!isPlausibleEmail(address)) continue;
+    const parts = address.split("@");
+    if (parts.length !== 2) continue;
+    const localPart = parts[0];
+    const host = parts[1].replace(/^www\./, "");
+    if (host !== want || isPersonalMailDomain(host)) continue;
+    if (!isRoleMailbox(address) && cand.type !== "generic") continue;
+    if (cand.verification?.status !== "valid") continue;
+    const idx = COMPANY_MAILBOX_ORDER.indexOf(localPart);
+    const order = idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+    accepted.push({ address, order });
+  }
+
+  if (accepted.length === 0) return null;
+  let best = accepted[0];
+  for (let i = 1; i < accepted.length; i++) {
+    if (accepted[i].order < best.order) {
+      best = accepted[i];
+    }
+  }
+  return { value: best.address, status: "verified", evidence: "provider_listed" };
 }
