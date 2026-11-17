@@ -1156,4 +1156,49 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
   });
 
+
+  it("T-W B5-R3c canonical overwritten by the loser: loser's upload is last, winner dead => loser's rows are delivered", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 400;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    const winnerRows = [{ name: "WinCompany", website: "https://win.com" }];
+    const loserRows = [{ name: "LoseCompany", website: "https://lose.com" }];
+
+    // Winner uploads first
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: winnerRows, attemptId: "att_win" })));
+    // Loser overwrites canonical file after winner's upload
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: loserRows, attemptId: "att_lose" })));
+
+    // Assemble and verify delivered rows are loser's rows
+    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
+    expect(stored.rows).toEqual(loserRows);
+    expect(stored.attemptId).toBe("att_lose");
+  });
+
+  it("T-W B5-R3d winner's upload last: winner's upload is last => winner's rows are delivered", async () => {
+    resetDb({ target: 2 });
+    db.unitPrice = 100;
+    db.reserved = 400;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    const winnerRows = [{ name: "WinCompany", website: "https://win.com" }];
+    const loserRows = [{ name: "LoseCompany", website: "https://lose.com" }];
+
+    // Loser uploads first
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: loserRows, attemptId: "att_lose" })));
+    // Winner's upload is last
+    db.partials.set(stepKey, Buffer.from(JSON.stringify({ rows: winnerRows, attemptId: "att_win" })));
+
+    // Assemble and verify delivered rows are winner's rows
+    const stored = JSON.parse(db.partials.get(stepKey)!.toString());
+    expect(stored.rows).toEqual(winnerRows);
+    expect(stored.attemptId).toBe("att_win");
+  });
+
 });
