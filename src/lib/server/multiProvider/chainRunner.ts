@@ -571,6 +571,50 @@ export async function askWebVariant(rc: ChainRunCtx, provider: "firecrawl" | "co
   rc.trace.call("discover", provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
 }
 
+export async function discoverOnce(rc: ChainRunCtx): Promise<void> {
+  const stage = rc.route.stages.find((s) => s.stage === "discover");
+  if (!stage) return;
+  const caps = stage.capabilityIds.map(capabilityById);
+  for (const cap of caps) {
+    const provider = cap.provider;
+    const isUnusable =
+      !rc.deps.providerKeys[provider] ||
+      !isSellable(cap) ||
+      (provider === "treg" && !rc.deps.tregCall);
+    if (isUnusable) {
+      if (!rc.state.un.includes(provider)) rc.state.un.push(provider);
+      continue;
+    }
+    if (rc.state.dn.includes(provider) || rc.state.cp.includes(provider)) {
+      continue;
+    }
+    const isOver =
+      provider === "treg"
+        ? rc.state.tx === 1 || rc.state.tf === 1
+        : (rc.state.wq[provider] ?? 0) >= CHAIN_RUN.variantsPerProvider;
+    if (isOver) {
+      continue;
+    }
+
+    const beforeTp = rc.state.tp;
+    if (provider === "treg") {
+      await askTregDirectory(rc);
+    } else {
+      await askWebVariant(rc, provider);
+    }
+    const admitted = rc.state.tp - beforeTp;
+    rc.discoveredNow = admitted;
+    if (admitted > 0) {
+      await rc.deps.emit(discoveryLineAr({ found: admitted, fresh: admitted, duplicate: 0, total: rc.state.tp }), rc.state.out);
+    } else {
+      await rc.deps.emit(discoveryEmptyLineAr(), rc.state.out);
+    }
+    return;
+  }
+  rc.state.dx = 1;
+}
+
+
 
 
 
