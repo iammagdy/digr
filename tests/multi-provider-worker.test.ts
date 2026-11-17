@@ -764,10 +764,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       expect(last.status).toBeGreaterThanOrEqual(400);
 
       const events = db.events.map((e: any) => String(e.message ?? ""));
-      for (const t of events) {
-        expect(t).not.toContain("المسلَّم");
-        expect(t).not.toContain("تم إكمال");
-      }
+      const confirmed = releaseTextAr(RELEASE_NEUTRAL_REASON_AR, 3); // the job's target is 3 (resetDb({ target: 3 }))
+      const releases = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+      expect(releases).toHaveLength(1);
+      expect(releases[0].args.p_error_message).toBe(confirmed); // a release was confirmed with exactly this text
+      for (const t of events) expect(t).not.toContain("تم إكمال");
+      const delivered = events.filter((t) => t.includes("المسلَّم"));
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].startsWith(confirmed)).toBe(true);
+      expect(delivered[0].slice(confirmed.length)).toMatch(/^ \(حجز مؤقت مُحرَّر [^()]+، ولم يُخصم شيء\)\.$/);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
