@@ -1233,4 +1233,82 @@ it("T-T 7 catalog drift guard (tomba.companies.emails.list is in catalog, sellab
     expect(blockedEndpointReason("tomba.companies.emails.list")).toBeNull();
     expect(categoryOf("tomba.companies.emails.list")).toBe("b2b_contact");
   });
+it("T-H chainStrict unset: runRecordedCall preserves baseline behavior, webGateway never sets it, chainCtxFor is the sole setter", async () => {
+    const reservedAmounts: number[] = [];
+    const commits: Array<{ costUsd: number }> = [];
+
+    const recorder = {
+      reserve: async (args: any) => {
+        reservedAmounts.push(args.estimatedUsd);
+        if (args.capabilityId === "refuse_budget") return { allowed: false, reason: "budget" };
+        if (args.capabilityId === "refuse_error") return { allowed: false, reason: "error" };
+        if (args.capabilityId === "refuse_cap") return { allowed: false, reason: "cap" };
+        return { allowed: true, costId: 1 };
+      },
+      commit: async (_id: number, rec: any) => {
+        commits.push(rec);
+      },
+    };
+
+    const ctxUnset: any = {
+      apiKey: "test_key",
+      jobId: "j1",
+      fetchFn: vi.fn(async () => { throw new Error("network_failed"); }),
+      recorder,
+    };
+
+    const firecrawlCap: any = { id: "firecrawl.scrape", provider: "firecrawl", costPerCallUsd: 0.005 };
+    const resFc = await runRecordedCall({
+      ctx: ctxUnset,
+      capability: firecrawlCap,
+      request: { url: "https://api.firecrawl.dev/v2/scrape", method: "POST", headers: {} },
+      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      reserveUsd: 0.02,
+    });
+    expect(reservedAmounts[0]).toBe(0.005);
+    expect(commits[0].costUsd).toBe(0);
+    expect(resFc.ok).toBe(false);
+
+    const resBudget = await runRecordedCall({
+      ctx: ctxUnset,
+      capability: { id: "refuse_budget", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
+      request: { url: "http://example.com", method: "GET", headers: {} },
+      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+    });
+    expect(resBudget.errorCode).toBe("cap_reached");
+
+    const resError = await runRecordedCall({
+      ctx: ctxUnset,
+      capability: { id: "refuse_error", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
+      request: { url: "http://example.com", method: "GET", headers: {} },
+      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+    });
+    expect(resError.errorCode).toBe("cap_reached");
+
+    const resCap = await runRecordedCall({
+      ctx: ctxUnset,
+      capability: { id: "refuse_cap", provider: "firecrawl", costPerCallUsd: 0.005 } as any,
+      request: { url: "http://example.com", method: "GET", headers: {} },
+      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+    });
+    expect(resCap.errorCode).toBe("cap_reached");
+
+    const ctxDevCap: any = { id: "contextdev.scrape", provider: "contextdev", costPerCallUsd: 0.001 };
+    await runRecordedCall({
+      ctx: ctxUnset,
+      capability: ctxDevCap,
+      request: { url: "https://api.context.dev/v1/web/scrape", method: "POST", headers: {} },
+      interpret: () => ({ ok: true, data: null, units: 1, credits: 1 }),
+      reserveUsd: 0.05,
+    });
+    expect(reservedAmounts[reservedAmounts.length - 1]).toBe(0.001);
+
+    const webGatewaySrc = readFileSync("agent/src/webGateway.ts", "utf8");
+    expect(webGatewaySrc.includes("chainStrict")).toBe(false);
+
+    const chainRunnerSrc = readFileSync("src/lib/server/multiProvider/chainRunner.ts", "utf8");
+    expect(chainRunnerSrc.includes("chainStrict: true")).toBe(true);
+    const matches = chainRunnerSrc.match(/chainStrict:\s*true/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
 });
