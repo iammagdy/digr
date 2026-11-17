@@ -48,7 +48,10 @@ vi.mock("../src/lib/supabase/server", () => ({
             return { data: null, error: { message: "lease not expired" } };
           }
         }
-        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpoint, unit_price: db.unitPrice }, error: null };
+        // DT-20261117-04 CI r1: like the real claim_job_chunk, write the lease to the job row and return it. It is a Postgres timestamptz text (microseconds, +00:00): the chain runner compares it as an INSTANT with the job row (readJobLease + sameInstant).
+        const leaseUntil = new Date(Date.now() + 60_000).toISOString().replace(/Z$/, "456+00:00");
+        if (job) Object.assign(job, { status: "running", step: db.step, lease_until: leaseUntil });
+        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpoint, unit_price: db.unitPrice, lease_until: leaseUntil }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") {
         if (db.reserveDeniedFor.has(args.p_provider)) return { data: { allowed: false }, error: null };
