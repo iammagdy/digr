@@ -8,6 +8,7 @@ import { createMemoryRecorder } from "./helpers/multiProviderFakes";
 import { HARD_LIMITS, routeCodeOf } from "../src/lib/multiProvider/routes";
 import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
+import { sameInstant } from "../src/lib/multiProvider/tregContacts";
 
 interface Harness { deps: ChainDeps; events: string[]; fetch: ReturnType<typeof createFakeFetch>; rec: ReturnType<typeof createMemoryRecorder>; tregCalls: number }
 
@@ -653,5 +654,22 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     expect(workLimitsFor(45, ["work_email"], "firecrawl.search")).toEqual({ maxCalls: 1407, maxChunks: 29550, maxWallMs: 21600000 });
     expect(workLimitsFor(1, ["work_email"], "firecrawl.search")).toEqual({ maxCalls: 198, maxChunks: 4161, maxWallMs: 21600000 });
     expect(workLimitsFor(45, ["work_email", "decision_maker"], "treg.companies.search").maxCalls).toBe(2877);
+  });
+
+  it("T-A A7 sameInstant comparisons and leaseHeld token verification", async () => {
+    // sameInstant tests
+    expect(sameInstant("2026-11-17T12:00:12.345678+00:00", "2026-11-17T12:00:12.345679+00:00")).toBe(false);
+    expect(sameInstant("2026-11-17T12:00:12.500000+00:00", "2026-11-17T12:00:12.5Z")).toBe(true);
+    expect(sameInstant("2026-11-17T14:00:12.5+02:00", "2026-11-17T12:00:12.5Z")).toBe(true);
+    expect(sameInstant("2026-11-17T12:00:12.1234567+00:00", "2026-11-17T12:00:12.1234567+00:00")).toBe(false);
+    expect(sameInstant("invalid", "invalid")).toBe(false);
+    expect(sameInstant(null, "2026-11-17T12:00:00Z")).toBe(false);
+
+    // leaseHeld false -> runner fails closed
+    const h = harness(defaultFakeWorld(5));
+    h.deps.leaseHeld = async () => false;
+    const run = await runChainChunk(baseInput(params({ count: 5 })), h.deps);
+    expect(run.ok).toBe(false);
+    expect((run as any).errorCode).toBe("lease_lost");
   });
 });
