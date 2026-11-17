@@ -222,8 +222,11 @@ export async function runTregDirectoryPageDirect(args: {
     reservedUsd: TREG_DIRECTORY.reservedUsd,
     options,
     answerKindOf: (b) => {
-      const p = parseSafe(b);
-      return Array.isArray(p?.rows) ? (p.rows.length === 0 ? "empty" : "non_empty") : "unparsable";
+      // DT-20261117-04 CI r1: only an answer that carries a RECOGNISED list (leads, data.leads, results or data: the lists parseIcypeasCompaniesResponse reads) can be "empty" or "non_empty"; any other body is "unparsable" and keeps the full reservation.
+      if (!b || typeof b !== "object") return "unparsable";
+      const list = Array.isArray(b.leads) ? b.leads : Array.isArray(b.data?.leads) ? b.data.leads : Array.isArray(b.results) ? b.results : Array.isArray(b.data) ? b.data : null;
+      if (list === null) return "unparsable";
+      return list.length === 0 ? "empty" : "non_empty";
     },
     unitsOf: (b) => {
       const p = parseSafe(b);
