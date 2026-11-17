@@ -153,4 +153,3 @@ describe("T-WD the two sentences themselves", () => {
     expect(t).not.toMatch(PROVIDER_WORDS);
   });
 });
-
