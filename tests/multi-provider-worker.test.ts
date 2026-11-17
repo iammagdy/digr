@@ -895,14 +895,22 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     // 6. work_limit
     {
       resetDb({ target: 8 });
-      const world = defaultFakeWorld(2);
+      // two verified companies, then many that are not: chunk 1 delivers the two and ends after its 24 calls, so the job goes on
+      const world = defaultFakeWorld(30).map((c, i) => (i < 2 ? c : { ...c, email: undefined, phone: undefined }));
+      // chunk 1 runs normally and delivers the two verified companies; the job goes on at step 1, whose eight start markers already exist, so that start is the work_limit one WITH rows delivered
+      const firstChunk = await runWith(world, { unitPrice: 1000 }, 1);
+      expect(firstChunk.last.status).toBe(200);
+      expect(firstChunk.last.json.done).toBe(false);
+      expect(db.step).toBe(1);
       for (let k = 0; k < 8; k++) {
-        db.partials.set(`${JOB}/start_0_${k}.json`, Buffer.from(""));
+        db.partials.set(`${JOB}/start_1_${k}.json`, Buffer.from(""));
       }
-      const { last } = await run(world);
+      const { last } = await runWith(world);
       expect(last.status).toBe(200);
       const X = await getPublishedRowCount();
+      expect(X).toBe(2);
       checkOutcome(8, "work_limit");
+      expect(stopLinesOfLog()).toEqual(["work_limit"]);
       const finalInfo = db.events.filter((e: any) => e.event_type === "info" && String(e.message ?? "").startsWith("المسلَّم")).at(-1);
       expect(String(finalInfo.message)).toContain(`المسلَّم ${toArabicDigits(X)} من ٨ مطلوب.`);
     }
