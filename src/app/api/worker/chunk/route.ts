@@ -878,7 +878,7 @@ export async function POST(req: NextRequest) {
       ...(videoSelector ? { videoSelector } : {}),
       ...(reportStore ? { reportStore, axisModel: getAxisModel() } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
-      ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
+      ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}), claimLeaseUntil: typeof claimData?.lease_until === "string" ? claimData.lease_until : undefined, startIndex: chainStartIndex } : {}),
       // A model-planned job with a sensitive step: the account's access and purpose for the audited path (nothing for any other job).
       ...(spec.capabilitySlug === MODEL_PLAN_SLUG ? await modelPlanSensitiveContext(adminClient, userId, spec.params) : {}),
       ...(callBudget.ceilingUsd !== null ? { callBudget, callEstimateUsd: estimatedCostUsd } : {}),
