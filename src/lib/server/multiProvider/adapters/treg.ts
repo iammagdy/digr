@@ -76,3 +76,12 @@ export async function runTregDirectoryPage(args: {
 }
 
 export interface TregCallOutcome { ok: boolean; status: CallStatus; httpStatus: number | null; errorCode?: ErrorCode; body: any; committedUsd: number; known: boolean; refused?: "cap_reached" | "budget_reached" | "ledger_unavailable"; timedOut: boolean; answerKind: TregAnswerKind; durationMs: number }
+
+export function buildTregIdempotencyKey(args: { jobId: string; attemptId: string; ordinal: number; kind: "dir" | "dirkw" | "mail" }): string {
+  const raw = `c_${args.jobId}_${args.attemptId}_${Math.max(0, Math.floor(args.ordinal))}_${args.kind}`;
+  const key = raw.replace(/[^A-Za-z0-9_-]/g, "_");
+  if (key.length > 120) {
+    throw new Error("treg_key_too_long");
+  }
+  return key;
+}
