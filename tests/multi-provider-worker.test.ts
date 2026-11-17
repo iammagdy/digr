@@ -590,7 +590,11 @@ describe("worker: multi-provider chain job (fake providers)", () => {
         if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
       }
-      expect(events.some((e) => e === chainStopProgressLineAr("target_reached") || e === chainStopProgressLineAr("no_more_work") || e === chainStopProgressLineAr("budget"))).toBe(true);
+      // at the count the runner emits NO stop line of ANY kind (plan v9 :122 and :276(b); P65): the old line asked for one. Same check as the F15 style of chain.test.ts.
+      const STOP_LINES = (["budget", "no_more_work", "target_reached", "coverage_end", "sources_limited", "stalled", "work_limit"] as const).map((k) => chainStopProgressLineAr(k));
+      expect(events.some((e) => STOP_LINES.includes(e))).toBe(false);
+      // non-vacuity: the progress lines the loop above skips are there
+      expect(events.some((e) => e.includes("الموثّق منها"))).toBe(true);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
