@@ -839,4 +839,62 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
+
+  it("T-W B3 step object: carries chainStop and attemptId (and chainSkippedOrigins when > 0) on terminal chain chunk; non-chain has none of them", async () => {
+    // 1. Terminal chain chunk with skipped origins
+    resetDb({ target: 8 });
+    const world1 = defaultFakeWorld(1);
+    fetchSpy = createFakeFetch(world1);
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world1), keys: { treg: "managed" } });
+    setProviderAdapterForTesting(async () => ({
+      ok: true,
+      httpStatus: 200,
+      rows: [{ name: "   ", website: "https://skipped-origin.com" }],
+      nextCursor: null,
+      costUsd: 0,
+      costMicro: 0,
+      tregCallId: "",
+    }));
+    const { last: chainLast } = await runMany(world1);
+    expect(chainLast.status).toBe(200);
+
+    const stepFiles = Array.from(db.partials.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    expect(stepFiles.length).toBeGreaterThan(0);
+    const lastStepKey = stepFiles.sort().at(-1)!;
+    const chainStepObj = JSON.parse(db.partials.get(lastStepKey)!.toString());
+    expect(typeof chainStepObj.chainStop).toBe("string");
+    expect(typeof chainStepObj.attemptId).toBe("string");
+    expect(Number(chainStepObj.chainSkippedOrigins)).toBeGreaterThan(0);
+
+    // 2. Non-chain job
+    resetDb({ target: 10 });
+    db.endpoint = "icypeas.companies.search";
+    db.quotes[0].items[0].capabilitySlug = "icypeas-companies-search";
+    db.quotes[0].items[0].endpointId = "icypeas.companies.search";
+    setProviderAdapterForTesting(async () => ({
+      ok: true,
+      httpStatus: 200,
+      rows: [{ name: "Acme", website: "https://acme.com" }],
+      nextCursor: null,
+      costUsd: 0.005,
+      costMicro: 5000,
+      tregCallId: "t_non_chain",
+    }));
+
+    const route = await import("../src/app/api/worker/chunk/route");
+    const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      method: "POST",
+      headers: { authorization: "Bearer chain-secret" },
+      body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+    }));
+    expect(res.status).toBe(200);
+
+    const nonChainStepFiles = Array.from(db.partials.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
+    const nonChainStepKey = nonChainStepFiles.sort().at(-1)!;
+    const nonChainStepObj = JSON.parse(db.partials.get(nonChainStepKey)!.toString());
+    expect(nonChainStepObj.chainStop).toBeUndefined();
+    expect(nonChainStepObj.attemptId).toBeUndefined();
+    expect(nonChainStepObj.chainSkippedOrigins).toBeUndefined();
+  });
+
 });
