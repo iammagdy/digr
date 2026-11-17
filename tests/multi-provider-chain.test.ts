@@ -636,7 +636,7 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
 
   it("T-A A3 coverage end ONLY after TREG null cursor + 8 variants per usable web provider, and sources_limited conditions", async () => {
     const p = params({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), count: 20 });
-    const variants = discoveryQueryVariants(chainParamsOf(p as any));
+    const variants = discoveryQueryVariants(chainParamsOf(p as any)!);
     expect(variants.length).toBe(8);
 
     const hCov = harness([], { emptyProvider: { contextdev: true, firecrawl: true } }, { tregRows: [] });
