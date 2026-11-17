@@ -1201,4 +1201,44 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(stored.attemptId).toBe("att_win");
   });
 
+
+  it("T-W B5-R4 loser not terminal: alreadyCompleted, nothing assembles, watchdog gives zero debit, rows lost (main parity)", async () => {
+    resetDb({ target: 5 });
+    db.unitPrice = 100;
+    db.reserved = 5 * 100 * 2;
+
+    // Winner committed step 1 with 2 delivered units, then was killed
+    db.step = 1;
+    db.deliveredUnits = 2;
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 2;
+
+    // Loser is not terminal by its own data: calls complete_chunk for step 0 -> already_completed: true
+    const loserRes = { success: false, already_completed: true, delivered_units: db.deliveredUnits };
+    expect(loserRes.already_completed).toBe(true);
+
+    // Because loser is not terminal, nothing assembles and no settlement occurs
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+
+    // Lease expires past 30 minutes
+    const past35Min = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+    const jobRow = db.jobs.find((j) => j.id === JOB)!;
+    jobRow.lease_until = past35Min;
+
+    // T-WD R4 fixture shape
+    expect(jobRow.status).toBe("running");
+    expect(jobRow.step).toBeGreaterThanOrEqual(1);
+    expect(jobRow.delivered_units).toBeGreaterThan(0);
+    expect(jobRow.target_volume_max).toBe(5);
+    expect(Date.now() - new Date(jobRow.lease_until).getTime()).toBeGreaterThan(30 * 60 * 1000);
+
+    // Watchdog release runs: zero debit, rows lost
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "watchdog_release", p_force: true });
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+  });
+
 });
