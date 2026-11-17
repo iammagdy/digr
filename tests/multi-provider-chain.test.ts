@@ -476,7 +476,15 @@ describe("copy API regression", () => {
     const h2 = harness(defaultFakeWorld(10));
     await runAll(h2, params({ count: 3 }));
     expect(h2.events.at(-1)).not.toBe(chainStopProgressLineAr("target_reached"));
-    expect(h2.events.at(-1)).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+    // At the count the runner emits NO terminal line: the worker ends the job (terminalOf never returns "target_reached"; T-2(c) below pins `chainStop` absent and `nextCursor` set for this very run). The old line read the LAST event, which is now the enrich progress line (its text «…فلم يُحتسب…» is correct). Say it explicitly: not one stop line of ANY kind is among the events.
+    const STOP_LINES = (["budget", "no_more_work", "target_reached", "coverage_end", "sources_limited", "stalled", "work_limit"] as const).map((k) => chainStopProgressLineAr(k));
+    expect(h2.events.filter((e) => STOP_LINES.includes(e))).toEqual([]);
+    // A REAL terminal event is still proved: the same count with a world too small to reach it ends with the runner's own stop line. It is FOUND by kind (it is one of the stop lines), it must EXIST exactly once, and it keeps the neutral wording (regex unchanged).
+    const h4 = harness(defaultFakeWorld(2));
+    await runAll(h4, params({ count: 3 }));
+    const terminal4 = h4.events.filter((e) => STOP_LINES.includes(e));
+    expect(terminal4).toHaveLength(1);
+    expect(terminal4[0]).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
 
     const h3 = harness(defaultFakeWorld(2));
     await runAll(h3, params({ count: 8 }));
