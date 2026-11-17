@@ -18,6 +18,7 @@ import { ChunkTraceCollector, type ChunkTrace } from "../../multiProvider/trace"
 import { HOST_RE, ORIGIN_CHARSET_RE, TREG_DIRECTORY, TREG_EMAIL_LOOKUP, escapedBytes, readTombaMailbox, sameInstant, stripControl, utf8Bytes } from "../../multiProvider/tregContacts";
 import type { TregCallOptions, TregCallResult } from "../../../functions/shared/tregClient";
 import { KEYWORDS_ONLY_CURSOR_PREFIX, normalizeIcypeasCompanyParams } from "../tregAdapter";
+import { blockedEndpointReason } from "../../treg/blockList";
 
 
 /**
@@ -612,6 +613,85 @@ export async function discoverOnce(rc: ChainRunCtx): Promise<void> {
     return;
   }
   rc.state.dx = 1;
+}
+
+export async function lookupEmail(rc: ChainRunCtx, domain: string): Promise<FoundEmail | null> {
+  const allowed =
+    rc.params.requiredFields.includes("work_email") &&
+    Boolean(rc.deps.providerKeys.treg) &&
+    Boolean(rc.deps.tregCall) &&
+    blockedEndpointReason(TREG_EMAIL_LOOKUP.endpointId, null) === null &&
+    rc.state.tg === 0 &&
+    !rc.state.dn.includes("treg") &&
+    !rc.state.cp.includes("treg");
+  if (!allowed) {
+    return null;
+  }
+
+  rc.ordinal += 1;
+  const key = buildTregIdempotencyKey({ jobId: rc.input.jobId, attemptId: rc.attemptId, ordinal: rc.ordinal, kind: "mail" });
+  const timeoutMs = Math.min(CHAIN_RUN.tregTimeoutCapMs, Math.floor((rc.hardEndMs - rc.now()) / (1 + CHAIN_RUN.tregKeyPoolHops)));
+  if (timeoutMs < CHAIN_RUN.tregMinTimeoutMs) {
+    return null;
+  }
+
+  const gate = await canStartCall(rc, TREG_EMAIL_LOOKUP.reservedUsd);
+  if (gate !== "ok") {
+    if (gate === "budget") rc.state.bd = 1;
+    return null;
+  }
+
+  const out = await runTregEmailLookup({
+    tregCall: rc.deps.tregCall,
+    ctx: { recorder: verifyingRecorder(rc), jobId: rc.input.jobId, now: rc.deps.now },
+    userId: rc.input.userId,
+    domain,
+    idempotencyKey: key,
+    timeoutMs,
+  });
+
+  rc.chunkUsd += out.committedUsd;
+  rc.trace.call("enrich", "treg", TREG_EMAIL_LOOKUP.endpointId, {
+    status: out.status,
+    costUsd: out.committedUsd,
+    durationMs: out.durationMs,
+  });
+
+  if (out.refused === "cap_reached") {
+    rc.state.tg = 1;
+    return null;
+  }
+  if (out.refused === "budget_reached") {
+    rc.state.bd = 1;
+    return null;
+  }
+  if (out.refused === "ledger_unavailable") {
+    rc.stop.ledger = true;
+    return null;
+  }
+
+  if (!out.ok) {
+    rc.state.ff.tregmail = (rc.state.ff.tregmail ?? 0) + 1;
+    if (rc.state.ff.tregmail >= CHAIN_RUN.lookupFailuresOff) {
+      rc.state.tg = 1;
+    }
+  } else {
+    rc.state.ff.tregmail = 0;
+  }
+
+  const mail = out.ok ? readTombaMailbox(out.body, domain) : null;
+  if (mail) {
+    rc.state.wm = 0;
+    return mail;
+  } else {
+    if (out.committedUsd > 0) {
+      rc.state.wm += 1;
+      if (rc.state.wm >= CHAIN_RUN.wasteBreakerMisses) {
+        rc.state.tg = 1;
+      }
+    }
+    return null;
+  }
 }
 
 
