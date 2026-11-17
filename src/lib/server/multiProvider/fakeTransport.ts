@@ -77,6 +77,8 @@ const page = (company: FakeCompany, path: string): { markdown: string; links: st
 
 export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {}, log: FakeCallLog[] = []): FetchFn & { log: FakeCallLog[]; world: FakeCompany[] } {
   const find = (host: string) => world.find((c) => host === c.domain || host.endsWith(`.${c.domain}`));
+  const queryOrder = new Map<string, number>();
+  const searchPool = (query: string, exclude: unknown, fallbackLimit: number) => { if (!scenario.searchByQuery) return world.slice(0, fallbackLimit); const k = queryOrder.has(query) ? (queryOrder.get(query) as number) : queryOrder.size; queryOrder.set(query, k); const per = Math.max(1, Math.floor(scenario.searchByQuery.perQuery)); const ignore = scenario.searchByQuery.ignoreExclude === true; const skip = new Set(!ignore && Array.isArray(exclude) ? exclude.map((h) => String(h).toLowerCase()) : []); const start = ignore ? 0 : k * per; return world.slice(start, start + per).filter((c) => !skip.has(c.domain)); };
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
   const fn = (async (input: string, init?: RequestInit): Promise<Response> => {
@@ -104,7 +106,7 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
       record(operation, 200);
       const empty = scenario.emptyProvider?.[provider];
       const limit = Math.max(1, Math.min(100, Number(body.limit ?? body.numResults ?? 10)));
-      const hits = empty ? [] : world.slice(0, limit).map((c) => ({ url: `https://www.${c.domain}/`, title: `${c.name} | الصفحة الرئيسية`, description: `موقع ${c.name}` }));
+      const hits = empty ? [] : searchPool(String(body.query ?? ""), body.excludeDomains, limit).map((c) => ({ url: `https://www.${c.domain}/`, title: `${c.name} | الصفحة الرئيسية`, description: `موقع ${c.name}` }));
       const credits = hits.length === 0 ? 0 : Math.ceil(hits.length / 10) * (provider === "firecrawl" ? 2 : 1);
       return provider === "firecrawl"
         ? json(200, { success: true, data: { web: hits }, id: "s", creditsUsed: credits })
