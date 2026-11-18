@@ -35,6 +35,9 @@ vi.mock("../src/lib/server/multiProvider/jobGroups", async (importOriginal) => {
   return {
     ...actual,
     reconcileJobGroups: vi.fn(async (admin: any, opts: any) => {
+      if (currentDriveWorld?.rejectReconcile || currentWatchdogWorld?.rejectReconcile) {
+        throw new Error("reconcile rejected");
+      }
       if (
         (currentDriveWorld && currentDriveWorld.neverResolves === "from(job_groups)") ||
         (currentWatchdogWorld && currentWatchdogWorld.neverResolves === "from(job_groups)")
@@ -134,6 +137,10 @@ function makeWorld() {
   const latency: Record<string, number> = {};
   const answer: { draw?: any; claim?: any } = {};
   const events: string[] = [];
+  const dueJobs: any[] = [];
+  const claimedIds: string[] = [];
+  const legacyRpcCalls: Array<{ name: string; args: any }> = [];
+  const legacy: { release?: any } = {};
   const partials = new Map<string, Buffer>();
   const results = new Map<string, Buffer>();
   const f5 = {
@@ -293,6 +300,7 @@ function makeWorld() {
     candidates?: { first: any[]; second: any[] };
     unfreezable?: string;
     updatedAgoMs?: number;
+    priorCompleted?: { delivered: number; charged: number };
   }) => {
     const gid = "grp_1";
     const p1Id = "job_p1";
@@ -319,6 +327,10 @@ function makeWorld() {
     groups.push(g);
     queue.push(g);
     setParts(gid, [part1], false);
+    if (opts.priorCompleted) {
+      setParts(gid, [part("completed", opts.priorCompleted.delivered, opts.priorCompleted.charged, { id: "job_p0", user_id: "u1" }), part1], false);
+      g.next_part = 3;
+    }
 
     if (opts.unfreezable === "every candidate absent") {
       // no files in partials
@@ -352,7 +364,7 @@ function makeWorld() {
     return g;
   };
 
-  const groupWithFailedPart = (opts: { cursor?: string | null }) => {
+  const groupWithFailedPart = (opts: { cursor?: string | null; priorCompleted?: { delivered: number; charged: number } }) => {
     const gid = "grp_1";
     const p1Id = "job_p1";
     const part1 = part("failed", 0, 0, {
@@ -376,6 +388,11 @@ function makeWorld() {
     groups.push(g);
     queue.push(g);
     setParts(gid, [part1], false);
+    if (opts.priorCompleted) {
+      part1.delivered_units = 10;
+      setParts(gid, [part("completed", opts.priorCompleted.delivered, opts.priorCompleted.charged, { id: "job_p0", user_id: "u1" }), part1], false);
+      g.next_part = 3;
+    }
     return g;
   };
 
@@ -699,7 +716,7 @@ function makeWorld() {
               throw new Error("abortAfterReads");
             }
             if (inCol === "status") {
-              return Promise.resolve(finish({ data: [], error: null }));
+              return Promise.resolve(finish({ data: [...dueJobs], error: null }));
             }
             const allJobs: any[] = [];
             for (const jList of parts.values()) {
@@ -719,6 +736,10 @@ function makeWorld() {
       return builder;
     },
     rpc: (name: string, args: any) => {
+      if (name === "release_job_atomic" && legacy.release !== undefined) {
+        legacyRpcCalls.push({ name, args });
+        return stepAnswer(legacy.release ?? { data: null, error: null });
+      }
       w_all_rpc_names_seen_in_this_file.add(name);
       if (
         (name === "draw_next_group_part_atomic" && neverResolves === "rpc draw") ||
@@ -791,6 +812,7 @@ function makeWorld() {
         }
 
         if (nextGroup) {
+          claimedIds.push(nextGroup.id);
           nextGroup.last_attempt_at = new Date(Date.now()).toISOString();
           rpcCalls.push({ name, args });
           if (latency.process) {
@@ -983,6 +1005,11 @@ function makeWorld() {
     latency,
     answer,
     events,
+    dueJobs,
+    claimedIds,
+    legacyRpcCalls,
+    legacy,
+    rejectReconcile: false,
     firstItem,
     partials,
     results,
@@ -1371,6 +1398,33 @@ describe("T05: draw R5", () => {
     }
   });
 
+  it.each([
+    ["part_not_frozen refusal", { data: { success: false, error: "part_not_frozen" }, error: null }],
+    ["group_halted refusal", { data: { success: false, error: "group_halted" }, error: null }],
+    ["deadline_passed refusal", { data: { success: false, error: "deadline_passed" }, error: null }],
+    ["rpc error", { data: null, error: { message: "rpc down" } }],
+  ] as Array<[string, any]>)("(d3) %s ⇒ one claim, one draw call, no part-2 job, no S2 line, no close, nothing drawn", async (_n, ans) => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.answer.draw = ans;
+    const r = await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+    expect([r.claims, r.drawn, r.closed]).toEqual([1, 0, 0]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(1);
+    expect(w.events).toEqual([]);
+  });
+
+  it("(d3) a draw that times out (5 s against the 4 s limit) ⇒ one claim, one draw call, no part-2 job, no S2 line, no close, nothing drawn", async () => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.latency.draw = 5_000;
+    const r = await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+    expect([r.claims, r.drawn, r.closed]).toEqual([1, 0, 0]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(1);
+    expect(w.events).toEqual([]);
+  });
+
   it("(e) STOP_AFTER_EMPTY_PARTS = 0 never stops early: two empty parts and a part left ⇒ the draw is the decision, no close", async () => {
     const w = makeWorld();
     w.oneGroupWithParts([part("completed", 0, 0), part("completed", 0, 0)]);
@@ -1544,6 +1598,53 @@ describe("T08: release and halt", () => {
     }
   );
 
+  it.each([
+    "every candidate absent",
+    "every readable candidate malformed",
+    "rows.length ≠ delivered",
+    "a row without identity",
+    "a duplicate identity",
+    "F5 answers keys_overlap",
+  ])("(d3) UNFREEZABLE %s after a completed charged part: the one close carries the literal Z 10 and C 70, the exact release and close arguments, no draw call, no S2 line", async (kind) => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, unfreezable: kind, priorCompleted: { delivered: 10, charged: 70 } });
+    const r = await run(w);
+    const calls = (name: string) => w.rpcCalls.filter((c) => c.name === name);
+    expect(calls("draw_next_group_part_atomic")).toEqual([]);
+    expect(w.events).toEqual([]);
+    expect(calls("release_unfrozen_group_part_atomic").map((c) => c.args)).toEqual([
+      { p_group_id: "grp_1", p_part_index: 2, p_job_id: "job_p1", p_release_ar: GROUP_PART_UNFROZEN_RELEASED_AR },
+    ]);
+    expect(calls("close_job_group_atomic").map((c) => c.args)).toEqual([
+      {
+        p_group_id: "grp_1",
+        p_reason: "part_unfrozen",
+        p_final_line_ar: groupFinalLineAr({ reason: "part_unfrozen", Z: 10, X: 30, Y: 30, C: 70 }),
+        p_delivered_total: 10,
+        p_charged_total: 70,
+        p_part_release_ar: null,
+      },
+    ]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(2);
+    expect([r.drawn, r.released, r.closed]).toEqual([0, 1, 1]);
+  });
+
+  it("(r2) WATCHDOG RELEASED FIRST after a completed charged part: no draw, no F6, ONE close('part_unfrozen') with the literal Z 10 and C 70 (the failed part, which delivered 10, is not counted)", async () => {
+    const w = makeWorld();
+    w.groupWithFailedPart({ cursor: "completed", priorCompleted: { delivered: 10, charged: 70 } });
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "close_job_group_atomic"]);
+    expect(w.rpcCalls[1].args).toEqual({
+      p_group_id: "grp_1",
+      p_reason: "part_unfrozen",
+      p_final_line_ar: groupFinalLineAr({ reason: "part_unfrozen", Z: 10, X: 30, Y: 30, C: 70 }),
+      p_delivered_total: 10,
+      p_charged_total: 70,
+      p_part_release_ar: null,
+    });
+    expect(w.events).toEqual([]);
+  });
+
   it("(d2) a freeze that keeps answering retry: no F6 before 20 min, F6 once after, then close('part_unfrozen'), no draw", async () => {
     const w = makeWorld();
     w.awaitingFreezeGroup({ delivered: 10, updatedAgoMs: 19 * 60_000 });
@@ -1652,6 +1753,27 @@ describe("T10: fairness through F4", () => {
       vi.advanceTimersByTime(31_000);
     }
     expect(w.group("grp_closable").status).toBe("closed");
+    expect(w.claimedIds).toContain("grp_closable");
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBeLessThanOrEqual(26);
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBe(1);
+  });
+
+  it("(j2) STARVATION BOUND FOR REAL: 25 never-attempted groups whose draw times out and a closable group attempted 40 s ago (it sorts after them) ⇒ each of the 25 is claimed once and its draw attempted once, the closable group is exactly the 26th claim and closes (the plan row's bound of 26 claims, met with equality)", async () => {
+    const w = makeWorld();
+    w.manyGroups({ stuckDrawers: 25, closable: 1 });
+    w.group("grp_closable").last_attempt_at = new Date(NOW0 - 40_000).toISOString();
+    w.latency.draw = 5_000;
+    for (let i = 0; i < 40 && w.group("grp_closable").status !== "closed"; i++) {
+      await run(w);
+      vi.advanceTimersByTime(31_000);
+    }
+    expect(w.group("grp_closable").status).toBe("closed");
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBe(26);
+    expect(new Set(w.claimedIds.slice(0, 25)).size).toBe(25);
+    expect(w.claimedIds.slice(0, 25).every((id) => id.startsWith("grp_stuck_"))).toBe(true);
+    const drawn = w.rpcCalls.filter((c) => c.name === "draw_next_group_part_atomic").map((c) => c.args.p_group_id);
+    for (let i = 1; i <= 25; i++) expect(drawn).toContain(`grp_stuck_${i}`);
+    expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").length).toBe(1);
   });
 
   it("(j) 30 groups with a running part and 1 closable ⇒ the closable group is closed at the first claim", async () => {
@@ -1823,4 +1945,95 @@ describe("T13: inertness and recorder", () => {
       "release_unfrozen_group_part_atomic",
     ]);
   });
+});
+
+
+describe("T14: the cron answers keep every legacy field when the reconcile fails", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const DUE_JOB = {
+    id: "job_due_1",
+    user_id: "u1",
+    step: 2,
+    status: "running",
+    lease_until: null,
+    next_attempt_at: null,
+    updated_at: new Date(NOW0 - 40 * 60_000).toISOString(),
+    target_volume_max: 10,
+    delivered_units: 4,
+  };
+  const LEGACY = {
+    drive: {
+      success: true,
+      mode: expect.any(String),
+      considered: 1,
+      dispatched: 1,
+      started: 1,
+      stalledNotices: { considered: 2, notified: 1 },
+      planning: { considered: 0, stepped: 0, finished: 0 },
+      results: [{ jobId: "job_due_1", started: true }],
+    },
+    watchdog: {
+      success: true,
+      staleCount: 1,
+      stalledNotices: { considered: 2, notified: 1 },
+      releasedCount: 1,
+      releasedJobs: [{ jobId: "job_due_1", userId: "u1", releasedCredits: 0, alreadyReleased: true }],
+      purgedAccountsCount: 0,
+      cleanedGuestsCount: 0,
+    },
+  };
+
+  async function call(kind: "drive" | "watchdog", mode: "baseline" | "rejected" | "timeout") {
+    const w = kind === "drive" ? installDriveMocks() : installWatchdogMocks({});
+    w.dueJobs.push({ ...DUE_JOB });
+    const stall = await import("../src/lib/server/jobStallNotifier");
+    vi.mocked(stall.notifyStalledJobs).mockResolvedValue({ considered: 2, notified: 1 } as any);
+    if (kind === "drive") {
+      const dispatch = await import("../src/lib/server/workerDispatch");
+      vi.mocked(dispatch.dispatchWorkerChunk).mockResolvedValue({ started: true } as any);
+    } else {
+      w.legacy.release = { data: { success: true, released_credits: 0, already_released: true }, error: null };
+    }
+    if (mode === "rejected") w.rejectReconcile = true;
+    if (mode === "timeout") w.neverResolves = "from(job_groups)";
+    const { GET } = await import(
+      kind === "drive" ? "../src/app/api/cron/drive/route" : "../src/app/api/cron/watchdog/route"
+    );
+    const p = GET(kind === "drive" ? driveRequest() : watchdogRequest());
+    if (mode === "timeout") await vi.advanceTimersByTimeAsync(TICK_BUDGET_MS + 15_000);
+    const res = await p;
+    return { w, status: res.status, body: await res.json() };
+  }
+
+  it.each(["drive", "watchdog"] as const)(
+    "%s: with real work in the answer, a rejected and a timed-out reconcile leave every legacy field equal to the no-groups baseline and groups is null",
+    async (kind) => {
+      const base = await call(kind, "baseline");
+      const { groups: baseGroups, scannedAt: baseScannedAt, ...baseLegacy } = base.body;
+      expect(base.status).toBe(200);
+      expect(baseLegacy).toEqual(LEGACY[kind]);
+      expect(baseGroups).not.toBeNull();
+      if (kind === "watchdog") expect(base.w.legacyRpcCalls.length).toBe(1);
+      for (const mode of ["rejected", "timeout"] as const) {
+        const got = await call(kind, mode);
+        const { groups, scannedAt, ...legacy } = got.body;
+        expect(got.status).toBe(200);
+        expect(groups).toBeNull();
+        expect(legacy).toEqual(baseLegacy);
+        expect(legacy).toEqual(LEGACY[kind]);
+        if (kind === "watchdog") {
+          expect(typeof scannedAt).toBe("string");
+          expect(got.w.legacyRpcCalls.length).toBe(1);
+        }
+      }
+    }
+  );
 });
