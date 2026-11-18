@@ -437,7 +437,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           break;
         }
         // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
-        if (value === "" && step.kind === "phone" && step.type_key) {
+        // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
+        if (value === "" && step.kind === "phone" && step.type_key && (step.company_phone ?? []).length > 0) {
           const cp = await companyPhoneFor(parentId);
           if (cp.stop) { stopRun = cp.stop; }
           if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; if (cp.origin) origin = cp.origin; }
