@@ -177,10 +177,10 @@ vi.mock("../src/lib/supabase/server", () => ({
         // DT-20261117-04 CI r1 (kept): like the real function, a recorded failure clears the job's lease; otherwise the fake's own «lease not expired» rule refuses the next claim.
         if (job) job.lease_until = null;
         if (db.failCount < 5) return { data: { success: true, released: false, attempts: db.failCount }, error: null };
-        // the 5th failure: the SQL releases the job and stores this exact text (migration 20261012135525:182-186)
+        // the 5th failure: the SQL releases the job INSIDE the function and answers failed_permanently, attempt_count, released, job_id (no released_credits): migration 20261012162016:240-260
         if (job) fakeRelease(job.id, `Exceeded maximum retry attempts (5): ${args.p_error_message}`, "record_chunk_failure");
         db.onFifthFailure?.(job);
-        return { data: { success: true, released: true, released_credits: db.reserved, attempts: 5 }, error: null };
+        return { data: { success: true, failed_permanently: true, attempt_count: db.failCount, released: true, job_id: args.p_job_id }, error: null };
       }
       return { data: { success: true }, error: null };
     }),
