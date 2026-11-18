@@ -21,20 +21,24 @@ Megz executes each script in the Supabase SQL Editor and sends the screenshot of
    ```
 2. **Execute `00_verify_before_apply.sql`**:
    - Paste into Supabase SQL Editor.
-   - Result must show: every row shows `✓` and the final `ALL` row shows `✓`.
-   - Take a screenshot of the result and send back to COMMANDER. Note the V1 money functions fingerprint row.
+   - Result must show every row ✓ and the last row ALL ✓. If ANY row shows ✗ (an altered money function, a different constraint or column type, or an object of this proposal that already exists), STOP: do not run 01. Send the screenshot to COMMANDER. The ✗ row prints the live value in the 'actual' column.
+   - Note the combined money functions fingerprint row.
 3. **Execute `01_job_groups_one_hold.sql`**:
    - Creates the tables, triggers, and functions F1–F6 wrapped in `BEGIN; ... COMMIT;`.
-   - Result must show: `job-groups installed`.
+   - Result must show the row 'job-groups installed'.
    - Take a screenshot of the result and send back to COMMANDER.
 4. **Execute `02_verify_after_apply.sql`**:
-   - Result must show: every row shows `✓` and the final `ALL` row shows `✓`.
-   - The V1 money functions fingerprint must match the fingerprint from 00 verbatim.
+   - Result must show every row ✓ and ALL ✓. The six 'V1 …' rows and the combined fingerprint row must be the same values that 00 showed.
    - Take a screenshot of the result and send back to COMMANDER.
 
 ## 3. Rollback & Stop Procedures
 - **Stopping New Groups**: The only approved rollback is reverting the PR-10 merge commit (`git revert <PR-10_merge_commit>`). This turns off new group card offerings immediately. Any group quote already issued remains approvable for its remaining 30-minute validity and runs to normal completion.
-- **Ending Running Groups Early**: If an operator must close open groups early, run `04_report_open_groups.sql` first, then run `03_operator_close_open_groups.sql`. Any group accepted while 03 runs closes later through normal continuation.
+- **Ending Running Groups Early (Operator Close Procedure — Plain, Numbered Steps)**:
+  1. Before 03 run 04. Run `04_report_open_groups.sql` first in Supabase SQL Editor.
+  2. The FIRST row (R0: summary) must say `OK_TO_RUN_03`. If it says `WAIT`, a part is awaiting freeze (R1 rows with a WAIT flag and `current_cursor = completed`): do NOT run 03; run 04 again every 1-2 minutes until the first row says `OK_TO_RUN_03`. Send the screenshot of each result to COMMANDER.
+  3. Run `03_operator_close_open_groups.sql` ONLY when no WAIT row remains in 04.
+  4. Each closed group displays one report row with verified delivered and charged totals.
+  Any group accepted while 03 runs closes later through normal continuation.
 - **Never**: Never run `DROP` or `REVOKE` on tables or functions.
 
 ## 4. Guarantees (H1–H9)

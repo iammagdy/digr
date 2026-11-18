@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createScratchDb, type ScratchDb } from "./localPg";
+import { assertScratchPgTarget, createScratchDb, type ScratchDb } from "./localPg";
 import { GROUP_OPERATOR_CLOSE_AR, GROUP_PART_STOPPED_AR, GROUP_PART_UNFROZEN_RELEASED_AR, groupFinalLineAr, groupDrawLineAr, groupStartLineAr } from "../../src/lib/multiProvider/copy";
 import { pointsAr } from "../../src/lib/pointsFormat";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
@@ -12,7 +12,7 @@ import { checkCustomerText } from "../../src/lib/agentMission/text";
  * Money proof on a REAL scratch PostgreSQL (DIGER_PROOF=1).
  * When DIGER_PROOF is unset, this test file is SKIPPED.
  * When DIGER_PROOF=1 and DIGER_TEST_PG is unset, this file THROWS.
- * Refuses any host containing supabase.co.
+ * Refuses any host not on the scratch allowlist (unix socket dir or localhost/127.0.0.1/::1).
  */
 const PROOF = process.env.DIGER_PROOF === "1";
 
@@ -21,9 +21,7 @@ if (PROOF) {
   if (!target) {
     throw new Error("DIGER_PROOF=1 requires DIGER_TEST_PG to be set to a scratch PostgreSQL host:port");
   }
-  if (target.includes("supabase.co")) {
-    throw new Error("Refusing to run tests against supabase.co! Scratch Postgres only.");
-  }
+  assertScratchPgTarget(target);
 }
 
 const DIR = path.resolve(__dirname, "../../docs/proposals/job-groups-one-hold");

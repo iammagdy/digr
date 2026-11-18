@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createScratchDb, scratchPgTarget, type ScratchDb } from "./localPg";
+import { assertScratchPgTarget, createScratchDb, scratchPgTarget, type ScratchDb } from "./localPg";
 import { GROUP_OPERATOR_CLOSE_AR } from "../../src/lib/multiProvider/copy";
 
 /**
  * T1: Job groups SQL proposal on a REAL scratch PostgreSQL (DIGER_PROOF=1).
  * When DIGER_PROOF is unset, this test file is SKIPPED.
  * When DIGER_PROOF=1 and DIGER_TEST_PG is unset, this file THROWS.
- * Refuses any host containing supabase.co.
+ * Refuses any host not on the scratch allowlist (unix socket dir or localhost/127.0.0.1/::1).
  */
 const PROOF = process.env.DIGER_PROOF === "1";
 
@@ -17,10 +17,25 @@ if (PROOF) {
   if (!target) {
     throw new Error("DIGER_PROOF=1 requires DIGER_TEST_PG to be set to a scratch PostgreSQL host:port");
   }
-  if (target.includes("supabase.co")) {
-    throw new Error("Refusing to run tests against supabase.co! Scratch Postgres only.");
-  }
+  assertScratchPgTarget(target);
 }
+
+describe("scratch Postgres host allowlist (safety guard)", () => {
+  it("refuses SUPABASE.CO, case variations, and arbitrary remote hosts", () => {
+    expect(() => assertScratchPgTarget("SUPABASE.CO:5432")).toThrow(/Refusing non-scratch Postgres host/);
+    expect(() => assertScratchPgTarget("db.xyz.supabase.co:5432")).toThrow(/Refusing non-scratch Postgres host/);
+    expect(() => assertScratchPgTarget("remote.production.db:5432")).toThrow(/Refusing non-scratch Postgres host/);
+    expect(() => assertScratchPgTarget("10.0.0.1:5432")).toThrow(/Refusing non-scratch Postgres host/);
+    expect(() => assertScratchPgTarget("192.168.1.1:5432")).toThrow(/Refusing non-scratch Postgres host/);
+  });
+
+  it("accepts unix sockets and local hosts", () => {
+    expect(assertScratchPgTarget("/tmp/pg_socket:5432")).toEqual({ host: "/tmp/pg_socket", port: "5432" });
+    expect(assertScratchPgTarget("localhost:5432")).toEqual({ host: "localhost", port: "5432" });
+    expect(assertScratchPgTarget("127.0.0.1:5432")).toEqual({ host: "127.0.0.1", port: "5432" });
+    expect(assertScratchPgTarget("::1:5432")).toEqual({ host: "::1", port: "5432" });
+  });
+});
 
 const DIR = path.resolve(__dirname, "../../docs/proposals/job-groups-one-hold");
 const sql01 = readFileSync(path.join(DIR, "01_job_groups_one_hold.sql"), "utf8");

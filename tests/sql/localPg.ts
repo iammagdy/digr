@@ -5,12 +5,43 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Validate scratch Postgres target against explicit host allowlist:
+ * - target must be "<socket dir or host>:<port>"
+ * - host must be a unix-socket dir path (starts with "/") or localhost / 127.0.0.1 / ::1 (lower-cased, trimmed)
+ * Throws BEFORE psql is spawned if target is not on the allowlist.
+ */
+export function assertScratchPgTarget(raw: string): { host: string; port: string } {
+  const trimmed = raw.trim();
+  const idx = trimmed.lastIndexOf(":");
+  if (idx <= 0) {
+    throw new Error(`Invalid scratch Postgres target "${trimmed}": must be <host-or-socket-dir>:<port>`);
+  }
+  const host = trimmed.slice(0, idx).trim();
+  const port = trimmed.slice(idx + 1).trim();
+  const normalizedHost = host.toLowerCase();
+
+  const isUnixSocket = host.startsWith("/");
+  const isLocalHost =
+    normalizedHost === "localhost" ||
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost === "::1" ||
+    normalizedHost === "[::1]";
+
+  if (!isUnixSocket && !isLocalHost) {
+    throw new Error(
+      `Refusing non-scratch Postgres host "${host}"! Target must be a unix socket directory or localhost/127.0.0.1/::1.`
+    );
+  }
+
+  return { host, port };
+}
+
 /** DIGR_TEST_PG (or DIGER_TEST_PG) = "<socket dir or host>:<port>" points at a scratch Postgres (never Supabase). Unset = skip. */
 export function scratchPgTarget(): { host: string; port: string } | null {
   const raw = process.env.DIGR_TEST_PG || process.env.DIGER_TEST_PG;
   if (!raw) return null;
-  const idx = raw.lastIndexOf(":");
-  return { host: raw.slice(0, idx), port: raw.slice(idx + 1) };
+  return assertScratchPgTarget(raw);
 }
 
 export interface ScratchDb {
