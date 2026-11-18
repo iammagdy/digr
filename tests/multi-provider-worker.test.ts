@@ -2490,6 +2490,7 @@ describe("T-M chain (DT-06)", () => {
       const last = await drive(mode, twoRequiredFields);
       expectNoBareFailed(customerTexts({ rpcCalls: db.rpcCalls, events: db.events, jobs: db.jobs, json: last.json }));
       expectReleasedZeroOf(storedText(mode), db.targetVolumeMax);
+      expectMoney("released", { calls: mode === "CRASH" ? 0 : 1 });
     });
   }
 });
