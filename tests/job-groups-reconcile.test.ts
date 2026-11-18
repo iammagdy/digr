@@ -1851,3 +1851,94 @@ describe("T13: inertness and recorder", () => {
     ]);
   });
 });
+
+
+describe("T14: the cron answers keep every legacy field when the reconcile fails", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const DUE_JOB = {
+    id: "job_due_1",
+    user_id: "u1",
+    step: 2,
+    status: "running",
+    lease_until: null,
+    next_attempt_at: null,
+    updated_at: new Date(NOW0 - 40 * 60_000).toISOString(),
+    target_volume_max: 10,
+    delivered_units: 4,
+  };
+  const LEGACY = {
+    drive: {
+      success: true,
+      mode: expect.any(String),
+      considered: 1,
+      dispatched: 1,
+      started: 1,
+      stalledNotices: { considered: 2, notified: 1 },
+      planning: { considered: 0, stepped: 0, finished: 0 },
+      results: [{ jobId: "job_due_1", started: true }],
+    },
+    watchdog: {
+      success: true,
+      staleCount: 1,
+      stalledNotices: { considered: 2, notified: 1 },
+      releasedCount: 1,
+      releasedJobs: [{ jobId: "job_due_1", userId: "u1", releasedCredits: 0, alreadyReleased: true }],
+      purgedAccountsCount: 0,
+      cleanedGuestsCount: 0,
+    },
+  };
+
+  async function call(kind: "drive" | "watchdog", mode: "baseline" | "rejected" | "timeout") {
+    const w = kind === "drive" ? installDriveMocks() : installWatchdogMocks({});
+    w.dueJobs.push({ ...DUE_JOB });
+    const stall = await import("../src/lib/server/jobStallNotifier");
+    vi.mocked(stall.notifyStalledJobs).mockResolvedValue({ considered: 2, notified: 1 } as any);
+    if (kind === "drive") {
+      const dispatch = await import("../src/lib/server/workerDispatch");
+      vi.mocked(dispatch.dispatchWorkerChunk).mockResolvedValue({ started: true } as any);
+    } else {
+      w.legacy.release = { data: { success: true, released_credits: 0, already_released: true }, error: null };
+    }
+    if (mode === "rejected") w.rejectReconcile = true;
+    if (mode === "timeout") w.neverResolves = "from(job_groups)";
+    const { GET } = await import(
+      kind === "drive" ? "../src/app/api/cron/drive/route" : "../src/app/api/cron/watchdog/route"
+    );
+    const p = GET(kind === "drive" ? driveRequest() : watchdogRequest());
+    if (mode === "timeout") await vi.advanceTimersByTimeAsync(TICK_BUDGET_MS + 15_000);
+    const res = await p;
+    return { w, status: res.status, body: await res.json() };
+  }
+
+  it.each(["drive", "watchdog"] as const)(
+    "%s: with real work in the answer, a rejected and a timed-out reconcile leave every legacy field equal to the no-groups baseline and groups is null",
+    async (kind) => {
+      const base = await call(kind, "baseline");
+      const { groups: baseGroups, scannedAt: baseScannedAt, ...baseLegacy } = base.body;
+      expect(base.status).toBe(200);
+      expect(baseLegacy).toEqual(LEGACY[kind]);
+      expect(baseGroups).not.toBeNull();
+      if (kind === "watchdog") expect(base.w.legacyRpcCalls.length).toBe(1);
+      for (const mode of ["rejected", "timeout"] as const) {
+        const got = await call(kind, mode);
+        const { groups, scannedAt, ...legacy } = got.body;
+        expect(got.status).toBe(200);
+        expect(groups).toBeNull();
+        expect(legacy).toEqual(baseLegacy);
+        expect(legacy).toEqual(LEGACY[kind]);
+        if (kind === "watchdog") {
+          expect(typeof scannedAt).toBe("string");
+          expect(got.w.legacyRpcCalls.length).toBe(1);
+        }
+      }
+    }
+  );
+});
