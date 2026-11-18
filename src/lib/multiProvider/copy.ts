@@ -205,6 +205,26 @@ export function groupPartLinkAr(k: number, K: number): string {
   return `الجزء ${toArabicDigits(k)} من ${toArabicDigits(K)}`;
 }
 
+export function groupFinalLineAr(args: { reason: GroupCloseReason; Z: number; X: number; Y: number; C: number }): string {
+  let reasonClause = "";
+  if (args.Z < args.X) {
+    let R = "";
+    if (args.reason === "all_parts_done" && args.Y < args.X && args.Z === args.Y) {
+      R = `أقصى ما يتسع له الطلب الواحد ${countPlainAr(args.Y, "companies")} على ${toArabicDigits(40)} جزءًا، ويمكنك طلب الباقي في طلب جديد.`;
+    } else if (args.reason === "all_parts_done") {
+      R = "لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد.";
+    } else if (args.reason === "deadline" || args.reason === "deadline_stuck") {
+      R = `انتهت المدة المتاحة لتنفيذ الطلب (${toArabicDigits(72)} ساعة) قبل اكتمال الأجزاء.`;
+    } else if (args.reason === "empty_parts") {
+      R = "لم يُسلَّم شيء في جزأين متتاليين، فأوقفنا الأجزاء الباقية.";
+    } else if (args.reason === "part_unfrozen") {
+      R = "تعذّر تجهيز ملف جزء من الطلب بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وأوقفنا الأجزاء الباقية.";
+    }
+    reasonClause = ` السبب: ${R}`;
+  }
+  return `المسلَّم ${toArabicDigits(args.Z)} من ${toArabicDigits(args.X)} مطلوب.${reasonClause} الخصم الإجمالي ${pointsAr(args.C, toArabicDigits)}، وحُرِّر باقي الحجز.`;
+}
+
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
   whatWeCollectAr({ count: 50, withEmail: true, withPhone: true, withDecisionMaker: true, industry: "مقاولات", country: "مصر" }),

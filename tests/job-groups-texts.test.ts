@@ -30,4 +30,18 @@ describe("DT-05 PR-3 group texts", () => {
   it("groupDrawLineAr is S2", () => { expect(copy.groupDrawLineAr({ k: 2, K: 3, Z: 40, Y: 120 })).toBe("انتهى الجزء ١ من ٣، والمسلَّم حتى الآن ٤٠ من ١٢٠. بدأ الجزء ٢ تلقائيًا من الحجز الذي وافقت عليه، دون حجز جديد."); });
   it("groupPartLinkAr is S16", () => { expect(copy.groupPartLinkAr(2, 3)).toBe("الجزء ٢ من ٣"); });
   it.each([copy.splitCardLineAr({ parts: 3, perPart: 40, reachable: 120, askedOriginal: 120, hold: 1200 }), copy.splitCardLineAr({ parts: 40, perPart: 40, reachable: 1600, askedOriginal: 2000, hold: 6000 }), copy.groupStartLineAr({ hold: 1200, parts: 3 }), copy.groupDrawLineAr({ k: 2, K: 3, Z: 40, Y: 120 }), copy.groupPartLinkAr(2, 3)])("text %# passes checkCustomerText", (t) => { expect(checkCustomerText(t).issues).toEqual([]); });
+
+  it.each([
+    ["all_parts_done", { reason: "all_parts_done", Z: 120, X: 120, Y: 120, C: 1200 }, "المسلَّم ١٢٠ من ١٢٠ مطلوب. الخصم الإجمالي ١٢٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["all_parts_done", { reason: "all_parts_done", Z: 1600, X: 2000, Y: 1600, C: 6000 }, "المسلَّم ١٦٠٠ من ٢٠٠٠ مطلوب. السبب: أقصى ما يتسع له الطلب الواحد ١٦٠٠ شركة على ٤٠ جزءًا، ويمكنك طلب الباقي في طلب جديد. الخصم الإجمالي ٦٠٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["all_parts_done", { reason: "all_parts_done", Z: 100, X: 120, Y: 120, C: 1000 }, "المسلَّم ١٠٠ من ١٢٠ مطلوب. السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد. الخصم الإجمالي ١٠٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["deadline", { reason: "deadline", Z: 40, X: 120, Y: 120, C: 400 }, "المسلَّم ٤٠ من ١٢٠ مطلوب. السبب: انتهت المدة المتاحة لتنفيذ الطلب (٧٢ ساعة) قبل اكتمال الأجزاء. الخصم الإجمالي ٤٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["deadline_stuck", { reason: "deadline_stuck", Z: 40, X: 120, Y: 120, C: 400 }, "المسلَّم ٤٠ من ١٢٠ مطلوب. السبب: انتهت المدة المتاحة لتنفيذ الطلب (٧٢ ساعة) قبل اكتمال الأجزاء. الخصم الإجمالي ٤٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["empty_parts", { reason: "empty_parts", Z: 40, X: 120, Y: 120, C: 400 }, "المسلَّم ٤٠ من ١٢٠ مطلوب. السبب: لم يُسلَّم شيء في جزأين متتاليين، فأوقفنا الأجزاء الباقية. الخصم الإجمالي ٤٠٠ نقطة، وحُرِّر باقي الحجز."],
+    ["part_unfrozen", { reason: "part_unfrozen", Z: 40, X: 120, Y: 120, C: 0 }, "المسلَّم ٤٠ من ١٢٠ مطلوب. السبب: تعذّر تجهيز ملف جزء من الطلب بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وأوقفنا الأجزاء الباقية. الخصم الإجمالي ٠ نقطة، وحُرِّر باقي الحجز."],
+  ] as Array<[string, { reason: copy.GroupCloseReason; Z: number; X: number; Y: number; C: number }, string]>)("groupFinalLineAr %s (Z=%#)", (_r, args, expected) => {
+    expect(copy.groupFinalLineAr(args)).toBe(expected);
+    expect(checkCustomerText(expected).issues).toEqual([]);
+  });
+  it("a delivered-in-full request has no reason clause", () => { expect(copy.groupFinalLineAr({ reason: "all_parts_done", Z: 120, X: 120, Y: 120, C: 1200 })).not.toContain("السبب"); });
 });
