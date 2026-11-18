@@ -2518,4 +2518,29 @@ describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", (
     const late = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "late", p_force: true });
     expect(String(late.error?.message)).toContain("already completed");
   });
+
+  it("F2f record_chunk_failure ignores a terminal job", async () => {
+    resetDb({ target: 5 });
+    await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "x", p_force: true });
+    const ignoredFailed = await rpc("record_chunk_failure", { p_job_id: JOB, p_error_message: "late failure" });
+    expect(ignoredFailed.data).toEqual({ success: true, ignored: true, status: "failed", job_id: JOB });
+    expect(db.failCount).toBe(0);
+    db.jobs[0].status = "completed";
+    const ignoredDone = await rpc("record_chunk_failure", { p_job_id: JOB, p_error_message: "late failure" });
+    expect(ignoredDone.data).toEqual({ success: true, ignored: true, status: "completed", job_id: JOB });
+    expect(db.failCount).toBe(0);
+  });
+
+  it("F2g the 5th failure is an effective release", async () => {
+    resetDb({ target: 5 }); db.failCount = 4;
+    const fifth = await rpc("record_chunk_failure", { p_job_id: JOB, p_error_message: "boom" });
+    expect(fifth.data).toMatchObject({ success: true, released: true });
+    expect(db.jobs[0]).toMatchObject({ status: "failed", charged_credits: 0, error_message: "Exceeded maximum retry attempts (5): boom" });
+    expect(db.ledger).toEqual([{ id: `rel_${JOB}`, job_id: JOB, user_id: "user_1", type: "release", delta: 575, by: "record_chunk_failure" }]);
+    expect(effectiveReleases()).toBe(1);
+    const later = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "later", p_force: true });
+    expect(later.data).toMatchObject({ success: true, already_released: true });
+    expect(effectiveReleases()).toBe(1);
+    expect(db.jobs[0].error_message).toBe("Exceeded maximum retry attempts (5): boom");
+  });
 });
