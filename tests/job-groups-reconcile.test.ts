@@ -139,6 +139,46 @@ function makeWorld() {
     return g;
   };
 
+  const groupWithRunningPart = (opts: {
+    lease_until?: string;
+    delivered?: number;
+    charged?: number;
+    deadlineAheadMs?: number;
+    deadlineAgoMs?: number;
+    updated_at?: string;
+  }) => {
+    const gid = "grp_1";
+    let deadline_at: string;
+    if (opts.deadlineAheadMs !== undefined) {
+      deadline_at = new Date(NOW0 + opts.deadlineAheadMs).toISOString();
+    } else {
+      const ago = opts.deadlineAgoMs ?? 3 * 3_600_000;
+      deadline_at = new Date(NOW0 - ago).toISOString();
+    }
+
+    const part1 = part("completed", 10, 100);
+    const part2 = part("running", opts.delivered ?? 0, opts.charged ?? 0, {
+      lease_until: opts.lease_until,
+      updated_at: opts.updated_at ?? new Date(NOW0 - 10 * 60_000).toISOString(),
+    });
+
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      status: "open",
+      parts_planned: 3,
+      next_part: 3,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at,
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, [part1, part2], true);
+    return g;
+  };
+
   const admin = {
     from: (table: string) => {
       tables.push(table);
@@ -364,6 +404,7 @@ function makeWorld() {
     requeue,
     oneGroupWithPartsDone,
     oneGroupWithParts,
+    groupWithRunningPart,
   };
 }
 
@@ -698,5 +739,47 @@ describe("T05: draw R5", () => {
     w.oneGroupWithParts([part("completed", 0, 0), part("completed", 0, 0)]);
     await run(w);
     expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+  });
+});
+
+describe("T06: stuck R1b", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("(k) STUCK: stale lease ⇒ close('deadline_stuck') with S8 and Z/C excluding the running part", async () => {
+    const w = makeWorld();
+    w.groupWithRunningPart({ lease_until: new Date(NOW0 - 40 * 60_000).toISOString(), delivered: 5, charged: 0 });
+    await run(w);
+    const c = w.rpcCalls.find((x) => x.name === "close_job_group_atomic")!;
+    expect(c.args.p_reason).toBe("deadline_stuck");
+    expect(c.args.p_part_release_ar).toBe(GROUP_PART_STOPPED_AR);
+    expect(c.args.p_delivered_total).toBe(10);
+    expect(c.args.p_charged_total).toBe(100);
+  });
+
+  it("(k) fresh lease and a deadline 1 h past ⇒ no close until deadline + 2 h, then close", async () => {
+    const w = makeWorld();
+    w.groupWithRunningPart({ lease_until: new Date(NOW0 + 60_000).toISOString(), deadlineAgoMs: 3_600_000 });
+    await run(w);
+    expect(w.rpcCalls.some((c) => c.name === "close_job_group_atomic")).toBe(false);
+    /* NOW0: the deadline is 1 h past, the lease fresh */
+    vi.setSystemTime(NOW0 + 3 * 3_600_000);
+    w.requeue();
+    await run(w);
+    expect(w.rpcCalls.some((c) => c.name === "close_job_group_atomic")).toBe(true);
+  });
+
+  it("(k) the group's deadline is checked first: a part 'running' with a fresh lease and no deadline passed is never closed by this claim", async () => {
+    const w = makeWorld();
+    w.groupWithRunningPart({ lease_until: new Date(NOW0 + 60_000).toISOString(), deadlineAheadMs: 3_600_000 });
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group"]);
   });
 });

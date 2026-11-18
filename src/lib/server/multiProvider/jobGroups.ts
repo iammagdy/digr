@@ -158,6 +158,100 @@ export async function reconcileJobGroups(
         const jobL = claimData.current;
         const resFrozen = Boolean(claimData.frozen);
 
+        const isRunningOrQueued = jobL?.status === "queued" || jobL?.status === "running";
+        const isAwaitingFreeze = jobL?.status === "running" && jobL?.current_cursor === "completed";
+
+        // R1b: Running/queued part not awaiting freeze
+        if (isRunningOrQueued && !isAwaitingFreeze) {
+          if (now() < Date.parse(group.deadline_at)) {
+            continue;
+          }
+
+          const stale = jobL?.lease_until
+            ? Date.parse(jobL.lease_until) < now() - 30 * 60_000
+            : Date.parse(jobL?.updated_at ?? "1970-01-01") < now() - 30 * 60_000;
+          const overdue2h = now() >= Date.parse(group.deadline_at) + 2 * 3_600_000;
+
+          if (stale || overdue2h) {
+            // Stuck: read parts and close deadline_stuck
+            const partsRes = await withTimeout(
+              admin.from("job_group_parts").select("part_index, job_id").eq("group_id", gid),
+              4_000
+            );
+            if (partsRes === TIMED_OUT || partsRes?.error || !Array.isArray(partsRes?.data)) {
+              continue;
+            }
+
+            const partRows = partsRes.data;
+            const jobIds = partRows.map((p: any) => p.job_id).filter(Boolean);
+
+            let jobs: any[] = [];
+            if (jobIds.length > 0) {
+              const jobsRes = await withTimeout(
+                admin
+                  .from("jobs")
+                  .select("id, status, current_cursor, delivered_units, charged_credits, updated_at")
+                  .in("id", jobIds),
+                4_000
+              );
+              if (jobsRes === TIMED_OUT || jobsRes?.error || !Array.isArray(jobsRes?.data)) {
+                continue;
+              }
+              jobs = jobsRes.data;
+            }
+
+            const jobMap = new Map<string, any>();
+            for (const j of jobs) {
+              jobMap.set(j.id, j);
+            }
+
+            let Z = 0;
+            let C = 0;
+            for (const p of partRows) {
+              if (p.part_index === L) {
+                // Active part ends with 0 delivered and 0 charged
+                continue;
+              }
+              const j = jobMap.get(p.job_id);
+              if (j) {
+                if (j.status === "completed") {
+                  Z += (j.delivered_units ?? 0);
+                }
+                C += (j.charged_credits ?? 0);
+              }
+            }
+
+            const closeRes = await withTimeout(
+              admin.rpc("close_job_group_atomic", {
+                p_group_id: gid,
+                p_reason: "deadline_stuck",
+                p_final_line_ar: groupFinalLineAr({
+                  reason: "deadline_stuck",
+                  Z,
+                  X: group.asked_original,
+                  Y: group.reachable,
+                  C,
+                }),
+                p_delivered_total: Z,
+                p_charged_total: C,
+                p_part_release_ar: GROUP_PART_STOPPED_AR,
+              }),
+              4_000
+            );
+
+            if (closeRes === TIMED_OUT || closeRes?.error) {
+              continue;
+            }
+            if (closeRes?.data?.success === true) {
+              closed += 1;
+            }
+            continue;
+          } else {
+            // Not stuck yet
+            continue;
+          }
+        }
+
         // R3 reads
         const partsRes = await withTimeout(
           admin.from("job_group_parts").select("part_index, job_id").eq("group_id", gid),
