@@ -87,16 +87,17 @@ describe("PR-5 saved dataset readers", () => {
   const text = JSON.stringify({ rows: [{ id: "A" }] });
   const sha = createHash("sha256").update(text).digest("hex");
   const frozen = { path: `u/j/frozen-${sha}.json`, sha256: sha, row_count: 1 };
-  function admin(part: any, freeze: any = frozen, bytes = text) {
+  function admin(part: any, freeze: any = frozen, bytes = text, opts: { partError?: any; freezeError?: any; storageError?: any } = {}) {
     return {
-      from: (table: string) => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: table === "job_group_parts" ? part : freeze, error: null }) }),
-      storage: { from: () => ({ download: async (path: string) => ({ data: path === frozen.path ? new Blob([bytes]) : null, error: null }) }) },
+      from: (table: string) => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: table === "job_group_parts" ? part : freeze, error: table === "job_group_parts" ? opts.partError ?? null : opts.freezeError ?? null }) }),
+      storage: { from: () => ({ download: async (path: string) => ({ data: opts.storageError || path !== frozen.path ? null : new Blob([bytes]), error: opts.storageError ?? null }) }) },
     };
   }
-  it.each(["frozen", "pending", "unavailable", "ordinary"])("R-5/R-6 %s uses only the frozen dataset rules", async (kind) => {
+  it.each(["frozen", "pending", "lookup-error", "storage-error", "completed-unfrozen", "ordinary"])("R-5/R-6 case %s follows the E-1 frozen dataset rules", async (kind) => {
     const part = kind === "ordinary" ? null : { group_id: "g", part_index: 1 };
     const freeze = kind === "frozen" ? frozen : null;
-    const db = admin(part, freeze, kind === "unavailable" ? "wrong bytes" : text);
+    const opts = kind === "lookup-error" ? { partError: { code: "XX000" } } : kind === "storage-error" ? { storageError: { status: 500 } } : {};
+    const db = admin(part, freeze, text, opts);
     const expectedText = kind === "frozen" ? text : "";
     const expectedSaved = kind === "frozen" ? true : kind === "ordinary" ? false : null;
     await expect(readJobDatasetText(db, { id: "j", user_id: "u" })).resolves.toBe(expectedText);
