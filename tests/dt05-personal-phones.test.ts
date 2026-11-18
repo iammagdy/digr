@@ -143,8 +143,8 @@ describe("DT-20261118-05 item 4c: the catalog's profile lookup is asked first fo
     expect((await w.attempts()).outcomes[`${LOOKUP.id}|not_tried:person_budget`]).toBe(1);
   });
   it("a person who already has a page is never looked up", async () => {
-    const w = await world({ people: [{ ...NAME_ONLY, linkedin: "https://www.linkedin.com/in/mina-naguib" }], phone: { finders: [BLITZ], profile_lookup: [LOOKUP] }, answers: () => null });
-    expect(w.calls.map((c) => c.endpoint)).toEqual([BLITZ.id]);
+    const w = await world({ people: [{ ...NAME_ONLY, linkedin: "https://www.linkedin.com/in/mina-naguib" }], phone: { finders: [BLITZ, AIARK], profile_lookup: [LOOKUP] }, answers: () => null });
+    expect(w.calls.map((c) => c.endpoint)).toEqual([BLITZ.id, AIARK.id]);
   });
   it("the page is read from any answer shape", () => {
     expect(profileUrlIn({ success: true, result: "https://www.linkedin.com/in/patrickcollison" })).toBe("https://www.linkedin.com/in/patrickcollison");
