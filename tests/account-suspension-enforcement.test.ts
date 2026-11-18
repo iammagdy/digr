@@ -46,6 +46,9 @@ describe("the routes that sign the customer in themselves check the ban right af
     "src/app/api/chat/sample-remainder/route.ts",
     "src/app/api/chat/edit-plan/route.ts",
     "src/app/api/topup/submit/route.ts",
+    // Gate 1 P1-1: the methodology purchase spends points; the artifacts edit is a charged change of a request
+    "src/app/api/jobs/[id]/methodology/route.ts",
+    "src/app/api/jobs/[id]/artifacts/route.ts",
   ])("%s", (file) => {
     const src = readFileSync(file, "utf8");
     const signIn = src.lastIndexOf("auth.getUser(");

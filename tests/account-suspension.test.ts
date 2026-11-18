@@ -124,3 +124,21 @@ describe("what the customer reads", () => {
     expect(checkCustomerText(SUSPENDED_AR, {}).issues).toEqual([]);
   });
 });
+
+// Gate 1: a lookup the sign-in service answers with an error is NOT remembered (it was cached as «not suspended» for 30 s); the sentence says nothing untrue for an indefinite ban
+describe("Gate 1 P2: no caching of a failed lookup; the sentence stays true for every duration", () => {
+  it("an {error} answer is not cached: the next request asks again and sees the ban", async () => {
+    let calls = 0;
+    let answer: { data: { user: { id: string; banned_until: string | null } | null }; error: unknown } = { data: { user: null }, error: { message: "service unavailable" } };
+    const admin = () => ({ auth: { admin: { getUserById: async () => { calls += 1; return answer; } } } }) as never;
+    const uid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    expect(await isAccountSuspended(admin, uid)).toBe(false);
+    answer = { data: { user: { id: uid, banned_until: "2099-01-01T00:00:00Z" } }, error: null };
+    expect(await isAccountSuspended(admin, uid)).toBe(true);
+    expect(calls).toBe(2);
+  });
+  it("the customer sentence does not say «مؤقتًا» (an indefinite suspension is not temporary)", () => {
+    expect(SUSPENDED_AR).toBe("تم إيقاف هذا الحساب. للاستفسار تواصل مع الدعم.");
+  });
+});
+
