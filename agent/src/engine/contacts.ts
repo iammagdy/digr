@@ -336,6 +336,9 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
 function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
+  // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
+  const outcomes = new Map<string, number>();
+  let stoppedBy: string | null = null;
   // THE COMPANY MAILBOX, BY STRUCTURE (DT-20261118-03 PR-3, D-0086): an address that is on the person's company row, or that 2+ people of the same company share, is the company's, never one person's
   const addressOf = (v: unknown): string => String(v ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -423,7 +426,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let hit: FoundContact | null = null;
       let origin: { endpointId: string; callId: string } | null = null;
       if (value === "") {
-        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
+        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
         for (const finder of step.finders) {
           const params = finderParamsFor(finder, facts);
           // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
@@ -478,6 +481,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
         if (step.kind === "email" && hit) foundIds.add(String(row.id));
       }
+      if (stopRun) stoppedBy = stopRun;
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();
       return stopRun;
@@ -501,6 +505,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       }
       await flush();
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
+      if (outcomes.size > 0 || stoppedBy !== null) await deps.store.putFile(deps.missionId, `contacts/attempts_${step.stage_key}_${step.kind}.json`, JSON.stringify({ outcomes: Object.fromEntries(outcomes), people: peopleCount, stopped: stoppedBy }), "application/json").catch(() => undefined);
       if (notTried.size > 0) await deps.store.putFile(deps.missionId, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, JSON.stringify(Object.fromEntries(notTried)), "application/json").catch(() => undefined);
       await items.mirror(step.stage_key);
       try {
