@@ -1,5 +1,5 @@
 import { sampleCellText } from "./sampleLinks";
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
+import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
 import { isLanguageColumn } from "./languageLabel";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
@@ -861,10 +861,6 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {})];
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
-  // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
-  // (owner decision after #321) the paid contact lookup and the deeper search are what the customer asked for and sees the price of: the default count of people is lowered for the price of the READING alone, never to make the lookups fit
-  const baseReserve = priceMissionByCode(stagePriceInputs(priced, undefined, { withoutDepth: true }), { settings: lookup.pricingSettings }).reservePoints;
-  if (impliedUsed && impliedCount > 1 && baseReserve > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${baseReserve} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   notes.push(...languageOffNotes);
