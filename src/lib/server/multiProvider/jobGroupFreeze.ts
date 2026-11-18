@@ -116,7 +116,13 @@ export async function freezeGroupPart(
     let validRows = true;
     const ids: string[] = [];
     for (const row of rows) {
-      const id = dedupe(row);
+      let id: string | null | undefined;
+      try {
+        id = dedupe(row);
+      } catch {
+        validRows = false;
+        break;
+      }
       if (!id || typeof id !== "string" || id.length === 0 || id.length > 300) {
         validRows = false;
         break;
