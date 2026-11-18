@@ -60,3 +60,67 @@ describe("DT-20261118-03 F3: the lookup has an exit the customer can press", () 
     expect(r.kind).toBe("plan");
   });
 });
+
+// QA wave-1 FAIL #574: the live flow itself, YouTube-shaped, end to end on fakes (catalog endpoints, fake pages, scripted model answers): the question with the button, then the plan
+describe("DT-20261118-03 F3: the YouTube flow of the live chat, end to end on fakes", () => {
+  const REQUEST = "عايز ٥٠ تعليق على فيديو عن الذكاء الاصطناعي من يوتيوب";
+  const VIDEOS = [{ videoId: "vid_ai_1", title: "ما هو الذكاء الاصطناعي؟" }, { videoId: "vid_ai_2", title: "الذكاء الاصطناعي في 10 دقائق" }];
+  const ytRun = (exchanges: Array<{ question: string; answer: string }>, pick: unknown[]) => {
+    const prompts: string[] = [];
+    const answers: Record<string, unknown[]> = {
+      request_plan: [{ decision: "plan", understanding_ar: "خمسون تعليقًا على فيديو عن الذكاء الاصطناعي من يوتيوب.", assumptions_ar: [], accepts_available: false, steps: [
+        { key: "find_video", title_ar: "الفيديو", platform: "youtube", capability: "youtube.search.videos", parent: null, deliver: false, count: { total: 1, all: false }, topic: "الذكاء الاصطناعي", search_terms: ["الذكاء الاصطناعي"] },
+        { key: "comments", title_ar: "التعليقات", platform: "youtube", capability: "youtube.video.comments", parent: "find_video", deliver: true, count: { total: 50, all: false }, search_terms: [] },
+      ] }],
+      tool_choice: [
+        { options: [{ endpoint_id: "crawl4ai.youtube.search.videos", params_json: JSON.stringify({ query: "الذكاء الاصطناعي", limit: 10 }) }] },
+        { options: [{ endpoint_id: "crawl4ai.youtube.video.comments", params_json: JSON.stringify({ limit: 50 }), parent_input: { param: "video", from_field: "id" } }] },
+      ],
+      field_map: [{ fields: { id: ["videoId"], text: ["title"] }, extra: [] }, { fields: { id: ["cid"], text: ["text"] }, extra: [] }],
+      pick_item: pick,
+    };
+    let n = 0;
+    const pages = new Map<string, unknown>();
+    const probed: Array<{ id: string; params: unknown }> = [];
+    const result = planWithLlm({ words: [REQUEST], request: "", exchanges }, {
+      model: async ({ tool, user }: any) => { if (tool.name === "pick_item") prompts.push(String(user ?? "")); const next = (answers[tool.name] ?? []).shift(); return next === undefined ? null : { input: next, costUsd: 0.001 }; },
+      catalog: loadTregCatalog(), access: null, today: "2026-11-18",
+      probe: async (id: string, params: unknown) => {
+        n += 1; const call_id = `call_${n}`; probed.push({ id, params });
+        const comments = id.includes("comments");
+        pages.set(call_id, comments ? { data: { comments: Array.from({ length: 50 }, (_, k) => ({ cid: `C${k}`, text: `تعليق ${k}` })) } } : { data: { videos: VIDEOS } });
+        return { ok: true, call_id, http_status: 200, rows_in_page: comments ? 50 : 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
+      },
+      readPage: async (id: string) => pages.get(id) ?? null
+    } as any);
+    return { result, prompts, probed };
+  };
+  it("no video confirmed: the YouTube question carries the one button (live: no button, the same question again)", async () => {
+    const { result } = ytRun([], [{ index: -1 }]);
+    const r = await result;
+    expect(r.kind).toBe("question");
+    if (r.kind !== "question") return;
+    expect(r.options_ar).toEqual([ANY_RESULT_OPTION_AR]);
+    expect(checkCustomerText(r.question_ar).issues).toEqual([]);
+  });
+  it("the button pressed: the plan is built on the first video, with no model pick and no second question; the comments are read from that video", async () => {
+    const first = await ytRun([], [{ index: -1 }]).result;
+    expect(first.kind).toBe("question");
+    if (first.kind !== "question") return;
+    const { result, prompts, probed } = ytRun([{ question: first.question_ar, answer: ANY_RESULT_OPTION_AR }], []);
+    const r = await result;
+    expect(r.kind, JSON.stringify(r).slice(0, 600)).toBe("plan");
+    expect(prompts).toEqual([]);
+    const commentsCall = probed.find((p) => p.id === "crawl4ai.youtube.video.comments");
+    expect(commentsCall, JSON.stringify(probed)).toBeTruthy();
+    expect(JSON.stringify(commentsCall!.params)).toContain("vid_ai_1");
+  });
+  it("a written answer (the live words) goes to the model that picks, and the plan follows its pick", async () => {
+    const { result, prompts, probed } = ytRun([{ question: "بحثنا…", answer: WRITTEN }], [{ index: 1 }]);
+    const r = await result;
+    expect(r.kind, JSON.stringify(r).slice(0, 600)).toBe("plan");
+    expect(prompts.length).toBe(1);
+    expect(prompts[0]).toContain(`«${WRITTEN}»`);
+    expect(JSON.stringify(probed.find((p) => p.id === "crawl4ai.youtube.video.comments")?.params)).toContain("vid_ai_2");
+  });
+});
