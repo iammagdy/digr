@@ -81,6 +81,14 @@ export const PEOPLE_PLATFORM = "people";
 export function asksPeopleOfCompanies(steps: ReadonlyArray<{ key: string; parent: string | null; platform: string }>): boolean {
   return steps.some((s) => s.parent !== null && s.platform === PEOPLE_PLATFORM && steps.find((p) => p.key === s.parent)?.platform === COMPANIES_PLATFORM);
 }
+/** The same structure with its facts, as the planning model wrote them (its own titles and the count per company it read, never a word list): what the plan check needs to treat the people of the companies as a step. */
+export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; count: { per_parent: number | null } }>): { noun_ar: string; parent_ar: string; per_parent: number | null } | null {
+  for (const s of steps) {
+    const parent = s.parent !== null && s.platform === PEOPLE_PLATFORM ? steps.find((p) => p.key === s.parent) : undefined;
+    if (parent && parent.platform === COMPANIES_PLATFORM) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent };
+  }
+  return null;
+}
 
 /** What a person row of a source gives the e-mail and phone finders: a professional page (a LinkedIn profile), a name, a domain. Read from the catalog's own field names and example answer (values like «linkedin.com/in/…»), never from the request. */
 export type PersonIdentifier = "linkedin" | "name" | "domain";

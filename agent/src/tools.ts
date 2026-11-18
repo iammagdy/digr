@@ -111,6 +111,8 @@ export const PEOPLE_SEND_BACKS_MAX = 3;
 export interface ToolContext {
   /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
   peopleOfCompanies?: boolean;
+  /** The people step the planner understood, with its own title and count (DT-20261118-05): the plan check treats it as a step the customer asked for, whatever the wording. */
+  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null };
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */
@@ -698,7 +700,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
           isContactSource,
           pricingSettings: ctx.pricingSettings,
-          childStepSources: (noun: string) => childStepSourcesFor(noun, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed),
+          ...(ctx.understoodPeople ? { understoodPeople: ctx.understoodPeople } : {}),
+          childStepSources: (noun: string) => { const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
           contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
           mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
           contactAids: (kind: "email" | "phone") => {

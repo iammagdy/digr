@@ -3,7 +3,7 @@ import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPL
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
 import { isLanguageColumn } from "./languageLabel";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
-import { isPeopleStage } from "./people";
+import { isPeopleStage, stageKindByCapability } from "./people";
 import { buildCompanySteps, buildContactSteps, isEmailColumn, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
@@ -14,6 +14,7 @@ import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField }
 import { CONTRACT_ONLY_CLASSES, REPLY_TO_KEY, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
+import { isPeopleNoun } from "./childSources";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { revisionChangesLatestFirst } from "./revisionText";
@@ -174,6 +175,8 @@ export interface PlanLookup {
   pricingSettings?: MissionPricingSettings;
   /** The catalog sources that can carry out a step the request asks per parent (the people of a company), cheapest first: a plan may not call such a step «unserved» while one of them was never tried. */
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
+  /** THE REQUEST'S STRUCTURE as the planning model understood it (a people step under a companies step), read from its understanding, never from the words: the people of the companies are asked for whatever the customer's wording, so the check below treats them as a step. */
+  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null };
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
@@ -465,6 +468,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, { impliedPerParent: impliedCount });
+  if (lookup.understoodPeople && !perParentAsks.some((q) => isPeopleNoun(q.noun ?? "") || isPeopleNoun(q.of ?? ""))) { const u = lookup.understoodPeople; perParentAsks.push({ value: u.per_parent ?? impliedCount, noun: u.noun_ar, digits: false, perEach: true, of: null, parent: u.parent_ar, ...(u.per_parent === null ? { implied: true } : {}) }); }
   /** The implied ask (people of the companies, no number) a child stage of this plan serves: its count is code's default and the card says so. */
   let impliedUsed: { noun: string; parent: string } | null = null;
   // THE STAGES WHOSE ITEMS THE CUSTOMER ASKED FOR (the counted noun and every per-parent noun) ARE DELIVERED, whatever the model marked: only items nobody asked for may be an intermediate stage (checked again below, on the finished plan)
@@ -768,8 +772,11 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       }
     }
 
+    // A PEOPLE STAGE IS KNOWN BY ITS TOOL, NOT BY ITS TITLE (rule 9; D-0086): a stage whose catalog capability is a people-of-company capability carries it, so the contact steps and the contact check never depend on the model's wording of the title
+    const peopleCapability = parentKey !== null ? (lookup.endpointCapability?.(endpointId) ?? null) : null;
     priced.push({
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
+      ...(peopleCapability !== null && stageKindByCapability(peopleCapability) === "people" && !isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(raw.role_preference ? { role_preference: true } : {}) }) ? { capability: peopleCapability } : {}),
       ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
       ...(roleOf ? { role_preference: { role: roleOf.key } } : {}),
       ...(parentKey !== null && roleOf?.key === "manager" && raw.deliver === true && measuredCalls.length > 0 ? { pages_per_parent: AGENT_PEOPLE_PAGES_DEFAULT, page_cost_usd: measuredCalls.reduce((n, c) => n + Math.max(0, c.costUsd), 0) / measuredCalls.length } : {}),
@@ -825,6 +832,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     const note = input.contacts_note_ar === undefined ? null : checkCustomerText(input.contacts_note_ar, { maxChars: 300 });
     if (note && note.issues.length) issues.push(`contacts_note_ar: ${note.issues.join("; ")}`);
     else if (!hasContactStage && !note) issues.push(`the customer asked for ${wants.email ? "work e-mails" : ""}${wants.email && wants.phone ? " and " : ""}${wants.phone ? "phones" : ""}: add a CONTACT STAGE per person or company (a contact source of the catalog or the page parsers; mark its e-mail / phone columns with kind "work_email" / "phone"), sample it, and deliver verified values only; if no source can give them, pass contacts_note_ar (ONE Arabic sentence saying honestly why they are not in the plan)`);
+    // A MODEL'S «UNAVAILABLE» IS NEVER TRUSTED BY ITSELF (DT-20261118-05 P2): the planner understood a people step and the catalog has finders for what was asked, so the note is refused and the people stage is asked for (code adds the finder steps)
+    else if (note && !hasContactStage && lookup.understoodPeople && ((wants.phone && (lookup.contactFinders?.("phone") ?? []).length > 0) || (wants.email && (lookup.contactFinders?.("email") ?? []).length > 0))) issues.push(`contacts_note_ar: the catalog HAS finders for the ${wants.email && wants.phone ? "e-mails and phones" : wants.email ? "e-mails" : "phones"} of the people the customer asked for (${[...(wants.email ? lookup.contactFinders?.("email") ?? [] : []), ...(wants.phone ? lookup.contactFinders?.("phone") ?? [] : [])].map((f) => f.id).join(", ")}): add the people stage under the companies (code adds the finder steps); the note is not a reason`);
     else if (note && !hasContactStage) notes.push(note.text);
     // AN E-MAIL ASK IS NEVER DROPPED SILENTLY (live DT-20261118-02 F2: a phone column passed the check above and the file had no e-mail column): a stage with an e-mail column, a people stage (its finder step is added by code), or a company stage that code gives the company e-mail step
     const emailCovered = priced.some((s) => s.columns.some((c) => c.kind === "work_email") || (s.deliver && isPeopleStage(s))) || ((lookup.mailboxListers?.() ?? []).length > 0 && priced.some((s) => s.deliver && s.parent_key === null && isCompanyStage(s)));
