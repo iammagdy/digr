@@ -4,6 +4,8 @@ import { verifyCronSecret, resolveInternalBaseUrl, createInternalWorkerAuthHeade
 import { DRIVER_DISPATCH_TIMEOUT_MS, MAX_IDLE_MS, MAX_JOBS_PER_TICK, MIN_IDLE_MS } from "../../../../lib/server/driverLimits";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
 import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
+import { reconcileJobGroups, TICK_BUDGET_MS } from "../../../../lib/server/multiProvider/jobGroups";
+import { withTimeout, TIMED_OUT } from "../../../../lib/server/multiProvider/jobGroupShared";
 import { recordDriverTick } from "../../../../lib/server/driverHeartbeat";
 import { driverModeFromTick } from "../../../../lib/driverMode";
 import { defaultModelPlannerConfig } from "../../../../lib/modelPlanner/chatTurn";
@@ -61,7 +63,7 @@ export async function GET(req: NextRequest) {
   }
 
   // In parallel: each chunk can run for most of a minute, and the worker claims a job with a lease, so two ticks never double-run one.
-  const [results, stalledNotices] = await Promise.all([
+  const [results, stalledNotices, groupsRaw] = await Promise.all([
     Promise.all(due.map(async (job) => {
       try {
         const outcome = await dispatchWorkerChunk(baseUrl, job.id, job.step ?? 0, createInternalWorkerAuthHeaders(job.id), DRIVER_DISPATCH_TIMEOUT_MS);
@@ -71,8 +73,10 @@ export async function GET(req: NextRequest) {
       }
     })),
     notifyStalledJobs(admin, now),
+    withTimeout(reconcileJobGroups(admin, { nowMs: now, source: "drive", budgetMs: TICK_BUDGET_MS }), TICK_BUDGET_MS).catch(() => null),
   ]);
   await recordDriverTick(admin, results.filter((result) => result.started).length, now);
+  const groups = groupsRaw === TIMED_OUT ? null : groupsRaw;
   // Planning sessions whose page has gone (or whose step died) are continued here: one session per tick, inside what is left of this call (the tick above already proved the driver alive).
   const planning = await resumeStalePlanningSessions({ client: admin, tables: admin, config: defaultModelPlannerConfig(), nowMs: Date.now(), limit: 1, budgetMs: Math.max(10_000, 50_000 - (Date.now() - now)) }).catch(() => ({ considered: 0, stepped: 0, finished: 0 }));
   return NextResponse.json({
@@ -82,6 +86,7 @@ export async function GET(req: NextRequest) {
     dispatched: results.length,
     started: results.filter((result) => result.started).length,
     stalledNotices,
+    groups,
     planning,
     results,
   });

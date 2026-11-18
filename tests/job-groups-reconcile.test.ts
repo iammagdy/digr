@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHash } from "node:crypto";
+import { NextRequest } from "next/server";
 import {
   TICK_BUDGET_MS,
   MIN_LEFT_FOR_CLAIM_MS,
@@ -24,6 +25,47 @@ import {
 } from "../src/functions/shared/providerSpend";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { frozenPathFor } from "../src/lib/server/multiProvider/jobGroupShared";
+
+let currentDriveWorld: any = null;
+let currentWatchdogWorld: any = null;
+
+vi.mock("../src/lib/server/multiProvider/jobGroups", async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    reconcileJobGroups: vi.fn(async (admin: any, opts: any) => {
+      if (
+        (currentDriveWorld && currentDriveWorld.neverResolves === "from(job_groups)") ||
+        (currentWatchdogWorld && currentWatchdogWorld.neverResolves === "from(job_groups)")
+      ) {
+        return new Promise(() => {});
+      }
+      return actual.reconcileJobGroups(admin, opts);
+    }),
+  };
+});
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createAdminClient: vi.fn(() => currentDriveWorld?.admin ?? makeWorld().admin),
+}));
+
+vi.mock("../src/lib/server/workerDispatch", () => ({
+  dispatchWorkerChunk: vi.fn(async () => ({ started: false })),
+}));
+
+vi.mock("../src/lib/server/cronAuth", () => ({
+  verifyCronSecret: vi.fn(() => true),
+  resolveInternalBaseUrl: vi.fn(() => "http://x"),
+  createInternalWorkerAuthHeaders: vi.fn(() => ({})),
+}));
+
+vi.mock("../src/lib/server/jobStallNotifier", () => ({
+  notifyStalledJobs: vi.fn(async () => 0),
+}));
+
+vi.mock("../src/lib/modelPlanner/planningSession", () => ({
+  resumeStalePlanningSessions: vi.fn(async () => ({ considered: 0, stepped: 0, finished: 0 })),
+}));
 
 const NOW0 = Date.parse("2026-11-20T00:00:00Z");
 const w_all_rpc_names_seen_in_this_file = new Set<string>();
@@ -520,6 +562,19 @@ function makeWorld() {
     },
     from: (table: string) => {
       tables.push(table);
+      if (table === "driver_heartbeat") {
+        return {
+          upsert: async () => ({ error: null }),
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { last_tick_at: new Date(Date.now()).toISOString() },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
       let isCountHead = false;
       let statusFilter: string | null = null;
       let deadlineLtFilter: string | null = null;
@@ -551,6 +606,10 @@ function makeWorld() {
           inVals = vals;
           return builder;
         },
+        or: () => builder,
+        gt: () => builder,
+        order: () => builder,
+        limit: () => builder,
         maybeSingle: () => {
           if (neverResolves === `from(${table})`) {
             return new Promise(() => {});
@@ -609,6 +668,9 @@ function makeWorld() {
           if (table === "jobs") {
             if (abortAfterReads) {
               throw new Error("abortAfterReads");
+            }
+            if (inCol === "status") {
+              return Promise.resolve(finish({ data: [], error: null }));
             }
             const allJobs: any[] = [];
             for (const jList of parts.values()) {
@@ -1583,5 +1645,63 @@ describe("T10: fairness through F4", () => {
     w.errors.length = 0;
     await run(w);
     expect(w.errors.some((e) => e[0] === "[job-groups:overdue]")).toBe(false);
+  });
+});
+
+function installDriveMocks() {
+  vi.resetModules();
+  const w = makeWorld();
+  w.fail.r00 = { code: "42P01", message: "x" };
+  currentDriveWorld = w;
+  return w;
+}
+
+const driveRequest = () => new NextRequest("http://x/api/cron/drive");
+
+describe("T11: drive route", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+    installDriveMocks();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the drive handler adds `groups` and nothing else changes; with the SQL absent (R00 answers 42P01) groups is the not-installed result and the rest of the JSON equals today's", async () => {
+    const { GET } = await import("../src/app/api/cron/drive/route");
+    const res = await GET(driveRequest());
+    const body = await res.json();
+    const { groups, ...rest } = body;
+    expect(res.status).toBe(200);
+    expect(groups).toEqual({ installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 });
+    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "planning", "results", "started", "stalledNotices", "success"].sort());
+  });
+
+  it("(q2) an unknown error shape: the handler never throws and the JSON equals today's plus `groups` (null or a zero result)", async () => {
+    const w = installDriveMocks();
+    w.fail.r00 = { code: "XX999", message: "boom" };
+    w.fail.claim = { code: "XX999", message: "boom" };
+    const { GET } = await import("../src/app/api/cron/drive/route");
+    const res = await GET(driveRequest());
+    const { groups, ...rest } = await res.json();
+    expect(res.status).toBe(200);
+    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "planning", "results", "started", "stalledNotices", "success"].sort());
+    expect(groups === null || groups.claims === 0).toBe(true);
+    expect(w.errors.length).toBeLessThanOrEqual(1);
+  });
+
+  it("(g)/(n) a never-resolving reconcile: the handler answers within 45 s of fake time with groups null; the dispatch results are intact", async () => {
+    const w = installDriveMocks();
+    w.neverResolves = "from(job_groups)";
+    const { GET } = await import("../src/app/api/cron/drive/route");
+    const p = GET(driveRequest());
+    await vi.advanceTimersByTimeAsync(TICK_BUDGET_MS);
+    const res = await p;
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.groups).toBeNull();
+    expect(Date.now() - NOW0).toBeLessThanOrEqual(TICK_BUDGET_MS);
+    expect(Array.isArray(body.results)).toBe(true);
   });
 });
