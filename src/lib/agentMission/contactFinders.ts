@@ -12,6 +12,7 @@ import { isCompanyStage } from "./entities";
 import { emailOnOtherDomain } from "./emailVerification";
 import { isRoleMailbox } from "./people";
 import { isPersonalMailDomain } from "../multiProvider/policy";
+import { COMPANY_EMAIL_STATUS_TITLE_AR, COMPANY_EMAIL_TITLE_AR } from "./taskContracts";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -46,6 +47,8 @@ export interface ContactStep {
   type_key?: string;
   /** Set on a step of the COMPANY (audit 2026-11, taskContracts.ts): `stage_key` is the stage whose rows are the companies; the e-mail step looks up the company's own role mailbox (`finders` are mailbox listers), the phone step the company's HQ phone (`company_phone` are the map searches). Absent: a step of the people of a stage. */
   level?: "company";
+  /** A company e-mail step of a COMPANIES-ONLY request (no people under the companies): its two columns are added by withContactColumns (a companies and people delivery gets them from taskContracts.ts). */
+  own_columns?: true;
 }
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
@@ -195,6 +198,9 @@ export function buildContactSteps(
 export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string; type_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
   // (a step of the COMPANY has its own columns, taskContracts.ts: it never adds a person's e-mail or phone column to the company's stage)
   const mine = (steps ?? []).filter((s) => s.stage_key === stageKey && s.level === undefined);
+  // THE COMPANY'S OWN E-MAIL OF A COMPANIES-ONLY REQUEST: its two columns are added here when the stage holds no e-mail column (a companies and people delivery gets them from taskContracts.ts)
+  const companyEmail = (steps ?? []).find((s) => s.stage_key === stageKey && s.level === "company" && s.kind === "email" && s.own_columns === true);
+  if (companyEmail && !columns.some((c) => /mail/i.test(c.key) || /(إيميل|ايميل|بريد)/.test(c.title_ar))) return [...withContactColumns(stageKey, columns, mine), { key: companyEmail.column_key, title_ar: COMPANY_EMAIL_TITLE_AR } as C, { key: companyEmail.status_key, title_ar: COMPANY_EMAIL_STATUS_TITLE_AR, status_of: companyEmail.column_key } as C];
   if (mine.length === 0) return [...columns];
   let out: C[] = [...columns];
   for (const s of mine) {
@@ -352,19 +358,21 @@ export function buildCompanySteps(
   stages: ReadonlyArray<{ key: string; title_ar: string; parent_key: string | null; deliver: boolean; role_preference?: unknown }>,
   listers: ReadonlyArray<FinderInfo>,
   aids: (kind: FinderKind) => ContactAids,
+  wants: { email: boolean; hasEmailColumn?: (stageKey: string) => boolean } = { email: false },
 ): ContactStep[] {
   const out: ContactStep[] = [];
   for (const st of stages) {
     if (!st.deliver || st.parent_key !== null || !isCompanyStage(st)) continue;
-    if (!stages.some((p) => p.deliver && p.parent_key === st.key && isPeopleStage(p))) continue;
+    const withPeople = stages.some((p) => p.deliver && p.parent_key === st.key && isPeopleStage(p));
+    if (!withPeople && (!wants.email || wants.hasEmailColumn?.(st.key) === true)) continue;
     if (listers.length > 0) {
       const verifiers = aids("email").verifiers;
       const verifierUsd = verifiers && verifiers.length > 0 ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0;
       const perCompany = listers[0].usd + verifierUsd;
-      out.push({ kind: "email", level: "company", stage_key: st.key, column_key: COMPANY_EMAIL_KEY, status_key: statusKeyOf(COMPANY_EMAIL_KEY), per_person_usd: perCompany, max_person_usd: perCompany, finders: listers.slice(0, FINDERS_PER_STEP), ...(verifiers && verifiers.length > 0 ? { verifiers } : {}) });
+      out.push({ kind: "email", level: "company", stage_key: st.key, column_key: COMPANY_EMAIL_KEY, status_key: statusKeyOf(COMPANY_EMAIL_KEY), per_person_usd: perCompany, max_person_usd: perCompany, finders: listers.slice(0, FINDERS_PER_STEP), ...(verifiers && verifiers.length > 0 ? { verifiers } : {}), ...(withPeople ? {} : { own_columns: true as const }) });
     }
     const maps = aids("phone").company_phone;
-    if (maps && maps.length > 0) {
+    if (withPeople && maps && maps.length > 0) {
       const first = chainPriceUsd(maps, 1);
       out.push({ kind: "phone", level: "company", stage_key: st.key, column_key: COMPANY_PHONE_KEY, status_key: statusKeyOf(COMPANY_PHONE_KEY), per_person_usd: first, max_person_usd: Math.max(first, chainPriceUsd(maps, FINDERS_PER_STEP)), finders: [], company_phone: maps });
     }
