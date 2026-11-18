@@ -37,6 +37,7 @@ vi.mock("../src/lib/supabase/server", () => {
     createAdminClient: vi.fn(() => ({
       rpc: async () => { world.writes.push("rpc"); if (world.noDbWrites) throw new Error("DATABASE WRITE (rpc)"); return { data: null, error: null }; },
       from: (table: string) => {
+        if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
         if (table === "jobs") return chain(() => ({ data: { id: "job_old1", user_id: "owner-1", status: "completed", delivered_units: 3, charged_credits: 9, reserved_credits: 9, target_volume_max: 3, params: {}, endpoint_id: "x", created_at: "2026-09-01T10:00:00Z", finished_at: "2026-09-01T10:30:00Z" }, error: null }), table);
         if (table === "artifact_versions") return chain(() => ({ data: world.versions, error: null }), table);
         return chain(() => ({ data: table === "missions" ? null : [], error: null }), table);
