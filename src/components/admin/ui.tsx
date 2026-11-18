@@ -42,6 +42,25 @@ export function SubTabs<T extends string>({ label, value, items, onChange, idPre
   );
 }
 
+/** Filter chips of a list (DT-20261118-06 phase 1B): one row that scrolls sideways on a phone, each with its count (Arabic-Indic digits). One is selected at a time. */
+export function SegmentChips<T extends string>({ label, items, value, counts, onChange }: { label: string; items: Array<[T, string]>; value: T; counts?: Partial<Record<T, number>>; onChange: (v: T) => void }) {
+  return (
+    <div role="tablist" aria-label={label} className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-[14px] bg-sf2 p-1">
+      {items.map(([id, text]) => {
+        const on = value === id;
+        const n = counts?.[id];
+        return (
+          <button key={id} type="button" role="tab" aria-selected={on} onClick={() => onChange(id)}
+            className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-[10px] border-0 px-3 text-xs font-semibold"
+            style={{ background: on ? "var(--sf)" : "transparent", color: on ? "var(--ink)" : "var(--mut)", boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>
+            {text}{typeof n === "number" && <span className="ms-1 opacity-60">{formatAr(n)}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── DT-20261118-06 phase 0: one card, one tile, one meter, one chart, one ranked list, one empty and one error sentence for every admin screen. Logical properties only. ── */
 
 export type CardTone = "default" | "warn" | "bad";
