@@ -1,6 +1,14 @@
 -- 03_operator_close_open_groups.sql
 -- Close all currently open job groups by operator.
--- Run 04_report_open_groups.sql first to ensure no parts are awaiting freeze.
+--
+-- OPERATOR PROCEDURE (Plain, Numbered Steps):
+-- 1. Before running 03, run 04_report_open_groups.sql in Supabase SQL Editor.
+-- 2. Check the FIRST row (R0: summary):
+--    - It must say OK_TO_RUN_03.
+--    - If it says WAIT, a part is awaiting freeze (R1 rows with a WAIT flag and current_cursor = completed):
+--      do NOT run 03; run 04 again every 1-2 minutes until the first row says OK_TO_RUN_03.
+-- 3. Run this script (03_operator_close_open_groups.sql) ONLY when no WAIT row remains (summary says OK_TO_RUN_03).
+-- 4. Send the screenshot of each result to COMMANDER.
 
 SELECT g.id,
        r->>'delivered_total' AS delivered,
