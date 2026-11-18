@@ -131,12 +131,11 @@ export async function POST(
     if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
     }
-    if (!["done", "completed"].includes(String(jobDoc.status).toLowerCase())) {
-      return NextResponse.json({ success: false, error: "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب." }, { status: 409 });
-    }
-
     // 3. A delivered COMPILED MISSION writes its methodology from the file it delivered (round 21); every other job keeps the saved-data path below, unchanged.
     const mission = await methodologyMissionOfJob(adminClient, { jobId, userId: jobDoc.user_id });
+    if (mission && !["done", "completed"].includes(String(jobDoc.status).toLowerCase())) {
+      return NextResponse.json({ success: false, error: "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب." }, { status: 409 });
+    }
 
     // Read the completed dataset and render the add-on before charging. A
     // failed read or generation therefore never changes the customer's balance.
@@ -157,6 +156,9 @@ export async function POST(
       if (groupDataset.kind === "refuse") return NextResponse.json({ success: false, error: groupDataset.errorAr }, { status: groupDataset.status });
       if (groupDataset.kind === "frozen") {
         try { rawParsed = JSON.parse(groupDataset.text); } catch { return NextResponse.json({ success: false, error: "تعذر العثور على بيانات الطلب المكتملة؛ لم يتم خصم أي نقاط." }, { status: 409 }); }
+      }
+      if (!["done", "completed"].includes(String(jobDoc.status).toLowerCase())) {
+        return NextResponse.json({ success: false, error: "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب." }, { status: 409 });
       }
       try {
         const candidatePaths = [
