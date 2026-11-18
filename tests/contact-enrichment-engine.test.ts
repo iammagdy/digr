@@ -101,6 +101,18 @@ describe("the engine fills the cells of the people it delivered", () => {
     expect(cellsOf(w.items, "p5")).toMatchObject({ email: "", email_status: "", phone: "", phone_status: "" });
     expect(w.items.acceptedRows("people").length).toBe(5);
   });
+  it("DT-20261118-03 F1-d: the company's own role mailbox (info@ on the person's company domain) is never a person's e-mail; the next finder is asked", async () => {
+    const w = await world({ people: [person(1, "General Manager")], steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }], answers: (ep) => (ep === EMAIL_A.id ? { email: "info@orascom-em.com.eg" } : ep === EMAIL_B.id ? { email: "ahmed@orascom-em.com.eg" } : null) });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "ahmed@orascom-em.com.eg", email_status: "غير موثّق" });
+    expect(w.calls.map((c) => c.endpoint)).toEqual([EMAIL_A.id, EMAIL_B.id]);
+  });
+  it("DT-20261118-03 F1-d: a General Manager row keeps gm@<domain> (not withheld as a generic mailbox)", async () => {
+    const w = await world({ people: [person(1, "General Manager")], steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }], answers: (ep) => (ep === EMAIL_A.id ? { email: "gm@orascom-em.com.eg" } : null) });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "gm@orascom-em.com.eg", email_status: "غير موثّق" });
+    expect(w.calls.map((c) => c.endpoint)).toEqual([EMAIL_A.id]);
+  });
   it("decision-maker titles first: with money for two lookups only, the chief executive and the general manager are looked up", async () => {
     // a hit costs 0.0005; a ceiling that leaves room for two hits only
     const w = await world({ ceilingUsd: 0.0011, steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.0005, finders: [EMAIL_A] }], answers: (ep, p) => (ep === EMAIL_A.id ? hitEmail(String(p.person_linkedin_url).split("/in/")[1]) : null) });
