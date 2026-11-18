@@ -2459,3 +2459,47 @@ describe("T-M chain (DT-06)", () => {
     });
   }
 });
+
+describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", () => {
+  const rpc = async (name: string, args: Record<string, unknown>) => ((await import("../src/lib/supabase/server")) as any).createAdminClient().rpc(name, args);
+
+  it("F2a first release", async () => {
+    resetDb({ target: 5 });
+    const first = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "first text", p_force: true });
+    expect(first.error).toBeNull();
+    expect(first.data).toEqual({ success: true, already_released: false, job_id: JOB, user_id: "user_1", released_credits: 575 });
+    expect(db.jobs[0]).toMatchObject({ status: "failed", charged_credits: 0, error_message: "first text", lease_until: null });
+    expect(db.ledger).toEqual([{ id: `rel_${JOB}`, job_id: JOB, user_id: "user_1", type: "release", delta: 575, by: "release_job_atomic" }]);
+    expect(netDebit()).toBe(0);
+  });
+
+  it("F2b second release writes nothing", async () => {
+    resetDb({ target: 5 });
+    const first = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "first text", p_force: true });
+    const second = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "second text", p_force: true });
+    expect(second.data).toEqual({ success: true, already_released: true, job_id: JOB, released_credits: 575 });
+    expect("user_id" in second.data).toBe(false);
+    expect(db.jobs[0].error_message).toBe("first text");
+    expect(db.ledger).toHaveLength(1);
+    expect(releaseAnswers().map((a: any) => a.already_released)).toEqual([false, true]);
+  });
+
+  it("F2c a completed job raises", async () => {
+    resetDb({ target: 5 });
+    db.jobs[0].status = "completed";
+    const res = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "x", p_force: true });
+    expect(res.data).toBeNull();
+    expect(String(res.error?.message)).toContain("Cannot release already completed job");
+    expect(db.ledger).toEqual([]);
+    expect(db.jobs[0].status).toBe("completed");
+  });
+
+  it("F2d reads db.reserved live", async () => {
+    resetDb({ target: 5 });
+    db.reserved = 1000;
+    const first = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "first text", p_force: true });
+    expect(first.data.released_credits).toBe(1000);
+    expect(db.ledger[0].delta).toBe(1000);
+    expect(netDebit()).toBe(0);
+  });
+});
