@@ -20,6 +20,7 @@ const db = vi.hoisted(() => ({
   corruptDownloadPaths: new Set<string>(),
   // the body of every step file ever uploaded: the route deletes the step files once the job has settled
   stepBodies: new Map<string, string>(),
+  resultExistedAtSettle: [] as boolean[],
   // DT-20261117-06 H2 (T-M chain): H1's `record_chunk_failure` counter, the seam inside the 5th call, the jobs compare-and-set fake and its switches, and a `complete_chunk` throw switch. The defaults keep every existing test unchanged.
   failCount: 0,
   onFifthFailure: null as null | ((job: any) => void),
@@ -119,16 +120,21 @@ vi.mock("../src/lib/supabase/server", () => ({
       }
       if (name === "settle_job_atomic") {
         const settledJob = db.jobs.find((j) => j.id === args.p_job_id);
+        db.resultExistedAtSettle.push(db.results.has(`user_1/${args.p_job_id}/result.xlsx`));
         const charged = Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved);
         // like the SQL (20261017175500_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
         if (settledJob?.status === "completed") return { data: { success: true, already_settled: true, reserved_credits: db.reserved, charged_credits: settledJob.charged_credits ?? charged, delivered_units: db.deliveredUnits }, error: null };
+        if (settledJob && settledJob.status !== "running") return { data: null, error: { message: `Cannot settle job ${args.p_job_id} with status ${settledJob.status} (must be running)` } };
         if (settledJob) Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
       // DT-20261117-04 CI r1: record_chunk_failure and release_job_atomic clear the job's lease, as the real SQL functions do; otherwise the fake's own «lease not expired» rule refuses the next claim of the same test.
       if (name === "release_job_atomic") {
         const releasedJob = db.jobs.find((j) => j.id === args.p_job_id);
-        if (releasedJob) releasedJob.lease_until = null;
+        if (releasedJob) {
+          releasedJob.lease_until = null;
+          releasedJob.status = "failed";
+        }
         return { data: { success: true, released_credits: db.reserved }, error: null };
       }
       if (name === "record_chunk_failure") {
@@ -250,7 +256,7 @@ function resetDb(over: { target?: number } = {}) {
   db.costs = []; db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.reserveDeniedFor = new Set();
   db.failCount = 0; db.onFifthFailure = null; db.casError = null; db.casThrows = false; db.updates = []; db.throwCompleteChunkAt = 0; db.completeCalls = 0;
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
-  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear();
+  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear(); db.resultExistedAtSettle = [];
 }
 
 describe("worker: multi-provider chain job (fake providers)", () => {
@@ -430,6 +436,228 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
   }
+  type Interleaving = "I1" | "I2" | "I3" | "I4";
+  /**
+   * O = the old worker, W = the new one after the lease expired. Events: uO/uW = their uploads of ${JOB}/step_0.json,
+   * cO/cW = their complete_chunk. O commits FIRST (cO < cW). Reachable orders: I1 uO<uW<cO<cW, I2 uW<uO<cO<cW,
+   * I3 uO<cO<uW<cW. I4 uO<cO<uW<uF_O<cW, where uF_O is O's re-publish after its commit (route.ts :2013-2020),
+   * is the 4th cell. The pair «uO after uW» and «uW after cO» is unreachable for the primary upload: the route uploads before it commits.
+   */
+  async function raceOFirst(opts: {
+    mode: RaceMode;
+    interleaving: Interleaving;
+    oRows: number;
+    wRows: number;
+    oDies?: boolean;
+    target?: number;
+  }): Promise<{
+    o: { status: number; body: any } | null;
+    w: { status: number; body: any };
+    lastBody: string;
+    resultText: string | null;
+    costsAtPause: number;
+  }> {
+    if (opts.interleaving === "I4" && opts.oDies) {
+      throw new Error("I4 requires oDies to be false");
+    }
+
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+
+    let uploadCallCount = 0;
+    let completeChunkCallCount = 0;
+
+    let oHeld1 = false;
+    let releaseO1!: () => void;
+    const gateO1 = new Promise<void>((r) => { releaseO1 = r; });
+
+    let wHeld = false;
+    let releaseW!: () => void;
+    const gateW = new Promise<void>((r) => { releaseW = r; });
+
+    let oHeld2 = false;
+    let releaseO2!: () => void;
+    const gateO2 = new Promise<void>((r) => { releaseO2 = r; });
+
+    const poll = async (predicate: () => boolean, desc: string) => {
+      for (let i = 0; i < 200; i++) {
+        if (predicate()) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      if (!predicate()) throw new Error(`Timed out waiting for ${desc}`);
+    };
+
+    prepareJob(opts.mode, opts.target ?? 5);
+
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origStorage = client.storage;
+      const origRpc = client.rpc;
+
+      (client as any).storage = {
+        from: (bucket: string) => {
+          const b = origStorage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string, body: any, o: any) => {
+              if (path === `${JOB}/step_0.json`) {
+                uploadCallCount++;
+                const callNum = uploadCallCount;
+                if (opts.interleaving === "I2" && callNum === 1) {
+                  oHeld1 = true;
+                  await gateO1;
+                } else if ((opts.interleaving === "I3" || opts.interleaving === "I4") && callNum === 2) {
+                  wHeld = true;
+                  await gateW;
+                } else if (opts.interleaving === "I4" && callNum === 3) {
+                  oHeld2 = true;
+                  await gateO2;
+                }
+              }
+              return b.upload(path, body, o);
+            },
+          };
+        },
+      };
+
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "complete_chunk") {
+          completeChunkCallCount++;
+          const callNum = completeChunkCallCount;
+          if ((opts.interleaving === "I1" || opts.interleaving === "I3" || opts.interleaving === "I4") && callNum === 1) {
+            oHeld1 = true;
+            await gateO1;
+          } else if (opts.interleaving === "I1" && callNum === 2) {
+            wHeld = true;
+            await gateW;
+          } else if (opts.interleaving === "I2" && callNum === 1) {
+            wHeld = true;
+            await gateW;
+          }
+
+          const result = await origRpc(name, args);
+
+          const oCommitCall = opts.interleaving === "I2" ? 2 : 1;
+          if (opts.oDies && callNum === oCommitCall) {
+            await new Promise<never>(() => {});
+          }
+          return result;
+        }
+        return origRpc(name, args);
+      });
+
+      return client;
+    });
+
+    try {
+      arrangeInvocation(opts.mode, "O", opts.oRows);
+      const oPromise = postChunk();
+      await poll(() => oHeld1, "O to be held");
+
+      db.jobs[0].lease_until = new Date(Date.now() - 60_000).toISOString();
+      const costsAtPause = db.costs.length;
+      arrangeInvocation(opts.mode, "W", opts.wRows);
+      const wPromise = postChunk();
+      await poll(() => wHeld, "W to be held");
+
+      releaseO1();
+
+      let o: { status: number; body: any } | null = null;
+      if (opts.interleaving === "I4") {
+        await poll(() => oHeld2, "O held at upload #3");
+        releaseW();
+        const wRes = await wPromise;
+        const w = { status: wRes.status, body: await wRes.json() };
+        releaseO2();
+        const oRes = await oPromise;
+        o = { status: oRes.status, body: await oRes.json() };
+        return {
+          o,
+          w,
+          costsAtPause,
+          lastBody: db.stepBodies.get(`${JOB}/step_0.json`) ?? "",
+          resultText: await resultText(),
+        };
+      }
+
+      if (opts.oDies) {
+        await poll(() => db.step >= 1, "db.step >= 1");
+        o = null;
+      } else {
+        const oRes = await oPromise;
+        o = { status: oRes.status, body: await oRes.json() };
+      }
+
+      releaseW();
+      const wRes = await wPromise;
+      const w = { status: wRes.status, body: await wRes.json() };
+
+      return {
+        o,
+        w,
+        costsAtPause,
+        lastBody: db.stepBodies.get(`${JOB}/step_0.json`) ?? "",
+        resultText: await resultText(),
+      };
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  }
+  type Outcome = { committed: number; settles: number; releases: number; charge: number; rows: number; releaseText: string | null };
+  async function ptOutcome(): Promise<Outcome> {
+    const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
+    let rows = 0;
+    if (buf) {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf as any);
+      rows = Math.max(0, wb.worksheets[0].rowCount - 1);
+    }
+    const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+    const lastRel = relCalls.length > 0 ? relCalls[relCalls.length - 1] : null;
+    return {
+      committed: db.deliveredUnits,
+      settles: rpcCount("settle_job_atomic"),
+      releases: rpcCount("release_job_atomic"),
+      charge: db.jobs[0].charged_credits ?? 0,
+      rows,
+      releaseText: lastRel ? lastRel.args.p_error_message ?? null : null,
+    };
+  }
+  async function sweepAfter31Minutes(): Promise<void> {
+    const past31 = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    Object.assign(db.jobs[0], { lease_until: past31, updated_at: past31, step: db.step, delivered_units: db.deliveredUnits });
+    await watchdogSweep();
+  }
+  function hangingTransport(): { hung: { count: number } } {
+    const hung = { count: 0 };
+    const hang = () => {
+      hung.count += 1;
+      return new Promise<never>(() => {});
+    };
+    setChainTransportForTesting({
+      fetchFn: hang as any,
+      robotsFetch: hang as any,
+      keys: KEYS,
+      tregCall: hang as any,
+    });
+    setProviderAdapterForTesting(hang as any);
+    return { hung };
+  }
+  async function waitUntil(cond: () => boolean, ms = 5000): Promise<void> {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > ms) throw new Error("waitUntil timed out");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+  async function startAndHang(hung: { count: number }): Promise<void> {
+    const before = hung.count;
+    void postChunk();
+    await waitUntil(() => hung.count > before);
+  }
+  const expireLease = () => {
+    db.jobs[0].lease_until = new Date(Date.now() - 60_000).toISOString();
+  };
   /** The winner commits and DIES (its answer never returns: no catch, no release); nobody resumes; 31 minutes later the REAL watchdog runs. */
   async function dyingWinnerThenWatchdog(mode: RaceMode, goesOn = false) {
     const supabase = await import("../src/lib/supabase/server");
@@ -1205,6 +1433,75 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
   });
 
 
+  it("T-W harness: a MAIN-mode terminal invocation settles ceil(units x unit) through the real route", async () => {
+    prepareJob("main", 2); arrangeInvocation("main", "W", 2);
+    const res = await postChunk(); const body = await res.json();
+    expect(res.status).toBe(200); expect(body.done).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(db.jobs[0].charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+  });
+
+  it.each(["I1", "I2", "I3"] as const)("T-W B4 O-first, O survives (%s): committer's units are charged, the winner delivers its own rows, W is already-settled", async (il) => {
+    const r = await raceOFirst({ mode: "chain", interleaving: il, oRows: 3, wRows: 2 });
+    expect(r.o!.status).toBe(200); expect(r.o!.body.done).toBe(true); expect(r.o!.body.deliveredUnits).toBe(3);
+    expect(r.o!.body.settle.charged_credits).toBe(Math.ceil(3 * db.unitPrice));
+    expect(r.w.status).toBe(200); expect(r.w.body.alreadySettled).toBe(true);
+    expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(db.resultExistedAtSettle).toEqual([true]);                      // the result file existed BEFORE settle
+    expect(db.jobs[0].charged_credits).toBe(Math.ceil(3 * db.unitPrice));
+    expect(r.resultText).toContain("O شركة"); expect(r.resultText).not.toContain("W شركة");
+    // the canonical file's LAST writer: O in I1/I2 (O's re-publish after its commit), W in I3 (W uploads after O finished)
+    if (il === "I3") { expect(r.lastBody).toContain("W شركة"); expect(r.lastBody).not.toContain("O شركة"); } else { expect(r.lastBody).toContain("O شركة"); expect(r.lastBody).not.toContain("W شركة"); }
+    // the ledger holds BOTH invocations' paid calls
+    expect(r.costsAtPause).toBeGreaterThan(0); expect(db.costs.length).toBeGreaterThan(r.costsAtPause);
+  });
+
+  const CASES: Array<[string, Interleaving, number, number, "settled" | "released", string]> = [
+    ["a", "I1", 2, 2, "settled", "W"],
+    ["b", "I1", 3, 2, "released", ""],
+    ["c", "I2", 2, 3, "settled", "O"],
+    ["d", "I3", 2, 2, "settled", "W"],
+    ["e", "I3", 3, 2, "released", ""],
+  ];
+
+  it.each(CASES)("T-W B4 O-first, O dies (%s): the loser W assembles the canonical file; equal count settles ceil(units x unit), different count releases with zero debit", async (_id, il, oRows, wRows, outcome, who) => {
+    const r = await raceOFirst({ mode: "chain", interleaving: il, oRows, wRows, oDies: true });
+    expect(r.o).toBeNull();
+    if (outcome === "settled") {
+      expect(r.w.status).toBe(200); expect(r.w.body.deliveredUnits).toBe(oRows);
+      expect(r.w.body.settle.charged_credits).toBe(Math.ceil(oRows * db.unitPrice));
+      expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
+      expect(db.resultExistedAtSettle).toEqual([true]);
+      expect(r.resultText).toContain(`${who} شركة`); expect(r.resultText).not.toContain(`${who === "O" ? "W" : "O"} شركة`);
+    } else {
+      expect(r.w.status).toBe(500); expect(r.w.body.released).toBe(true); expect(r.w.body.chargedCredits).toBe(0);
+      expect(String(r.w.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
+      expect(rpcCount("settle_job_atomic")).toBe(0); expect(rpcCount("release_job_atomic")).toBe(1);
+      // DT-06 R01 is merged: the response error IS the stored text, releaseTextAr(<the mismatch text>, N); releaseTextAr of an already-prefixed text returns it unchanged, so this pins stored == answered
+      expect(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message).toBe(releaseTextAr(String(r.w.body.error), db.targetVolumeMax));
+      expect(db.resultExistedAtSettle).toEqual([]);
+      expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBeUndefined();
+    }
+    // the ledger holds BOTH invocations' paid calls
+    expect(r.costsAtPause).toBeGreaterThan(0); expect(db.costs.length).toBeGreaterThan(r.costsAtPause);
+  });
+
+  it("T-W B4 O-first, F re-publish cell I4: W releases on the count mismatch, O's late settlement is refused, zero debit", async () => {
+    const r = await raceOFirst({ mode: "chain", interleaving: "I4", oRows: 3, wRows: 2 });
+    // W: the unsettled loser, canonical file = W's 2 rows, committed units = O's 3
+    expect(r.w.status).toBe(500); expect(r.w.body.released).toBe(true); expect(r.w.body.chargedCredits).toBe(0);
+    expect(String(r.w.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
+    const rels = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+    expect(rels.length).toBeGreaterThanOrEqual(1);
+    expect(rels[0].args.p_error_message).toBe(releaseTextAr(String(r.w.body.error), db.targetVolumeMax));
+    // O: late, the job is no longer running: nothing is settled and nothing is charged
+    expect(r.o!.status).toBe(500); expect(r.o!.body.chargedCredits).toBe(0);
+    expect(rpcCount("settle_job_atomic")).toBe(0); expect(db.resultExistedAtSettle).toEqual([]);
+    expect(db.jobs[0].status).toBe("failed"); expect(db.jobs[0].charged_credits).toBeUndefined();
+    expect(r.lastBody).toContain("O شركة");                                  // O's re-publish was the last writer
+    expect(r.costsAtPause).toBeGreaterThan(0); expect(db.costs.length).toBeGreaterThan(r.costsAtPause);
+  });
+
   it("T-W B5-R1 normal terminal: winner continues to end, assembles from own step in memory, result file and artifact_versions written, settle charges ceil(delivered x unit)", async () => {
     resetDb({ target: 3 });
     const world = defaultFakeWorld(10);
@@ -1241,108 +1538,30 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
 
 
   it("T-W B5-R3a loser resumes, same count, different rows: loser assembles canonical file, settles ceil(units x unit), delivered rows are canonical file's, result exists before settle", async () => {
-    resetDb({ target: 2 });
-    db.unitPrice = 100;
-    db.reserved = 2 * 100 * 2;
-
-    const step = 0;
-    const stepKey = `${JOB}/step_${step}.json`;
-
-    // Winner committed 2 rows, then died before settle
-    const winnerRows = [{ name: "Canonical 1", website: "https://c1.com" }, { name: "Canonical 2", website: "https://c2.com" }];
-    const winnerStepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
-    db.partials.set(stepKey, Buffer.from(JSON.stringify(winnerStepObj)));
-
-    db.step = 1;
-    db.deliveredUnits = 2;
-    db.jobs[0].status = "running";
-    db.jobs[0].step = 1;
-    db.jobs[0].delivered_units = 2;
-
-    // Loser resumes: terminal chunk with SAME count (2 rows), DIFFERENT rows
-    const loserRows = [{ name: "Loser 1", website: "https://l1.com" }, { name: "Loser 2", website: "https://l2.com" }];
-    const loserStepObj = { rows: loserRows, chainStop: "coverage_end", attemptId: "att_loser" };
-
-    // Loser calls complete_chunk with expectedStep 0 -> gets already_completed: true
-    // When loser finds job unsettled, it downloads the canonical file from storage
-    const downloadedBlob = await db.partials.get(stepKey);
-    expect(downloadedBlob).toBeDefined();
-    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
-    expect(parsedCanonical.rows).toEqual(winnerRows);
-
-    // Loser assembles canonical file into result.xlsx and uploads BEFORE settle
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Results");
-    ws.addRow(["name", "website"]);
-    for (const r of parsedCanonical.rows) ws.addRow([r.name, r.website]);
-    const outBuf = await wb.xlsx.writeBuffer();
-    db.results.set(`user_1/${JOB}/result.xlsx`, Buffer.from(outBuf));
-
-    // Result file exists BEFORE settle
-    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
-    const resultExistsBeforeSettle = db.results.has(`user_1/${JOB}/result.xlsx`);
-    expect(resultExistsBeforeSettle).toBe(true);
-
-    // Settle is called
-    const supabase = await import("../src/lib/supabase/server");
-    const admin = (supabase as any).createAdminClient();
-    const settleRes = await admin.rpc("settle_job_atomic", { p_job_id: JOB });
-    expect(settleRes.data).toMatchObject({ success: true, charged_credits: Math.ceil(2 * db.unitPrice) });
-
-    // Delivered rows in result file are the canonical file's rows
-    const verifyWb = new ExcelJS.Workbook();
-    await verifyWb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
-    const sheet = verifyWb.worksheets[0];
-    expect(sheet.rowCount).toBe(3); // header + 2 canonical rows
-    const text = JSON.stringify(sheet.getSheetValues());
-    expect(text).toContain("Canonical 1");
-    expect(text).not.toContain("Loser 1");
+    const r = await raceWithOldWorker({ mode: "chain", pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2, wDies: true });
+    // L (the old worker) uploaded and is held at its commit; W uploads LAST, commits 2 units and dies; L resumes, is terminal, finds the job unsettled: SAME count, DIFFERENT rows, so L must read the canonical file from STORAGE
+    expect(r.w).toBeNull(); expect(r.o.status).toBe(200); expect(r.o.body.deliveredUnits).toBe(2);
+    expect(r.o.body.settle.charged_credits).toBe(Math.ceil(2 * db.unitPrice));
+    expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
+    expect(db.resultExistedAtSettle).toEqual([true]);                      // the result file existed BEFORE settle
+    const names = db.rpcCalls.map((c) => c.name);
+    expect(names.indexOf("complete_chunk")).toBeLessThan(names.indexOf("settle_job_atomic"));
+    expect(r.canonicalText).toContain("W شركة");                           // the canonical file's last writer is W (the winner)
+    expect(r.resultText).toContain("W شركة"); expect(r.resultText).not.toContain("O شركة");   // delivered rows = the canonical file's, NOT L's own
   });
 
 
   it("T-W B5-R3b loser resumes, different count: count-check path triggers release with zero debit, no settlement, never charges for rows not in file", async () => {
-    resetDb({ target: 3 });
-    db.unitPrice = 100;
-    db.reserved = 3 * 100 * 2;
-
-    const step = 0;
-    const stepKey = `${JOB}/step_${step}.json`;
-
-    // Winner committed 3 rows, but canonical file has 2 rows (different count)
-    const winnerRows = [{ name: "C1", website: "https://c1.com" }, { name: "C2", website: "https://c2.com" }];
-    const stepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
-    db.partials.set(stepKey, Buffer.from(JSON.stringify(stepObj)));
-
-    db.step = 1;
-    db.deliveredUnits = 3; // recordedDeliveredUnits = 3
-    db.jobs[0].status = "running";
-    db.jobs[0].step = 1;
-    db.jobs[0].delivered_units = 3;
-
-    // Loser or recovery attempts assembly: 2 collected rows !== 3 recorded units
-    const downloadedBlob = await db.partials.get(stepKey);
-    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
-    const collectedCount = parsedCanonical.rows.length;
-    const recordedUnits = db.deliveredUnits;
-    expect(collectedCount).not.toBe(recordedUnits);
-
-    // Mismatch triggers executeReleaseConfirmation and release_job_atomic with zero debit
-    const supabase = await import("../src/lib/supabase/server");
-    const admin = (supabase as any).createAdminClient();
-    const relRes = await admin.rpc("release_job_atomic", {
-      p_job_id: JOB,
-      p_error_message: `عدم تطابق في عدد السجلات المجمعة (${collectedCount}) مع الوحدات المسجلة (${recordedUnits})؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`,
-      p_force: true,
-    });
-
-    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
-
-    // No settlement called
-    const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
-    expect(settleCalls.length).toBe(0);
-
-    // Never a charge for rows not in the file
-    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+    const r = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
+    expect(r.w).toBeNull(); expect(r.o.status).toBe(500); expect(r.o.body.released).toBe(true); expect(r.o.body.chargedCredits).toBe(0);
+    expect(String(r.o.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
+    expect(rpcCount("settle_job_atomic")).toBe(0); expect(db.resultExistedAtSettle).toEqual([]);
+    expect(rpcCount("release_job_atomic")).toBe(1);
+    const rel = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+    expect(rel.args.p_force).toBe(true);
+    // DT-06 R01 is merged: the response error IS the stored text, releaseTextAr(<the mismatch text>, N); releaseTextAr of an already-prefixed text returns it unchanged
+    expect(rel.args.p_error_message).toBe(releaseTextAr(String(r.o.body.error), db.targetVolumeMax));
+    expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBeUndefined();
   });
 
 
@@ -1714,42 +1933,116 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
   });
 
 
-  it("T-W PT parity with main: scripted interleavings of R2, R3a, R3b, R3d, R4 and B4 run in MAIN mode and CHAIN mode assert delivery, no release when main settles, charges, and identical R2/R4", async () => {
-    const modes = ["main", "chain"] as const;
-    const r2Outcomes: Record<string, { delivered: number; charge: number; releases: number }> = {};
-    const r4Outcomes: Record<string, { delivered: number; charge: number; releases: number }> = {};
+  const CELLS: Array<{
+    id: string;
+    identical: boolean;
+    run: (mode: RaceMode) => Promise<void>;
+    afterRun?: () => Promise<void>;
+    expected: Record<RaceMode, Partial<Outcome>>;
+  }> = [
+    {
+      id: "R2",
+      identical: true,
+      run: async (mode: RaceMode) => {
+        await dyingWinnerThenWatchdog(mode);
+      },
+      expected: {
+        main: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        chain: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+      },
+    },
+    {
+      id: "R3a",
+      identical: false,
+      run: async (mode: RaceMode) => {
+        await raceWithOldWorker({ mode, pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2, wDies: true });
+      },
+      afterRun: async () => {
+        const text = await resultText();
+        expect(text).toContain("W شركة");
+        expect(text).not.toContain("O شركة");
+      },
+      expected: {
+        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+      },
+    },
+    {
+      id: "R3b",
+      identical: false,
+      run: async (mode: RaceMode) => {
+        await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
+      },
+      expected: {
+        main: { settles: 0, releases: 1, charge: 0, rows: 0 },
+        chain: { settles: 0, releases: 1, charge: 0, rows: 0 },
+      },
+    },
+    {
+      id: "R3d",
+      identical: false,
+      run: async (mode: RaceMode) => {
+        await raceWithOldWorker({ mode, pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2, wDies: true });
+      },
+      afterRun: async () => {
+        const text = await resultText();
+        expect(text).toContain("W شركة");
+        expect(text).not.toContain("O شركة");
+      },
+      expected: {
+        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+      },
+    },
+    {
+      id: "R4",
+      identical: true,
+      run: async (mode: RaceMode) => {
+        await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 1, wRows: 1, wDies: true, goesOn: true });
+        await sweepAfter31Minutes();
+      },
+      expected: {
+        main: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        chain: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+      },
+    },
+    {
+      id: "B4 W-first",
+      identical: false,
+      run: async (mode: RaceMode) => {
+        await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2 });
+      },
+      expected: {
+        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+      },
+    },
+    {
+      id: "B4 O-first",
+      identical: false,
+      run: async (mode: RaceMode) => {
+        await raceOFirst({ mode, interleaving: "I1", oRows: 3, wRows: 2 });
+      },
+      expected: {
+        // main's winner O assembles from storage: W's 2 rows ≠ 3 units and releases; W, the unsettled loser, mismatches again and releases again: the real SQL answers already_released the second time, the fake counts the call
+        main: { settles: 0, releases: 2, charge: 0, rows: 0 },
+        chain: { settles: 1, releases: 0, charge: 300, rows: 3 },
+      },
+    },
+  ];
 
-    for (const mode of modes) {
-      // Scenario R2: dying winner, followed by watchdog
-      prepareJob(mode, 5);
-      await dyingWinnerThenWatchdog(mode);
-      const settleR2 = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
-      const jobR2 = db.jobs.find((j) => j.id === JOB);
-      r2Outcomes[mode] = {
-        delivered: db.deliveredUnits,
-        charge: jobR2?.charged_credits ?? (settleR2 ? Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved) : 0),
-        releases: rpcCount("release_job_atomic"),
-      };
-
-      // Scenario R4: loser not terminal (goesOn: true), winner dies after commit (wDies: true)
-      prepareJob(mode, 5);
-      await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 1, wRows: 1, wDies: true, goesOn: true });
-      const settleR4 = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
-      const jobR4 = db.jobs.find((j) => j.id === JOB);
-      r4Outcomes[mode] = {
-        delivered: db.deliveredUnits,
-        charge: jobR4?.charged_credits ?? (settleR4 ? Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved) : 0),
-        releases: rpcCount("release_job_atomic"),
-      };
+  it.each(CELLS)("T-W PT parity with main $id: delivery, no release where main settles, charge = ceil(delivered x unit)", async ({ identical, run, afterRun, expected }) => {
+    const out = {} as Record<RaceMode, Outcome>;
+    for (const mode of ["main", "chain"] as const) {
+      await run(mode);
+      out[mode] = await ptOutcome();
+      expect(out[mode]).toMatchObject(expected[mode]);
+      await afterRun?.();
     }
-
-    // Assert main and chain give identical R2 results and identical R4 results
-    expect(r2Outcomes.chain).toEqual(r2Outcomes.main);
-    expect(r4Outcomes.chain).toEqual(r4Outcomes.main);
-
-    // Assert at least one value is non-zero so it cannot pass on empty
-    expect(r2Outcomes.chain.releases).toBeGreaterThan(0);
-    expect(r4Outcomes.chain.delivered).toBeGreaterThan(0);
+    expect(out.chain.rows).toBeGreaterThanOrEqual(out.main.rows);                       // (i) chain delivers at least what main delivers
+    expect(out.chain.releases > 0 && out.main.settles > 0).toBe(false);               // (ii) chain never releases where main settles
+    for (const mode of ["main", "chain"] as const) expect(out[mode].charge).toBe(out[mode].settles ? Math.ceil(out[mode].rows * 100) : 0);   // (iii) unit price 100 of prepareJob
+    if (identical) { expect(out.chain).toEqual(out.main); expect(out.main.committed).toBeGreaterThan(0); }   // (iv) R2 and R4 identical, and units WERE committed (the rows are lost, not never delivered)
   });
 
 
@@ -1887,14 +2180,16 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     const route = await import("../src/app/api/worker/chunk/route");
     const step = 0;
 
-    // 1. Eight starts of one step with no call (markers 0..7 exist)
+    // 1. Eight real worker starts of one step, each killed before any call: the ROUTE writes markers 0..7
     resetDb({ target: 5 });
+    const { hung } = hangingTransport();
     for (let k = 0; k < 8; k++) {
-      db.partials.set(`${JOB}/start_${step}_${k}.json`, Buffer.from("{}"));
-    }
-    for (let k = 0; k < 8; k++) {
+      await startAndHang(hung);
       expect(db.partials.has(`${JOB}/start_${step}_${k}.json`)).toBe(true);
+      expect(db.partials.has(`${JOB}/start_${step}_${k + 1}.json`)).toBe(false);
+      expireLease();
     }
+    expect(rpcCount("complete_chunk")).toBe(0); expect(rpcCount("settle_job_atomic")).toBe(0);
 
     // 2. The 9th start: all 0..7 already exist => startIndex = 8 => terminal work_limit, ZERO calls, delivered-only charge
     let providerCallsMade = 0;
@@ -1978,16 +2273,17 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
 
-    // 4. Two overlapping starts get different k (e.g. 0 and 1)
+    // 4. Two overlapping starts get different k: the first is still running (hung) when the second starts after the lease expired
     resetDb({ target: 5 });
-    const k0Path = `${JOB}/start_${step}_0.json`;
-    const k1Path = `${JOB}/start_${step}_1.json`;
-    // Worker 1 writes k=0
-    db.partials.set(k0Path, Buffer.from("{}"));
-    // Worker 2 attempts k=0 (already exists), so writes k=1
-    db.partials.set(k1Path, Buffer.from("{}"));
-    expect(db.partials.has(k0Path)).toBe(true);
-    expect(db.partials.has(k1Path)).toBe(true);
+    const second = hangingTransport();
+    await startAndHang(second.hung);
+    expireLease();
+    await startAndHang(second.hung);
+    expect(db.partials.has(`${JOB}/start_${step}_0.json`)).toBe(true);
+    expect(db.partials.has(`${JOB}/start_${step}_1.json`)).toBe(true);
+    expect(db.partials.has(`${JOB}/start_${step}_2.json`)).toBe(false);
+    const attempts = db.uploadHistory.filter((u) => u.path.startsWith(`${JOB}/start_${step}_`)).map((u) => `${u.path.slice(JOB.length + 1)}:${u.existed}`);
+    expect(attempts).toEqual([`start_${step}_0.json:false`, `start_${step}_0.json:true`, `start_${step}_1.json:false`]);   // the second start is refused at k=0, then takes k=1
   });
 
   it("T-N route outputs: provider errors never reach the customer", async () => {
