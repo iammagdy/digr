@@ -2,8 +2,13 @@ import { withTimeout, TIMED_OUT, isMissingSchema } from "./jobGroupShared";
 import {
   GROUP_CLOSING_NOTICE_AR,
   GROUP_PART_STOPPED_AR,
+  groupDrawLineAr,
   groupFinalLineAr,
 } from "../../multiProvider/copy";
+import {
+  getConfiguredJobPointsCap,
+  DEFAULT_JOB_POINTS_CAP,
+} from "../../../functions/shared/providerSpend";
 
 export const TICK_BUDGET_MS = 45_000;
 export const MIN_LEFT_FOR_CLAIM_MS = 35_000;
@@ -253,7 +258,44 @@ export async function reconcileJobGroups(
           continue;
         }
 
-        // Else DRAW (T05)
+        // R5 DRAW
+        const quoteRes = await withTimeout(
+          admin.from("plans_quotes").select("items").eq("id", group.quote_id).maybeSingle(),
+          4_000
+        );
+        if (quoteRes === TIMED_OUT || quoteRes?.error || !quoteRes?.data?.items?.[0]) {
+          continue;
+        }
+
+        const firstItem = quoteRes.data.items[0];
+        const nextPartIndex = L + 1;
+        const item = buildPartItem(firstItem, nextPartIndex, gid);
+
+        const drawRes = await withTimeout(
+          admin.rpc("draw_next_group_part_atomic", {
+            p_group_id: gid,
+            p_part_index: nextPartIndex,
+            p_items: [item],
+            p_event_ar: groupDrawLineAr({
+              k: nextPartIndex,
+              K: group.parts_planned,
+              Z,
+              Y: group.reachable,
+            }),
+            p_delivered_so_far: Z,
+            p_points_cap: Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP),
+          }),
+          4_000
+        );
+
+        if (drawRes === TIMED_OUT || drawRes?.error) {
+          continue;
+        }
+
+        if (drawRes?.data?.success === true && !drawRes?.data?.already_drawn) {
+          drawn += 1;
+        }
+        continue;
       } catch (groupErr) {
         if (!logged) {
           console.error("[job-groups:group-failed]", { source: opts.source });

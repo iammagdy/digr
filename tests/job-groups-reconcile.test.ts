@@ -17,6 +17,10 @@ import {
   groupDrawLineAr,
   groupFinalLineAr,
 } from "../src/lib/multiProvider/copy";
+import {
+  getConfiguredJobPointsCap,
+  DEFAULT_JOB_POINTS_CAP,
+} from "../src/functions/shared/providerSpend";
 
 const NOW0 = Date.parse("2026-11-20T00:00:00Z");
 const w_all_rpc_names_seen_in_this_file = new Set<string>();
@@ -46,13 +50,35 @@ function makeWorld() {
 
   const rpcCalls: Array<{ name: string; args: any }> = [];
   const tables: string[] = [];
-  const fail: { r00?: any; claim?: any; parts?: any } = {};
+  const fail: { r00?: any; claim?: any; parts?: any; draw?: any } = {};
   const groups: any[] = [];
   const queue: any[] = [];
   const parts = new Map<string, any[]>();
   const partsFrozen = new Map<string, boolean>();
   const latency: Record<string, number> = {};
   const answer: { draw?: any; claim?: any } = {};
+  const events: string[] = [];
+  let throwAfterDraw = false;
+  let abortAfterReads = false;
+
+  let firstItem: any = {
+    capabilitySlug: "mp-business-contacts",
+    unitPricePoints: 7,
+    targetVolumeMax: 10,
+    targetVolumeMin: 10,
+    params: {
+      industry: "x",
+      split: {
+        v: 3,
+        part: 1,
+        parts: 3,
+        perPart: 10,
+        partVolumes: [10, 10, 10],
+        reachable: 30,
+        askedOriginal: 30,
+      },
+    },
+  };
 
   const setParts = (gid: string, jobs: any[], withFrozen?: boolean) => {
     parts.set(gid, jobs);
@@ -62,6 +88,56 @@ function makeWorld() {
   };
 
   const group = (id: string) => groups.find((g) => g.id === id);
+  const jobsOfGroup = (gid: string) => parts.get(gid) ?? [];
+
+  const requeue = () => {
+    queue.length = 0;
+    for (const g of groups) {
+      if (g.status === "open") queue.push(g);
+    }
+  };
+
+  const oneGroupWithPartsDone = (n: number) => {
+    const gid = "grp_1";
+    const jobs: any[] = [];
+    for (let i = 0; i < n; i++) {
+      jobs.push(part("completed", 10, 70));
+    }
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      status: "open",
+      parts_planned: 3,
+      next_part: n + 1,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, jobs, true);
+    return g;
+  };
+
+  const oneGroupWithParts = (jobs: any[]) => {
+    const gid = "grp_1";
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      status: "open",
+      parts_planned: 3,
+      next_part: jobs.length + 1,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, jobs, true);
+    return g;
+  };
 
   const admin = {
     from: (table: string) => {
@@ -97,6 +173,12 @@ function makeWorld() {
           inVals = vals;
           return builder;
         },
+        maybeSingle: () => {
+          if (table === "plans_quotes") {
+            return Promise.resolve({ data: { items: [firstItem] }, error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
         then: (resolve: (val: any) => any, reject: (err: any) => any) => {
           if (latency.r00) {
             vi.advanceTimersByTime(latency.r00);
@@ -127,12 +209,19 @@ function makeWorld() {
           }
 
           if (table === "jobs") {
+            if (abortAfterReads) {
+              throw new Error("abortAfterReads");
+            }
             const allJobs: any[] = [];
             for (const jList of parts.values()) {
               allJobs.push(...jList);
             }
             const matching = allJobs.filter((j) => (inVals.length > 0 ? inVals.includes(j.id) : true));
             return Promise.resolve(resolve({ data: matching, error: null }));
+          }
+
+          if (table === "plans_quotes") {
+            return Promise.resolve(resolve({ data: { items: [firstItem] }, error: null }));
           }
 
           return Promise.resolve(resolve({ data: [], error: null }));
@@ -175,7 +264,6 @@ function makeWorld() {
             error: null,
           });
         }
-        // When nextGroup is null: only record if nothing has been recorded yet (empty world in T03)
         if (rpcCalls.length === 0) {
           rpcCalls.push({ name, args });
         }
@@ -204,6 +292,43 @@ function makeWorld() {
         });
       }
 
+      if (name === "draw_next_group_part_atomic") {
+        if (answer.draw) {
+          return Promise.resolve(answer.draw);
+        }
+        const gid = args.p_group_id;
+        const partIdx = args.p_part_index;
+        const gParts = parts.get(gid) ?? [];
+        if (gParts.length >= partIdx) {
+          if (throwAfterDraw) throw new Error("transport error after draw");
+          const grp = groups.find((g) => g.id === gid);
+          if (grp) grp.next_part = partIdx + 1;
+          return Promise.resolve({
+            data: {
+              success: true,
+              already_drawn: true,
+              job_id: gParts[partIdx - 1].id,
+            },
+            error: null,
+          });
+        }
+        const newJob = part("queued", 0, 0, { id: `job_part_${partIdx}` });
+        gParts.push(newJob);
+        parts.set(gid, gParts);
+        events.push(args.p_event_ar);
+        if (throwAfterDraw) throw new Error("transport error after draw");
+        const grp = groups.find((g) => g.id === gid);
+        if (grp) grp.next_part = partIdx + 1;
+        return Promise.resolve({
+          data: {
+            success: true,
+            already_drawn: false,
+            job_id: newJob.id,
+          },
+          error: null,
+        });
+      }
+
       return Promise.resolve({ data: null, error: null });
     },
   };
@@ -219,8 +344,26 @@ function makeWorld() {
     parts,
     latency,
     answer,
+    events,
+    firstItem,
+    set throwAfterDraw(v: boolean) {
+      throwAfterDraw = v;
+    },
+    get throwAfterDraw() {
+      return throwAfterDraw;
+    },
+    set abortAfterReads(v: boolean) {
+      abortAfterReads = v;
+    },
+    get abortAfterReads() {
+      return abortAfterReads;
+    },
     setParts,
     group,
+    jobsOfGroup,
+    requeue,
+    oneGroupWithPartsDone,
+    oneGroupWithParts,
   };
 }
 
@@ -473,5 +616,87 @@ describe("T04: R1, R3, R4 and close", () => {
     w.fail.parts = { message: "x" };
     await run(w);
     expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group"]);
+  });
+});
+
+describe("T05: draw R5", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("(a) LOST RESPONSE: the draw commits, the transport throws ⇒ the next tick draws again ⇒ already_drawn ⇒ exactly ONE part-2 job and ONE S2 line", async () => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.throwAfterDraw = true;
+    await run(w);
+    w.throwAfterDraw = false;
+    w.requeue();
+    const r2 = await run(w);
+    expect(w.jobsOfGroup("grp_1").length).toBe(2);
+    expect(w.events.filter((e: any) => e === groupDrawLineAr({ k: 2, K: 3, Z: 10, Y: 30 })).length).toBe(1);
+    expect(r2.drawn).toBe(0);
+  });
+
+  it("(b) CRASH BETWEEN PARTS: the tick is aborted after R3 ⇒ the next tick draws once", async () => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.abortAfterReads = true;
+    await run(w);
+    expect(w.jobsOfGroup("grp_1").length).toBe(1);
+    w.abortAfterReads = false;
+    w.requeue();
+    await run(w);
+    expect(w.jobsOfGroup("grp_1").length).toBe(2);
+  });
+
+  it("(c) FAILED PART CONTINUES: part 1 'failed' ⇒ no freeze call, draw part 2; the final line later counts completed parts only", async () => {
+    const w = makeWorld();
+    w.oneGroupWithParts([part("failed", 0, 0)]);
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+    expect(w.rpcCalls[1].args.p_delivered_so_far).toBe(0);
+  });
+
+  it("the draw call carries the item for part k, S2 and the plan's cap", async () => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    await run(w);
+    const draw = w.rpcCalls.find((c) => c.name === "draw_next_group_part_atomic")!;
+    expect(draw.args).toEqual({
+      p_group_id: "grp_1",
+      p_part_index: 2,
+      p_items: [buildPartItem(w.firstItem, 2, "grp_1")],
+      p_event_ar: groupDrawLineAr({ k: 2, K: 3, Z: 10, Y: 30 }),
+      p_delivered_so_far: 10,
+      p_points_cap: Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP),
+    });
+  });
+
+  it("refusals do nothing more: part_not_frozen, group_halted, deadline_passed, an error and a timeout each leave one claim and one draw call", async () => {
+    for (const ans of [
+      { success: false, error: "part_not_frozen" },
+      { success: false, error: "group_halted" },
+      { success: false, error: "deadline_passed" },
+    ]) {
+      const w = makeWorld();
+      w.oneGroupWithPartsDone(1);
+      w.answer.draw = ans;
+      const r = await run(w);
+      expect(r.drawn).toBe(0);
+      expect(w.rpcCalls.length).toBe(2);
+    }
+  });
+
+  it("(e) STOP_AFTER_EMPTY_PARTS = 0 never stops early: two empty parts and a part left ⇒ the draw is the decision, no close", async () => {
+    const w = makeWorld();
+    w.oneGroupWithParts([part("completed", 0, 0), part("completed", 0, 0)]);
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
   });
 });
