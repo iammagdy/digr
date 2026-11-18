@@ -263,6 +263,29 @@ describe("jobGroupFreeze", () => {
     expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
     expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 0 });
   });
+
+  it.each([
+    ["candidate byte read never resolves", "hang", "candidate"],
+    ["existing-object byte read never resolves", "hang", "existing"],
+    ["candidate byte read rejects", "reject", "candidate"],
+    ["existing-object byte read rejects", "reject", "existing"],
+  ] as Array<[string, "hang" | "reject", "candidate" | "existing"]>)("(z) BYTE READ INSIDE THE 5 s DEADLINE: %s ⇒ retry by 5.1 s of fake time, no rpc at all, candidate 2 never read", async (_n, kind, where) => {
+    const w = makeWorld();
+    const b = bytesOf(rowsOf(10));
+    const frozen = frozenPathFor(uid, jobId, shaOf(b));
+    w.partials.set("u1/job_p1/data.json", b);
+    w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
+    if (where === "existing") w.results.set(frozen, b);
+    (kind === "hang" ? w.byteHang : w.byteReject).add(where === "candidate" ? "u1/job_p1/data.json" : frozen);
+    if (where === "candidate") w.readLatency.set("u1/job_p1/data.json", 3_000);
+    else w.latency.download = 3_000;
+    const rpc = vi.spyOn(w.admin, "rpc");
+    expect(await runFreezeBounded(w, FREEZE_IO_TIMEOUT_MS + 100)).toBe("retry");
+    expect(rpc).not.toHaveBeenCalled();
+    expect(w.reads).toEqual(["u1/job_p1/data.json"]);
+    expect(w.results.size).toBe(where === "existing" ? 1 : 0);
+  });
+
   it.each([
     ["both absent", (w: any) => {}],
     [
