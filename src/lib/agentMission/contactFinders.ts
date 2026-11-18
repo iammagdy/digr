@@ -280,6 +280,9 @@ const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
 const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$/i;
 /** A number inside a phone container (phone_numbers[].number, phones[].phoneNumber): «number» alone is never a phone key. */
 const PHONE_ITEM_KEYS = /^(number|phone_?number|value)$/i;
+/** A PHONE CONTAINER is known by a whole word of its key, snake_case or camelCase («phones», «mobilePhone», «telephone_numbers»): «hotel», «intelligence», «telemetry» only contain the letters (BUG HUNTER Gate 2 P2). */
+const PHONE_CONTAINER_WORD = /^(phones?|mobiles?|tel|telephones?|phonenumbers?|cellphones?)$/i;
+const isPhoneContainerKey = (k: string): boolean => k.replace(/([a-z0-9])([A-Z])/g, "$1_$2").split(/[^A-Za-z0-9]+/).some((w) => PHONE_CONTAINER_WORD.test(w));
 /** Whose number it is NOT (BUG HUNTER Gate 1 delta P1, D-0084): a fax, an office or switchboard line, the company's or employer's, by the key it sits under or the type the finder gives it. */
 const NOT_PERSONAL_KEY = /fax|company|office|employer|organi[sz]ation|head_?quarter|\bhq\b|^hq|switchboard|reception|main_?(line|phone|number)/i;
 const NOT_PERSONAL_TYPE = /^(fax|office|switchboard|reception|company|main|hq)$/i;
@@ -313,7 +316,7 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
       else if (kind === "email" && /^(verification|email_status|status|verified|deliverability|validity)$/i.test(k)) {
         const s = typeof v === "object" && v !== null ? text((v as Record<string, unknown>).status) : text(v);
         if (v === true || GOOD_STATUS.test(s)) sourceStatus = sourceStatus ?? "good"; else if (v === false || BAD_STATUS.test(s)) sourceStatus = "bad";
-      } else if (typeof v === "object") walk(v, depth + 1, inPhone || (kind === "phone" && /phone|mobile|tel/i.test(k)), np);
+      } else if (typeof v === "object") walk(v, depth + 1, inPhone || (kind === "phone" && isPhoneContainerKey(k)), np);
     }
   };
   walk(page, 0);
