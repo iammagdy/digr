@@ -81,6 +81,8 @@ export type LlmPlanResult =
 
 /** Asked when the model's own question cannot be shown as it wrote it. */
 export const GENERIC_QUESTION_AR = "ممكن توضّح طلبك أكثر: من أي منصة، وما الذي نجمعه بالضبط، وعن أي موضوع أو من أي حساب، وكم عددًا تريد؟";
+/** The button of the lookup question (planner.ts, live DT-20261118-02): the customer lets us pick any result about the topic. Compared word for word with the answer. */
+export const ANY_RESULT_OPTION_AR = "أي نتيجة عن الموضوع تكفي، اختاروها أنتم";
 /** Items a step collects when the customer gave no number (said on the card; the customer edits it before approving). */
 export const DEFAULT_COUNT = 20;
 /** Children read for each parent when the customer asked for «all» and the parent gives no counter (the card says it is a maximum). */
@@ -583,9 +585,9 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     // A LOOKUP STEP (the one named app, place or product the customer's items belong to): the search's FIRST result is not the thing (live, 16 Nov 2026: Google Play's search for «InstaPay» answered Fawry first, and 100 Fawry
     // reviews were delivered as InstaPay's). The model picks the result that IS the named thing; none of them: the customer is asked for its link, nothing is planned on a guess.
     if (isLookupStep(step, u.steps)) {
-      const at = await pickNamedItem(step, sampleRows, ask);
+      const at = await pickNamedItem(step, sampleRows, ask, (input.exchanges ?? []).map((e) => e.answer));
       deps.log?.(`llm_planner_lookup ${step.key} picked=${at}`);
-      if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [], understanding: u, costUsd: cost.usd };
+      if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [ANY_RESULT_OPTION_AR], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
     built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
@@ -816,13 +818,15 @@ export function isLookupStep(step: UnderstoodStep, steps: ReadonlyArray<Understo
 
 const PICK_TOOL = { name: "pick_item", description: "Which result is the named thing.", schema: { type: "object", properties: { index: { type: "integer", description: "the position (0-based) of the result that IS the named thing, -1 when none is" }, why: { type: "string" } }, required: ["index"] } as Record<string, unknown> };
 /** The position of the result that IS the thing the customer named (not a similar or competing one), or -1. One small model call; with one result that the model cannot confirm, -1 too. */
-export async function pickNamedItem(step: UnderstoodStep, rows: ReadonlyArray<Record<string, unknown>>, ask: (system: string, user: string, tool: typeof PICK_TOOL, maxTokens: number) => Promise<unknown | null>): Promise<number> {
+export async function pickNamedItem(step: UnderstoodStep, rows: ReadonlyArray<Record<string, unknown>>, ask: (system: string, user: string, tool: typeof PICK_TOOL, maxTokens: number) => Promise<unknown | null>, answers: ReadonlyArray<string> = []): Promise<number> {
   if (rows.length === 0) return -1;
+  // THE CUSTOMER PRESSED «any result is fine»: the first result of the search on the topic, with no model call
+  if (answers.some((a) => a.trim() === ANY_RESULT_OPTION_AR)) return 0;
   const name = [step.source?.value, step.topic].filter(Boolean).join(" — ");
   const view = rows.slice(0, 10).map((r, i) => ({ index: i, ...Object.fromEntries(Object.entries(r).filter(([k, v]) => !k.startsWith("__") && (typeof v === "string" || typeof v === "number")).map(([k, v]) => [k, String(v).slice(0, 160)]).slice(0, 12)) }));
   const answer = await ask(
     "You check search results for a data service. The customer named ONE specific thing (an app, a place, a product, a business). Return the index of the result that IS that exact thing: the same brand/app/place, not a similar, competing or related one (a different company's app is never it). Names may differ in language or spelling (Arabic vs Latin). If no result is clearly it, return -1.",
-    `The customer named: «${name}» (${step.platform}, ${step.capability}).\nResults:\n${JSON.stringify(view)}`,
+    `The customer named: «${name}» (${step.platform}, ${step.capability}).${answers.length > 0 ? `\nThe customer's answers to our questions: ${answers.map((a) => `«${a}»`).join(" | ")}. If they say any result about the topic is fine, return the index of the first result that is about the topic.` : ""}\nResults:\n${JSON.stringify(view)}`,
     PICK_TOOL,
     300,
   );
