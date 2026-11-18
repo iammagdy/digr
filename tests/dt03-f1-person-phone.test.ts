@@ -3,8 +3,12 @@ import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
-import { loadTregCatalog } from "../src/lib/treg/catalog";
-import { finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+import { loadTregCatalog, isSellable } from "../src/lib/treg/catalog";
+import { blockedEndpointReason } from "../src/lib/treg/blockList";
+import { policyVerdict } from "../src/lib/treg/dataPolicy";
+import { NOT_ADMIN } from "./helpers/agentHarness";
+import { finderHitRate } from "../src/lib/agentMission/finderStats";
+import { FALLBACK_FINDER_MAX_USD, PHONE_FINDER_MAX_USD, finderParamsFor, finderSourcesOf, foundContactIn, missingInputsFor, personFactsOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
 
 /**
  * DT-20261118-03 F1-c (Megz D-0084: the person's OWN phone is core; the company's number is never a stand-in). Live chat A: 0 of 5 personal phones. Three defects of OURS, none of them «the data does not exist»:
@@ -113,5 +117,26 @@ describe("D-0084: the company's number is never written in a person's phone cell
     const w = await run([{ id: "p1", full_name: "Mina Naguib" }, { id: "p2", full_name: "Sara Adel" }], () => null);
     expect(w.calls).toEqual([]);
     expect(JSON.parse((await w.store.getFile("msn_p", "contacts/not_tried_people_phone.json"))!)).toEqual({ [`${BLITZ.id}|person_linkedin_url`]: 2 });
+  });
+});
+
+// DT-20261118-03 PR-2c (Megz D-0085, D-0086): the person-phone chain is chosen from the catalog by capability, price and measured rate only (no service named in code); a phone call may cost up to 0.05 USD, an e-mail call 0.02
+describe("the person-phone chain, from catalog metadata only", () => {
+  const allowed = (id: string) => isSellable(id, catalog) && !blockedEndpointReason(id) && policyVerdict(id, NOT_ADMIN).allowed;
+  it("phone finders up to 0.05 USD a call, cheapest per found number first, three at most; e-mail finders stay at 0.02", () => {
+    expect(PHONE_FINDER_MAX_USD).toBe(0.05);
+    const phone = finderSourcesOf("phone", catalog, allowed);
+    expect(phone.length).toBe(3);
+    for (const f of phone) expect(f.usd).toBeLessThanOrEqual(PHONE_FINDER_MAX_USD);
+    expect(phone.some((f) => f.usd > FALLBACK_FINDER_MAX_USD)).toBe(true);
+    const keys = phone.map((f) => f.usd / finderHitRate(f.id, "phone"));
+    expect([...keys].sort((a, b) => a - b)).toEqual(keys);
+    for (const f of finderSourcesOf("email", catalog, allowed)) expect(f.usd).toBeLessThanOrEqual(FALLBACK_FINDER_MAX_USD);
+  });
+  it("a finder is never called without a person identifier (a profile or a name): a company domain alone is not a person", () => {
+    const anyOf: FinderInfo = { id: "x.people.phone.find", usd: 0.04, inputs: [{ name: "email", required: false }, { name: "domain", required: false }, { name: "linkedin", required: false }] };
+    const columns = [{ key: "name", title_ar: "اسم المدير" }, { key: "linkedin", title_ar: "الملف المهني" }];
+    expect(finderParamsFor(anyOf, personFactsOf({ id: "p1" }, columns, { website: "orascom-em.com.eg" }))).toBeNull();
+    expect(finderParamsFor(anyOf, personFactsOf({ id: "p1", linkedin: "linkedin.com/in/mina" }, columns, { website: "orascom-em.com.eg" }))).toEqual({ domain: "orascom-em.com.eg", linkedin: "https://linkedin.com/in/mina" });
   });
 });
