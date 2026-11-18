@@ -92,6 +92,21 @@ function makeWorld() {
   let abortBeforeF5 = false;
   let neverResolves: string | null = null;
   let failAll: any = null;
+  let stepMs = 0;
+
+  const stepAnswer = (val: any) => ({
+    then: (resolve: any, reject: any) => {
+      if (resolve) resolve(val);
+      Promise.resolve().then(() => {
+        if (stepMs > 0) {
+          vi.advanceTimersByTime(stepMs);
+        }
+      });
+    },
+    catch: (reject: any) => ({
+      then: (resolve: any) => resolve(val),
+    }),
+  });
 
   let firstItem: any = {
     capabilitySlug: "mp-business-contacts",
@@ -327,6 +342,133 @@ function makeWorld() {
     return g;
   };
 
+  const manyGroups = (opts: {
+    stuckDrawers?: number;
+    runningParts?: number;
+    closable?: number;
+    actionable?: number;
+    overduePast2h?: number;
+  }) => {
+    if (opts.stuckDrawers) {
+      for (let i = 1; i <= opts.stuckDrawers; i++) {
+        const gid = `grp_stuck_${i}`;
+        const p1 = part("completed", 10, 10, { id: `job_stuck_${i}_p1`, user_id: "u1" });
+        const g = {
+          id: gid,
+          quote_id: "q_1",
+          user_id: "u1",
+          status: "open",
+          parts_planned: 3,
+          next_part: 2,
+          asked_original: 30,
+          reachable: 30,
+          deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+          last_attempt_at: null,
+          halted_at: null,
+        };
+        groups.push(g);
+        setParts(gid, [p1], true);
+      }
+    }
+
+    if (opts.runningParts) {
+      for (let i = 1; i <= opts.runningParts; i++) {
+        const gid = `grp_running_${i}`;
+        const p1 = part("running", 0, 0, {
+          id: `job_running_${i}_p1`,
+          user_id: "u1",
+          lease_until: new Date(NOW0 + 60_000).toISOString(),
+          current_cursor: null,
+        });
+        const g = {
+          id: gid,
+          quote_id: "q_1",
+          user_id: "u1",
+          status: "open",
+          parts_planned: 3,
+          next_part: 2,
+          asked_original: 30,
+          reachable: 30,
+          deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+          last_attempt_at: null,
+          halted_at: null,
+        };
+        groups.push(g);
+        setParts(gid, [p1], false);
+      }
+    }
+
+    if (opts.closable) {
+      const gid = "grp_closable";
+      const p1 = part("completed", 10, 10, { id: "job_closable_p1", user_id: "u1" });
+      const p2 = part("completed", 10, 10, { id: "job_closable_p2", user_id: "u1" });
+      const p3 = part("completed", 10, 10, { id: "job_closable_p3", user_id: "u1" });
+      const g = {
+        id: gid,
+        quote_id: "q_1",
+        user_id: "u1",
+        status: "open",
+        parts_planned: 3,
+        next_part: 4,
+        asked_original: 30,
+        reachable: 30,
+        deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+        last_attempt_at: null,
+        halted_at: null,
+      };
+      groups.push(g);
+      setParts(gid, [p1, p2, p3], true);
+    }
+
+    if (opts.actionable) {
+      for (let i = 1; i <= opts.actionable; i++) {
+        const gid = `grp_act_${i}`;
+        const p1 = part("completed", 10, 10, { id: `job_act_${i}_p1`, user_id: "u1" });
+        const g = {
+          id: gid,
+          quote_id: "q_1",
+          user_id: "u1",
+          status: "open",
+          parts_planned: 3,
+          next_part: 2,
+          asked_original: 30,
+          reachable: 30,
+          deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+          last_attempt_at: null,
+          halted_at: null,
+        };
+        groups.push(g);
+        setParts(gid, [p1], true);
+      }
+    }
+
+    if (opts.overduePast2h) {
+      const gid = "grp_overdue";
+      const p1 = part("running", 0, 0, {
+        id: "job_overdue_p1",
+        user_id: "u1",
+        lease_until: new Date(NOW0 - 40 * 60_000).toISOString(),
+        updated_at: new Date(NOW0 - 40 * 60_000).toISOString(),
+        current_cursor: null,
+      });
+      const g = {
+        id: gid,
+        quote_id: "q_1",
+        user_id: "u1",
+        status: "open",
+        parts_planned: 3,
+        next_part: 2,
+        asked_original: 30,
+        reachable: 30,
+        deadline_at: new Date(NOW0 - OVERDUE_AFTER_MS - 60_000).toISOString(),
+        last_attempt_at: null,
+        halted_at: null,
+      };
+      groups.push(g);
+      setParts(gid, [p1], false);
+    }
+  };
+
   const rewriteAllDataTo = (rows: any[]) => {
     const buf = bytesOf(rows);
     for (const key of partials.keys()) {
@@ -414,12 +556,12 @@ function makeWorld() {
             return new Promise(() => {});
           }
           if (failAll) {
-            return Promise.resolve({ data: null, error: failAll });
+            return stepAnswer({ data: null, error: failAll });
           }
           if (table === "plans_quotes") {
-            return Promise.resolve({ data: { items: [firstItem] }, error: null });
+            return stepAnswer({ data: { items: [firstItem] }, error: null });
           }
-          return Promise.resolve({ data: null, error: null });
+          return stepAnswer({ data: null, error: null });
         },
         then: (resolve: (val: any) => any, reject: (err: any) => any) => {
           if (neverResolves === `from(${table})`) {
@@ -431,21 +573,29 @@ function makeWorld() {
           if (latency.r00) {
             vi.advanceTimersByTime(latency.r00);
           }
+          const finish = (result: any) => {
+            resolve(result);
+            Promise.resolve().then(() => {
+              if (stepMs > 0) {
+                vi.advanceTimersByTime(stepMs);
+              }
+            });
+          };
           if (table === "job_groups" && isCountHead) {
             if (fail.r00) {
-              return Promise.resolve(resolve({ count: null, data: null, error: fail.r00 }));
+              return Promise.resolve(finish({ count: null, data: null, error: fail.r00 }));
             }
             const matching = groups.filter((g) => {
               if (statusFilter && g.status !== statusFilter) return false;
               if (deadlineLtFilter && !(Date.parse(g.deadline_at) < Date.parse(deadlineLtFilter))) return false;
               return true;
             });
-            return Promise.resolve(resolve({ count: matching.length, data: [], error: null }));
+            return Promise.resolve(finish({ count: matching.length, data: [], error: null }));
           }
 
           if (table === "job_group_parts") {
             if (fail.parts) {
-              return Promise.resolve(resolve({ data: null, error: fail.parts }));
+              return Promise.resolve(finish({ data: null, error: fail.parts }));
             }
             const gid = eqVal;
             const gParts = parts.get(gid) ?? [];
@@ -453,7 +603,7 @@ function makeWorld() {
               part_index: idx + 1,
               job_id: j.id,
             }));
-            return Promise.resolve(resolve({ data, error: null }));
+            return Promise.resolve(finish({ data, error: null }));
           }
 
           if (table === "jobs") {
@@ -465,14 +615,14 @@ function makeWorld() {
               allJobs.push(...jList);
             }
             const matching = allJobs.filter((j) => (inVals.length > 0 ? inVals.includes(j.id) : true));
-            return Promise.resolve(resolve({ data: matching, error: null }));
+            return Promise.resolve(finish({ data: matching, error: null }));
           }
 
           if (table === "plans_quotes") {
-            return Promise.resolve(resolve({ data: { items: [firstItem] }, error: null }));
+            return Promise.resolve(finish({ data: { items: [firstItem] }, error: null }));
           }
 
-          return Promise.resolve(resolve({ data: [], error: null }));
+          return Promise.resolve(finish({ data: [], error: null }));
         },
       };
       return builder;
@@ -486,7 +636,7 @@ function makeWorld() {
         return new Promise(() => {});
       }
       if (failAll) {
-        return Promise.resolve({ data: null, error: failAll });
+        return stepAnswer({ data: null, error: failAll });
       }
       if (latency.claim && name === "claim_next_job_group") {
         vi.advanceTimersByTime(latency.claim);
@@ -494,14 +644,63 @@ function makeWorld() {
       if (name === "claim_next_job_group") {
         if (fail.claim) {
           rpcCalls.push({ name, args });
-          return Promise.resolve({ data: null, error: fail.claim });
+          return stepAnswer({ data: null, error: fail.claim });
         }
         if (answer.claim) {
           rpcCalls.push({ name, args });
-          return Promise.resolve(answer.claim);
+          return stepAnswer(answer.claim);
         }
-        const nextGroup = queue.shift() ?? null;
+        let nextGroup: any = null;
+        if (queue.length > 0) {
+          nextGroup = queue.shift() ?? null;
+        } else {
+          const nowMs = Date.now();
+          const candidates = groups.filter((g) => {
+            if (g.status !== "open") return false;
+            if (g.last_attempt_at != null && Date.parse(g.last_attempt_at) >= nowMs - 30_000) {
+              return false;
+            }
+            const gid = g.id;
+            const gParts = parts.get(gid) ?? [];
+            const L = (g.next_part ?? 1) - 1;
+            const j = L > 0 ? (gParts[L - 1] ?? null) : null;
+            if (nowMs >= Date.parse(g.deadline_at)) {
+              return true;
+            }
+            if (!j) {
+              return true;
+            }
+            const quietSec = (args.p_quiet_seconds ?? 180) * 1000;
+            const isQuiet = Date.parse(j.updated_at ?? "1970-01-01") <= nowMs - quietSec;
+            if (!isQuiet) return false;
+            if (j.status === "completed" || j.status === "failed") {
+              return true;
+            }
+            if (
+              j.status === "running" &&
+              j.current_cursor === "completed" &&
+              (!j.lease_until || Date.parse(j.lease_until) < nowMs)
+            ) {
+              return true;
+            }
+            return false;
+          });
+
+          candidates.sort((a, b) => {
+            if (a.last_attempt_at == null && b.last_attempt_at != null) return -1;
+            if (a.last_attempt_at != null && b.last_attempt_at == null) return 1;
+            if (a.last_attempt_at != null && b.last_attempt_at != null) {
+              const diff = Date.parse(a.last_attempt_at) - Date.parse(b.last_attempt_at);
+              if (diff !== 0) return diff;
+            }
+            return a.id.localeCompare(b.id);
+          });
+
+          nextGroup = candidates[0] ?? null;
+        }
+
         if (nextGroup) {
+          nextGroup.last_attempt_at = new Date(Date.now()).toISOString();
           rpcCalls.push({ name, args });
           if (latency.process) {
             vi.advanceTimersByTime(latency.process);
@@ -511,7 +710,7 @@ function makeWorld() {
           const L = (nextGroup.next_part ?? 1) - 1;
           const currentJob = L > 0 ? (gParts[L - 1] ?? null) : null;
           const isFrozen = partsFrozen.get(gid) ?? false;
-          return Promise.resolve({
+          return stepAnswer({
             data: {
               success: true,
               group: nextGroup,
@@ -524,7 +723,7 @@ function makeWorld() {
         if (rpcCalls.length === 0) {
           rpcCalls.push({ name, args });
         }
-        return Promise.resolve({
+        return stepAnswer({
           data: {
             success: true,
             group: null,
@@ -540,7 +739,7 @@ function makeWorld() {
       if (name === "close_job_group_atomic") {
         const grp = groups.find((g) => g.id === args.p_group_id);
         if (grp) grp.status = "closed";
-        return Promise.resolve({
+        return stepAnswer({
           data: {
             success: true,
             released_credits: 0,
@@ -550,8 +749,16 @@ function makeWorld() {
       }
 
       if (name === "draw_next_group_part_atomic") {
+        if (latency.draw) {
+          return {
+            then: (resolve: any) => {
+              vi.advanceTimersByTime(latency.draw);
+              resolve({ data: null, error: { message: "timeout" } });
+            },
+          };
+        }
         if (answer.draw) {
-          return Promise.resolve(answer.draw);
+          return stepAnswer(answer.draw);
         }
         const gid = args.p_group_id;
         const partIdx = args.p_part_index;
@@ -560,7 +767,7 @@ function makeWorld() {
           if (throwAfterDraw) throw new Error("transport error after draw");
           const grp = groups.find((g) => g.id === gid);
           if (grp) grp.next_part = partIdx + 1;
-          return Promise.resolve({
+          return stepAnswer({
             data: {
               success: true,
               already_drawn: true,
@@ -576,7 +783,7 @@ function makeWorld() {
         if (throwAfterDraw) throw new Error("transport error after draw");
         const grp = groups.find((g) => g.id === gid);
         if (grp) grp.next_part = partIdx + 1;
-        return Promise.resolve({
+        return stepAnswer({
           data: {
             success: true,
             already_drawn: false,
@@ -719,6 +926,12 @@ function makeWorld() {
     get failAll() {
       return failAll;
     },
+    set stepMs(v: number) {
+      stepMs = v;
+    },
+    get stepMs() {
+      return stepMs;
+    },
     setParts,
     group,
     jobsOfGroup,
@@ -730,6 +943,7 @@ function makeWorld() {
     awaitingFreezeGroup,
     groupWithFailedPart,
     oneGroupPastDeadline,
+    manyGroups,
     rewriteAllDataTo,
   };
 }
@@ -1320,5 +1534,54 @@ describe("T09: timeouts and outage", () => {
     w.requeue();
     await run(w);
     expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").length).toBe(1);
+  });
+});
+
+describe("T10: fairness through F4", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("(j) STARVATION: 25 groups whose draw always times out and 1 closable group ⇒ the closable group closes within 26 claims", async () => {
+    const w = makeWorld();
+    w.manyGroups({ stuckDrawers: 25, closable: 1 });
+    w.latency.draw = 5_000; // every draw of the 25 times out
+    for (let i = 0; i < 26 && w.group("grp_closable").status !== "closed"; i++) {
+      await run(w);
+      vi.advanceTimersByTime(31_000);
+    }
+    expect(w.group("grp_closable").status).toBe("closed");
+  });
+
+  it("(j) 30 groups with a running part and 1 closable ⇒ the closable group is closed at the first claim", async () => {
+    const w = makeWorld();
+    w.manyGroups({ runningParts: 30, closable: 1 });
+    await run(w);
+    expect(w.group("grp_closable").status).toBe("closed");
+  });
+
+  it("(l) BACKLOG: 40 actionable groups, 6 s per request (a tick fits one claim); the 40th is past deadline + 2 h with a running part ⇒ closed within 40 ticks; [job-groups:overdue] is logged every tick until then and not after", async () => {
+    const w = makeWorld();
+    w.manyGroups({ actionable: 39, overduePast2h: 1 });
+    w.stepMs = 6_000;
+    let ticks = 0,
+      overdueTicks = 0;
+    while (ticks < 40 && w.group("grp_overdue").status !== "closed") {
+      w.errors.length = 0;
+      await run(w);
+      ticks++;
+      if (w.errors.some((e) => e[0] === "[job-groups:overdue]")) overdueTicks++;
+      vi.advanceTimersByTime(60_000);
+    }
+    expect(w.group("grp_overdue").status).toBe("closed");
+    expect(ticks).toBeLessThanOrEqual(40);
+    expect(overdueTicks).toBe(ticks);
+    w.errors.length = 0;
+    await run(w);
+    expect(w.errors.some((e) => e[0] === "[job-groups:overdue]")).toBe(false);
   });
 });
