@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { isGroupQuoteItems, planSplit, hasJobGroupRpc } from "../src/lib/server/multiProvider/jobGroupPlan";
 import { reserveForUnits, DEFAULT_PRICING_BASIS } from "../src/lib/recordPricing";
+import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
+import { GROUP_UNAVAILABLE_AR, groupStartLineAr } from "../src/lib/multiProvider/copy";
+import { getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "../src/functions/shared/providerSpend";
 
 describe("DT-05 PR-9 group approval", () => {
   afterEach(() => {
@@ -92,5 +95,183 @@ describe("DT-05 PR-9 group approval", () => {
     await vi.advanceTimersByTimeAsync(4_000);
     expect(await p).toBe(false);
     vi.useRealTimers();
+  });
+
+  // T03 group accept branch
+  const GROUP_ITEM = {
+    capabilitySlug: "mp-business-contacts",
+    endpointId: "mp.business.contacts",
+    unitPricePoints: 7,
+    unitCostUsd: 0.02,
+    targetVolumeMax: 40,
+    params: {
+      split: {
+        v: 3,
+        part: 1,
+        parts: 3,
+        perPart: 40,
+        partVolumes: [40, 40, 25],
+        partReserves: [322, 322, 202],
+        hold: 846,
+        reachable: 105,
+        askedOriginal: 105,
+      },
+    },
+  };
+
+  function adminFor(items: any[], answers: { probe?: any; accept?: any; acceptOld?: any } = {}) {
+    const rpc = vi.fn(async (name: string, args: any) => {
+      if (name === "accept_group_quote_atomic" && String(args.p_quote_id).startsWith("__diger_group_probe_")) {
+        return (answers.probe ?? (async () => ({ data: { success: false, error: "quote_not_found" }, error: null })))();
+      }
+      if (name === "accept_group_quote_atomic") {
+        return answers.accept ?? {
+          data: { success: true, already_accepted: false, quote_id: args.p_quote_id, job_id: "job_p1", group_id: "grp_x", reserved_credits: 846 },
+          error: null,
+        };
+      }
+      return answers.acceptOld ?? {
+        data: { success: true, already_accepted: false, quote_id: args.p_quote_id, job_id: "job_old", reserved_credits: 100 },
+        error: null,
+      };
+    });
+    return {
+      admin: {
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              single: async () => ({ data: { quote_hash: "h1", items }, error: null }),
+            }),
+          }),
+        }),
+        rpc,
+      } as any,
+      rpc,
+    };
+  }
+
+  const realAccepts = (rpc: any) =>
+    rpc.mock.calls.filter(
+      ([n, a]: any[]) =>
+        n === "accept_quote_atomic" ||
+        (n === "accept_group_quote_atomic" && !String(a.p_quote_id).startsWith("__diger_group_probe_"))
+    );
+
+  it("(c) group items ⇒ ONE accept_group_quote_atomic with the exact args; the result is the part-1 job and the hold", async () => {
+    const { admin, rpc } = adminFor([GROUP_ITEM]);
+    const r = await acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q1" });
+    const calls = realAccepts(rpc);
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toEqual([
+      "accept_group_quote_atomic",
+      {
+        p_quote_id: "q1",
+        p_user_id: "u1",
+        p_expected_quote_hash: "h1",
+        p_points_cap: Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP),
+        p_start_event_ar: groupStartLineAr({ hold: 846, parts: 3 }),
+      },
+    ]);
+    expect(r).toEqual({
+      success: true,
+      jobId: "job_p1",
+      quoteId: "q1",
+      reservedCredits: 846,
+      alreadyAccepted: false,
+    });
+  });
+
+  it("(e) ACCEPT AFTER THE STOP: a quote row with group items made directly in the fake (no card code) is accepted through the group branch with the same args", async () => {
+    const other = {
+      ...GROUP_ITEM,
+      params: {
+        split: {
+          ...GROUP_ITEM.params.split,
+          parts: 2,
+          partVolumes: [40, 20],
+          partReserves: [322, 161],
+          hold: 483,
+          reachable: 60,
+          askedOriginal: 60,
+        },
+      },
+    };
+    const { admin, rpc } = adminFor([other], {
+      accept: {
+        data: {
+          success: true,
+          already_accepted: false,
+          quote_id: "q2",
+          job_id: "job_p1",
+          group_id: "grp_y",
+          reserved_credits: 483,
+        },
+        error: null,
+      },
+    });
+    const r = await acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q2", expectedPlanHash: "hX" });
+    expect(realAccepts(rpc)[0][1]).toMatchObject({
+      p_quote_id: "q2",
+      p_expected_quote_hash: "hX",
+      p_start_event_ar: groupStartLineAr({ hold: 483, parts: 2 }),
+    });
+    expect(r.reservedCredits).toBe(483);
+  });
+
+  it.each([
+    ["PGRST202", { data: null, error: { code: "PGRST202", message: "x" } }],
+    ["42883", { data: null, error: { code: "42883", message: "x" } }],
+    ["an unknown code", { data: null, error: { code: "XX999", message: "boom" } }],
+  ])("(f) PRE-SQL FAIL CLOSED: the probe answers %s ⇒ 503 GROUP_UNAVAILABLE_AR, no accept rpc of either kind", async (_n, answer) => {
+    const { admin, rpc } = adminFor([GROUP_ITEM], { probe: async () => answer });
+    const r = await acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q1" });
+    expect(r).toEqual({ success: false, statusCode: 503, errorAr: GROUP_UNAVAILABLE_AR });
+    expect(realAccepts(rpc)).toEqual([]);
+  });
+
+  it("(f) a probe that never resolves ⇒ 503 after 4 s, no accept rpc", async () => {
+    vi.useFakeTimers();
+    const { admin, rpc } = adminFor([GROUP_ITEM], { probe: () => new Promise(() => {}) });
+    const p = acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q1" });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(await p).toEqual({ success: false, statusCode: 503, errorAr: GROUP_UNAVAILABLE_AR });
+    expect(realAccepts(rpc)).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["insufficient_balance", { balance: 5 }],
+    ["quote_expired", {}],
+    ["concurrency_limit", {}],
+    ["invalid_quote_status", {}],
+    ["quote_not_found", {}],
+  ])("the group branch maps %s exactly as the single-job path does", async (code, extra) => {
+    const answer = { data: { success: false, error: code, ...extra }, error: null };
+    const g = adminFor([GROUP_ITEM], { accept: answer });
+    const o = adminFor([{ ...GROUP_ITEM, params: {} }], { acceptOld: answer });
+    expect(await acceptQuoteSupabase(g.admin, { userId: "u1", quoteId: "q1" })).toEqual(
+      await acceptQuoteSupabase(o.admin, { userId: "u1", quoteId: "q1" })
+    );
+  });
+
+  it.each(["invalid_group_plan", "accepted_without_group"])(
+    "%s ⇒ 409 with the existing generic text",
+    async (code) => {
+      const { admin } = adminFor([GROUP_ITEM], { accept: { data: { success: false, error: code }, error: null } });
+      expect(await acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q1" })).toEqual({
+        success: false,
+        statusCode: 409,
+        errorAr: "حالة العرض غير صالحة للبدء.",
+      });
+    }
+  );
+
+  it("non-group quotes: the probe is never made and accept_quote_atomic is called exactly as today", async () => {
+    const { admin, rpc } = adminFor([{ ...GROUP_ITEM, params: {} }]);
+    const r = await acceptQuoteSupabase(admin, { userId: "u1", quoteId: "q1" });
+    expect(rpc.mock.calls).toEqual([
+      ["accept_quote_atomic", { p_quote_id: "q1", p_user_id: "u1", p_expected_quote_hash: "h1" }],
+    ]);
+    expect(r).toMatchObject({ success: true, jobId: "job_old" });
   });
 });
