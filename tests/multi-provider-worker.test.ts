@@ -1415,6 +1415,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     // the ledger holds the calls of BOTH invocations (O's before the pause, W's after it)
     expect(a.costsAtPause).toBeGreaterThan(0);
     expect(db.costs.length).toBeGreaterThan(a.costsAtPause);
+    expectMoney("settled", { charge: Math.ceil(2 * db.unitPrice) });
 
     // b. O is paused AFTER its own upload, before complete_chunk: W's upload is the last writer, W settles, O's complete_chunk answers «already completed»
     const b = await raceWithOldWorker({ mode: "chain", pause: { kind: "rpc", name: "complete_chunk" }, oRows: 2, wRows: 2 });
@@ -1424,6 +1425,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rpcCount("settle_job_atomic")).toBe(1);
     expect(lastWriter(b)).toContain("W شركة");
     expect(lastWriter(b)).not.toContain("O شركة");
+    expectMoney("settled", { charge: Math.ceil(2 * db.unitPrice) });
 
     // c. DIFFERENT counts, O paused before its upload: the charge follows the COMMITTER's units (2), not the last writer's file (3 rows)
     const c = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2 });
@@ -1433,6 +1435,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rpcCount("settle_job_atomic")).toBe(1);
     expect(lastWriter(c)).toContain("O شركة اختبار 3");
     expect(c.resultText).not.toContain("O شركة");
+    expectMoney("settled", { charge: Math.ceil(2 * db.unitPrice) });
 
     // d. W commits and DIES (no answer, no catch, no release); O resumes with the SAME count: it assembles the canonical file (its own, the last writer) and settles ceil(units x unit)
     const d = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 2, wRows: 2, wDies: true });
@@ -1443,6 +1446,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rpcCount("settle_job_atomic")).toBe(1);
     expect(rpcCount("release_job_atomic")).toBe(0);
     expect(d.resultText).toContain("O شركة");
+    expectMoney("settled", { charge: Math.ceil(2 * db.unitPrice) });
 
     // e. W commits 2 and DIES; O resumes with 3 rows in the canonical file: the counts differ, so NOTHING is settled and the whole reserve is released with zero debit
     const e = await raceWithOldWorker({ mode: "chain", pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
@@ -1454,6 +1458,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rpcCount("release_job_atomic")).toBe(1);
     expect(db.rpcCalls.find((x) => x.name === "release_job_atomic")!.args.p_error_message).toBe(e.o.body.error);
     expect(e.resultText).toBeNull();
+    expectMoney("released", { calls: 1 });
   });
 
 
