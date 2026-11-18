@@ -4,6 +4,12 @@ import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import { NOT_ADMIN } from "./helpers/agentHarness";
 import { validateAndPricePlan, priceIncludesLinesAr, type PlanLookup } from "../src/lib/agentMission/plan";
+import { createMemoryStore } from "../agent/src/memoryStore";
+import { ItemStore } from "../agent/src/items/itemStore";
+import { runContactEnrichment } from "../agent/src/engine/contacts";
+import { buildMissionFiles } from "../agent/src/workbook";
+import { createJobCallBudget } from "../src/lib/server/callBudget";
+import { bindCompanySteps, withContractColumns } from "../src/lib/agentMission/taskContracts";
 import { buildCompanySteps, companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../src/lib/agentMission/contactFinders";
 
 /**
@@ -75,10 +81,52 @@ describe("DT-20261118-03 F2-a: the plan of «١٠ شركات مقاولات في
     expect(c.ok).toBe(true);
     if (!c.ok) return;
     expect((c.plan.contact_steps ?? []).filter((s) => s.level === "company")).toEqual([]);
+    // QA wave-1 FAIL #572: the control plan must succeed, so the price comparison always runs
     const cNoListers = validateAndPricePlan({ summary_ar: "شركات مقاولات في القاهرة.", stages: [stageWithEmail] }, lookup(false));
-    if (cNoListers.ok) {
-      expect(c.plan.price.reservePoints).toBe(cNoListers.plan.price.reservePoints);
-    }
+    expect(cNoListers.ok, JSON.stringify(cNoListers)).toBe(true);
+    if (!cNoListers.ok) return;
+    expect(c.plan.price.reservePoints).toBe(cNoListers.plan.price.reservePoints);
     expect(priceIncludesLinesAr(c.plan)).not.toContain("السعر يشمل أيضًا البحث عن الإيميل العام للشركة لكل شركة؛ وما لا نجده نكتب مكانه «غير متوفر».");
+  });
+});
+
+// QA wave-1 FAIL #572: the delivered file is observed, not only the plan. The approved plan runs through the real contact engine (fake provider answers) and the real workbook builder.
+describe("DT-20261118-03 F2-a: the company e-mail reaches the delivered file", () => {
+  it("the engine writes the company's mailbox into the company row, and the delivered CSV has the e-mail column and that address", async () => {
+    const c = validateAndPricePlan({ summary_ar: "شركات مقاولات في القاهرة.", stages: [stage] }, lookup(true));
+    expect(c.ok, JSON.stringify(c)).toBe(true);
+    if (!c.ok) return;
+    // the columns the approved plan gets after the check, by the same production calls, in the same order, as the plan tool (agent/src/tools.ts:745-750)
+    const plan = c.plan;
+    for (const st of plan.stages) st.columns = withContactColumns(st.key, st.columns, plan.contact_steps);
+    const contracted = withContractColumns(plan.stages);
+    plan.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
+    plan.contact_steps = bindCompanySteps(plan.stages, plan.contact_steps ?? []);
+    const MISSION = "msn_dt03_f2";
+    const store = createMemoryStore();
+    const items = await ItemStore.open(store, MISSION);
+    await items.commit([{ t: "item", stage: "companies", id: "cairobuild.com.eg", state: "accepted", by: "rule", row: { ...stage.sample_rows[0] } }]);
+    const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
+    const called: string[] = [];
+    let n = 0;
+    const gateway: any = {
+      async tregCall(a: { endpoint_id: string; params: Record<string, unknown> }) {
+        called.push(a.endpoint_id);
+        const id = `call_${String(++n).padStart(4, "0")}`;
+        await store.putFile(MISSION, `raw/${id}.json`, JSON.stringify({ data: { domain: "cairobuild.com.eg", emails: [{ email: "info@cairobuild.com.eg", type: "generic" }] } }), "application/json");
+        budget.settle(0, 0.001);
+        return { ok: true, call_id: id, http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null };
+      },
+    };
+    await runContactEnrichment({ items, store, plan, missionId: MISSION, gateway, addEvent: async () => {}, budget, deadlineMs: Date.now() + 60_000 } as any);
+    const row = items.acceptedRows("companies").find((r) => r.id === "cairobuild.com.eg")!;
+    const emailKey = plan.contact_steps!.find((x) => x.level === "company" && x.kind === "email")!.column_key;
+    expect(row[emailKey]).toBe("info@cairobuild.com.eg");
+    expect(called.length).toBeGreaterThan(0);
+    const files = await buildMissionFiles(plan, { companies: items.acceptedRows("companies") }, undefined, undefined, { completeContract: false });
+    const lines = files.csv.split(/\r?\n/);
+    const header = lines.findIndex((l) => l.includes("الإيميل العام للشركة"));
+    expect(header, files.csv.slice(0, 800)).toBeGreaterThanOrEqual(0);
+    expect(lines.slice(header + 1).some((l) => l.includes("info@cairobuild.com.eg"))).toBe(true);
   });
 });
