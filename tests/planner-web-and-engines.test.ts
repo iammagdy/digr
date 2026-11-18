@@ -921,25 +921,27 @@ async function t4Run(script: (n: number, id: string) => T4Mode, tools: CatalogEn
   return { result, recorded, modelCalls };
 }
 
-describe("DT-20261117-06 T4 (i)-(iii): an unreadable answer moves on to the next option", () => {
-  it("T4(i) option 1 answers but is unreadable, option 2 maps: the step is served by option 2", async () => {
+describe("DT-20261117-06 T4 (i)-(iii): an unreadable map stops at the first option (D-0051: one field-map ask per step)", () => {
+  it("T4(i) D-0051: option 1 answers but its map is unreadable: ONE field-map ask, option 2 is not probed, the step lands in unserved with the existing reason", async () => {
     const [A, B] = t4Offered();
     expect(A).toBeTruthy(); expect(B).toBeTruthy();
-    const { result, recorded } = await t4Run((_n, id) => (id === A!.id ? "bad" : "ok"), [A!, B!], { web: true });
-    expect(result.kind).toBe("plan");
-    if (result.kind !== "plan") return;
-    expect(recorded.slice(0, 2).map((c) => c.id)).toEqual([A!.id, B!.id]);
-    expect(result.plan.stages[0]!.endpoint_id).toBe(B!.id);
-  });
-
-  it("T4(ii) all three options answer but are unreadable: the existing unserved reason, three probes, no web call", async () => {
-    const [A, B, C] = t4Offered();
-    expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
-    const { result, recorded } = await t4Run((_n, id) => (id === T4_WEB[0]!.id ? "ok" : "bad"), [A!, B!, C!], { web: true });
+    const { result, recorded, modelCalls } = await t4Run((_n, id) => (id === A!.id ? "bad" : "ok"), [A!, B!], { web: true });
+    expect(modelCalls.field_map).toBe(1);
+    expect(recorded.map((c) => c.id)).toEqual([A!.id]);
     expect(result.kind).toBe("cannot");
     if (result.kind !== "cannot") return;
     expect(result.reason_ar).toBe("لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر.");
-    expect(recorded.map((c) => c.id)).toEqual([A!.id, B!.id, C!.id]);
+  });
+
+  it("T4(ii) D-0051: three options that would all be unreadable: ONE probe, ONE field-map ask, the existing unserved reason, no web call", async () => {
+    const [A, B, C] = t4Offered();
+    expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
+    const { result, recorded, modelCalls } = await t4Run((_n, id) => (id === T4_WEB[0]!.id ? "ok" : "bad"), [A!, B!, C!], { web: true });
+    expect(modelCalls.field_map).toBe(1);
+    expect(recorded.map((c) => c.id)).toEqual([A!.id]);
+    expect(result.kind).toBe("cannot");
+    if (result.kind !== "cannot") return;
+    expect(result.reason_ar).toBe("لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر.");
   });
 
   it("T4(iii) option 1 maps: one probe and one field-map ask", async () => {
