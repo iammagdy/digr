@@ -35,17 +35,17 @@ v2_secdef AS (
 v3_objects AS (
   SELECT count(*) AS existing_new_objects
   FROM (
-    SELECT to_regclass('public.job_groups') AS obj
-    UNION ALL SELECT to_regclass('public.job_group_parts')
-    UNION ALL SELECT to_regclass('public.job_group_keys')
-    UNION ALL SELECT to_regclass('public.job_group_frozen')
-    UNION ALL SELECT to_regproc('public.accept_group_quote_atomic')
-    UNION ALL SELECT to_regproc('public.draw_next_group_part_atomic')
-    UNION ALL SELECT to_regproc('public.close_job_group_atomic')
-    UNION ALL SELECT to_regproc('public.claim_next_job_group')
-    UNION ALL SELECT to_regproc('public.freeze_and_settle_group_part_atomic')
-    UNION ALL SELECT to_regproc('public.release_unfrozen_group_part_atomic')
-    UNION ALL SELECT to_regproc('public.job_group_points_ar')
+    SELECT to_regclass('public.job_groups')::text AS obj
+    UNION ALL SELECT to_regclass('public.job_group_parts')::text
+    UNION ALL SELECT to_regclass('public.job_group_keys')::text
+    UNION ALL SELECT to_regclass('public.job_group_frozen')::text
+    UNION ALL SELECT to_regproc('public.accept_group_quote_atomic')::text
+    UNION ALL SELECT to_regproc('public.draw_next_group_part_atomic')::text
+    UNION ALL SELECT to_regproc('public.close_job_group_atomic')::text
+    UNION ALL SELECT to_regproc('public.claim_next_job_group')::text
+    UNION ALL SELECT to_regproc('public.freeze_and_settle_group_part_atomic')::text
+    UNION ALL SELECT to_regproc('public.release_unfrozen_group_part_atomic')::text
+    UNION ALL SELECT to_regproc('public.job_group_points_ar')::text
   ) s
   WHERE obj IS NOT NULL
 ),
