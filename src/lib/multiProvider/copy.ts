@@ -188,9 +188,9 @@ export function splitCardLineAr(split: { parts: number; perPart: number; reachab
   const K = split.parts;
   const G = split.hold;
   if (Y === X) {
-    return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+    return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
   }
-  return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ${toArabicDigits(40)}، لذلك أقصى ما يمكن تسليمه في هذا الطلب ${countPlainAr(Y, "companies")} على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+  return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ${toArabicDigits(40)}، لذلك أقصى ما يمكن تسليمه في هذا الطلب ${countPlainAr(Y, "companies")} على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
 }
 
 export function groupStartLineAr(args: { hold: number; parts: number }): string {
