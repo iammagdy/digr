@@ -224,6 +224,7 @@ import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReaso
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
 import { RELEASE_NEUTRAL_REASON_AR, RETRY_CAUSE_AR, releaseTextAr } from "../src/lib/releaseText";
+import { sendPlatformEmail, getRecipient } from "../src/lib/server/sendPlatformEmail";
 
 function expectReleased(actual: unknown, expectedBase: string): void {
   expect(actual).toBe(releaseTextAr(expectedBase, db.targetVolumeMax));
@@ -1518,14 +1519,31 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(r.w.status).toBe(500); expect(r.w.body.released).toBe(true); expect(r.w.body.chargedCredits).toBe(0);
     expect(String(r.w.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
     const rels = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
-    expect(rels.length).toBeGreaterThanOrEqual(1);
+    expect(rels).toHaveLength(2);                                    // W's release and O's catch: two CALLS, one effective (below)
     expect(rels[0].args.p_error_message).toBe(releaseTextAr(String(r.w.body.error), db.targetVolumeMax));
     // O: late, the job is no longer running: nothing is settled and nothing is charged
     expect(r.o!.status).toBe(500); expect(r.o!.body.chargedCredits).toBe(0);
     expect(rpcCount("settle_job_atomic")).toBe(0); expect(db.resultExistedAtSettle).toEqual([]);
-    expect(db.jobs[0].status).toBe("failed"); expect(db.jobs[0].charged_credits).toBeUndefined();
+    expect(db.jobs[0].status).toBe("failed"); expect(db.jobs[0].charged_credits).toBe(0);
+    expect(releaseAnswers().map((a: any) => a.already_released)).toEqual([false, true]);   // call 1 returns the hold, call 2 answers already_released
+    expectMoney("released", { calls: 2 });                                                  // exactly ONE effective release, net debit 0
+    expect(db.jobs[0].error_message).toBe(rels[0].args.p_error_message);                    // first writer wins: the second release keeps W's text
     expect(r.lastBody).toContain("O شركة");                                  // O's re-publish was the last writer
     expect(r.costsAtPause).toBeGreaterThan(0); expect(db.costs.length).toBeGreaterThan(r.costsAtPause);
+  });
+
+  it("T-W B4 O-first, I4: the second release answers already_released and writes no second event, notice or e-mail", async () => {
+    vi.mocked(sendPlatformEmail).mockClear();
+    vi.mocked(getRecipient).mockImplementation(async () => ({ email: "owner@example.test", name: "Owner" }));
+    try {
+      await raceOFirst({ mode: "chain", interleaving: "I4", oRows: 3, wRows: 2 });
+    } finally {
+      vi.mocked(getRecipient).mockImplementation(async () => null);                 // the file's own default
+    }
+    expect(releaseAnswers().map((a: any) => a.already_released)).toEqual([false, true]);
+    expect(releaseEvents()).toHaveLength(1);                                         // the second release wrote no activity line
+    expect(db.notices.filter((n: any) => n.id === `notif_released_${JOB}`)).toHaveLength(1);   // no second «released» notice insert
+    expect(vi.mocked(sendPlatformEmail).mock.calls.filter((c) => c[0] === "refund")).toHaveLength(1);   // no second refund e-mail
   });
 
   it("T-W B5-R1 normal terminal: winner continues to end, assembles from own step in memory, result file and artifact_versions written, settle charges ceil(delivered x unit)", async () => {
