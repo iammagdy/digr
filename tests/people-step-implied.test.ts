@@ -92,17 +92,17 @@ describe("the plan check: the decision makers are never dropped by one sentence"
     expect(checked.plan.price.reservePoints).toBeLessThanOrEqual(600);
     expect(checked.plan.price.deliveredRows).toBe(5 + 5 * DEFAULT_PEOPLE_PER_PARENT);
   });
-  it("a plan that the default count would make dearer than 600 points gets a LOWER count from code (the job cap is never touched); the card says which count it used", () => {
-    // 0.012 USD per person: 10 people do not fit under 600 points, 5 do
+  // CHANGED (DT-20261118-03 O-1, Megz D-0082 «في كل شركه مديرين»): the default count is no longer lowered for the price of the reading; only the job cap lowers it (before: 1 per company, 5 people)
+  it("a plan whose reading alone is dearer than 600 points KEEPS the default count of 2 (only the job cap lowers it); the card says which count it used", () => {
+    // 0.012 USD per person: the reading of 10 people is above 600 points
     const dear = calls(0.024, 2);
     const checked = validateAndPricePlan({ summary_ar: "٥ شركات مصرية في قطاع الكهروميكانيكا ومعهم صناع القرار.", stages: [companies, people(2)], contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.", }, lookupOf([["aviato.companies.employees", 2]], dear));
     expect(checked.ok, JSON.stringify(checked)).toBe(true);
     if (!checked.ok) return;
     const stage = checked.plan.stages.find((s) => s.key === "people")!;
-    expect(stage.per_parent_rows).toBe(1);
-    expect(stage.planned_rows).toBe(5);
-    // CHANGED (owner decision after #321): the 600-point target is the price of the READING alone; the deeper search is the customer's choice and is priced on top
-    expect(readingAlone(checked.plan)).toBeLessThanOrEqual(600);
+    expect(stage.per_parent_rows).toBe(2);
+    expect(stage.planned_rows).toBe(10);
+    expect(readingAlone(checked.plan)).toBeGreaterThan(600);
     expect((checked.plan.assumptions_ar ?? []).join(" ")).toMatch(/لم تحدد عدد/);
   });
   it("a number the customer gave is never lowered by code, however dear the plan (the job cap itself is untouched)", () => {
@@ -188,9 +188,10 @@ describe("the price of «5 Egyptian electromechanical companies + decision maker
     // CHANGED (PR 2 price): planning is priced by the plan's shape (two stages 0.016, was a flat 0.012), the names step 0.00007 a person: holds and charges move by about 8%
     [0.00099, 2, 15, 357, 311],
     [0.0035, 2, 15, 834, 725],
-    [0.0115, 1, 10, 2349, 2043],
+    // CHANGED (DT-20261118-03 O-1): the dearest case keeps 2 per company (before: [0.0115, 1, 10, 2349, 2043])
+    [0.0115, 2, 15, 2352, 2045],
   ];
-  it.each(OWNER_PRICES)("%f USD per person: %i per company, %i items, hold %i points (the reading alone never above 600), at most %i charged", (perPerson, per, rows, hold, max) => {
+  it.each(OWNER_PRICES)("%f USD per person: %i per company, %i items, hold %i points, at most %i charged", (perPerson, per, rows, hold, max) => {
     const calls = new Map([
       ["call_0001", { id: "call_0001", endpointId: "tomba.companies.search.reveal", ok: true, costUsd: 0.000178, rows: 50, params: { query: "electromechanical" } }],
       ["call_0002", { id: "call_0002", endpointId: "aviato.companies.employees", ok: true, costUsd: perPerson * 2, rows: 2, params: { website: "kahromika-co.com", perPage: 2, page: 0 } }],
@@ -207,6 +208,5 @@ describe("the price of «5 Egyptian electromechanical companies + decision maker
     expect(checked.plan.price.deliveredRows).toBe(rows);
     expect(checked.plan.price.reservePoints).toBe(hold);
     expect(checked.plan.price.maxChargePoints).toBe(max);
-    expect(readingAlone(checked.plan)).toBeLessThanOrEqual(600);
   });
 });
