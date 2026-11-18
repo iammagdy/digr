@@ -56,22 +56,20 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(p.price.overCap).toBe(false);
     expect(p.price.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
   });
-  it("the EXPECTED provider cost is about a quarter of the provider's daily cap (0.80 USD), and even the WORST case (every person goes through every finder, every page is read) is under two thirds of it and inside the job's own call budget", () => {
+  // CHANGED (DT-20261118-03 fix round 1, BUG HUNTER Gate 2 P0; Megz D-0085 and its addendum): the daily cap is ONE number for all of TREG, every vendor together (agent/src/gateway.ts:295 reserves under provider «treg»;
+  // supabase/migrations/20261016205259_fix_provider_spend_scope.sql:19-26 sums every TREG cost against it). With the 0.05 USD phone chain a standard request expects about 56% of the 0.80 USD cap and may plan up to about 145% of it:
+  // two such requests a day use up the default cap (accepted in the D-0085 addendum; the cap is raised in admin). Before: expected < 1/3 and worst < 2/3 of the cap.
+  it("the EXPECTED TREG cost is under 60% of the TREG-wide daily cap (0.80 USD), and even the WORST case (every person goes through every finder, every page is read) is under 150% of it and inside the job's own call budget", () => {
     const p = priced();
     const expected = p.price.providerCostUsd ?? 0;
     expect(expected).toBeGreaterThan(0.15);
-    // CHANGED (DT-20261118-03 PR-2c, Megz D-0085): the provider daily cap is enforced PER PROVIDER (the gateway), so the worst case is now checked per provider; the sum of all providers is no longer compared with one provider's cap (before: expected < 1/3 and worst < 2/3 of 0.80 USD summed over every provider)
+    expect(expected).toBeLessThan(DAILY_CAP_USD * 0.6);
     const people = p.stages.find((s) => s.key === "people")!;
     const pages = people.planned_rows * ((people.pages_per_parent ?? 1) * (people.page_cost_usd ?? 0)) / (people.per_parent_rows ?? 1);
     // CHANGED (PR 1 part b): each step's cap is per row of ITS OWN stage (the company steps: the five companies, not the ten people)
     const chain = (p.contact_steps ?? []).reduce((n, st) => n + (st.max_person_usd ?? st.per_person_usd) * p.stages.find((x) => x.key === st.stage_key)!.planned_rows, 0);
     const worst = pages + chain + 0.0001;
-    const perProvider = new Map<string, number>();
-    for (const st of p.contact_steps ?? []) {
-      const rows = p.stages.find((x) => x.key === st.stage_key)!.planned_rows;
-      for (const h of [...st.finders, ...(st.verifiers ?? []), ...(st.validators ?? []), ...(st.company_phone ?? [])]) { const provider = h.id.split(".")[0]; perProvider.set(provider, (perProvider.get(provider) ?? 0) + h.usd * rows); }
-    }
-    for (const [provider, usd] of perProvider) expect(usd, provider).toBeLessThan(DAILY_CAP_USD);
+    expect(worst).toBeLessThan(DAILY_CAP_USD * 1.5);
     expect(worst).toBeLessThan(executionBudgetUsd(p.price.reservePoints));
   });
   // CHANGED (DT-20261118-03, Megz D-0084): the person's phone step has no company-phone search (before: «then the company's phone»; company_phone non-empty)
