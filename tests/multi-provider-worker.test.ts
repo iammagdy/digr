@@ -2531,6 +2531,21 @@ describe("T-M chain (DT-06)", () => {
       }
     });
   }
+
+  it("T-M chain notice e-mail of the 5th failure carries no amount", async () => {
+    vi.mocked(sendPlatformEmail).mockClear();
+    vi.mocked(getRecipient).mockImplementation(async () => ({ email: "owner@example.test", name: "Owner" }));
+    try {
+      await drive("CRASH", true);
+    } finally {
+      vi.mocked(getRecipient).mockImplementation(async () => null);                 // the file's own default
+    }
+    const mails = vi.mocked(sendPlatformEmail).mock.calls.filter((c) => c[3] === `job-update:released:${JOB}`);
+    expect(mails).toHaveLength(1);                                                   // exactly one e-mail for this notice (the idempotency key of jobNotices.ts jobNoticeEmailKey)
+    expect(mails[0][0]).toBe("job-update");
+    expect(mails[0][2].DetailOne).toBe(releasedNoticeFull(0, { withEmail: true }).email!.detail1);
+    expect(mails[0][2].DetailOne).not.toMatch(/[0-9٠-٩]/);
+  });
 });
 
 describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", () => {
