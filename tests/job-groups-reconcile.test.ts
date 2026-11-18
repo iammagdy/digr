@@ -1753,6 +1753,9 @@ describe("T10: fairness through F4", () => {
       vi.advanceTimersByTime(31_000);
     }
     expect(w.group("grp_closable").status).toBe("closed");
+    expect(w.claimedIds).toContain("grp_closable");
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBeLessThanOrEqual(26);
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBe(1);
   });
 
   it("(j) 30 groups with a running part and 1 closable ⇒ the closable group is closed at the first claim", async () => {
