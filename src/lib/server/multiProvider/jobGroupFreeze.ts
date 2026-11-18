@@ -176,7 +176,7 @@ export async function freezeGroupPart(
 
     let dlExisting: any;
     try {
-      dlExisting = await withTimeout(
+      dlExisting = await downloadWithin(
         admin.storage.from("results").download(path),
         FREEZE_IO_TIMEOUT_MS
       );
@@ -188,14 +188,7 @@ export async function freezeGroupPart(
       return "retry";
     }
 
-    let existingBytes: Buffer;
-    try {
-      existingBytes = Buffer.isBuffer(dlExisting.data)
-        ? dlExisting.data
-        : Buffer.from(await dlExisting.data.arrayBuffer());
-    } catch {
-      return "retry";
-    }
+    const existingBytes: Buffer = dlExisting.data;
 
     const existingSha = createHash("sha256").update(existingBytes).digest("hex");
     if (existingSha !== sha) {
