@@ -38,6 +38,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
 import { isChainSlug } from "../../../../lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainZeroDeliveryReasonAr } from "../../../../lib/multiProvider/copy";
+import { isGroupPartSpec, loadGroupKeys } from "../../../../lib/server/multiProvider/jobGroupWorker";
 import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
 import { MAX_STARTS_PER_STEP } from "../../../../lib/server/multiProvider/chainRunner";
 import { createAdminClient } from "../../../../lib/supabase/server";
@@ -475,6 +476,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: switchedOffAr, release: rel.data }, { status: 503 });
     }
     const isChainJob = isChainSlug(spec.capabilitySlug) && multiProviderEnabled();
+    const isGroupPart = isGroupPartSpec(spec, isChainJob);
+    if (isGroupPart && Number(spec.params?.split?.part) >= 2) {
+      spec.params = { ...spec.params, excludeRowKeys: await loadGroupKeys(adminClient, spec.params?.split?.groupId) };
+    }
 
     // The provider is called and billed after this point. Refuse a people job
     // until field-level settlement exists, and release its reserve through the
@@ -2479,6 +2484,16 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       if (!collectionCompleteBeforeSettlement(persistedCompletion, persistedCompletionErr, recordedDeliveredUnits)) {
         throw new CustomerReasonError("collection_unverified");
+      }
+
+      if (isGroupPart) {
+        return NextResponse.json({
+          success: true,
+          done: true,
+          awaitingGroupFreeze: true,
+          jobId,
+          deliveredUnits: recordedDeliveredUnits,
+        });
       }
 
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
