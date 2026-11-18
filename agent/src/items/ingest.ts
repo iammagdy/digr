@@ -1,4 +1,4 @@
-import { CONTACT_STATUS_UNVERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
+import { CONTACT_STATUS_UNVERIFIED_AR, SOURCE_PROFILE_KEY, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../../src/lib/agentMission/foundation/topicChoice";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
@@ -193,6 +193,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
     // the tokens the stage's replies tool needs from the item's own row (rule 6 of the consolidation): kept on the stored row, never a column of the file
     for (const k of stage.carry_keys ?? []) if (raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(k in row)) row[k] = raw[k];
+    // the person's professional page read from the source's raw answer (engine/run.ts, DT-20261118-05 item 4a): kept on the stored row for the finders, never a column of the file
+    if (typeof raw[SOURCE_PROFILE_KEY] === "string" && raw[SOURCE_PROFILE_KEY] !== "" && !(SOURCE_PROFILE_KEY in row)) row[SOURCE_PROFILE_KEY] = raw[SOURCE_PROFILE_KEY];
     if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);

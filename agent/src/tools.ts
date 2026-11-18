@@ -5,7 +5,7 @@ import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { contactVerificationQuestionIssue } from "../../src/lib/agentMission/contactQuestion";
 import { PEOPLE_PLATFORM, childStepSourcesFor, identifierTier, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies, rankedPeopleSources } from "../../src/lib/agentMission/childSources";
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
-import { companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
+import { alternateFinderSourcesOf, companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, profileLookupSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
 import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMission/taskContracts";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES, WEB_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
@@ -706,7 +706,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
           contactAids: (kind: "email" | "phone") => {
             const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-            return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
+            return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
           },
           endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
         };

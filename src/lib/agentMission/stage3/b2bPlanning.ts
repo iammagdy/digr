@@ -2,7 +2,7 @@ import { blockedEndpointReason } from "../../treg/blockList";
 import { isSellable, type TregCatalog } from "../../treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../treg/dataPolicy";
 import type { MissionPricingSettings } from "../../missionPricing";
-import { companyPhoneSourcesOf, validatorSourcesOf, verifierSourcesOf } from "../contactFinders";
+import { alternateFinderSourcesOf, companyPhoneSourcesOf, profileLookupSourcesOf, validatorSourcesOf, verifierSourcesOf } from "../contactFinders";
 import type { StatsMap } from "../sourceRanking";
 import { stage3Enabled } from "./flags";
 import { planB2BByCode, type B2BPlanResult } from "./b2bPlan";
@@ -29,6 +29,6 @@ export function planCompaniesByCodeIfOn(input: CompaniesPlanningInput): B2BPlanR
   const allowed = (id: string): boolean => isSellable(id, catalog) && !blockedEndpointReason(id) && policyVerdict(id, access).allowed;
   return planB2BByCode({
     requestText: input.requestText, catalog, isAllowed: allowed, stats, now, ...(input.pricingSettings ? { pricingSettings: input.pricingSettings } : {}),
-    aids: (kind) => (kind === "email" ? { verifiers: verifierSourcesOf(catalog, allowed, stats, now) } : { validators: validatorSourcesOf(catalog, allowed, stats, now), company_phone: companyPhoneSourcesOf(catalog, allowed, stats, now) }),
+    aids: (kind) => (kind === "email" ? { verifiers: verifierSourcesOf(catalog, allowed, stats, now) } : { validators: validatorSourcesOf(catalog, allowed, stats, now), company_phone: companyPhoneSourcesOf(catalog, allowed, stats, now), alternates: alternateFinderSourcesOf("phone", catalog, allowed, stats, now), profile_lookup: profileLookupSourcesOf(catalog, allowed, stats, now) }),
   });
 }
