@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getAuthAccount } from "@/lib/server/authAccount";
 import { AGENT_BUCKET, MISSION_TABLE } from "@/lib/agentMission/constants";
 import { findTestAccount } from "@/lib/agentMission/adminActions";
-import { ADDON_MARKER_COLUMN, hasAddonMarker, withoutAddonRows } from "@/lib/agentMission/addonMarker";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "@/lib/agentMission/addonMarker";
+import { readUserMissions } from "@/lib/server/adminUserMissions";
 import { missionDownloadName } from "@/lib/agentMission/fileNames";
 import { customerGreetingName, renderCustomerMessageHtml, renderCustomerMessageText, validateCustomerMessage } from "@/lib/customerMessage";
 import { CUSTOMER_MAIL_MAX_ATTACHMENT_BYTES, customerMailFailureAr, sendCustomerMail } from "@/lib/server/customerMail";
@@ -66,8 +67,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const client = createAdminClient();
     const account = await within("account", 10_000, getAuthAccount(client, id));
     if (!account.email) return NextResponse.json({ error: "المستخدم غير موجود" }, { status: 404 });
-    const { data } = await within("mission", 10_000, client.from(MISSION_TABLE).select(`id,status,request_text,files,created_at,${ADDON_MARKER_COLUMN}`).eq("user_id", id).order("created_at", { ascending: false }).limit(20)) as { data: any[] | null };
-    const missions = withoutAddonRows(Array.isArray(data) ? data : []).map((m: any) => ({
+    const { rows } = await within("mission", 10_000, readUserMissions(client, id));
+    const missions = rows.map((m) => ({
       id: String(m.id), status: String(m.status ?? ""), createdAt: m.created_at ?? null, requestAr: String(m.request_text ?? "").slice(0, 140),
       files: (Array.isArray(m.files) ? (m.files as MissionFile[]) : []).map((f) => f.name).filter((n) => FILE_NAME.test(n)),
     }));

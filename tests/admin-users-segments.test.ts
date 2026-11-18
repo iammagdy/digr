@@ -19,7 +19,7 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 import { GET } from "../src/app/api/admin/users/route";
-import { LOW_BALANCE_POINTS } from "../src/app/api/admin/users/route";
+import { LOW_BALANCE_POINTS } from "../src/lib/server/adminUsersList";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 
 /** A fake world: profiles, an append-only ledger, top-ups, missions, old jobs, and the sign-in service's accounts (with `banned_until`). Every read is recorded. */
@@ -176,9 +176,11 @@ describe("GET /api/admin/users: segments, counts, sort", () => {
   it("the CSV export keeps its columns", async () => {
     state.db = seven();
     const res = await GET(new NextRequest("http://localhost/api/admin/users?format=csv"));
-    const text = await res.text();
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const text = bytes.subarray(3).toString("utf8");
     expect(res.headers.get("content-type")).toContain("text/csv");
-    expect(text.split("\r\n")[0]).toBe('﻿"الاسم","البريد","تاريخ التسجيل","آخر دخول","إجمالي الشحن (ج.م)","آخر شحن"');
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // the BOM, so a spreadsheet reads the Arabic right
+    expect(text.split("\r\n")[0]).toBe('"الاسم","البريد","تاريخ التسجيل","آخر دخول","إجمالي الشحن (ج.م)","آخر شحن"');
     expect(text.split("\r\n")).toHaveLength(8);
   });
 

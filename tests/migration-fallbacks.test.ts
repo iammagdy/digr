@@ -34,6 +34,8 @@ const baseTables = {
   profiles: [{ id: USER_ID, email: "c@x.test", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-12T00:00:00Z" }, { id: ADMIN.id, email: "a@x.test" }],
   topups: [{ id: "t1", user_id: USER_ID, amount_egp: 30, status: "approved", created_at: "2026-10-10T09:00:00Z" }],
   jobs: [{ id: "job_1", user_id: USER_ID, status: "completed", created_at: "2026-10-12T10:00:00Z" }],
+  // DT-20261118-06 phase 1B: the profile counts the customer's requests in `missions` (the request that became job_1)
+  missions: [{ id: "msn_job1", user_id: USER_ID, status: "completed", job_id: "job_1", plan: null, created_at: "2026-10-12T10:00:00Z" }],
   provider_costs: [],
   settings_public: [{ key: "pricing", value: { creditValueEgp: 0.1 } }],
 };
