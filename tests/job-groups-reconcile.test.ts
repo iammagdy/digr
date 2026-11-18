@@ -90,6 +90,8 @@ function makeWorld() {
   let throwAfterDraw = false;
   let abortAfterReads = false;
   let abortBeforeF5 = false;
+  let neverResolves: string | null = null;
+  let failAll: any = null;
 
   let firstItem: any = {
     capabilitySlug: "mp-business-contacts",
@@ -304,6 +306,27 @@ function makeWorld() {
     return g;
   };
 
+  const oneGroupPastDeadline = () => {
+    const gid = "grp_1";
+    const part1 = part("completed", 10, 10, { id: "job_p1", user_id: "u1" });
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      user_id: "u1",
+      status: "open",
+      parts_planned: 3,
+      next_part: 2,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at: new Date(NOW0 - 3_600_000).toISOString(),
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, [part1], true);
+    return g;
+  };
+
   const rewriteAllDataTo = (rows: any[]) => {
     const buf = bytesOf(rows);
     for (const key of partials.keys()) {
@@ -387,12 +410,24 @@ function makeWorld() {
           return builder;
         },
         maybeSingle: () => {
+          if (neverResolves === `from(${table})`) {
+            return new Promise(() => {});
+          }
+          if (failAll) {
+            return Promise.resolve({ data: null, error: failAll });
+          }
           if (table === "plans_quotes") {
             return Promise.resolve({ data: { items: [firstItem] }, error: null });
           }
           return Promise.resolve({ data: null, error: null });
         },
         then: (resolve: (val: any) => any, reject: (err: any) => any) => {
+          if (neverResolves === `from(${table})`) {
+            return;
+          }
+          if (failAll) {
+            return resolve({ data: null, error: failAll });
+          }
           if (latency.r00) {
             vi.advanceTimersByTime(latency.r00);
           }
@@ -444,6 +479,15 @@ function makeWorld() {
     },
     rpc: (name: string, args: any) => {
       w_all_rpc_names_seen_in_this_file.add(name);
+      if (
+        (name === "draw_next_group_part_atomic" && neverResolves === "rpc draw") ||
+        (name === "close_job_group_atomic" && neverResolves === "rpc close")
+      ) {
+        return new Promise(() => {});
+      }
+      if (failAll) {
+        return Promise.resolve({ data: null, error: failAll });
+      }
       if (latency.claim && name === "claim_next_job_group") {
         vi.advanceTimersByTime(latency.claim);
       }
@@ -663,6 +707,18 @@ function makeWorld() {
     get abortBeforeF5() {
       return abortBeforeF5;
     },
+    set neverResolves(v: string | null) {
+      neverResolves = v;
+    },
+    get neverResolves() {
+      return neverResolves;
+    },
+    set failAll(v: any) {
+      failAll = v;
+    },
+    get failAll() {
+      return failAll;
+    },
     setParts,
     group,
     jobsOfGroup,
@@ -673,6 +729,7 @@ function makeWorld() {
     groupWithRunningPart,
     awaitingFreezeGroup,
     groupWithFailedPart,
+    oneGroupPastDeadline,
     rewriteAllDataTo,
   };
 }
@@ -1222,5 +1279,46 @@ describe("T08: release and halt", () => {
     b.groupWithFailedPart({ cursor: null });
     await run(b);
     expect(b.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+  });
+});
+
+describe("T09: timeouts and outage", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(["from(job_groups)", "from(job_group_parts)", "from(jobs)", "rpc draw", "rpc close"])(
+    "(g) TIMEOUT: a never-resolving %s ⇒ the tick returns within 45 s of fake time",
+    async (op) => {
+      const w = makeWorld();
+      w.oneGroupWithPartsDone(1);
+      w.neverResolves = op;
+      const p = run(w);
+      await vi.advanceTimersByTimeAsync(TICK_BUDGET_MS);
+      const r = await p;
+      expect(Date.now() - NOW0).toBeLessThanOrEqual(TICK_BUDGET_MS);
+      expect(r).toBeDefined();
+    }
+  );
+
+  it("(n) DATABASE OUTAGE: every select and rpc errors for 10 ticks ⇒ no upload, [job-groups:overdue-check-failed] each tick (one error line per tick), never throws; tick 11 healthy ⇒ the group closes once", async () => {
+    const w = makeWorld();
+    w.oneGroupPastDeadline();
+    w.failAll = { message: "db down" };
+    for (let i = 0; i < 10; i++) {
+      w.errors.length = 0;
+      await run(w);
+      expect(w.errors.filter((e) => e[0] === "[job-groups:overdue-check-failed]").length).toBe(1);
+      expect(w.errors.length).toBe(1);
+      expect(w.results.size).toBe(0);
+    }
+    w.failAll = null;
+    w.requeue();
+    await run(w);
+    expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").length).toBe(1);
   });
 });
