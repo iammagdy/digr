@@ -48,3 +48,32 @@ describe("DT-20261118-03 F2-b: a city request keeps the other cities of the coun
     expect(placeVerdict(["EG:cairo"], { city: "Cairo", address: "12 Tahrir Street" }, fields)).toBe("pass");
   });
 });
+
+// DT-20261118-03 fix round 1 (QA consolidated FAIL 2 + 3, BUG HUNTER Gate 2 P1; D-0086: no new list): the CITY FIELD states the city, so a city field that never names the asked city is another place, also from a source asked for Cairo;
+// in an address, a part with a digit (street, building, floor) or one that names a country is not a town, a postal code is dropped first; a city of the place table named by its OWN name (Giza, not the district «الدقي») is another place
+describe("DT-20261118-03 fix round 1: the city field says the city; a street, a floor or the country is not another town", () => {
+  it.each([
+    [{ city: "Giza" }, true],
+    [{ city: "الجيزة" }, false],
+    [{ city: "Giza", address: "12 Tahrir Street" }, false],
+    [{ city: "Cairo", address: "7 Pyramids Rd, Giza" }, false],
+    [{ city: "Cairo", address: "Sheikh Zayed, Giza 12588" }, true],
+  ])("%j (asked of the source: %s) is another place", (row, bySource) => {
+    expect(placeVerdict(["EG:cairo"], row, fields, { bySource })).toBe("other_place");
+    expect(filterVerdict([{ kind: "place", places: ["EG:cairo"], fields, by_source: bySource } as never], row, { textKey: null, now: 0 } as never)).toBe("filter_place");
+  });
+  it.each([
+    [{ city: "Cairo", address: "12 Tahrir Street, floor 2" }],
+    [{ city: "Cairo", address: "12 Tahrir Street, Egypt" }],
+    [{ city: "القاهرة", address: "١٢ شارع التحرير، مصر" }],
+    [{ city: "Cairo", address: "١٢ شارع التحرير، الدقي" }],
+    [{ city: "Cairo", address: "Building 5, 12 Tahrir Street, 11511" }],
+  ])("%j passes a Cairo request", (row) => {
+    expect(placeVerdict(["EG:cairo"], row, fields)).toBe("pass");
+    expect(placeVerdict(["EG:cairo"], row, fields, { bySource: true })).toBe("pass");
+  });
+  it("a country request is not narrowed by the city field: Giza is in Egypt", () => {
+    expect(placeVerdict(["EG"], { city: "Giza" }, fields)).toBe("pass");
+    expect(placeVerdict(["EG"], { city: "Giza", address: "7 Pyramids Rd, Giza" }, fields)).toBe("pass");
+  });
+});
