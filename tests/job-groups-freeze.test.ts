@@ -286,6 +286,33 @@ describe("jobGroupFreeze", () => {
     expect(w.results.size).toBe(where === "existing" ? 1 : 0);
   });
 
+  const MALFORMED_ID_ROW = JSON.parse('{"id":{"toString":null}}');
+  it("(i) MALFORMED IDENTITY: candidate 1 has a row whose identity cannot be computed ⇒ that candidate is invalid, candidate 2 is frozen with its exact hash", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const w = makeWorld();
+    const b2 = bytesOf(rowsOf(10, "b"));
+    w.partials.set("u1/job_p1/data.json", bytesOf([...rowsOf(9), MALFORMED_ID_ROW]));
+    w.partials.set("job_p1/data.json", b2);
+    expect(await runFreezeBounded(w, FREEZE_BUDGET_MS)).toBe("frozen");
+    expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
+    expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 0 });
+    expect(w.f5.committed.map((c) => c.p_sha256)).toEqual([shaOf(b2)]);
+    expect([...w.results.keys()]).toEqual([frozenPathFor(uid, jobId, shaOf(b2))]);
+  });
+  it("(i) MALFORMED IDENTITY IN BOTH CANDIDATES ⇒ unfreezable, no throw, no upload, no rpc at all", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf([...rowsOf(9), MALFORMED_ID_ROW]));
+    w.partials.set("job_p1/data.json", bytesOf([MALFORMED_ID_ROW, ...rowsOf(9, "b")]));
+    const rpc = vi.spyOn(w.admin, "rpc");
+    expect(await runFreezeBounded(w, FREEZE_BUDGET_MS)).toBe("unfreezable");
+    expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
+    expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 0 });
+    expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 1 });
+    expect(w.results.size).toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["both absent", (w: any) => {}],
     [
