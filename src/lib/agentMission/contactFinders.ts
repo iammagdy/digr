@@ -249,7 +249,8 @@ export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArr
 }
 
 /** The call parameters of a finder for a person, or null when the person lacks what the finder REQUIRES (it is then skipped for this person). At least one identifying input must be filled. */
-export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<string, string> | null {
+/** `forPerson` false: a COMPANY lookup (the company e-mail listers take only the domain), where no person identifier is required. */
+export function finderParamsFor(finder: FinderInfo, p: PersonFacts, forPerson = true): Record<string, string> | null {
   const value: Record<ReturnType<typeof inputKindOf> & string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
   const params: Record<string, string> = {};
   for (const i of finder.inputs) {
@@ -259,7 +260,7 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<stri
     if (v) params[i.name] = v; else if (i.required) return null;
   }
   // A PERSON FINDER NEEDS A PERSON (BUG HUNTER Gate 1 delta, PR-2c): a call with only the company's domain or name is a paid call about nobody; at least a profile or a name must go with it
-  if (!finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last"].includes(inputKindOf(i.name) ?? ""))) return null;
+  if (forPerson && !finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last"].includes(inputKindOf(i.name) ?? ""))) return null;
   return Object.keys(params).length > 0 ? params : null;
 }
 

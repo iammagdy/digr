@@ -207,7 +207,7 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: stageKey, row: id, column: emailStep.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
             for (const finder of emailStep.finders) {
               if ((emailApi.down.get(finder.id) ?? 0) >= 2) continue;
-              const params = finderParamsFor(finder, facts);
+              const params = finderParamsFor(finder, facts, false);
               if (!params) continue;
               const a = await emailApi.attempt(finder, params);
               if (a.t === "stop") { note(finder.id, "refused"); stopped = a.stop; break; }
