@@ -497,29 +497,16 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
     const trace = { empties: 0, failures: 0 };
-    // DT-20261117-06 L1 (plan N-1): ONE primary budget of MAX_PROBES_PER_STEP for this step, shared by every probeStep call of THIS loop and never reset per retry or per option; an option whose answer cannot be read is followed by the next option
-    const probeBudget = { left: MAX_PROBES_PER_STEP };
-    let accepted: { got: Probed; map: FieldMap; sampleRows: Array<Record<string, unknown>> } | null = null;
-    let answeredButUnreadable = false;
-    let rest = options;
-    while (rest.length > 0 && probeBudget.left > 0) {
-      const tried = await probeStep(step, rest, parent, deps, probeBudget, trace);
-      if (!tried) break;
-      const triedMap = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, tried.option.endpoint, tried.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), tried.items), tried.items);
-      const triedRows = triedMap ? runMap(cardMapCode(pseudoCard(tried.option.endpoint, tried.listPath, triedMap, tried.items.length, carryFieldsOf(tried.items, triedMap), tried.items)), tried.page) : [];
-      if (triedMap && triedRows.length > 0) { accepted = { got: tried, map: triedMap, sampleRows: triedRows }; break; }
-      answeredButUnreadable = true;
-      rest = rest.slice(rest.findIndex((o) => o.endpoint.id === tried.option.endpoint.id) + 1);
-    }
-    const got = accepted ? accepted.got : null;
+    const got = await probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace);
     // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
     // (a tool that answered empty on its searches is evidence even when another option of the step failed to answer at all: live 16 Nov, the second option was refused)
-    if (!got && !answeredButUnreadable && !step.parent && trace.empties > 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
-    if (!got && !answeredButUnreadable) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
-    const map = accepted ? accepted.map : null;
+    if (!got && !step.parent && trace.empties > 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
+    if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
+    const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
+    const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
     // the source answered, but nothing usable came back for a top-level step (a named account that does not exist answers with a stray item): for the customer that is «nothing found», so they are asked, not told «unreadable»
     const noUsable = (): void => { if (!step.parent) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: Math.max(1, trace.empties + 1) }); };
-    if (!map || !got) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
+    if (!map) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const carry = carryFieldsOf(got.items, map);
     const card = pseudoCard(got.option.endpoint, got.listPath, map, got.items.length, carry, got.items);
     const mapCode = cardMapCode(card);
