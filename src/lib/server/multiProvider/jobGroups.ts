@@ -1,5 +1,9 @@
 import { withTimeout, TIMED_OUT, isMissingSchema } from "./jobGroupShared";
-import { GROUP_CLOSING_NOTICE_AR } from "../../multiProvider/copy";
+import {
+  GROUP_CLOSING_NOTICE_AR,
+  GROUP_PART_STOPPED_AR,
+  groupFinalLineAr,
+} from "../../multiProvider/copy";
 
 export const TICK_BUDGET_MS = 45_000;
 export const MIN_LEFT_FOR_CLAIM_MS = 35_000;
@@ -144,7 +148,112 @@ export async function reconcileJobGroups(
       const group = claimData.group;
 
       try {
-        // Processing of group will be implemented in T04+
+        const gid = group.id;
+        const L = (group.next_part ?? 1) - 1;
+        const jobL = claimData.current;
+        const resFrozen = Boolean(claimData.frozen);
+
+        // R3 reads
+        const partsRes = await withTimeout(
+          admin.from("job_group_parts").select("part_index, job_id").eq("group_id", gid),
+          4_000
+        );
+        if (partsRes === TIMED_OUT || partsRes?.error || !Array.isArray(partsRes?.data)) {
+          continue;
+        }
+
+        const partRows = partsRes.data;
+        const jobIds = partRows.map((p: any) => p.job_id).filter(Boolean);
+
+        let jobs: any[] = [];
+        if (jobIds.length > 0) {
+          const jobsRes = await withTimeout(
+            admin
+              .from("jobs")
+              .select("id, status, current_cursor, delivered_units, charged_credits, updated_at")
+              .in("id", jobIds),
+            4_000
+          );
+          if (jobsRes === TIMED_OUT || jobsRes?.error || !Array.isArray(jobsRes?.data)) {
+            continue;
+          }
+          jobs = jobsRes.data;
+        }
+
+        const jobMap = new Map<string, any>();
+        for (const j of jobs) {
+          jobMap.set(j.id, j);
+        }
+
+        const sortedParts = [...partRows].sort((a: any, b: any) => a.part_index - b.part_index);
+        const orderedJobs: any[] = sortedParts.map((p: any) => jobMap.get(p.job_id)).filter(Boolean);
+
+        let Z = 0;
+        let C = 0;
+        for (const j of orderedJobs) {
+          if (j.status === "completed") {
+            Z += (j.delivered_units ?? 0);
+          }
+          C += (j.charged_credits ?? 0);
+        }
+
+        let E = 0;
+        for (let i = orderedJobs.length - 1; i >= 0; i--) {
+          const j = orderedJobs[i];
+          if (j.status === "failed" || (j.delivered_units ?? 0) === 0) {
+            E++;
+          } else {
+            break;
+          }
+        }
+
+        const halted =
+          group.halted_at != null ||
+          (jobL?.status === "failed" &&
+            jobL?.current_cursor === "completed" &&
+            resFrozen === false);
+
+        let reason: string | null = null;
+        if (halted) {
+          reason = "part_unfrozen";
+        } else if (L === group.parts_planned) {
+          reason = "all_parts_done";
+        } else if (now() >= Date.parse(group.deadline_at)) {
+          reason = "deadline";
+        } else if (STOP_AFTER_EMPTY_PARTS > 0 && E >= STOP_AFTER_EMPTY_PARTS) {
+          reason = "empty_parts";
+        }
+
+        if (reason) {
+          const closeRes = await withTimeout(
+            admin.rpc("close_job_group_atomic", {
+              p_group_id: gid,
+              p_reason: reason,
+              p_final_line_ar: groupFinalLineAr({
+                reason: reason as any,
+                Z,
+                X: group.asked_original,
+                Y: group.reachable,
+                C,
+              }),
+              p_delivered_total: Z,
+              p_charged_total: C,
+              p_part_release_ar: reason === "deadline_stuck" ? GROUP_PART_STOPPED_AR : null,
+            }),
+            4_000
+          );
+
+          if (closeRes === TIMED_OUT || closeRes?.error) {
+            continue;
+          }
+
+          if (closeRes?.data?.success === true) {
+            closed += 1;
+          }
+          continue;
+        }
+
+        // Else DRAW (T05)
       } catch (groupErr) {
         if (!logged) {
           console.error("[job-groups:group-failed]", { source: opts.source });
