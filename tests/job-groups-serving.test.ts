@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
+import { readJobDatasetText } from "@/lib/server/savedResultColumns";
+import { jobHasSavedData } from "@/lib/server/methodologyPurchase";
 
 const routeState = vi.hoisted(() => ({ job: null as any, jobs: {} as Record<string, any>, part: null as any, parts: {} as Record<string, any>, frozen: null as any, frozens: {} as Record<string, any>, objects: {} as Record<string, string>, reads: [] as string[], signed: [] as string[], uploads: [] as string[], partError: null as any, frozenError: null as any, partTimeout: false, storageError: null as any, generatorThrows: false }));
 function query(table: string) {
@@ -78,6 +80,27 @@ describe("groupPartDataset", () => {
     const sha256 = "0".repeat(64);
     const corrupted = makeAdmin({ frozen: { path: `u/j/frozen-${sha256}.json`, sha256, row_count: 1 }, bytes: text });
     await expect(groupPartDataset(corrupted, { id: "j", user_id: "u", status: "completed" })).resolves.toMatchObject({ kind: "refuse", status: 503 });
+  });
+});
+
+describe("PR-5 saved dataset readers", () => {
+  const text = JSON.stringify({ rows: [{ id: "A" }] });
+  const sha = createHash("sha256").update(text).digest("hex");
+  const frozen = { path: `u/j/frozen-${sha}.json`, sha256: sha, row_count: 1 };
+  function admin(part: any, freeze: any = frozen, bytes = text) {
+    return {
+      from: (table: string) => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: table === "job_group_parts" ? part : freeze, error: null }) }),
+      storage: { from: () => ({ download: async (path: string) => ({ data: path === frozen.path ? new Blob([bytes]) : null, error: null }) }) },
+    };
+  }
+  it.each(["frozen", "pending", "unavailable", "ordinary"])("R-5/R-6 %s uses only the frozen dataset rules", async (kind) => {
+    const part = kind === "ordinary" ? null : { group_id: "g", part_index: 1 };
+    const freeze = kind === "frozen" ? frozen : null;
+    const db = admin(part, freeze, kind === "unavailable" ? "wrong bytes" : text);
+    const expectedText = kind === "frozen" ? text : "";
+    const expectedSaved = kind === "frozen" ? true : kind === "ordinary" ? false : null;
+    await expect(readJobDatasetText(db, { id: "j", user_id: "u" })).resolves.toBe(expectedText);
+    await expect(jobHasSavedData(db, { jobId: "j", userId: "u" })).resolves.toBe(expectedSaved);
   });
 });
 

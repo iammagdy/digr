@@ -9,6 +9,7 @@ import { readWorkbookMethodology } from "@/lib/agentMission/methodology/readWork
 import { buildMethodologyDocument, METHODOLOGY_DOC_TITLE_AR } from "@/lib/agentMission/methodology/document";
 import { renderMethodologyPdf } from "@/lib/agentMission/methodology/pdf";
 import { fileResponseFromUrl } from "@/lib/server/fileResponse";
+import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
 export const dynamic = "force-dynamic";
 
@@ -130,6 +131,8 @@ export async function POST(
     if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
     }
+    const groupDataset = await groupPartDataset(adminClient, jobDoc);
+    if (groupDataset.kind === "refuse") return NextResponse.json({ success: false, error: groupDataset.errorAr }, { status: groupDataset.status });
     if (!["done", "completed"].includes(String(jobDoc.status).toLowerCase())) {
       return NextResponse.json({ success: false, error: "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب." }, { status: 409 });
     }
@@ -145,6 +148,9 @@ export async function POST(
     const methodologyPath = `${verifiedUserId}/${jobId}/methodology-addon.pdf`;
     const methodologyBucket = adminClient.storage.from("results");
 
+    if (groupDataset.kind === "frozen") {
+      try { rawParsed = JSON.parse(groupDataset.text); } catch { return NextResponse.json({ success: false, error: "تعذر العثور على بيانات الطلب المكتملة؛ لم يتم خصم أي نقاط." }, { status: 409 }); }
+    }
     if (mission) {
       const built = await missionMethodologyPdf(adminClient, mission);
       if (!built.ok) return NextResponse.json({ success: false, error: built.error }, { status: built.status });
@@ -159,7 +165,7 @@ export async function POST(
           `json_${jobId}`,
         ];
 
-        for (const bucketName of ["results", "partials"]) {
+        for (const bucketName of groupDataset.kind === "frozen" ? [] : ["results", "partials"]) {
           if (rawParsed) break;
           const bucket = adminClient.storage?.from?.(bucketName);
           if (!bucket || typeof bucket.download !== "function") continue;

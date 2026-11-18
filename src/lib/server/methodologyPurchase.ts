@@ -1,4 +1,5 @@
 import { methodologyChargeId } from "../methodologyOffer";
+import { groupPartDataset } from "./multiProvider/groupPartDataset";
 
 /**
  * Whether this customer already bought the methodology file for a job. The deterministic ledger row `chg_meth_<jobId>` is the
@@ -11,6 +12,11 @@ import { methodologyChargeId } from "../methodologyOffer";
  */
 export async function jobHasSavedData(admin: any, scope: { userId: string; jobId: string }): Promise<boolean | null> {
   if (!admin?.storage || typeof admin.storage.from !== "function" || !scope.userId || !scope.jobId) return null;
+  const group = typeof admin.from === "function" ? await groupPartDataset(admin, { id: scope.jobId, user_id: scope.userId }) : { kind: "not_group" as const };
+  if (group.kind === "frozen") {
+    try { const parsed = JSON.parse(group.text); return Array.isArray(parsed?.rows) && parsed.rows.length > 0; } catch { return null; }
+  }
+  if (group.kind === "refuse") return null;
   try {
     const paths = [`${scope.userId}/${scope.jobId}/data.json`, `${scope.jobId}/data.json`, `json_${scope.jobId}`];
     for (const bucketName of ["results", "partials"]) {
