@@ -1472,6 +1472,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
     expect(db.resultExistedAtSettle).toEqual([true]);                      // the result file existed BEFORE settle
     expect(db.jobs[0].charged_credits).toBe(Math.ceil(3 * db.unitPrice));
+    expectMoney("settled", { charge: Math.ceil(3 * db.unitPrice) });
     expect(r.resultText).toContain("O شركة"); expect(r.resultText).not.toContain("W شركة");
     // the canonical file's LAST writer: O in I1/I2 (O's re-publish after its commit), W in I3 (W uploads after O finished)
     if (il === "I3") { expect(r.lastBody).toContain("W شركة"); expect(r.lastBody).not.toContain("O شركة"); } else { expect(r.lastBody).toContain("O شركة"); expect(r.lastBody).not.toContain("W شركة"); }
@@ -1496,6 +1497,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(rpcCount("settle_job_atomic")).toBe(1); expect(rpcCount("release_job_atomic")).toBe(0);
       expect(db.resultExistedAtSettle).toEqual([true]);
       expect(r.resultText).toContain(`${who} شركة`); expect(r.resultText).not.toContain(`${who === "O" ? "W" : "O"} شركة`);
+      expectMoney("settled", { charge: Math.ceil(oRows * db.unitPrice) });
     } else {
       expect(r.w.status).toBe(500); expect(r.w.body.released).toBe(true); expect(r.w.body.chargedCredits).toBe(0);
       expect(String(r.w.body.error)).toContain("عدم تطابق في عدد السجلات المجمعة");
@@ -1503,7 +1505,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       // DT-06 R01 is merged: the response error IS the stored text, releaseTextAr(<the mismatch text>, N); releaseTextAr of an already-prefixed text returns it unchanged, so this pins stored == answered
       expect(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message).toBe(releaseTextAr(String(r.w.body.error), db.targetVolumeMax));
       expect(db.resultExistedAtSettle).toEqual([]);
-      expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBeUndefined();
+      expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBe(0);
+      expectMoney("released", { calls: 1 });
     }
     // the ledger holds BOTH invocations' paid calls
     expect(r.costsAtPause).toBeGreaterThan(0); expect(db.costs.length).toBeGreaterThan(r.costsAtPause);
