@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vitest";
+import { createMemoryStore } from "../agent/src/memoryStore";
+import { ItemStore } from "../agent/src/items/itemStore";
+import { runContactEnrichment } from "../agent/src/engine/contacts";
+import { createJobCallBudget } from "../src/lib/server/callBudget";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+
+/**
+ * DT-20261118-03 F1-c (Megz D-0084: the person's OWN phone is core; the company's number is never a stand-in). Live chat A: 0 of 5 personal phones. Three defects of OURS, none of them «the data does not exist»:
+ *   - mapping: the answer of 6 of the catalog's person-phone finders was not read (quickenrich «employee_phone», dropleads «mobile_number», limadata «phone_numbers[].number», tomba «intl_format», contactout «phone: [...]», aiark «data: [[...]]»);
+ *   - inputs: a profile written without https:// (aviato «linkedin.com/in/…») was not a profile, so a finder that needs it was skipped, in silence;
+ *   - the company's number filled the person's cell and hid the miss.
+ */
+const catalog = loadTregCatalog();
+const exampleOf = (id: string): unknown => (catalog.byId.get(id) as unknown as { example_response_trimmed?: unknown })?.example_response_trimmed;
+
+describe("every person-phone answer shape of the catalog is read", () => {
+  it.each([
+    ["quickenrich.people.phone.find", "+15550101000"],
+    ["dropleads.people.phone.find", "+12025550123"],
+    ["limadata.people.phone.find", "+12025550123"],
+    ["tomba.people.phone.find", "+1 415-555-0142"],
+    ["contactout.people.contact.phone", "+10000000000"],
+    ["aiark.people.phone.find", "+15555550100"],
+    ["blitzapi.people.phone.find", "+14155550123"],
+    ["aviato.people.phone.find", "+12025550100"],
+  ])("%s → %s", (id, phone) => {
+    expect(foundContactIn("phone", exampleOf(id))?.value.replace(/\D/g, "")).toBe(phone.replace(/\D/g, ""));
+  });
+  it("a miss is no value, and a date in a list is never a phone", () => {
+    expect(foundContactIn("phone", exampleOf("leadmagic.people.phone.find"))).toBeNull();
+    expect(foundContactIn("phone", { dates: ["2026-11-16", "2026-11-17"], count: 3 })).toBeNull();
+  });
+});
+
+const BLITZ: FinderInfo = { id: "blitzapi.people.phone.find", usd: 0.000495, inputs: [{ name: "person_linkedin_url", required: true }] };
+describe("the person's inputs", () => {
+  const columns = [{ key: "name", title_ar: "اسم المدير" }, { key: "linkedin", title_ar: "الملف المهني" }];
+  it("a profile without https:// is the person's profile and is given to the finder with it", () => {
+    const facts = personFactsOf({ id: "p1", name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }, columns, { website: "orascom-em.com.eg" });
+    expect(facts.linkedin).toBe("https://linkedin.com/in/mina-naguib");
+    expect(finderParamsFor(BLITZ, facts)).toEqual({ person_linkedin_url: "https://linkedin.com/in/mina-naguib" });
+  });
+  it("a finder the person cannot be given says which input was missing", () => {
+    const facts = personFactsOf({ id: "p1", name: "Mina Naguib" }, columns, { website: "orascom-em.com.eg" });
+    expect(missingInputsFor(BLITZ, facts)).toEqual(["person_linkedin_url"]);
+  });
+});
+
+describe("D-0084: the company's number is never written in a person's phone cell", () => {
+  const run = async (people: Array<Record<string, unknown>>, answers: (ep: string) => unknown) => {
+    const store = createMemoryStore();
+    const items = await ItemStore.open(store, "msn_p");
+    await items.commit([
+      { t: "item", stage: "companies", id: "c1", state: "accepted", by: "rule", row: { id: "c1", name: "Falcon Misr", website: "https://www.falconmisr.com/", country: "EG" } as any },
+      ...people.map((p) => ({ t: "item" as const, stage: "people", id: String(p.id), state: "accepted" as const, by: "rule" as const, row: { parent_id: "c1", phone: "", ...p } })),
+    ]);
+    // the person's phone step as buildContactSteps now makes it: the person's finders only, no company-number search
+    const step: ContactStep = { kind: "phone", stage_key: "people", column_key: "phone", status_key: "phone_status", type_key: "phone_type", per_person_usd: 0.01, finders: [BLITZ] };
+    const plan: any = { stages: [{ key: "companies", parent_key: null, title_ar: "الشركات", deliver: true, columns: [{ key: "name", title_ar: "الاسم" }, { key: "website", title_ar: "الموقع" }], planned_rows: 1 }, { key: "people", parent_key: "companies", title_ar: "صناع القرار", deliver: true, columns: [{ key: "full_name", title_ar: "الاسم" }, { key: "linkedin", title_ar: "الملف المهني" }, { key: "phone", title_ar: "رقم التليفون", kind: "phone" }], planned_rows: people.length }], contact_steps: [step] };
+    const calls: string[] = [];
+    let n = 0;
+    const gateway: any = { async tregCall(a: { endpoint_id: string }) { calls.push(a.endpoint_id); const out = answers(a.endpoint_id); const id = `call_${String(++n).padStart(4, "0")}`; await store.putFile("msn_p", `raw/${id}.json`, JSON.stringify(out ?? {}), "application/json"); return { ok: true, call_id: id, http_status: 200, rows_in_page: out ? 1 : 0, has_more: false, next_cursor: null }; } };
+    await runContactEnrichment({ items, store, plan, missionId: "msn_p", gateway, addEvent: async () => {}, budget: createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 }), deadlineMs: Date.now() + 60_000 });
+    const cell = (id: string) => { const r = items.acceptedRows("people").find((x) => x.id === id)!; return { phone: String(r.phone ?? ""), type: String(r.phone_type ?? "") }; };
+    return { store, calls, cell };
+  };
+  it("no personal phone found: the cell stays empty and no map search is paid for", async () => {
+    const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], (ep) => (ep.includes("maps") ? { places: [{ title: "Falcon Misr", phone: "+20 2 2345 6789" }] } : null));
+    expect(w.cell("p1")).toEqual({ phone: "", type: "" });
+    expect(w.calls).toEqual([BLITZ.id]);
+  });
+  it("a profile without https:// reaches the finder and the person's own number is written as «شخصي»", async () => {
+    const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], (ep) => (ep === BLITZ.id ? { found: true, phone: "+201001234567" } : null));
+    expect(w.cell("p1")).toEqual({ phone: "+201001234567", type: "شخصي" });
+  });
+  it("a person the finder cannot be given is recorded in the mission's file with the missing input, never skipped in silence", async () => {
+    const w = await run([{ id: "p1", full_name: "Mina Naguib" }, { id: "p2", full_name: "Sara Adel" }], () => null);
+    expect(w.calls).toEqual([]);
+    expect(JSON.parse((await w.store.getFile("msn_p", "contacts/not_tried_people_phone.json"))!)).toEqual({ [`${BLITZ.id}|person_linkedin_url`]: 2 });
+  });
+});
