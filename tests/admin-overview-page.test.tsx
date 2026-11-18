@@ -15,7 +15,7 @@ const providersWith = (balanceUsd: number, lowBalance: boolean) => ({
   limits: { level: "ok", percent: 56, llmLevel: "ok", llmPercent: 10 },
 });
 const ALERTS = { pendingTopups: [], pendingTotal: 3, newUsers: { total: 0, latest: null }, failedJobs: [], failedTotal: 0 };
-const days = (n: number, v: (i: number) => number) => Array.from({ length: n }, (_, i) => v(i));
+const days = <T,>(n: number, v: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => v(i));
 const STATS = {
   range: 30,
   totals: { users: 120, newUsers: 9, newUsersPrev: 6, active: 40, rev: 4800, cost: 1200, profit: 3600, margin: 75, jobs: 3, change: { users: 8.1, newUsers: 50, active: -3.2, rev: 12.5, profit: 10, jobs: 0 } },

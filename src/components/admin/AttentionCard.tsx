@@ -7,7 +7,14 @@ import { Card, CardSkeleton } from "./ui";
 export interface AttentionItem { level: "warn" | "bad"; text: string; actionLabel: string; href: string }
 
 /** «١٢٫٤٠» for a fraction, «٢٥» for a whole number of dollars. */
-const usd = (n: number) => (Number.isInteger(n) ? formatAr(n) : formatAr(n, 2));
+export const usd = (n: number) => (Number.isInteger(n) ? formatAr(n) : formatAr(n, 2));
+
+/** The data provider's balance as the attention card and the providers card both read it. A balance that could not be read is never called low. */
+export function tregBalanceState(treg: ProviderStatus["treg"] | null | undefined): { balance: number | null; threshold: number | null; low: boolean } {
+  const balance = treg?.balance?.available && typeof treg.balance.balanceUsd === "number" ? treg.balance.balanceUsd : null;
+  const threshold = typeof treg?.thresholdUsd === "number" ? treg.thresholdUsd : null;
+  return { balance, threshold, low: balance !== null && threshold !== null && (treg?.lowBalance === true || balance < threshold) };
+}
 const OPEN = "فتح";
 const PROVIDERS = "/admin/providers";
 
@@ -30,10 +37,8 @@ export function attentionItems({ alerts, providers, overview }: {
         ? "مزود البيانات رفض مفتاح الوصول، لذلك ستفشل المهام الجديدة. استبدل المفتاح من تبويب «مزودو الخدمة»."
         : "مزود البيانات لا يستجيب لفحص الاتصال الحقيقي الآن، وقد تفشل المهام الجديدة.", PROVIDERS);
     }
-    const balance = t.balance?.available && typeof t.balance.balanceUsd === "number" ? t.balance.balanceUsd : null;
-    const threshold = typeof t.thresholdUsd === "number" ? t.thresholdUsd : null;
-    // a balance that could not be read is never called low
-    if (balance !== null && threshold !== null && (t.lowBalance === true || balance < threshold)) {
+    const { balance, threshold, low } = tregBalanceState(t);
+    if (low && balance !== null && threshold !== null) {
       add("warn", `رصيد مزود البيانات منخفض: متبقٍ ${usd(balance)} دولار والحد المنبّه ${usd(threshold)} دولار.`, PROVIDERS);
     }
   }
