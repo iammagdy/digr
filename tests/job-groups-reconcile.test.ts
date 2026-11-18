@@ -300,6 +300,7 @@ function makeWorld() {
     candidates?: { first: any[]; second: any[] };
     unfreezable?: string;
     updatedAgoMs?: number;
+    priorCompleted?: { delivered: number; charged: number };
   }) => {
     const gid = "grp_1";
     const p1Id = "job_p1";
@@ -326,6 +327,10 @@ function makeWorld() {
     groups.push(g);
     queue.push(g);
     setParts(gid, [part1], false);
+    if (opts.priorCompleted) {
+      setParts(gid, [part("completed", opts.priorCompleted.delivered, opts.priorCompleted.charged, { id: "job_p0", user_id: "u1" }), part1], false);
+      g.next_part = 3;
+    }
 
     if (opts.unfreezable === "every candidate absent") {
       // no files in partials
@@ -359,7 +364,7 @@ function makeWorld() {
     return g;
   };
 
-  const groupWithFailedPart = (opts: { cursor?: string | null }) => {
+  const groupWithFailedPart = (opts: { cursor?: string | null; priorCompleted?: { delivered: number; charged: number } }) => {
     const gid = "grp_1";
     const p1Id = "job_p1";
     const part1 = part("failed", 0, 0, {
@@ -383,6 +388,11 @@ function makeWorld() {
     groups.push(g);
     queue.push(g);
     setParts(gid, [part1], false);
+    if (opts.priorCompleted) {
+      part1.delivered_units = 10;
+      setParts(gid, [part("completed", opts.priorCompleted.delivered, opts.priorCompleted.charged, { id: "job_p0", user_id: "u1" }), part1], false);
+      g.next_part = 3;
+    }
     return g;
   };
 
