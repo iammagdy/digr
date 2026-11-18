@@ -185,6 +185,18 @@ describe("the type is the model's, VALIDATED by code", () => {
     const noWords = fakeChatModel([], { override: () => ({ type: "edit_of_open_request", count: 2 }) });
     expect(await decideTurn(ctx("خليها شركتين بس", open), noWords.call)).toMatchObject({ count: null, countRejected: true });
   });
+  // QA #575 FAIL 2: the cited words were checked to be in the message but not to SAY the count
+  it("the cited words must say the returned count: «شركتين» is two, never 700; a number in words must be that number", async () => {
+    const open: OpenRequest = { id: "msn_open123456", state: "plan_ready" };
+    const decide = async (msg: string, count: number, words: string) => decideTurn(ctx(msg, open), fakeChatModel([], { override: () => ({ type: "edit_of_open_request", count, count_text: words }) }).call);
+    expect(await decide("خليها شركتين بس", 700, "شركتين")).toMatchObject({ count: null, countRejected: true });
+    expect(await decide("خليها شركتين بس", 3, "شركتين")).toMatchObject({ count: null, countRejected: true });
+    expect(await decide("خليها تلات شركات", 30, "تلات شركات")).toMatchObject({ count: null, countRejected: true });
+    expect(await decide("خليها بس", 2, "بس")).toMatchObject({ count: null, countRejected: true });
+    expect((await decide("خليها تلات شركات", 3, "تلات شركات")).count).toBe(3);
+    expect((await decide("خليها خمسة وعشرين تعليق", 25, "خمسة وعشرين")).count).toBe(25);
+    expect((await decide("خليها شركتين بس", 2, "شركتين")).count).toBe(2);
+  });
   it("the count of an edit must be a number the customer WROTE (a count the model invented is dropped)", async () => {
     const open: OpenRequest = { id: "msn_open123456", state: "plan_ready" };
     const invented = fakeChatModel([], { override: () => ({ type: "edit_of_open_request", count: 700 }) });
