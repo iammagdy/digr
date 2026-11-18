@@ -46,7 +46,7 @@ vi.mock("../src/lib/server/multiProvider/jobGroups", async (importOriginal) => {
 });
 
 vi.mock("../src/lib/supabase/server", () => ({
-  createAdminClient: vi.fn(() => currentDriveWorld?.admin ?? makeWorld().admin),
+  createAdminClient: vi.fn(() => currentWatchdogWorld?.admin ?? currentDriveWorld?.admin ?? makeWorld().admin),
 }));
 
 vi.mock("../src/lib/server/workerDispatch", () => ({
@@ -65,6 +65,20 @@ vi.mock("../src/lib/server/jobStallNotifier", () => ({
 
 vi.mock("../src/lib/modelPlanner/planningSession", () => ({
   resumeStalePlanningSessions: vi.fn(async () => ({ considered: 0, stepped: 0, finished: 0 })),
+}));
+
+vi.mock("../src/lib/server/jobNotices", () => ({
+  insertJobNotice: vi.fn(async () => ({ ok: true })),
+  jobStalledNotice: vi.fn(() => "notice"),
+}));
+
+vi.mock("../src/lib/server/sendPlatformEmail", () => ({
+  getRecipient: vi.fn(async () => ({ email: "u1@example.com", name: "سلمى" })),
+  sendPlatformEmail: vi.fn(async () => ({ ok: true })),
+}));
+
+vi.mock("../src/lib/supabase/ledger", () => ({
+  getBalance: vi.fn(async () => 5123),
 }));
 
 const NOW0 = Date.parse("2026-11-20T00:00:00Z");
@@ -135,6 +149,7 @@ function makeWorld() {
   let neverResolves: string | null = null;
   let failAll: any = null;
   let stepMs = 0;
+  let driverLastTickAgoMs: number | null | undefined = undefined;
 
   const stepAnswer = (val: any) => ({
     then: (resolve: any, reject: any) => {
@@ -553,6 +568,12 @@ function makeWorld() {
   };
 
   const admin = {
+    auth: {
+      admin: {
+        listUsers: async () => ({ data: { users: [] } }),
+        deleteUser: async () => ({}),
+      },
+    },
     storage: {
       from: (bucket: string) => {
         if (bucket === "partials") return partialsBucket;
@@ -568,7 +589,14 @@ function makeWorld() {
           select: () => ({
             eq: () => ({
               maybeSingle: async () => ({
-                data: { last_tick_at: new Date(Date.now()).toISOString() },
+                data:
+                  driverLastTickAgoMs === null
+                    ? null
+                    : {
+                        last_tick_at: new Date(
+                          Date.now() - (driverLastTickAgoMs ?? 0)
+                        ).toISOString(),
+                      },
                 error: null,
               }),
             }),
@@ -993,6 +1021,12 @@ function makeWorld() {
     },
     get stepMs() {
       return stepMs;
+    },
+    get driverLastTickAgoMs() {
+      return driverLastTickAgoMs;
+    },
+    set driverLastTickAgoMs(v: number | null | undefined) {
+      driverLastTickAgoMs = v;
     },
     setParts,
     group,
@@ -1653,10 +1687,23 @@ function installDriveMocks() {
   const w = makeWorld();
   w.fail.r00 = { code: "42P01", message: "x" };
   currentDriveWorld = w;
+  currentWatchdogWorld = null;
+  return w;
+}
+
+function installWatchdogMocks(opts: { driverLastTickAgoMs?: number } = {}) {
+  vi.resetModules();
+  const w = makeWorld();
+  if (typeof opts.driverLastTickAgoMs === "number") {
+    w.driverLastTickAgoMs = opts.driverLastTickAgoMs;
+  }
+  currentWatchdogWorld = w;
+  currentDriveWorld = null;
   return w;
 }
 
 const driveRequest = () => new NextRequest("http://x/api/cron/drive");
+const watchdogRequest = () => new NextRequest("http://x/api/cron/watchdog");
 
 describe("T11: drive route", () => {
   beforeEach(() => {
@@ -1703,5 +1750,48 @@ describe("T11: drive route", () => {
     expect(body.groups).toBeNull();
     expect(Date.now() - NOW0).toBeLessThanOrEqual(TICK_BUDGET_MS);
     expect(Array.isArray(body.results)).toBe(true);
+  });
+});
+
+describe("T12: watchdog pass", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("(m) DRIVER OUTAGE: heartbeat 6 h old and a group past deadline + 2 h with a stale running part ⇒ the watchdog logs [job-groups:driver-stale] and [job-groups:overdue], its one reconcile pass closes the group with 'deadline_stuck', and the existing watchdog work is unchanged", async () => {
+    const w = installWatchdogMocks({ driverLastTickAgoMs: 6 * 3_600_000 });
+    w.groupWithRunningPart({ lease_until: new Date(NOW0 - 40 * 60_000).toISOString(), delivered: 5, charged: 0 });
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    const res = await GET(watchdogRequest());
+    const body = await res.json();
+    expect(w.errors.map((e) => e[0])).toEqual(expect.arrayContaining(["[job-groups:driver-stale]", "[job-groups:overdue]"]));
+    expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").map((c) => c.args.p_reason)).toEqual(["deadline_stuck"]);
+    expect(body.groups.closed).toBe(1);
+    expect(Object.keys(body).sort()).toEqual(["cleanedGuestsCount", "groups", "purgedAccountsCount", "releasedCount", "releasedJobs", "scannedAt", "staleCount", "stalledNotices", "success"]);
+  });
+
+  it("(p) the watchdog with 20 s left runs R00 only: no claim rpc", async () => {
+    const w = installWatchdogMocks({});
+    w.groupWithRunningPart({ lease_until: new Date(NOW0 - 40 * 60_000).toISOString() });
+    vi.spyOn(Date, "now").mockReturnValueOnce(NOW0).mockReturnValueOnce(NOW0 + 35_000).mockReturnValue(NOW0 + 35_000);
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    await GET(watchdogRequest());
+    expect(w.rpcCalls.filter((c) => c.name === "claim_next_job_group")).toEqual([]);
+  });
+
+  it("a failing or never-resolving reconcile never fails the watchdog: status 200, groups null", async () => {
+    const w = installWatchdogMocks({});
+    w.neverResolves = "from(job_groups)";
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    const p = GET(watchdogRequest());
+    await vi.advanceTimersByTimeAsync(60_000);
+    const res = await p;
+    expect(res.status).toBe(200);
+    expect((await res.json()).groups).toBeNull();
   });
 });

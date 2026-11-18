@@ -8,11 +8,15 @@ import { getBalance } from "../../../../lib/supabase/ledger";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { isDisposableGuestAccount } from "../../../../lib/server/guestIdentity";
 import { staleReleaseReasonAr, operatorReleaseReasonAr } from "../../../../lib/multiProvider/copy";
+import { reconcileJobGroups } from "../../../../lib/server/multiProvider/jobGroups";
+import { withTimeout, TIMED_OUT } from "../../../../lib/server/multiProvider/jobGroupShared";
+import { readDriverLastTick } from "../../../../lib/server/driverHeartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
 
 export async function GET(req: NextRequest) {
+  const startedMs = Date.now();
   // 1. Authenticate with CRON_SECRET (timing-safe)
   if (!verifyCronSecret(req)) {
     return NextResponse.json(
@@ -207,6 +211,14 @@ export async function GET(req: NextRequest) {
       console.warn("[watchdog:guest_purge_warning]", guestPurgeErr);
     }
 
+    const budgetMs = Math.max(0, Math.min(45_000, 55_000 - (Date.now() - startedMs)));
+    const groupsRaw = await withTimeout(reconcileJobGroups(adminClient, { nowMs: Date.now(), source: "watchdog", budgetMs }), budgetMs).catch(() => null);
+    const groups = groupsRaw === TIMED_OUT ? null : groupsRaw;
+    const lastTick = await readDriverLastTick(adminClient).catch(() => null);
+    if ((lastTick === null || Date.now() - Date.parse(lastTick) > 10 * 60_000) && groups?.overdue) {
+      console.error("[job-groups:driver-stale]", { lastTick });
+    }
+
     return NextResponse.json({
       success: true,
       scannedAt: new Date().toISOString(),
@@ -216,6 +228,7 @@ export async function GET(req: NextRequest) {
       releasedJobs,
       purgedAccountsCount,
       cleanedGuestsCount,
+      groups,
     });
   } catch (err: any) {
     console.error("Watchdog execution failed:", err);

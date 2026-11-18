@@ -54,11 +54,13 @@ export async function reconcileJobGroups(
   released: number;
   drawn: number;
   closed: number;
+  overdue?: boolean;
 }> {
   try {
     const tickDeadline = opts.nowMs + opts.budgetMs;
     const now = opts.now ?? Date.now;
     let logged = false;
+    let isOverdue = false;
 
     if (tickDeadline - now() >= 4_000) {
       let q: any;
@@ -96,6 +98,7 @@ export async function reconcileJobGroups(
           logged = true;
         }
       } else if (typeof q?.count === "number" && q.count > 0) {
+        isOverdue = true;
         console.error("[job-groups:overdue]", { count: q.count, source: opts.source });
       }
     }
@@ -462,7 +465,15 @@ export async function reconcileJobGroups(
       }
     }
 
-    return {
+    const result: {
+      installed: boolean;
+      claims: number;
+      frozen: number;
+      released: number;
+      drawn: number;
+      closed: number;
+      overdue?: boolean;
+    } = {
       installed: true,
       claims,
       frozen,
@@ -470,6 +481,10 @@ export async function reconcileJobGroups(
       drawn,
       closed,
     };
+    if (isOverdue) {
+      result.overdue = true;
+    }
+    return result;
   } catch (err) {
     if (isMissingSchema(err)) {
       return { installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 };
