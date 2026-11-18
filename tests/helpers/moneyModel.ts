@@ -161,7 +161,12 @@ interface ModelJob {
 }
 interface ReplayEntry { sql: string; params: unknown[]; flag: string }
 
-export type StepFailure = { ok: false; step: number; cmd: Cmd | null; message: string };
+/**
+ * kind "invariant" = the database disagreed with the money model (the thing a mutant must cause); field names WHICH rule.
+ * kind "error" = an exception, a SQL error where an answer was expected, or the chunk driver failing: never counts as a catch.
+ */
+export type FailureKind = "invariant" | "error";
+export type StepFailure = { ok: false; kind: FailureKind; field: string; step: number; cmd: Cmd | null; message: string };
 /** How often each branch of the model ran: the clean run asserts floors so it can never pass by doing nothing. */
 export interface SequenceStats {
   topups: number; grants: number; accepted: number; refusedConcurrency: number; refusedBalance: number; deliveries: number;
@@ -181,7 +186,7 @@ export async function runSequence(c: PoolClient, seed: number, cmds: Cmd[], user
   try {
     return await runSequenceBody(c, seed, cmds, users);
   } catch (e: any) {
-    return { ok: false, step: -1, cmd: null, message: `runner error: ${String(e?.message ?? e)}` };
+    return { ok: false, kind: "error", field: "runner", step: -1, cmd: null, message: `runner error: ${String(e?.message ?? e)}` };
   } finally {
     await c.query("ROLLBACK TO SAVEPOINT ms_seq");
     await c.query("RELEASE SAVEPOINT ms_seq");
@@ -200,7 +205,9 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
 
   for (let i = 0; i < cmds.length; i += 1) {
     const cmd = cmds[i];
-    const fail = (message: string): StepFailure => ({ ok: false, step: i, cmd, message });
+    const fail = (field: string, message: string, kind: FailureKind = "invariant"): StepFailure => ({ ok: false, kind, field, step: i, cmd, message });
+    // an answer check: a SQL error where an answer was expected is an "error", a wrong answer is an "invariant" on `field`
+    const failOn = (field: string, r: { ok: boolean }, message: string): StepFailure => (r.ok ? fail(field, message) : fail(`${field}_sql_error`, message, "error"));
     const job = "j" in cmd && jobs.length > 0 ? jobs[cmd.j % jobs.length] : null;
 
     try {
@@ -210,7 +217,7 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const id = `t_${seed}_${i}`;
           await c.query("insert into public.topups(id,user_id,amount_egp,reference,sender_name,sender_phone,receipt_file_id) values ($1,$2,$3,$4,'n','p','f')", [id, u.id, cmd.egp, `ref_${seed}_${i}`]);
           const r = await rpc(c, "public.approve_topup_atomic($1,null)", [id]);
-          if (!r.ok || r.r.success !== true || r.r.already_approved !== false || Number(r.r.credits) !== cmd.egp * 10) return fail(`topup answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+          if (!r.ok || r.r.success !== true || r.r.already_approved !== false || Number(r.r.credits) !== cmd.egp * 10) return failOn("topup_answer", r, `topup answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
           u.balance += cmd.egp * 10; rows += 1; stats.topups += 1;
           history.push({ sql: "public.approve_topup_atomic($1,null)", params: [id], flag: "already_approved" });
           break;
@@ -220,7 +227,7 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const params = [admin, u.id, cmd.pts, "property grant", `req_${seed}_${i}`];
           const sql = "public.admin_grant_credit_atomic($1::uuid,$2::uuid,$3::numeric,$4,$5)";
           const r = await rpc(c, sql, params);
-          if (!r.ok || r.r.success !== true || r.r.already_granted !== false) return fail(`grant answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+          if (!r.ok || r.r.success !== true || r.r.already_granted !== false) return failOn("grant_answer", r, `grant answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
           u.balance += cmd.pts; rows += 1; stats.grants += 1;
           history.push({ sql, params, flag: "already_granted" });
           break;
@@ -236,14 +243,14 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const r = await rpc(c, sql, params);
           const active = jobs.filter((j) => j.user === ui && (j.status === "queued" || j.status === "running")).length;
           if (active >= 2) {
-            if (!r.ok || r.r.success !== false || r.r.error !== "concurrency_limit") return fail(`accept expected concurrency_limit, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== false || r.r.error !== "concurrency_limit") return failOn("concurrency_limit", r, `accept expected concurrency_limit, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.refusedConcurrency += 1;
           } else if (u.balance < reserve) {
-            if (!r.ok || r.r.success !== false || r.r.error !== "insufficient_balance") return fail(`accept expected insufficient_balance, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== false || r.r.error !== "insufficient_balance") return failOn("balance_refusal", r, `accept expected insufficient_balance, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.refusedBalance += 1;
           } else {
             if (!r.ok || r.r.success !== true || r.r.already_accepted !== false || Number(r.r.reserved_credits) !== reserve || r.r.job_id !== partJobId(quoteId, 1)) {
-              return fail(`accept expected success reserve ${reserve}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+              return failOn("accept_answer", r, `accept expected success reserve ${reserve}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             }
             u.balance -= reserve; rows += 1; stats.accepted += 1;
             jobs.push({ id: String(r.r.job_id), user: ui, unitK: cmd.unitK, volume: cmd.volume, reserve, delivered: 0, step: 0, cursorDone: false, status: "queued", charged: 0, purchased: false });
@@ -256,10 +263,10 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const n = Math.min(cmd.n, job.volume - job.delivered);
           if (n === 0) break;
           const claim = await rpc(c, "public.claim_job_chunk($1,$2,60)", [job.id, job.step]);
-          if (!claim.ok || claim.r.claimed !== true) return fail(`claim refused ${JSON.stringify(claim.ok ? claim.r : claim.error.message)}`);
+          if (!claim.ok || claim.r.claimed !== true) return fail("claim", `claim refused ${JSON.stringify(claim.ok ? claim.r : claim.error.message)}`, "error");
           const total = job.delivered + n;
           const done = await rpc(c, "public.complete_chunk($1,$2,$3,$4,0)", [job.id, job.step, total === job.volume ? "completed" : `c${job.step + 1}`, total]);
-          if (!done.ok || done.r.success !== true) return fail(`complete_chunk ${JSON.stringify(done.ok ? done.r : done.error.message)}`);
+          if (!done.ok || done.r.success !== true) return fail("complete_chunk", `complete_chunk ${JSON.stringify(done.ok ? done.r : done.error.message)}`, "error");
           job.delivered = total; job.step += 1; job.status = "running"; job.cursorDone = total === job.volume;
           stats.deliveries += 1;
           break;
@@ -271,14 +278,14 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const r = await rpc(c, sql, params);
           if (job.status === "running") {
             const charged = Math.min(exactCharge(job.delivered, job.unitK), job.reserve, PRODUCTION_CAP);
-            if (!r.ok || r.r.success !== true || r.r.already_settled !== false || Number(r.r.charged_credits) !== charged) return fail(`settle expected charge ${charged}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== true || r.r.already_settled !== false || Number(r.r.charged_credits) !== charged) return failOn(r.ok && Number(r.r.charged_credits) > job.reserve ? "reserve_cap" : "charge", r, `settle expected charge ${charged}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             users[job.user].balance += job.reserve - charged; rows += charged > 0 ? 2 : 1;
             job.status = "completed"; job.charged = charged; if (charged > 0) stats.settledWithCharge += 1;
             history.push({ sql, params, flag: "already_settled" });
           } else if (job.status === "completed") {
-            if (!r.ok || r.r.already_settled !== true || Number(r.r.charged_credits) !== job.charged) return fail(`settle replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.already_settled !== true || Number(r.r.charged_credits) !== job.charged) return failOn("settle_replay", r, `settle replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.settleReplays += 1;
-          } else if (r.ok) return fail(`settle of a ${job.status} job must raise, got ${JSON.stringify(r.r)}`);
+          } else if (r.ok) return fail("settle_must_raise", `settle of a ${job.status} job must raise, got ${JSON.stringify(r.r)}`);
           else stats.settleRaised += 1;
           break;
         }
@@ -288,13 +295,13 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const params = [job.id, "property"];
           const r = await rpc(c, sql, params);
           if (job.status === "queued" || job.status === "running") {
-            if (!r.ok || r.r.success !== true || r.r.already_released !== false) return fail(`release answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== true || r.r.already_released !== false) return failOn("release_answer", r, `release answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             users[job.user].balance += job.reserve; rows += 1; job.status = "failed"; stats.released += 1;
             history.push({ sql, params, flag: "already_released" });
           } else if (job.status === "failed") {
-            if (!r.ok || r.r.already_released !== true) return fail(`release replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.already_released !== true) return failOn("release_replay", r, `release replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.releaseReplays += 1;
-          } else if (r.ok) return fail(`release of a completed job must raise, got ${JSON.stringify(r.r)}`);
+          } else if (r.ok) return fail("release_must_raise", `release of a completed job must raise, got ${JSON.stringify(r.r)}`);
           else stats.releaseRaised += 1;
           break;
         }
@@ -305,13 +312,13 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           const params = [u.id, job.id, cmd.pts, "property"];
           const r = await rpc(c, sql, params);
           if (job.purchased) {
-            if (!r.ok || r.r.already_purchased !== true) return fail(`purchase replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.already_purchased !== true) return failOn("purchase_replay", r, `purchase replay ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.purchaseReplays += 1;
           } else if (u.balance < cmd.pts) {
-            if (!r.ok || r.r.success !== false || r.r.error !== "insufficient_balance") return fail(`purchase expected insufficient_balance, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== false || r.r.error !== "insufficient_balance") return failOn("purchase_refusal", r, `purchase expected insufficient_balance, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             stats.purchaseRefused += 1;
           } else {
-            if (!r.ok || r.r.success !== true || r.r.already_purchased !== false) return fail(`purchase answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+            if (!r.ok || r.r.success !== true || r.r.already_purchased !== false) return failOn("purchase_answer", r, `purchase answer ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
             u.balance -= cmd.pts; rows += 1; job.purchased = true; stats.purchases += 1;
             history.push({ sql, params, flag: "already_purchased" });
           }
@@ -321,47 +328,47 @@ async function runSequenceBody(c: PoolClient, seed: number, cmds: Cmd[], userCou
           if (history.length === 0) break;
           const h = history[cmd.h % history.length];
           const r = await rpc(c, h.sql, h.params);
-          if (!r.ok || r.r[h.flag] !== true) return fail(`replay of ${h.sql} expected ${h.flag}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
+          if (!r.ok || r.r[h.flag] !== true) return failOn("replay_flag", r, `replay of ${h.sql} expected ${h.flag}, got ${JSON.stringify(r.ok ? r.r : r.error.message)}`);
           stats.replays += 1;
           break;
         }
       }
     } catch (e: any) {
-      return fail(`error: ${String(e?.message ?? e)}`);
+      return fail("exception", `error: ${String(e?.message ?? e)}`, "error");
     }
 
     // invariants after every command
     const bal = new Map((await c.query("select user_id::text as u, sum(delta)::numeric as b from public.credit_ledger where user_id = any($1::uuid[]) group by user_id", [users.map((u) => u.id)])).rows.map((r) => [r.u as string, Number(r.b)]));
     for (const u of users) {
       const got = bal.get(u.id) ?? 0;
-      if (got !== u.balance) return fail(`balance ${got} != model ${u.balance}`);
-      if (got < 0) return fail(`balance ${got} below zero`);
+      if (got !== u.balance) return fail("balance_after_" + cmd.k, `balance ${got} != model ${u.balance}`);
+      if (got < 0) return fail("balance_below_zero", `balance ${got} below zero`);
     }
     const count = Number((await c.query("select count(*)::int as n from public.credit_ledger")).rows[0].n);
-    if (count !== baseRows + rows) return fail(`ledger rows ${count - baseRows} != model ${rows}`);
+    if (count !== baseRows + rows) return fail("ledger_rows", `ledger rows ${count - baseRows} != model ${rows}`);
     if (jobs.length > 0) {
       const db = new Map((await c.query("select id, status, coalesce(charged_credits,0)::numeric as ch, coalesce(delivered_units,0) as d, reserved_credits::numeric as r from public.jobs where id = any($1)", [jobs.map((j) => j.id)])).rows.map((r) => [r.id as string, r]));
       for (const j of jobs) {
         const row = db.get(j.id);
-        if (!row) return fail(`job ${j.id} missing`);
+        if (!row) return fail("job_state", `job ${j.id} missing`);
         if (row.status !== j.status || Number(row.ch) !== j.charged || Number(row.d) !== j.delivered) {
-          return fail(`job ${j.id} is ${row.status}/${row.ch}/${row.d}, model ${j.status}/${j.charged}/${j.delivered}`);
+          return fail("job_state", `job ${j.id} is ${row.status}/${row.ch}/${row.d}, model ${j.status}/${j.charged}/${j.delivered}`);
         }
-        if (Number(row.ch) > Number(row.r)) return fail(`job ${j.id} charged ${row.ch} above reserve ${row.r}`);
+        if (Number(row.ch) > Number(row.r)) return fail("job_charge_above_reserve", `job ${j.id} charged ${row.ch} above reserve ${row.r}`);
       }
     }
   }
 
   const recon = await runReconciliation(c);
   const bad = recon.filter((r) => r.ok === "✗");
-  if (bad.length > 0) return { ok: false, step: cmds.length, cmd: null, message: `reconciliation: ${bad.map((r) => `${r.check} -> ${r.actual}`).join(" | ")}` };
+  if (bad.length > 0) return { ok: false, kind: "invariant", field: "reconciliation", step: cmds.length, cmd: null, message: `reconciliation: ${bad.map((r) => `${r.check} -> ${r.actual}`).join(" | ")}` };
   return { ok: true, stats };
 }
 
-export type PropertyResult = { ok: true; runs: number; stats: SequenceStats } | { ok: false; seed: number; original: number; shrunk: Cmd[]; step: number; message: string };
+export type PropertyResult = { ok: true; runs: number; stats: SequenceStats } | { ok: false; kind: FailureKind; field: string; seed: number; original: number; shrunk: Cmd[]; step: number; message: string };
 
-/** Greedy delete-one shrinking of a failing sequence (cut to the failing step first). */
-async function shrink(c: PoolClient, seed: number, cmds: Cmd[], first: StepFailure, users: number): Promise<{ shrunk: Cmd[]; step: number; message: string }> {
+/** Greedy delete-one shrinking of an INVARIANT failure (cut to the failing step first); a candidate counts only if it fails with the SAME kind and field. */
+async function shrink(c: PoolClient, seed: number, cmds: Cmd[], first: StepFailure, users: number): Promise<{ kind: FailureKind; field: string; shrunk: Cmd[]; step: number; message: string }> {
   let cur = first.step >= 0 && first.step < cmds.length ? cmds.slice(0, first.step + 1) : cmds;
   let last: StepFailure = first;
   let budget = 300;
@@ -372,13 +379,13 @@ async function shrink(c: PoolClient, seed: number, cmds: Cmd[], first: StepFailu
       const cand = cur.filter((_, k) => k !== i);
       budget -= 1;
       const r = await runSequence(c, seed, cand, users);
-      if (!r.ok) {
+      if (!r.ok && r.kind === first.kind && r.field === first.field) {
         cur = r.step >= 0 && r.step < cand.length ? cand.slice(0, r.step + 1) : cand;
         last = r; changed = true; i -= 1;
       }
     }
   }
-  return { shrunk: cur, step: last.step, message: last.message };
+  return { kind: last.kind, field: last.field, shrunk: cur, step: last.step, message: last.message };
 }
 
 export function propertySeeds(defaults: number[]): number[] {
@@ -397,7 +404,10 @@ export async function runSeeds(pool: Pool, opts: { seeds: number[]; length: numb
         for (const key of Object.keys(total) as Array<keyof SequenceStats>) total[key] += r.stats[key];
         return null;
       }
-      const s = await shrink(c, seed, cmds, r, opts.users);
+      // an error is reported as is (never shrunk, never a catch): the caller's kind/field assertions fail on it
+      const s = r.kind === "error"
+        ? { kind: r.kind, field: r.field, shrunk: r.step >= 0 ? cmds.slice(0, r.step + 1) : cmds, step: r.step, message: r.message }
+        : await shrink(c, seed, cmds, r, opts.users);
       return { ok: false as const, seed, original: cmds.length, ...s };
     });
     if (failure) return failure;

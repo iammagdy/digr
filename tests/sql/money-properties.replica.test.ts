@@ -12,7 +12,14 @@ import { propertySeeds, replaySequence, runSeeds } from "../helpers/moneyModel";
  * MONEY_PROP_SEEDS="1,2,3" replaces the fixed seeds for exploration only (never set in CI).
  */
 const SEEDS = propertySeeds([11, 23, 37, 41, 53, 67, 79, 83, 97, 101]);
-const PROPERTY_MUTANTS: MutantId[] = ["P1_charge_floor", "P2_charge_not_capped_by_reserve", "P3_release_one_more", "P4_no_concurrency_limit", "P5_settle_skips_release"];
+// Each mutant must break ITS rule: an "invariant" failure on this field, first run AND shrunk replay. An "error" never counts.
+const PROPERTY_MUTANTS: Array<[MutantId, string]> = [
+  ["P1_charge_floor", "charge"],
+  ["P2_charge_not_capped_by_reserve", "reserve_cap"],
+  ["P3_release_one_more", "balance_after_release"],
+  ["P4_no_concurrency_limit", "concurrency_limit"],
+  ["P5_settle_skips_release", "balance_after_settle"],
+];
 
 describe.skipIf(!replicaAvailable())("random money sequences on the production bodies (real PostgreSQL)", () => {
   let db: ReplicaDb;
@@ -29,13 +36,14 @@ describe.skipIf(!replicaAvailable())("random money sequences on the production b
     for (const [branch, count] of Object.entries(r.stats)) expect(count, branch).toBeGreaterThan(0);
   }, 300_000);
 
-  it.each(PROPERTY_MUTANTS)("bites: mutant %s is caught, shrunk, and the shrunk sequence still fails", async (id) => {
+  it.each(PROPERTY_MUTANTS)("bites: mutant %s breaks the %s rule, and the shrunk sequence breaks the same rule", async (id, field) => {
     const r = await runSeeds(db.pool, { seeds: SEEDS, length: 60, users: 4, mutant: MUTANTS[id] });
     expect(r.ok, JSON.stringify(r)).toBe(false);
     if (r.ok) return;
+    expect({ kind: r.kind, field: r.field }, r.message).toEqual({ kind: "invariant", field });
     expect(r.shrunk.length).toBeGreaterThan(0);
     expect(r.shrunk.length).toBeLessThanOrEqual(r.original);
     const again = await replaySequence(db.pool, r.seed, r.shrunk, MUTANTS[id]);
-    expect(again.ok, JSON.stringify({ shrunk: r.shrunk, message: r.message })).toBe(false);
+    expect(again.ok ? { ok: true } : { kind: again.kind, field: again.field }, JSON.stringify({ shrunk: r.shrunk, message: r.message })).toEqual({ kind: "invariant", field });
   }, 300_000);
 });
