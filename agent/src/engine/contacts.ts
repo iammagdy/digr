@@ -1,5 +1,5 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
+import { companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
 import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
 import { isGenericRoleMailbox, isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
@@ -334,6 +334,8 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
 }
 
 function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
+  // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
+  const notTried = new Map<string, number>();
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
@@ -415,7 +417,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
         for (const finder of step.finders) {
           const params = finderParamsFor(finder, facts);
-          if (!params) continue;
+          // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
+          if (!params) { const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
           const a = await attempt(finder, params);
           if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
           if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
@@ -470,6 +473,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     },
     async finish(): Promise<void> {
       await flush();
+      // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
+      if (notTried.size > 0) await deps.store.putFile(deps.missionId, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, JSON.stringify(Object.fromEntries(notTried)), "application/json").catch(() => undefined);
       await items.mirror(step.stage_key);
       try {
         await deps.addEvent({ kind: "progress", message_ar: `بحث ${STEP_LABEL_AR[step.kind]} لصناع القرار: وُجد لـ ${toArabicDigits(found)} من ${toArabicDigits(peopleCount)}.`, counts: { saved: found, planned: peopleCount } });
