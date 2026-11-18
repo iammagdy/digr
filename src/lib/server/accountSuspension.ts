@@ -11,7 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 
 /** What the customer reads when a suspended account tries anything (customer text: Arabic only, no id). */
-export const SUSPENDED_AR = "تم إيقاف هذا الحساب مؤقتًا. للاستفسار تواصل مع الدعم.";
+export const SUSPENDED_AR = "تم إيقاف هذا الحساب. للاستفسار تواصل مع الدعم.";
 
 export type SuspendDuration = "7d" | "30d" | "indefinite";
 /** The ban the sign-in service applies for each choice of the admin dialog («مدة الإيقاف»): ٧ أيام · ٣٠ يومًا · حتى أعيد التفعيل (100 years). */
@@ -78,7 +78,9 @@ export async function isAccountSuspended(admin: () => SupabaseClient, userId: st
   if (hit && now - hit.checkedAt < CACHE_MS) return hit.until !== null && hit.until > now;
   try {
     const found = await admin().auth.admin.getUserById(userId);
-    const until = bannedUntilOf(found?.data?.user as { banned_until?: string | null } | undefined);
+    // the service answers an outage with {error} rather than throwing: that is «not known», never remembered (Gate 1: it was cached as «not suspended» for 30 s)
+    if (found?.error || !found?.data?.user) return false;
+    const until = bannedUntilOf(found.data.user as { banned_until?: string | null });
     cache.set(userId, { until, checkedAt: now });
     return until !== null && until > now;
   } catch {

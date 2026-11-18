@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { isAccountSuspended, suspendedResponse } from "@/lib/server/accountSuspension";
 import { applyArtifactEdit, ArtifactEditOperationSchema, type ArtifactResultPayload } from "@/functions/shared/artifactEditing";
 import { artifactVersionRowId } from "@/functions/shared/artifactVersions";
 import { producedFormats, resultsReleasable } from "@/lib/producedFormats";
@@ -49,6 +50,8 @@ async function authenticate(req: NextRequest): Promise<{ userId: string } | { re
     if (!user) {
       return { response: NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 }) };
     }
+    // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Gate 1 P1-1): an artifact edit is a charged change of a request
+    if (await isAccountSuspended(() => createAdminClient(), user.id, user as { banned_until?: string | null })) return { response: suspendedResponse() };
     return { userId: user.id };
   } catch {
     return { response: NextResponse.json({ success: false, error: "انتهت صلاحية الجلسة." }, { status: 401 }) };
