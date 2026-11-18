@@ -245,7 +245,28 @@ function makeWorld() {
     queue.push(g);
     setParts(gid, [part1], false);
 
-    if (opts.candidates) {
+    if (opts.unfreezable === "every candidate absent") {
+      // no files in partials
+    } else if (opts.unfreezable === "every readable candidate malformed") {
+      partials.set(`u1/${p1Id}/data.json`, Buffer.from("bad json"));
+      partials.set(`${p1Id}/data.json`, Buffer.from("bad json"));
+    } else if (opts.unfreezable === "rows.length ≠ delivered") {
+      partials.set(`u1/${p1Id}/data.json`, bytesOf(rowsOf((opts.delivered ?? 10) - 1, "a")));
+      partials.set(`${p1Id}/data.json`, bytesOf(rowsOf((opts.delivered ?? 10) - 1, "b")));
+    } else if (opts.unfreezable === "a row without identity") {
+      const rows = rowsOf(opts.delivered ?? 10, "a");
+      rows[0] = { other: 1 } as any;
+      partials.set(`u1/${p1Id}/data.json`, Buffer.from(JSON.stringify({ rows })));
+      partials.set(`${p1Id}/data.json`, Buffer.from(JSON.stringify({ rows })));
+    } else if (opts.unfreezable === "a duplicate identity") {
+      const rows = rowsOf(opts.delivered ?? 10, "a");
+      if (rows.length >= 2) rows[1] = { ...rows[0] };
+      partials.set(`u1/${p1Id}/data.json`, bytesOf(rows));
+      partials.set(`${p1Id}/data.json`, bytesOf(rows));
+    } else if (opts.unfreezable === "F5 answers keys_overlap") {
+      partials.set(`u1/${p1Id}/data.json`, bytesOf(rowsOf(opts.delivered ?? 10, "a")));
+      (f5 as any).failKeysOverlap = true;
+    } else if (opts.candidates) {
       partials.set(`u1/${p1Id}/data.json`, bytesOf(opts.candidates.first));
       partials.set(`${p1Id}/data.json`, bytesOf(opts.candidates.second));
     } else {
@@ -253,6 +274,33 @@ function makeWorld() {
       partials.set(`u1/${p1Id}/data.json`, bytesOf(defaultRows));
     }
 
+    return g;
+  };
+
+  const groupWithFailedPart = (opts: { cursor?: string | null }) => {
+    const gid = "grp_1";
+    const p1Id = "job_p1";
+    const part1 = part("failed", 0, 0, {
+      id: p1Id,
+      current_cursor: opts.cursor ?? null,
+      user_id: "u1",
+    });
+
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      user_id: "u1",
+      status: "open",
+      parts_planned: 3,
+      next_part: 2,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, [part1], false);
     return g;
   };
 
@@ -501,6 +549,9 @@ function makeWorld() {
             if (latency.f5) {
               vi.advanceTimersByTime(latency.f5);
             }
+            if ((f5 as any).failKeysOverlap) {
+              return resolve({ data: { success: false, error: "keys_overlap" }, error: null });
+            }
             if (f5.failNext) {
               f5.failNext = false;
               return resolve({ data: null, error: { message: "rpc down" } });
@@ -545,6 +596,31 @@ function makeWorld() {
               },
               error: null,
             });
+          },
+        };
+      }
+
+      if (name === "release_unfrozen_group_part_atomic") {
+        const commitF6 = () => {
+          const gid = args.p_group_id;
+          const grp = groups.find((g) => g.id === gid);
+          if (grp) {
+            grp.halted_at = new Date(NOW0).toISOString();
+          }
+          const gParts = parts.get(gid) ?? [];
+          const partIdx = args.p_part_index;
+          if (gParts[partIdx - 1]) {
+            gParts[partIdx - 1].status = "failed";
+          }
+          return { data: { success: true }, error: null };
+        };
+
+        return {
+          then: (resolve: any) => {
+            if (latency.f6) {
+              vi.advanceTimersByTime(latency.f6);
+            }
+            resolve(commitF6());
           },
         };
       }
@@ -596,6 +672,7 @@ function makeWorld() {
     oneGroupWithParts,
     groupWithRunningPart,
     awaitingFreezeGroup,
+    groupWithFailedPart,
     rewriteAllDataTo,
   };
 }
@@ -1053,5 +1130,97 @@ describe("T07: freeze R2b", () => {
     await run(w);
     expect(w.rpcCalls.filter((c) => c.name === "freeze_and_settle_group_part_atomic").length).toBe(1);
     expect(w.results.size).toBe(1);
+  });
+});
+
+describe("T08: release and halt", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    "every candidate absent",
+    "every readable candidate malformed",
+    "rows.length ≠ delivered",
+    "a row without identity",
+    "a duplicate identity",
+    "F5 answers keys_overlap",
+  ])(
+    "(d) UNFREEZABLE %s ⇒ no successful F5, F6 once with S13, NO draw, the same claim closes 'part_unfrozen' with Z and C without that part",
+    async (kind) => {
+      const w = makeWorld();
+      w.awaitingFreezeGroup({ delivered: 10, unfreezable: kind });
+      const r = await run(w);
+      const names = w.rpcCalls.map((c) => c.name);
+      expect(names.filter((n) => n === "release_unfrozen_group_part_atomic").length).toBe(1);
+      expect(
+        w.rpcCalls.find((c) => c.name === "release_unfrozen_group_part_atomic")!.args.p_release_ar
+      ).toBe(GROUP_PART_UNFROZEN_RELEASED_AR);
+      const close = w.rpcCalls.find((c) => c.name === "close_job_group_atomic")!;
+      expect(close.args.p_reason).toBe("part_unfrozen");
+      expect(close.args.p_final_line_ar).toBe(
+        groupFinalLineAr({
+          reason: "part_unfrozen",
+          Z: close.args.p_delivered_total,
+          X: 30,
+          Y: 30,
+          C: close.args.p_charged_total,
+        })
+      );
+      expect(r.released).toBe(1);
+      expect(r.closed).toBe(1);
+    }
+  );
+
+  it("(d2) a freeze that keeps answering retry: no F6 before 20 min, F6 once after, then close('part_unfrozen'), no draw", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, updatedAgoMs: 19 * 60_000 });
+    w.f5.failAlways = true;
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).not.toContain("release_unfrozen_group_part_atomic");
+    vi.setSystemTime(NOW0 + 61_000);
+    w.requeue();
+    await run(w); // now − updated_at = 20 min 1 s
+    const names = w.rpcCalls.map((c) => c.name);
+    expect(names.filter((n) => n === "release_unfrozen_group_part_atomic").length).toBe(1);
+    expect(names).toContain("close_job_group_atomic");
+    expect(names).not.toContain("draw_next_group_part_atomic");
+  });
+
+  it("(d2) the worker crashed after complete_chunk before writing data.json (no candidate) ⇒ F6, not charged, group halted and closed 'part_unfrozen'", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, unfreezable: "every candidate absent" });
+    await run(w);
+    expect(w.group("grp_1").halted_at).not.toBeNull();
+    expect(w.group("grp_1").status).toBe("closed");
+  });
+
+  it("(d2) F6 times out after committing ⇒ the next claim sees 'failed' and goes to the close without a second F6", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, unfreezable: "every candidate absent" });
+    w.latency.f6 = 4_100;
+    await run(w);
+    w.latency.f6 = 0;
+    w.requeue();
+    await run(w);
+    expect(w.rpcCalls.filter((c) => c.name === "release_unfrozen_group_part_atomic").length).toBe(1);
+    expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").length).toBe(1);
+  });
+
+  it("(r) WATCHDOG RELEASED FIRST: current = failed + current_cursor 'completed', frozen false, halted_at null ⇒ NO draw, NO F6, ONE close('part_unfrozen') with Z/C without that part; the same with current_cursor null (an ordinary failure) ⇒ draw part L+1", async () => {
+    const a = makeWorld();
+    a.groupWithFailedPart({ cursor: "completed" });
+    await run(a);
+    expect(a.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "close_job_group_atomic"]);
+    expect(a.rpcCalls[1].args.p_reason).toBe("part_unfrozen");
+
+    const b = makeWorld();
+    b.groupWithFailedPart({ cursor: null });
+    await run(b);
+    expect(b.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
   });
 });

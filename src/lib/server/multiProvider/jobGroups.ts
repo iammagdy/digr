@@ -3,6 +3,7 @@ import { freezeGroupPart } from "./jobGroupFreeze";
 import {
   GROUP_CLOSING_NOTICE_AR,
   GROUP_PART_STOPPED_AR,
+  GROUP_PART_UNFROZEN_RELEASED_AR,
   groupDrawLineAr,
   groupFinalLineAr,
 } from "../../multiProvider/copy";
@@ -177,17 +178,52 @@ export async function reconcileJobGroups(
           if (f === "frozen") {
             frozen += 1;
             // continue to R3 reads
-          } else if (f === "unfreezable") {
-            // T08 handles RELEASE
-            continue;
-          } else if (f === "retry") {
-            const updatedAgo = now() - Date.parse(jobL.updated_at ?? "1970-01-01");
-            const overdue2h = now() >= Date.parse(group.deadline_at) + 2 * 3_600_000;
-            if (updatedAgo >= FREEZE_GIVE_UP_MS || overdue2h) {
-              // T08 handles RELEASE
-              continue;
-            } else {
-              continue;
+          } else {
+            let shouldRelease = false;
+            if (f === "unfreezable") {
+              shouldRelease = true;
+            } else if (f === "retry") {
+              const updatedAgo = now() - Date.parse(jobL.updated_at ?? "1970-01-01");
+              const overdue2h = now() >= Date.parse(group.deadline_at) + 2 * 3_600_000;
+              if (updatedAgo >= FREEZE_GIVE_UP_MS || overdue2h) {
+                shouldRelease = true;
+              } else {
+                continue;
+              }
+            }
+
+            if (shouldRelease) {
+              const relRes: any = await withTimeout(
+                admin.rpc("release_unfrozen_group_part_atomic", {
+                  p_group_id: gid,
+                  p_part_index: L,
+                  p_job_id: jobL.id,
+                  p_release_ar: GROUP_PART_UNFROZEN_RELEASED_AR,
+                }),
+                4_000
+              );
+
+              if (relRes === TIMED_OUT || !relRes || relRes.error) {
+                continue;
+              }
+
+              const data = relRes.data;
+              if (!data || typeof data !== "object") {
+                continue;
+              }
+
+              if (data.success === true) {
+                released += 1;
+                group.halted_at = new Date(now()).toISOString();
+                // continue to R3 reads
+              } else if (data.already_released === true || data.error === "already_released") {
+                group.halted_at = new Date(now()).toISOString();
+                // continue to R3 reads
+              } else if (data.part_frozen === true || data.error === "part_frozen") {
+                // continue to R3 reads
+              } else {
+                continue;
+              }
             }
           }
         } else if (isRunningOrQueued) {
@@ -202,7 +238,7 @@ export async function reconcileJobGroups(
 
           if (stale || overdue2h) {
             // Stuck: read parts and close deadline_stuck
-            const partsRes = await withTimeout(
+            const partsRes: any = await withTimeout(
               admin.from("job_group_parts").select("part_index, job_id").eq("group_id", gid),
               4_000
             );
@@ -215,7 +251,7 @@ export async function reconcileJobGroups(
 
             let jobs: any[] = [];
             if (jobIds.length > 0) {
-              const jobsRes = await withTimeout(
+              const jobsRes: any = await withTimeout(
                 admin
                   .from("jobs")
                   .select("id, status, current_cursor, delivered_units, charged_credits, updated_at")
@@ -249,7 +285,7 @@ export async function reconcileJobGroups(
               }
             }
 
-            const closeRes = await withTimeout(
+            const closeRes: any = await withTimeout(
               admin.rpc("close_job_group_atomic", {
                 p_group_id: gid,
                 p_reason: "deadline_stuck",
@@ -281,7 +317,7 @@ export async function reconcileJobGroups(
         }
 
         // R3 reads
-        const partsRes = await withTimeout(
+        const partsRes: any = await withTimeout(
           admin.from("job_group_parts").select("part_index, job_id").eq("group_id", gid),
           4_000
         );
@@ -294,7 +330,7 @@ export async function reconcileJobGroups(
 
         let jobs: any[] = [];
         if (jobIds.length > 0) {
-          const jobsRes = await withTimeout(
+          const jobsRes: any = await withTimeout(
             admin
               .from("jobs")
               .select("id, status, current_cursor, delivered_units, charged_credits, updated_at")
@@ -352,7 +388,7 @@ export async function reconcileJobGroups(
         }
 
         if (reason) {
-          const closeRes = await withTimeout(
+          const closeRes: any = await withTimeout(
             admin.rpc("close_job_group_atomic", {
               p_group_id: gid,
               p_reason: reason,
@@ -381,7 +417,7 @@ export async function reconcileJobGroups(
         }
 
         // R5 DRAW
-        const quoteRes = await withTimeout(
+        const quoteRes: any = await withTimeout(
           admin.from("plans_quotes").select("items").eq("id", group.quote_id).maybeSingle(),
           4_000
         );
@@ -393,7 +429,7 @@ export async function reconcileJobGroups(
         const nextPartIndex = L + 1;
         const item = buildPartItem(firstItem, nextPartIndex, gid);
 
-        const drawRes = await withTimeout(
+        const drawRes: any = await withTimeout(
           admin.rpc("draw_next_group_part_atomic", {
             p_group_id: gid,
             p_part_index: nextPartIndex,
