@@ -176,6 +176,25 @@ const ISO3: Record<string, string> = { EG: "EGY", SA: "SAU", AE: "ARE", KW: "KWT
 /** The field of an item that holds its address (street, district, city), the one a city request is checked on. */
 const ADDRESS_FIELD_KEY = /(^|_)(address|street_address|formatted_address|full_address|location)$/i;
 const COUNTRY_FIELD_KEY = /(^|_)(country|country_code|country_name|nation|countrycode)$/i;
+/** The field of an item that holds its CITY: what it says is the item's city (DT-20261118-03 fix round 1, QA consolidated FAIL 2). */
+const CITY_FIELD_KEY = /(^|_)(city|town|locality|city_name)$/i;
+const DIGIT = /[0-9\u0660-\u0669\u06F0-\u06F9]/;
+/** A postal code: 4 digits or more standing alone («Giza 12588», «11511»). */
+const POSTCODE = /(^|\s)[0-9\u0660-\u0669\u06F0-\u06F9]{4,}(?=\s|$)/gu;
+const namesCountry = (part: string): boolean => ENTRIES.some((e) => e.kind === "country" && textHas(e, normalizeText(part)));
+/**
+ * The parts of a place text that can name a TOWN (DT-20261118-03 fix round 1, QA consolidated FAIL 3 + BUG HUNTER Gate 2 P1; D-0086: no list): split on commas, a postal code dropped; a part that names a country is not a town,
+ * and in an ADDRESS a part with a digit is a street, a building or a floor, never a town («12 Tahrir Street, floor 2» names no town). A city field keeps its digits («6th of October»).
+ */
+const townParts = (raw: string, digitsAreStreets: boolean): string[] => raw.split(/[,،;؛]/).map((part) => part.replace(POSTCODE, " ").trim()).filter((part) => /\p{L}/u.test(part) && !namesCountry(part) && !(digitsAreStreets && DIGIT.test(part)));
+const DISTRICT_NAMES = new Set(DISTRICTS.flatMap((d) => d.names));
+const ownNameCache = new Map<string, RegExp[]>();
+/** A city of the table named by its OWN name («Giza», «الجيزة»), not by one of its districts («الدقي» is read with its city elsewhere; here it is not proof of another city). */
+const namesCityItself = (entry: PlaceEntry, text: string): boolean => {
+  let list = ownNameCache.get(entry.key);
+  if (!list) { list = entry.names.filter((n) => !DISTRICT_NAMES.has(n) && normalizeText(n).length >= 3).map((n) => termRegex(n, "u")).filter((r): r is RegExp => r !== null); ownNameCache.set(entry.key, list); }
+  return list.some((r) => r.test(text));
+};
 const isoCountryOf = (value: string): string | null => {
   const t = value.trim().toUpperCase();
   if (/^[A-Z]{2}$/.test(t)) return countryOf.has(t) ? t : null;
@@ -219,8 +238,10 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
     const iso = COUNTRY_FIELD_KEY.test(field) ? isoCountryOf(raw) : null;
     if (iso) { if (wantedWholeCountries.some((e) => e.country === iso)) textPositive = true; else if (!wantedCountries.has(iso)) textNegative = true; continue; }
     const text = normalizeText(raw);
-    // A CITY WAS ASKED (DT-20261118-03 PR-5, D-0086: no list of OTHER cities): an address that names places (two parts or more) and never the asked city is another place, whatever town it names; a one-part street address is not judged
-    if (wantedCities.length > 0 && ADDRESS_FIELD_KEY.test(field) && !wanted.some((e) => textHas(e, text)) && raw.split(/[,،;؛]/).filter((part) => part.trim() !== "").length >= 2) otherCity = true;
+    // A CITY WAS ASKED (DT-20261118-03 PR-5, D-0086: no list of OTHER cities): an address with two town parts or more that never names the asked city is another place, whatever town it names; so is one that names another city of the asked country by that city's own name; a street, a floor, a postal code or the country is not a town (fix round 1)
+    if (wantedCities.length > 0 && ADDRESS_FIELD_KEY.test(field) && !wanted.some((e) => textHas(e, text)) && (townParts(raw, true).length >= 2 || ENTRIES.some((e) => e.kind === "city" && wantedCountries.has(e.country) && !wanted.includes(e) && namesCityItself(e, text)))) otherCity = true;
+    // THE CITY FIELD SAYS THE CITY (fix round 1, QA consolidated FAIL 2): a city field that names a town and never the asked city is another place, also from a source that was asked for the city
+    if (wantedCities.length > 0 && CITY_FIELD_KEY.test(field) && !wanted.some((e) => textHas(e, text)) && townParts(raw, false).length >= 1) otherCity = true;
     // a CITY of a wanted country is evidence of the country («Cairo», «Giza», «Sheikh Zayed» for «في مصر»); a wanted city is evidence of itself
     if (wanted.some((e) => textHas(e, text)) || ENTRIES.some((e) => e.kind === "city" && wantedWholeCountries.some((w) => w.country === e.country) && textHas(e, text))) { textPositive = true; continue; }
     // another country (not one of the wanted ones) named in the text
