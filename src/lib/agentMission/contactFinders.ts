@@ -229,13 +229,15 @@ export function verifierParamsFor(verifier: FinderInfo, email: string): Record<s
 /** What one person gives a finder. */
 export interface PersonFacts { linkedin: string | null; name: string | null; first: string | null; last: string | null; domain: string | null; company: string | null }
 
-const LINKEDIN_PERSON = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
+// DT-20261118-03: a profile written without its scheme (aviato URLs.linkedin «linkedin.com/in/…») is the same profile; it is given to a finder with https://
+const LINKEDIN_PERSON = /^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
 const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
 const bareDomain = (v: unknown): string | null => { const t = text(v); if (!t || /linkedin\./i.test(t)) return null; const d = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]; return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d) ? d.toLowerCase() : null; };
 
 /** The facts of a person row (and of its company's row): decided by code from the values, not from the planner's key names alone. */
 export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArray<{ key: string; title_ar?: string; kind?: string }>, parent: Record<string, unknown> | null): PersonFacts {
-  const linkedin = Object.values(row).map(text).find((v) => LINKEDIN_PERSON.test(v)) ?? null;
+  const profile = Object.values(row).map(text).find((v) => LINKEDIN_PERSON.test(v)) ?? null;
+  const linkedin = profile === null ? null : /^https?:\/\//i.test(profile) ? profile : `https://${profile}`;
   const name = nameKeysOf(columns).map((k) => text(row[k])).filter(Boolean).join(" ").trim() || null;
   const parts = name ? name.split(/\s+/) : [];
   const domainKey = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/(website|domain|site|url)/i.test(k)) { const d = bareDomain(v); if (d) return d; } return null; };
@@ -256,9 +258,20 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<stri
   return Object.keys(params).length > 0 ? params : null;
 }
 
+/** The inputs a finder REQUIRES that this person lacks (all its known inputs when none is filled): why it was not tried for this person. Empty when it can be called. */
+export function missingInputsFor(finder: FinderInfo, p: PersonFacts): string[] {
+  if (finderParamsFor(finder, p) !== null) return [];
+  const value: Record<string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
+  const required = finder.inputs.filter((i) => i.required && !value[inputKindOf(i.name) ?? ""]).map((i) => i.name);
+  return required.length > 0 ? required : finder.inputs.filter((i) => inputKindOf(i.name) !== null).map((i) => i.name);
+}
+
 export interface FoundContact { value: string; status: "verified" | "unverified" }
 const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
-const PHONE_KEYS = /^((mobile|direct|work)_?)?(phone|tel)(_?number)?$|^mobile$/i;
+// DT-20261118-03 (D-0084): every phone answer shape of the catalog's person-phone finders (quickenrich employee_phone, dropleads/leadmagic mobile_number, limadata phone_numbers[].number, tomba intl/e164_format, aviato phones[].phoneNumber)
+const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$|^number$/i;
+/** A phone written as a bare string inside a list (contactout phone: ["+1…"], aiark data: [["+1…"]]): international (+) or national (0) digits only, never a date. */
+const PHONE_LIKE = /^(\+\d|0\d)[\d\s().-]{6,19}$/;
 /** A value that is nothing but an address (optionally a mailto: link). */
 const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
@@ -274,7 +287,7 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
   const stray: string[] = [];
   const walk = (node: unknown, depth: number): void => {
     if (depth > 6 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else walk(x, depth + 1); } return; }
+    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else if (typeof x === "string" && kind === "phone" && PHONE_LIKE.test(x.trim())) seen.push(x.trim()); else walk(x, depth + 1); } return; }
     if (typeof node !== "object") return;
     const o = node as Record<string, unknown>;
     for (const [k, v] of Object.entries(o)) {
