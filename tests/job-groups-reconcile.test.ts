@@ -1571,6 +1571,53 @@ describe("T08: release and halt", () => {
     }
   );
 
+  it.each([
+    "every candidate absent",
+    "every readable candidate malformed",
+    "rows.length ≠ delivered",
+    "a row without identity",
+    "a duplicate identity",
+    "F5 answers keys_overlap",
+  ])("(d3) UNFREEZABLE %s after a completed charged part: the one close carries the literal Z 10 and C 70, the exact release and close arguments, no draw call, no S2 line", async (kind) => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, unfreezable: kind, priorCompleted: { delivered: 10, charged: 70 } });
+    const r = await run(w);
+    const calls = (name: string) => w.rpcCalls.filter((c) => c.name === name);
+    expect(calls("draw_next_group_part_atomic")).toEqual([]);
+    expect(w.events).toEqual([]);
+    expect(calls("release_unfrozen_group_part_atomic").map((c) => c.args)).toEqual([
+      { p_group_id: "grp_1", p_part_index: 2, p_job_id: "job_p1", p_release_ar: GROUP_PART_UNFROZEN_RELEASED_AR },
+    ]);
+    expect(calls("close_job_group_atomic").map((c) => c.args)).toEqual([
+      {
+        p_group_id: "grp_1",
+        p_reason: "part_unfrozen",
+        p_final_line_ar: groupFinalLineAr({ reason: "part_unfrozen", Z: 10, X: 30, Y: 30, C: 70 }),
+        p_delivered_total: 10,
+        p_charged_total: 70,
+        p_part_release_ar: null,
+      },
+    ]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(2);
+    expect([r.drawn, r.released, r.closed]).toEqual([0, 1, 1]);
+  });
+
+  it("(r2) WATCHDOG RELEASED FIRST after a completed charged part: no draw, no F6, ONE close('part_unfrozen') with the literal Z 10 and C 70 (the failed part, which delivered 10, is not counted)", async () => {
+    const w = makeWorld();
+    w.groupWithFailedPart({ cursor: "completed", priorCompleted: { delivered: 10, charged: 70 } });
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "close_job_group_atomic"]);
+    expect(w.rpcCalls[1].args).toEqual({
+      p_group_id: "grp_1",
+      p_reason: "part_unfrozen",
+      p_final_line_ar: groupFinalLineAr({ reason: "part_unfrozen", Z: 10, X: 30, Y: 30, C: 70 }),
+      p_delivered_total: 10,
+      p_charged_total: 70,
+      p_part_release_ar: null,
+    });
+    expect(w.events).toEqual([]);
+  });
+
   it("(d2) a freeze that keeps answering retry: no F6 before 20 min, F6 once after, then close('part_unfrozen'), no draw", async () => {
     const w = makeWorld();
     w.awaitingFreezeGroup({ delivered: 10, updatedAgoMs: 19 * 60_000 });
