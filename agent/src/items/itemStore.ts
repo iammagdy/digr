@@ -57,6 +57,8 @@ export type Op =
   | { t: "swap"; stage: string; out: string; in: string }
   /** Cells of an ACCEPTED item's row filled after it was stored (the contact finder steps, engine/contacts.ts): only cells that are still empty are set, so a replay of the log gives the same row. It adds no item and changes no state or count. */
   | { t: "cells"; stage: string; id: string; cells: Record<string, string> }
+  /** Cells of an ACCEPTED item's row emptied (DT-20261118-03 PR-3): an address that is the company's mailbox, not the person's, is taken out of the person's e-mail cell. A replay gives the same row; an older worker ignores the op. */
+  | { t: "clear"; stage: string; id: string; keys: string[] }
   | { t: "stop"; stage: string; reason: StopReason };
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
@@ -149,6 +151,12 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       const it = log.items.get(op.id);
       if (!it || it.state !== "accepted" || !it.row) return;
       for (const [k, v] of Object.entries(op.cells)) if (typeof v === "string" && v.trim() !== "" && String(it.row[k] ?? "").trim() === "") it.row[k] = v;
+      return;
+    }
+    case "clear": {
+      const it = log.items.get(op.id);
+      if (!it || it.state !== "accepted" || !it.row) return;
+      for (const k of op.keys) if (k in it.row) it.row[k] = "";
       return;
     }
     case "stop": log.stop = op.reason; return;
