@@ -82,10 +82,13 @@ export function asksPeopleOfCompanies(steps: ReadonlyArray<{ key: string; parent
   return steps.some((s) => s.parent !== null && s.platform === PEOPLE_PLATFORM && steps.find((p) => p.key === s.parent)?.platform === COMPANIES_PLATFORM);
 }
 /** The same structure with its facts, as the planning model wrote them (its own titles and the count per company it read, never a word list): what the plan check needs to treat the people of the companies as a step. */
-export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; count: { per_parent: number | null } }>): { noun_ar: string; parent_ar: string; per_parent: number | null } | null {
+/** A step is the PEOPLE of another step's items by what its tool IS (a people-of-company capability of the catalog), whatever platform key the model gave it (the catalog files these tools under «companies», «people» and «linkedin»). */
+export const isPeopleOfCompanyStep = (s: { platform: string; capability?: string | null }): boolean => s.platform === PEOPLE_PLATFORM || (typeof s.capability === "string" && PEOPLE_OF_COMPANY_CAPABILITIES.has(s.capability));
+export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>): { noun_ar: string; parent_ar: string; per_parent: number | null } | null {
   for (const s of steps) {
-    const parent = s.parent !== null && s.platform === PEOPLE_PLATFORM ? steps.find((p) => p.key === s.parent) : undefined;
-    if (parent && parent.platform === COMPANIES_PLATFORM) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent };
+    const parent = s.parent !== null && isPeopleOfCompanyStep(s) ? steps.find((p) => p.key === s.parent) : undefined;
+    // the parent of a people step is the companies step by structure; its own platform key is not read (a companies step may be a map search or a business directory)
+    if (parent) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent };
   }
   return null;
 }

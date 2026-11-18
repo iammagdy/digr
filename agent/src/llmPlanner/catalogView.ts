@@ -2,6 +2,9 @@ import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog
 import { isSellable } from "../../../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../../../src/lib/treg/blockList";
 import { policyVerdict, type AccountAccess } from "../../../src/lib/treg/dataPolicy";
+import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../../src/lib/agentMission/childSources";
+import { PHONE_CAPABILITIES } from "../../../src/lib/agentMission/peopleCheck";
+import { EMAIL_FINDER_CAPABILITIES } from "../../../src/lib/agentMission/contactSampling";
 import productionEligible from "../../../data/capabilities/production-eligible.json";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
@@ -157,4 +160,16 @@ export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
     ...(PROVEN.has(e.id) ? { proven_in_production: true } : {}),
     measured: { ok_rate: num(o.ok_rate), returns_rows_rate: num(o.hit_rate), p50_ms: num(o.p50_ms) },
   };
+}
+
+/**
+ * WHAT THE CATALOG CAN DO FOR THE PEOPLE OF A COMPANY, from its own structure (DT-20261118-05 RCA2): the capabilities whose items are the people of a company, and whether e-mail and phone finders for a person exist. The planner is told, so a request for the staff, managers or owners
+ * of companies, with their e-mails or phones, is planned as a child step of the companies and never answered «no source gives it» while the catalog has them. Nothing here reads the customer's words.
+ */
+export function peopleOfCompanyHint(catalog: TregCatalog, access: AccountAccess | null): string {
+  const usable = catalog.endpoints.filter((e) => usableEndpoint(e, catalog, access));
+  const people = [...new Set(usable.map(capabilityOf).filter((c) => PEOPLE_OF_COMPANY_CAPABILITIES.has(c)))].sort();
+  if (people.length === 0) return "";
+  const has = (caps: ReadonlySet<string>): boolean => usable.some((e) => e.capability !== undefined && e.capability !== null && caps.has(e.capability));
+  return `PEOPLE OF COMPANIES (from this catalog): the items of these capabilities are the people who work at a company: ${people.join(", ")}. When the customer asks for the people of companies (their staff, managers, owners or decision makers, in any words), plan a child step of the companies step with one of them, deliver true. The system then looks up each person's own e-mail${has(EMAIL_FINDER_CAPABILITIES) ? " (e-mail finders exist)" : ""} and phone${has(PHONE_CAPABILITIES) ? " (phone finders exist)" : ""} by itself: never write that these people or their e-mails or phones are unavailable while this line is here.`;
 }

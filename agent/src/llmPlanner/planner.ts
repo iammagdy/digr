@@ -8,7 +8,7 @@ import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCard
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import type { GatewayCallResult } from "../gateway";
-import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, platformIndex, platformsOf } from "./catalogView";
+import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
@@ -426,7 +426,7 @@ function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number; refused
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
 export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string }> {
   const ask = asker(deps, cost);
-  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}`;
+  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
   const userPrompt = understandPrompt(input, deps.today);
   let checked: ReturnType<typeof checkUnderstanding> | null = null;

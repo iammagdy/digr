@@ -1,4 +1,5 @@
 import { MODEL_SONNET } from "../../../src/lib/agentMission/constants";
+import { isPeopleOfCompanyStep } from "../../../src/lib/agentMission/childSources";
 import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
 import { RAW_PATH, type Gateway, type GatewayCallResult } from "../gateway";
 import type { WebGateway } from "../webGateway";
@@ -23,6 +24,8 @@ export const LLM_PLANNER_STATE_FILE = "state/llm_planner.json";
  * Everything else the catalog collects (every social platform, forums, video sites, maps, reviews, news, the web catalog …) is planned here.
  */
 export const B2B_PLATFORMS: ReadonlySet<string> = new Set(["companies", "people"]);
+/** Company and people research goes on to its own path: a step on a B2B platform key OR a step whose tool is a people-of-company capability (the catalog files those under «linkedin» too). */
+export const handsOverToB2B = (u: { steps: ReadonlyArray<{ platform: string; capability?: string | null }> }): boolean => u.steps.some((s) => B2B_PLATFORMS.has(s.platform) || isPeopleOfCompanyStep(s));
 
 interface PlannerState { asked: Array<{ question_ar: string; answer: string | null; scout?: boolean }> }
 
@@ -91,7 +94,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       pricingSettings: input.pricingSettings,
       today: cairoDayOf(input.now),
       onProgress: async (lineAr) => { await store.addEvent(mission.id, { kind: "progress", message_ar: lineAr }); },
-      accept: (u) => !u.steps.some((s) => B2B_PLATFORMS.has(s.platform)),
+      accept: (u) => !handsOverToB2B(u),
       ...(input.log ? { log: input.log } : {}),
     },
   );
