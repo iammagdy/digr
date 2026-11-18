@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createHash } from "node:crypto";
 import {
   TICK_BUDGET_MS,
   MIN_LEFT_FOR_CLAIM_MS,
@@ -21,9 +22,27 @@ import {
   getConfiguredJobPointsCap,
   DEFAULT_JOB_POINTS_CAP,
 } from "../src/functions/shared/providerSpend";
+import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
+import { frozenPathFor } from "../src/lib/server/multiProvider/jobGroupShared";
 
 const NOW0 = Date.parse("2026-11-20T00:00:00Z");
 const w_all_rpc_names_seen_in_this_file = new Set<string>();
+
+const rowsOf = (n: number, tag = "a") =>
+  Array.from({ length: n }, (_, i) => ({
+    name: `Co ${tag}${i}`,
+    website: `https://${tag}${i}.example.com`,
+  }));
+const bytesOf = (rows: any[]) => Buffer.from(JSON.stringify({ rows }), "utf-8");
+const shaOf = (b: Buffer | any[]) => {
+  const buf = Buffer.isBuffer(b) ? b : bytesOf(b);
+  return createHash("sha256").update(buf).digest("hex");
+};
+const companyDedupe = dedupeIdentityFor("company");
+const idsOf = (rows: any[]) => rows.map((r) => (companyDedupe as any)(r)).filter(Boolean);
+
+const A = rowsOf(10, "a");
+const B = rowsOf(10, "b");
 
 function part(
   status: string,
@@ -58,8 +77,19 @@ function makeWorld() {
   const latency: Record<string, number> = {};
   const answer: { draw?: any; claim?: any } = {};
   const events: string[] = [];
+  const partials = new Map<string, Buffer>();
+  const results = new Map<string, Buffer>();
+  const f5 = {
+    calls: [] as any[],
+    committed: [] as any[],
+    dropOnTimeout: false,
+    failNext: false,
+    failAlways: false,
+  };
+
   let throwAfterDraw = false;
   let abortAfterReads = false;
+  let abortBeforeF5 = false;
 
   let firstItem: any = {
     capabilitySlug: "mp-business-contacts",
@@ -89,6 +119,7 @@ function makeWorld() {
 
   const group = (id: string) => groups.find((g) => g.id === id);
   const jobsOfGroup = (gid: string) => parts.get(gid) ?? [];
+  const jobIdOfPart = (k: number) => (parts.get("grp_1") ?? [])[k - 1]?.id ?? `job_p${k}`;
 
   const requeue = () => {
     queue.length = 0;
@@ -106,6 +137,7 @@ function makeWorld() {
     const g = {
       id: gid,
       quote_id: "q_1",
+      user_id: "u1",
       status: "open",
       parts_planned: 3,
       next_part: n + 1,
@@ -125,6 +157,7 @@ function makeWorld() {
     const g = {
       id: gid,
       quote_id: "q_1",
+      user_id: "u1",
       status: "open",
       parts_planned: 3,
       next_part: jobs.length + 1,
@@ -165,6 +198,7 @@ function makeWorld() {
     const g = {
       id: gid,
       quote_id: "q_1",
+      user_id: "u1",
       status: "open",
       parts_planned: 3,
       next_part: 3,
@@ -179,7 +213,98 @@ function makeWorld() {
     return g;
   };
 
+  const awaitingFreezeGroup = (opts: {
+    delivered?: number;
+    candidates?: { first: any[]; second: any[] };
+    unfreezable?: string;
+    updatedAgoMs?: number;
+  }) => {
+    const gid = "grp_1";
+    const p1Id = "job_p1";
+    const updated_at = new Date(NOW0 - (opts.updatedAgoMs ?? 200_000)).toISOString();
+    const part1 = part("running", opts.delivered ?? 10, 0, {
+      id: p1Id,
+      current_cursor: "completed",
+      updated_at,
+      user_id: "u1",
+    });
+
+    const g = {
+      id: gid,
+      quote_id: "q_1",
+      user_id: "u1",
+      status: "open",
+      parts_planned: 3,
+      next_part: 2,
+      asked_original: 30,
+      reachable: 30,
+      deadline_at: new Date(NOW0 + 3_600_000).toISOString(),
+      halted_at: null,
+    };
+    groups.push(g);
+    queue.push(g);
+    setParts(gid, [part1], false);
+
+    if (opts.candidates) {
+      partials.set(`u1/${p1Id}/data.json`, bytesOf(opts.candidates.first));
+      partials.set(`${p1Id}/data.json`, bytesOf(opts.candidates.second));
+    } else {
+      const defaultRows = rowsOf(opts.delivered ?? 10, "a");
+      partials.set(`u1/${p1Id}/data.json`, bytesOf(defaultRows));
+    }
+
+    return g;
+  };
+
+  const rewriteAllDataTo = (rows: any[]) => {
+    const buf = bytesOf(rows);
+    for (const key of partials.keys()) {
+      partials.set(key, buf);
+    }
+  };
+
+  const partialsBucket = {
+    download: async (path: string) => {
+      if (partials.has(path)) {
+        const buf = partials.get(path)!;
+        return Promise.resolve({ data: new Blob([buf as any]), error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
+    },
+    upload: async (path: string, bytes: any) => {
+      partials.set(path, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+      return Promise.resolve({ data: { path }, error: null });
+    },
+  };
+
+  const resultsBucket = {
+    download: async (path: string) => {
+      if (results.has(path)) {
+        const buf = results.get(path)!;
+        return Promise.resolve({ data: new Blob([buf as any]), error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
+    },
+    upload: async (path: string, bytes: any) => {
+      if (results.has(path)) {
+        return Promise.resolve({ data: null, error: { message: "The resource already exists", statusCode: "409" } });
+      }
+      results.set(path, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+      if (abortBeforeF5) {
+        throw new Error("abortBeforeF5");
+      }
+      return Promise.resolve({ data: { path }, error: null });
+    },
+  };
+
   const admin = {
+    storage: {
+      from: (bucket: string) => {
+        if (bucket === "partials") return partialsBucket;
+        if (bucket === "results") return resultsBucket;
+        throw new Error("unknown bucket: " + bucket);
+      },
+    },
     from: (table: string) => {
       tables.push(table);
       let isCountHead = false;
@@ -369,6 +494,61 @@ function makeWorld() {
         });
       }
 
+      if (name === "freeze_and_settle_group_part_atomic") {
+        f5.calls.push(args);
+        return {
+          then: (resolve: any) => {
+            if (latency.f5) {
+              vi.advanceTimersByTime(latency.f5);
+            }
+            if (f5.failNext) {
+              f5.failNext = false;
+              return resolve({ data: null, error: { message: "rpc down" } });
+            }
+            if (f5.failAlways) {
+              return resolve({ data: null, error: { message: "rpc down" } });
+            }
+            const existing = f5.committed.find(
+              (c) => c.p_group_id === args.p_group_id && c.p_part_index === args.p_part_index
+            );
+            if (existing) {
+              return resolve({
+                data: {
+                  success: true,
+                  already_frozen: true,
+                  path: args.p_path,
+                  sha256: args.p_sha256,
+                  row_count: args.p_row_count,
+                  charged_credits: 0,
+                },
+                error: null,
+              });
+            }
+            f5.committed.push(args);
+            const gid = args.p_group_id;
+            const gParts = parts.get(gid) ?? [];
+            const partIdx = args.p_part_index;
+            if (gParts[partIdx - 1]) {
+              const j = gParts[partIdx - 1];
+              j.status = "completed";
+              j.charged_credits = (j.delivered_units ?? 0) * 7;
+            }
+            partsFrozen.set(gid, true);
+            return resolve({
+              data: {
+                success: true,
+                already_frozen: false,
+                path: args.p_path,
+                sha256: args.p_sha256,
+                row_count: args.p_row_count,
+                charged_credits: (gParts[partIdx - 1]?.delivered_units ?? 0) * 7,
+              },
+              error: null,
+            });
+          },
+        };
+      }
+
       return Promise.resolve({ data: null, error: null });
     },
   };
@@ -386,6 +566,9 @@ function makeWorld() {
     answer,
     events,
     firstItem,
+    partials,
+    results,
+    f5,
     set throwAfterDraw(v: boolean) {
       throwAfterDraw = v;
     },
@@ -398,13 +581,22 @@ function makeWorld() {
     get abortAfterReads() {
       return abortAfterReads;
     },
+    set abortBeforeF5(v: boolean) {
+      abortBeforeF5 = v;
+    },
+    get abortBeforeF5() {
+      return abortBeforeF5;
+    },
     setParts,
     group,
     jobsOfGroup,
+    jobIdOfPart,
     requeue,
     oneGroupWithPartsDone,
     oneGroupWithParts,
     groupWithRunningPart,
+    awaitingFreezeGroup,
+    rewriteAllDataTo,
   };
 }
 
@@ -781,5 +973,85 @@ describe("T06: stuck R1b", () => {
     w.groupWithRunningPart({ lease_until: new Date(NOW0 + 60_000).toISOString(), deadlineAheadMs: 3_600_000 });
     await run(w);
     expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group"]);
+  });
+});
+
+describe("T07: freeze R2b", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("(i) FREEZE CHOICE AND RACE: candidate 1 = A, candidate 2 = B (same count) ⇒ the uploaded object is A, named sha256(A), F5 keys = sorted ids of A; later rewrites to B never call F5 or draw again for that part", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10, candidates: { first: A, second: B } });
+    const r = await run(w);
+    expect(r.frozen).toBe(1);
+    expect([...w.results.keys()]).toEqual([frozenPathFor("u1", w.jobIdOfPart(1), shaOf(A))]);
+    const f5 = w.rpcCalls.find((c) => c.name === "freeze_and_settle_group_part_atomic")!;
+    expect(f5.args.p_sha256).toBe(shaOf(A));
+    expect(f5.args.p_keys).toEqual(idsOf(A).sort());
+    w.rewriteAllDataTo(B);
+    w.requeue();
+    const f5Before = w.rpcCalls.filter((c) => c.name === "freeze_and_settle_group_part_atomic").length;
+    await run(w);
+    expect(w.rpcCalls.filter((c) => c.name === "freeze_and_settle_group_part_atomic").length).toBe(f5Before);
+    expect(w.jobsOfGroup("grp_1").length).toBe(2); // the one draw of part 2 happened on the FIRST claim, none now
+  });
+
+  it("a frozen part continues: freeze, then the draw of part L+1 in the SAME claim", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10 });
+    await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual([
+      "claim_next_job_group",
+      "freeze_and_settle_group_part_atomic",
+      "draw_next_group_part_atomic",
+    ]);
+  });
+
+  it("(d2) F5 times out AFTER committing ⇒ the next claim sees 'completed', skips R2b, draws once", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10 });
+    w.latency.f5 = 4_100; // the fake commits at its own timer even after the caller gave up
+    const r1 = await run(w);
+    expect(r1.frozen).toBe(0);
+    expect(w.f5.committed.length).toBe(1);
+    w.latency.f5 = 0;
+    w.requeue();
+    const r2 = await run(w);
+    expect(w.rpcCalls.filter((c) => c.name === "freeze_and_settle_group_part_atomic").length).toBe(1); // R2b was skipped
+    expect(w.jobsOfGroup("grp_1").length).toBe(2);
+    expect(r2.drawn).toBe(1);
+  });
+
+  it("(d2) F5 errors (no commit) ⇒ the next claim retries and freezes", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10 });
+    w.f5.failNext = true;
+    await run(w);
+    expect(w.f5.committed).toEqual([]);
+    w.requeue();
+    const r = await run(w);
+    expect(r.frozen).toBe(1);
+    expect(w.f5.committed.length).toBe(1);
+  });
+
+  it("(d2) abort after the upload before F5 ⇒ the next claim finds the object (409, same bytes) and calls F5 once", async () => {
+    const w = makeWorld();
+    w.awaitingFreezeGroup({ delivered: 10 });
+    w.abortBeforeF5 = true;
+    await run(w);
+    expect(w.results.size).toBe(1);
+    w.abortBeforeF5 = false;
+    w.requeue();
+    await run(w);
+    expect(w.rpcCalls.filter((c) => c.name === "freeze_and_settle_group_part_atomic").length).toBe(1);
+    expect(w.results.size).toBe(1);
   });
 });

@@ -1,4 +1,5 @@
 import { withTimeout, TIMED_OUT, isMissingSchema } from "./jobGroupShared";
+import { freezeGroupPart } from "./jobGroupFreeze";
 import {
   GROUP_CLOSING_NOTICE_AR,
   GROUP_PART_STOPPED_AR,
@@ -161,8 +162,35 @@ export async function reconcileJobGroups(
         const isRunningOrQueued = jobL?.status === "queued" || jobL?.status === "running";
         const isAwaitingFreeze = jobL?.status === "running" && jobL?.current_cursor === "completed";
 
-        // R1b: Running/queued part not awaiting freeze
-        if (isRunningOrQueued && !isAwaitingFreeze) {
+        if (isAwaitingFreeze) {
+          const f = await freezeGroupPart(admin, {
+            groupId: gid,
+            partIndex: L,
+            job: {
+              id: jobL.id,
+              user_id: group.user_id,
+              delivered_units: jobL.delivered_units ?? 0,
+            },
+            now,
+          });
+
+          if (f === "frozen") {
+            frozen += 1;
+            // continue to R3 reads
+          } else if (f === "unfreezable") {
+            // T08 handles RELEASE
+            continue;
+          } else if (f === "retry") {
+            const updatedAgo = now() - Date.parse(jobL.updated_at ?? "1970-01-01");
+            const overdue2h = now() >= Date.parse(group.deadline_at) + 2 * 3_600_000;
+            if (updatedAgo >= FREEZE_GIVE_UP_MS || overdue2h) {
+              // T08 handles RELEASE
+              continue;
+            } else {
+              continue;
+            }
+          }
+        } else if (isRunningOrQueued) {
           if (now() < Date.parse(group.deadline_at)) {
             continue;
           }
