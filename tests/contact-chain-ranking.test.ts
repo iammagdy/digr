@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadTregCatalog, isSellable } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
-import { FALLBACK_FINDER_MAX_USD, finderRankKey, finderSourcesOf } from "../src/lib/agentMission/contactFinders";
+import { FALLBACK_FINDER_MAX_USD, PHONE_FINDER_MAX_USD, finderRankKey, finderSourcesOf } from "../src/lib/agentMission/contactFinders";
 import { NOT_ADMIN } from "./helpers/agentHarness";
 
 /**
@@ -28,14 +28,15 @@ describe("the finders are ranked by the cost of a found value", () => {
 
 describe("no finder of a chain costs more than FALLBACK_FINDER_MAX_USD a call", () => {
   it("the ceiling is 0.02 USD", () => expect(FALLBACK_FINDER_MAX_USD).toBe(0.02));
-  it("the real catalog for a customer: no e-mail or phone finder of the chain is dearer; the dear ones (tomba phone 0.0445, enrichlayer 0.1) are left out", () => {
+  // CHANGED (DT-20261118-03 PR-2c, Megz D-0085): a PERSON-PHONE finder may cost up to PHONE_FINDER_MAX_USD (0.05), so tomba phone (0.0445) is now in the phone chain; e-mail stays at 0.02 and enrichlayer (0.1) stays out
+  it("the real catalog for a customer: no e-mail finder above 0.02 and no phone finder above 0.05 is in the chain; the dearer ones (enrichlayer 0.1) are left out", () => {
     for (const kind of ["email", "phone"] as const) {
       const chain = finderSourcesOf(kind, catalog, customer);
       expect(chain.length).toBeGreaterThan(0);
-      for (const f of chain) expect(f.usd, f.id).toBeLessThanOrEqual(FALLBACK_FINDER_MAX_USD);
+      for (const f of chain) expect(f.usd, f.id).toBeLessThanOrEqual(kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD);
     }
     const ids = finderSourcesOf("phone", catalog, customer).map((f) => f.id);
-    expect(ids).not.toContain("tomba.people.phone.find");
+    expect(ids).toContain("tomba.people.phone.find");
     expect(ids).not.toContain("enrichlayer.contacts.personal-phone");
     expect(ids[0]).toBe("blitzapi.people.phone.find");
   });

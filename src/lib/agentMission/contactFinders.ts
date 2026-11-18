@@ -99,6 +99,8 @@ export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: Tr
  * Above the ceiling a finder is not part of the step; the plan then prices and caps the chain without it. It limits the CHAIN only (the cap and the price are derived from the chain), never the customer's quantity.
  */
 export const FALLBACK_FINDER_MAX_USD = 0.02;
+/** A PERSON-PHONE finder may cost up to this much a call (Megz D-0085: «ارفعه لـ٥ سنت»): the person's own phone is core (D-0084), and the finders that find it more often cost more. The chain is still chosen by catalog capability, price and measured rate only. */
+export const PHONE_FINDER_MAX_USD = 0.05;
 /** What a FOUND value costs: the price of a call over the measured share of calls that find one (finderStats.ts); finders are ranked by it, cheapest first. */
 export const finderRankKey = (f: { id: string; usd: number }, kind: FinderKind): number => f.usd / finderHitRate(f.id, kind);
 
@@ -107,7 +109,7 @@ export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowe
   const caps = kind === "email" ? EMAIL_FINDER_CAPABILITIES : PHONE_CAPABILITIES;
   const usable = (e: CatalogEndpoint): boolean => !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
   const group = catalog.endpoints.filter((e) => e.capability && caps.has(e.capability) && isAllowed(e.id) && usable(e));
-  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: FALLBACK_FINDER_MAX_USD });
+  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD });
 }
 
 /** The e-mail verifiers of the catalog this account may buy, cheapest first (the same ranking as every source): direct and synchronous (a routed one bills a range, an asynchronous one needs polling), taking only the address, with a known price. */
@@ -256,6 +258,8 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<stri
     // a «name» input takes the whole name only when the finder has no first/last pair of its own (the whole name is also enough for the pair's finders, which split it)
     if (v) params[i.name] = v; else if (i.required) return null;
   }
+  // A PERSON FINDER NEEDS A PERSON (BUG HUNTER Gate 1 delta, PR-2c): a call with only the company's domain or name is a paid call about nobody; at least a profile or a name must go with it
+  if (!finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last"].includes(inputKindOf(i.name) ?? ""))) return null;
   return Object.keys(params).length > 0 ? params : null;
 }
 
