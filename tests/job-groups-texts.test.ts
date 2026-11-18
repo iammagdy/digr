@@ -20,6 +20,10 @@ describe("DT-05 PR-3 group texts", () => {
     expect(checkCustomerText(actual).issues).toEqual([]);
   });
 
+  it("GROUP_PART_STOPPED_AR gives no time or deadline reason, because the operator stop uses it too", () => {
+    for (const word of ["المدة", "٧٢ ساعة", "لتجاوزه"]) expect(GROUP_PART_STOPPED_AR).not.toContain(word);
+  });
+
   it("splitCardLineAr writes C1 when Y = X", () => {
     expect(copy.splitCardLineAr({ parts: 3, perPart: 40, reachable: 120, askedOriginal: 120, hold: 1200 })).toBe("طلبت ١٢٠ شركة، وأقصى ما تتسع له المهمة الواحدة ٤٠ شركة بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ٣ أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ١٢٠٠ نقطة مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.");
   });
