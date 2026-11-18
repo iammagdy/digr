@@ -59,8 +59,10 @@ describe("DT-20261117-06 T6: a failed chat turn stores one reviewed constant", (
   it("T6 a thrown turn stores CHAT_PREP_REASON_AR as request_error, whatever the error says", async () => {
     for (const thrown of [new Error("TypeError: x"), new Error("تعذر الاتصال بفايركرول")]) {
       const { db, handler, oldPath } = setup(false);
+      handler.deterministicPlanning = false; // a request with a stated period is planned in code (chatHandler.ts:2993); the throw must be reached
       oldPath.mockImplementation(async () => { throw thrown; });
-      await expect(ask(handler, "هات ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا")).rejects.toThrow();
+      await expect(ask(handler, "هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥")).rejects.toThrow(); // the request names its period: no time-window question (chatHandler.ts:2821); the same text as stall-guard.test.ts:7
+      expect(oldPath).toHaveBeenCalled(); // non-vacuity: the model call really ran and threw
       const userRows = db.rows("messages").filter((m: any) => m.role === "user");
       expect(userRows).toHaveLength(1);
       expect(userRows[0].request_status).toBe("failed");
