@@ -304,8 +304,10 @@ describe("DT-05 PR-10 job groups card", () => {
     const r1 = reserveForUnits(40, CHAIN_UNIT, DEFAULT_PRICING_SETTINGS.safetyBuffer); // 4048
     process.env.JOB_MAX_POINTS_CAP = String(r1);
 
+    let storedQuote: any = null;
     const tablesProbeFalse = createMockTables({
-      probeAnswer: null, // rpc fails/returns null for probe
+      probeAnswer: null, // rpc fails/returns null for probe (hasJobGroupRpc false)
+      quoteCaptor: (row) => { storedQuote = row; },
     });
 
     const quoteResult = await createAndSaveManagedQuote(tablesProbeFalse, {
@@ -321,26 +323,75 @@ describe("DT-05 PR-10 job groups card", () => {
       },
     });
 
-    expect(quoteResult.isAffordable).toBe(false);
-    expect(quoteResult.quotedPoints).toBe(4048);
-    expect(quoteResult.expectedPoints).toBe(3520);
-    expect(quoteResult.targetVolumeMax).toBe(40);
-    expect(quoteResult.requestedVolumeMax).toBe(120);
-    expect(quoteResult.splitGroup).toBeUndefined();
-    expect(quoteResult.items[0].params?.split).toBeUndefined();
-    expect(quoteResult.downscaledOffer).toEqual({
-      maxAffordableUnits: 9,
-      affordableQuotedPoints: 911,
-      rawCostPoints: 792,
+    // Full comparison of the complete returned card object with normalized volatile fields
+    const { quoteId, planHash, expiresAt, createdAt, ...stableCard } = quoteResult;
+    expect(quoteId).toBeTruthy();
+    expect(planHash).toBeTruthy();
+    expect(expiresAt).toBeTruthy();
+    expect(createdAt).toBeTruthy();
+    expect(stableCard).toEqual({
+      status: "proposed",
+      summaryAr: "خطة 120 شركة",
+      items: [
+        {
+          capabilitySlug: CHAIN_CAPABILITY_SLUG,
+          params: {
+            industry: "مقاولات",
+            country: "مصر",
+            requiredFields: ["work_email"],
+            routeCode: expect.any(String),
+          },
+          targetVolumeMin: 1,
+          targetVolumeMax: 40,
+          endpointId: "mp.business.contacts",
+          unitCostUsd: expect.any(Number),
+          unitPricePoints: 88,
+          rawPoints: 3520,
+          itemReservation: 4048,
+          reservedPoints: 4048,
+          pricingUnit: "item",
+        },
+      ],
+      outputFormats: ["xlsx"],
+      targetVolumeMax: 40,
+      unitPricePoints: 88,
+      expectedPoints: 3520,
+      quotedPoints: 4048,
+      isAffordable: false,
+      downscaledOffer: {
+        maxAffordableUnits: 9,
+        affordableQuotedPoints: 911,
+        rawCostPoints: 792,
+      },
+      capacityConstrained: false,
+      pointsCapConstrained: true,
+      requestedVolumeMax: 120,
+      pointsCap: 4048,
+      userBalance: 1_000,
     });
 
+    // Stored quote row items and total reservation
+    const storedItems = storedQuote?.p_items ?? storedQuote?.items;
+    const storedTotal = storedQuote?.p_total_points ?? storedQuote?.total_reserved_credits;
+    expect(storedTotal).toBe(4048);
+    expect(storedItems).toEqual(quoteResult.items);
+
+    // Copy full comparison: exact summaryAr and methodologyNotes equal base code
     const copy = chainQuoteCopyFor({
       item: quoteResult.items[0],
       askedCount: 120,
     });
-    expect(copy).not.toBeNull();
-    expect(copy!.summaryAr).toBe("نجمع حتى ٤٠ شركة من مصادر متاحة، ومع كل شركة: اسم الشركة، الموقع الإلكتروني، البريد الإلكتروني المهني.");
-    expect(copy!.methodologyNotes).toContain("العدد المستهدف تسليمه: ٤٠ شركة من أصل ١٢٠ شركة مطلوبة، لأن الحد الأقصى لحجز المهمة الواحدة لا يتسع لأكثر من ذلك.");
+    expect(copy).toEqual({
+      summaryAr: "نجمع حتى ٤٠ شركة من مصادر متاحة، ومع كل شركة: اسم الشركة، الموقع الإلكتروني، البريد الإلكتروني المهني.",
+      methodologyNotes:
+        "العدد المستهدف تسليمه: ٤٠ شركة من أصل ١٢٠ شركة مطلوبة، لأن الحد الأقصى لحجز المهمة الواحدة لا يتسع لأكثر من ذلك. " +
+        "وقد يكون العدد المسلَّم أقل من المستهدف لأسباب قد تتعلق بالمصادر المتاحة أو بحدود المعالجة، وسنذكر لك العدد الفعلي والسبب، ولا يُحتسب عليك إلا ما يُسلَّم. " +
+        "نجمع بيانات التواصل المنشورة للعامة على المواقع الرسمية للشركات ومن مصادر بيانات تجارية متاحة. " +
+        "عمودا النشاط والدولة في الملف يعكسان معايير بحثك، ولا يُتحقق منهما لكل شركة على حدة. " +
+        "قد لا يتوفر البريد الإلكتروني أو الهاتف لبعض الشركات، ولا نحتسب إلا الشركات التي تحققنا من الحقول المطلوبة فيها. " +
+        "لا نجمع عناوين المنازل ولا معلومات العائلة ولا الحسابات الخاصة ولا أي صفحة تتطلب تسجيل دخول. " +
+        "لا نضمن دقة تامة؛ نبذل أفضل جهد ممكن، وقد يكون عدد الشركات المسلَّمة أقل من المطلوب.",
+    });
   });
 
   it("X = V non-split: when requested count fits single-job cap, ordinary card with no split", async () => {
