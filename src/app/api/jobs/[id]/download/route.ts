@@ -398,7 +398,7 @@ export async function GET(
         }
       }
 
-      if (!signedUrl && jsonText) {
+      if (!signedUrl && jsonText && (!isFrozenGroupPart || format === "json")) {
         try {
           const parsed = JSON.parse(jsonText);
           const fileBuf = Buffer.from(JSON.stringify(parsed, null, 2), "utf-8");

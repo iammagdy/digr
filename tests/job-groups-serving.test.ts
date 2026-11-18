@@ -3,30 +3,38 @@ import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
-const routeState = vi.hoisted(() => ({ job: null as any, part: null as any, frozen: null as any, objects: {} as Record<string, string>, reads: [] as string[], signed: [] as string[], uploads: [] as string[], partError: null as any, frozenError: null as any, storageError: null as any }));
+const routeState = vi.hoisted(() => ({ job: null as any, jobs: {} as Record<string, any>, part: null as any, parts: {} as Record<string, any>, frozen: null as any, frozens: {} as Record<string, any>, objects: {} as Record<string, string>, reads: [] as string[], signed: [] as string[], uploads: [] as string[], partError: null as any, frozenError: null as any, partTimeout: false, storageError: null as any, generatorThrows: false }));
 function query(table: string) {
-  const q: any = { select: () => q, eq: () => q, order: () => q, limit: () => q, insert: async () => ({ error: null }), update: () => q, maybeSingle: async () => table === "job_group_parts" ? { data: routeState.part, error: routeState.partError } : { data: routeState.frozen, error: routeState.frozenError }, single: async () => ({ data: routeState.job, error: null }), then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject) };
+  let jobId = "j";
+  const q: any = { select: () => q, eq: (column: string, value: string) => { if (column === "id" || column === "job_id") jobId = value; return q; }, order: () => q, limit: () => q, insert: async () => ({ error: null }), update: () => q, maybeSingle: async () => table === "job_group_parts" ? (routeState.partTimeout ? new Promise(() => {}) : { data: routeState.parts[jobId] ?? routeState.part, error: routeState.partError }) : { data: routeState.frozens[jobId] ?? routeState.frozen, error: routeState.frozenError }, single: async () => ({ data: routeState.jobs[jobId] ?? routeState.job, error: null }), then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject) };
   return q;
 }
 vi.mock("@/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({ auth: { getUser: async () => ({ data: { user: { id: "u", app_metadata: { role: routeState.job?.admin ? "admin" : undefined } } } }) } })),
   createAdminClient: vi.fn(() => ({ from: (table: string) => table === "jobs" ? { ...query(table), single: async () => ({ data: routeState.job, error: null }) } : query(table), storage: { from: () => ({ download: async (path: string) => { routeState.reads.push(path); if (routeState.storageError) return { data: null, error: routeState.storageError }; const text = routeState.objects[path]; return text === undefined ? { data: null, error: new Error("not found") } : { data: new Blob([text]), error: null }; }, upload: async (path: string, body: Buffer) => { routeState.uploads.push(path); routeState.objects[path] = body.toString("utf8"); return { error: null }; }, createSignedUrl: async (path: string) => { routeState.signed.push(path); return { data: { signedUrl: `https://signed/${path}` }, error: null }; } }) } })),
 }));
+vi.mock("@/functions/shared/fileGenerators", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/functions/shared/fileGenerators")>();
+  return { ...actual, generateExcelReport: (payload: any, options?: any) => { if (routeState.generatorThrows) throw new Error("generator failure"); return actual.generateExcelReport(payload, options); } };
+});
 import { GET as downloadRoute } from "@/app/api/jobs/[id]/download/route";
 import { GET as dataRoute } from "@/app/api/jobs/[id]/data/route";
 
 const routeA = JSON.stringify({ metadata: { title: "A", entityType: "companies" }, rows: [{ company_name: "A" }] });
 const routeB = JSON.stringify({ metadata: { title: "B", entityType: "companies" }, rows: [{ company_name: "B" }] });
-function seedRoute(status = "completed", rowCount = 1) {
-  const sha = createHash("sha256").update(routeA).digest("hex");
-  routeState.job = { id: "j", user_id: "u", status, delivered_units: status === "failed" ? 0 : rowCount, charged_credits: status === "failed" ? 0 : 10, reserved_credits: 10, target_volume_max: rowCount, params: {}, endpoint_id: "x", template_slug: "x", created_at: "2026-01-01", finished_at: "2026-01-02" };
-  routeState.part = { group_id: "grp_1", part_index: 1 }; routeState.partError = null;
-  routeState.frozen = { path: `u/j/frozen-${sha}.json`, sha256: sha, row_count: rowCount }; routeState.frozenError = null; routeState.storageError = null;
-  routeState.objects = { [routeState.frozen.path]: routeA, "u/j/data.json": routeB, "j/data.json": routeB, "result.xlsx": routeB, "u/j/result.xlsx": routeB };
+function seedRoute(status = "completed", rowCount = 1, jobId = "j", dataset = routeA) {
+  const sha = createHash("sha256").update(dataset).digest("hex");
+  const job = { id: jobId, user_id: "u", status, delivered_units: status === "failed" ? 0 : rowCount, charged_credits: status === "failed" ? 0 : 10, reserved_credits: 10, target_volume_max: rowCount, params: {}, endpoint_id: "x", template_slug: "x", created_at: "2026-01-01", finished_at: "2026-01-02" };
+  const part = { group_id: "grp_1", part_index: 1 };
+  const frozen = { path: `u/${jobId}/frozen-${sha}.json`, sha256: sha, row_count: rowCount };
+  routeState.job = job; routeState.jobs[jobId] = job;
+  routeState.part = part; routeState.parts[jobId] = part; routeState.partError = null; routeState.partTimeout = false;
+  routeState.frozen = frozen; routeState.frozens[jobId] = frozen; routeState.frozenError = null; routeState.storageError = null; routeState.generatorThrows = false;
+  routeState.objects = { ...routeState.objects, [frozen.path]: dataset, [`u/${jobId}/data.json`]: routeB, [`${jobId}/data.json`]: routeB, "result.xlsx": routeB, [`u/${jobId}/result.xlsx`]: routeB };
   routeState.reads = []; routeState.signed = []; routeState.uploads = [];
   return sha;
 }
-function callRoute(fn: any, path: string, query = "") { return fn(new NextRequest(`https://site.test/api/jobs/j/${path}${query}`, { headers: { authorization: "Bearer token" } }), { params: Promise.resolve({ id: "j" }) }); }
+function callRoute(fn: any, path: string, query = "", jobId = "j") { return fn(new NextRequest(`https://site.test/api/jobs/${jobId}/${path}${query}`, { headers: { authorization: "Bearer token" } }), { params: Promise.resolve({ id: jobId }) }); }
 
 function makeAdmin(opts: { part?: any; frozen?: any; bytes?: string; storageError?: any } = {}) {
   const selects: string[] = [];
@@ -96,7 +104,7 @@ describe("PR-4 real download and data readers", () => {
   });
 
   it.each(["download", "data"] as const)("%s refuses before freeze without reading storage", async (reader) => {
-    seedRoute("running"); routeState.frozen = null;
+    seedRoute("running"); routeState.frozen = null; routeState.frozens.j = null;
     const res = await callRoute(reader === "download" ? downloadRoute : dataRoute, reader);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("ملف هذا الجزء قيد التجهيز ولم يُتح للتحميل بعد. حاول مرة أخرى لاحقًا.");
@@ -111,7 +119,7 @@ describe("PR-4 real download and data readers", () => {
   });
 
   it("rejects completed-unfrozen and does not read data.json", async () => {
-    seedRoute(); routeState.frozen = null;
+    seedRoute(); routeState.frozen = null; routeState.frozens.j = null;
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await callRoute(dataRoute, "data");
     expect(res.status).toBe(503);
@@ -132,12 +140,47 @@ describe("PR-4 real download and data readers", () => {
     expect(res.status).toBe(503); expect(routeState.reads).toHaveLength(1);
   });
 
+  it.each(["lookup-error", "lookup-timeout", "frozen-select-error"])("(4) %s fails closed on both readers without mutable reads", async (kind) => {
+    seedRoute();
+    if (kind === "lookup-error") routeState.partError = { code: "XX000", message: "boom" };
+    if (kind === "lookup-timeout") routeState.partTimeout = true;
+    if (kind === "frozen-select-error") routeState.frozenError = { code: "XX000", message: "boom" };
+    const requests = [callRoute(downloadRoute, "download", "?format=xlsx"), callRoute(downloadRoute, "download", "?format=json"), callRoute(dataRoute, "data")];
+    const responses = await Promise.all(requests);
+    expect(responses.map((res) => res.status)).toEqual([503, 503, 503]);
+    for (const res of responses) expect((await res.json()).error).toBe("تعذّر تحميل ملف هذا الجزء الآن. حاول مرة أخرى لاحقًا.");
+    expect(routeState.reads).toEqual([]);
+  });
+
+  it.each(["missing", "storage-500", "row-count", "bad-path"])("(5) %s refuses without fallback", async (kind) => {
+    seedRoute();
+    if (kind === "missing") delete routeState.objects[routeState.frozen.path];
+    if (kind === "storage-500") routeState.storageError = { status: 500 };
+    if (kind === "row-count") routeState.frozen.row_count = 2;
+    if (kind === "bad-path") routeState.frozen.path = "u/j/result.json";
+    const res = await callRoute(dataRoute, "data");
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("تعذّر تحميل ملف هذا الجزء الآن. حاول مرة أخرى لاحقًا.");
+    expect(routeState.reads.length).toBeLessThanOrEqual(1);
+    expect(routeState.reads.some((path) => path.endsWith("data.json"))).toBe(false);
+  });
+
   it("pins generated files under served-sha names", async () => {
     const sha = seedRoute();
     const res = await callRoute(downloadRoute, "download", "?format=json");
     expect(res.status).toBe(200);
     expect(routeState.uploads).toContain(`u/j/served-${sha}.json`);
     expect(routeState.signed).toContain(`u/j/served-${sha}.json`);
+  });
+
+  it("(11) generator failure returns exact 404 and signs no stored candidate", async () => {
+    seedRoute();
+    routeState.generatorThrows = true;
+    const res = await callRoute(downloadRoute, "download", "?format=xlsx");
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("الملف المطلوب غير جاهز للتحميل بعد أو انتهت صلاحيته.");
+    expect(routeState.signed).toEqual([]);
+    routeState.generatorThrows = false;
   });
 
   it.each(["both buckets", "results only", "json candidate only", "stored result only"])("mutable %s sources cannot replace the frozen rows", async () => {
@@ -154,7 +197,7 @@ describe("PR-4 real download and data readers", () => {
 
   it("serves the database-bound second frozen object and never reads the first", async () => {
     const shaB = createHash("sha256").update(routeB).digest("hex");
-    seedRoute(); routeState.frozen = { path: `u/j/frozen-${shaB}.json`, sha256: shaB, row_count: 1 };
+    seedRoute(); routeState.frozen = { path: `u/j/frozen-${shaB}.json`, sha256: shaB, row_count: 1 }; routeState.frozens.j = routeState.frozen;
     routeState.objects[routeState.frozen.path] = routeB;
     const res = await callRoute(dataRoute, "data");
     expect(res.status).toBe(200);
@@ -162,16 +205,30 @@ describe("PR-4 real download and data readers", () => {
     expect(routeState.reads).toEqual([`u/j/frozen-${shaB}.json`]);
   });
 
-  it("concurrent reads stay pinned while mutable sources are rewritten", async () => {
-    const shaA = seedRoute();
-    const pathA = `u/j/frozen-${shaA}.json`;
-    const reads = Array.from({ length: 10 }, () => callRoute(dataRoute, "data"));
-    routeState.objects["u/j/data.json"] = routeB;
-    routeState.objects["j/data.json"] = routeB;
-    const responses = await Promise.all(reads);
+  it("(9) 10 concurrent downloads each for frozen part 1 and part 3 stay pinned during mutable rewrites", async () => {
+    const shaA1 = seedRoute("completed", 1, "j1", JSON.stringify({ rows: [{ company_name: "A1" }] }));
+    const dataA3 = JSON.stringify({ rows: [{ company_name: "A3" }] });
+    const shaA3 = seedRoute("completed", 1, "j3", dataA3);
+    const path1 = `u/j1/frozen-${shaA1}.json`, path3 = `u/j3/frozen-${shaA3}.json`;
+    const calls = [
+      ...Array.from({ length: 10 }, () => callRoute(downloadRoute, "download", "?format=json", "j1")),
+      ...Array.from({ length: 10 }, () => callRoute(downloadRoute, "download", "?format=json", "j3")),
+    ];
+    routeState.objects["u/j1/data.json"] = dataA3; routeState.objects["j1/data.json"] = dataA3;
+    routeState.objects["u/j3/data.json"] = routeB; routeState.objects["j3/data.json"] = routeB;
+    const responses = await Promise.all(calls);
     expect(responses.every((res) => res.status === 200)).toBe(true);
-    for (const res of responses) expect(JSON.stringify((await res.json()).rows)).toContain('"A"');
-    expect(routeState.reads).toEqual(Array(10).fill(pathA));
+    for (const [index, res] of responses.entries()) {
+      await res.json();
+      const name = index < 10 ? "A1" : "A3";
+      const served = routeState.uploads[index];
+      expect(routeState.objects[served]).toContain(name);
+    }
+    expect(routeState.reads.filter((path) => path.includes("data.json"))).toEqual([]);
+    expect(routeState.reads.filter((path) => path === path1)).toHaveLength(10);
+    expect(routeState.reads.filter((path) => path === path3)).toHaveLength(10);
+    const ownSource = await import("node:fs").then(({ readFileSync }) => readFileSync("tests/job-groups-serving.test.ts", "utf8"));
+    expect(ownSource).not.toMatch(/from ["'][^"']*(jobGroupWorker|jobGroupPlan|jobGroups|planUpgrade)[^"']*["']/);
   });
 
   it("has no dependency on PR-6 through PR-10", async () => {
