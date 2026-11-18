@@ -25,12 +25,40 @@ describe("every person-phone answer shape of the catalog is read", () => {
     ["aiark.people.phone.find", "+15555550100"],
     ["blitzapi.people.phone.find", "+14155550123"],
     ["aviato.people.phone.find", "+12025550100"],
+    ["prospeo.people.phone.find", "+15555550100"],
+    ["leadsforge.people.phone.find", "+14155550134"],
+    ["sixtyfour.people.phone.find", "+14155550123"],
   ])("%s → %s", (id, phone) => {
     expect(foundContactIn("phone", exampleOf(id))?.value.replace(/\D/g, "")).toBe(phone.replace(/\D/g, ""));
   });
   it("a miss is no value, and a date in a list is never a phone", () => {
     expect(foundContactIn("phone", exampleOf("leadmagic.people.phone.find"))).toBeNull();
     expect(foundContactIn("phone", { dates: ["2026-11-16", "2026-11-17"], count: 3 })).toBeNull();
+  });
+});
+
+// BUG HUNTER Gate 1 delta P1: the reader takes the PERSON's number only, never a fax, an office, a company or employer line, never a bare «number», a postal code or an id
+describe("the reader takes the person's own number only", () => {
+  it.each([
+    ["a fax list", { fax: ["+20 2 3333 4444"] }, null],
+    ["a company_phones list", { company_phones: ["+20 2 2222 3333"] }, null],
+    ["an office_numbers list", { office_numbers: ["+20 2 2222 3333", "+20 100 111 2222"] }, null],
+    ["«number» as an employee count", { name: "X", number: 5000000 }, null],
+    ["«number» of a street", { address: { number: "12345678" } }, null],
+    ["a phone typed fax", { phone_numbers: [{ number: "+20 2 3333 4444", type: "fax" }] }, null],
+    ["a fax_number key", { fax_number: "+20 2 3333 4444" }, null],
+    ["postal codes", { postal_codes: ["01234567", "07654321"] }, null],
+    ["ids", { ids: ["0012345678"] }, null],
+    ["national numbers in a bare list", { numbers: ["0100 111 2222"] }, null],
+    ["a tag with digits", { tags: ["0800 FLOWERS"] }, null],
+    ["the mobile after a fax", { phone_numbers: [{ number: "+20 2 3333 4444", type: "fax" }, { number: "+20 100 111 2222", type: "mobile" }] }, "201001112222"],
+    ["the person's mobile, not the company's phone before it", { company: { phone: "+20 2 2222 3333" }, person: { mobile_phone: "+20 100 111 2222" } }, "201001112222"],
+    ["the person's mobile, not the employer's phones", { employer: { phones: [{ phoneNumber: "+20 2 2222 3333" }] }, mobile: "+20 100 111 2222" }, "201001112222"],
+    ["a tel key", { tel: "+20 100 111 2222" }, "201001112222"],
+    ["a personal_mobile key", { personal_mobile: "+20 100 111 2222" }, "201001112222"],
+  ])("%s", (_name, page, digits) => {
+    const r = foundContactIn("phone", page);
+    expect(r === null ? null : r.value.replace(/\D/g, "")).toBe(digits);
   });
 });
 
