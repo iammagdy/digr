@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** DT-20261118-06 phase 1A: the overview's mission numbers come from the `missions` table only (customer requests are inserted there: customerActions.ts createCustomerMission). Fakes only. */
-const state = vi.hoisted(() => ({ admin: true, tables: [] as string[], windowRows: [] as any[], liveRows: [] as any[], fail: false, filters: [] as string[] }));
+const state = vi.hoisted(() => ({ admin: true, tables: [] as string[], windowRows: [] as any[], liveRows: [] as any[], fail: false, filters: [] as string[],
+  // ADDED (DT-20261118-06 Gate 1 P1-2): one record per query, the previous-period head counts and the paged window read
+  queries: [] as Array<{ cols: string; head: boolean; filters: string[]; ranges: Array<[number, number]> }>, prevEnded: 0 as number, prevSucceeded: 0 as number }));
 
 vi.mock("../src/lib/server/adminAuth", () => ({
   authenticateAdmin: vi.fn(async () => (state.admin ? { ok: true, ctx: { adminId: "adm-1", audit: vi.fn() } } : { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) })),
@@ -13,12 +15,20 @@ vi.mock("../src/lib/supabase/server", () => ({
     from: (table: string) => {
       state.tables.push(table);
       let live = false;
+      const q = { cols: "", head: false, filters: [] as string[], ranges: [] as Array<[number, number]> };
+      state.queries.push(q);
       const chain: any = {
-        select: () => chain,
-        gte: (col: string, v: string) => { state.filters.push(`gte:${col}:${v.slice(0, 10)}`); return chain; },
-        in: (col: string, v: string[]) => { live = true; state.filters.push(`in:${col}:${v.join("|")}`); return chain; },
+        select: (cols: string, o?: { head?: boolean }) => { q.cols = cols; q.head = Boolean(o?.head); return chain; },
+        gte: (col: string, v: string | number) => { state.filters.push(`gte:${col}:${String(v).slice(0, 10)}`); q.filters.push(`gte:${col}:${String(v).slice(0, 10)}`); return chain; },
+        lt: (col: string, v: string) => { q.filters.push(`lt:${col}:${v.slice(0, 10)}`); return chain; },
+        eq: (col: string, v: string) => { q.filters.push(`eq:${col}:${v}`); return chain; },
+        is: (col: string, v: unknown) => { q.filters.push(`is:${col}:${String(v)}`); return chain; },
+        in: (col: string, v: string[]) => { live = true; state.filters.push(`in:${col}:${v.join("|")}`); q.filters.push(`in:${col}:${v.join("|")}`); return chain; },
         order: () => chain,
         limit: async () => (state.fail ? { data: null, error: { message: "boom" } } : { data: live ? state.liveRows : state.windowRows, error: null }),
+        range: async (from: number, to: number) => { q.ranges.push([from, to]); return state.fail ? { data: null, error: { message: "boom" } } : { data: state.windowRows.slice(from, to + 1), error: null }; },
+        // a head count is awaited on the builder itself
+        then: (resolve: (v: unknown) => void) => resolve(state.fail ? { count: null, error: { message: "boom" } } : { count: q.filters.includes("eq:status:completed") ? state.prevSucceeded : state.prevEnded, error: null }),
       };
       return chain;
     },
@@ -77,6 +87,17 @@ describe("summarizeMissions (pure)", () => {
     expect(requestedRowsOf(plan(80, { requested: 100, target: 80 }))).toBe(100);
   });
 
+  // ADDED (Gate 1 P1-2): the route selects the plan's two fields by JSON path instead of the whole public plan; the count is the same
+  it("«المطلوب» from the selected stages/quantity columns equals the one from plan_public; previous-period counts replace the rows for the arrow", () => {
+    const p = plan(80, { requested: 100, target: 80 });
+    const viaPlan = summarizeMissions({ rows: [row({ delivered_units: 80, plan_public: p })], liveRows: [], range: 30, now: NOW, truncated: false });
+    const viaPath = summarizeMissions({ rows: [{ ...row({ delivered_units: 80 }), plan_public: undefined, stages: p.stages, quantity: p.quantity }], liveRows: [], range: 30, now: NOW, truncated: false, previous: { ended: 8, succeeded: 2 } });
+    expect(viaPath.missions.requested).toBe(100);
+    expect(viaPath.missions.requested).toBe(viaPlan.missions.requested);
+    expect(viaPath.missions.successPctPrev).toBe(25);
+    expect(summarizeMissions({ rows: [], liveRows: [], range: 7, now: NOW, truncated: false, previous: { ended: 0, succeeded: 0 } }).missions.successPctPrev).toBeNull();
+  });
+
   it.each([["7", 7], ["30", 30], ["90", 90], ["14", 30], [null, 30], ["abc", 30]] as const)("range %s -> %s", (raw, expected) => {
     expect(parseOverviewRange(raw)).toBe(expected);
   });
@@ -84,7 +105,7 @@ describe("summarizeMissions (pure)", () => {
 
 describe("GET /api/admin/overview", () => {
   const get = (q = "?range=7") => GET(new NextRequest(`http://localhost/api/admin/overview${q}`));
-  beforeEach(() => { state.admin = true; state.tables = []; state.filters = []; state.fail = false; state.windowRows = []; state.liveRows = []; vi.useFakeTimers({ now: NOW, toFake: ["Date"] }); });
+  beforeEach(() => { state.admin = true; state.tables = []; state.filters = []; state.fail = false; state.windowRows = []; state.liveRows = []; state.queries = []; state.prevEnded = 0; state.prevSucceeded = 0; vi.useFakeTimers({ now: NOW, toFake: ["Date"] }); });
 
   it("admins only", async () => {
     state.admin = false;
@@ -105,6 +126,74 @@ describe("GET /api/admin/overview", () => {
     expect(j.missions.delivered).toBe(5);
     expect(j.live.running).toBe(1);
     expect(j.range).toBe(7);
+  });
+
+  // ADDED (DT-20261118-06 phase 1A and Gate 1 P1-2)
+  const windowQueries = () => state.queries.filter((q) => q.ranges.length > 0);
+  const many = (n: number) => Array.from({ length: n }, (_, i) => row({ id: `msn_${i}`, status: "completed", delivered_units: 1, plan_public: plan(2), created_at: ago(DAY + i * 1000) }));
+
+  it("pages the window read 1,000 rows at a time: 2,400 rows are 3 pages, every row is counted, not truncated", async () => {
+    state.windowRows = many(2400);
+    const j = await (await get("?range=30")).json();
+    expect(windowQueries()).toHaveLength(3);
+    expect(windowQueries().map((q) => q.ranges[0])).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+    expect(j.missions.total).toBe(2400);
+    expect(j.missions.delivered).toBe(2400);
+    expect(j.truncated).toBe(false);
+  });
+
+  it("stops at 5 pages (5,000 rows) and says the numbers are truncated", async () => {
+    state.windowRows = many(6000);
+    const j = await (await get("?range=30")).json();
+    expect(windowQueries()).toHaveLength(5);
+    expect(j.missions.total).toBe(5000);
+    expect(j.truncated).toBe(true);
+  });
+
+  it("range 90 reads 90 days of rows; the previous 90 days are two head counts (ended, succeeded) for the arrow, never rows", async () => {
+    state.prevEnded = 4;
+    state.prevSucceeded = 3;
+    const j = await (await get("?range=90")).json();
+    for (const q of windowQueries()) {
+      expect(q.filters).toContain(`gte:created_at:${ago(90 * DAY).slice(0, 10)}`);
+      expect(q.filters).not.toContain(`gte:created_at:${ago(180 * DAY).slice(0, 10)}`);
+    }
+    const heads = state.queries.filter((q) => q.head);
+    expect(heads).toHaveLength(2);
+    for (const q of heads) {
+      expect(q.filters).toEqual(expect.arrayContaining([`gte:created_at:${ago(180 * DAY).slice(0, 10)}`, `lt:created_at:${ago(90 * DAY).slice(0, 10)}`, "is:plan->addon:null"]));
+    }
+    expect(heads.some((q) => q.filters.includes("in:status:completed|failed"))).toBe(true);
+    expect(heads.some((q) => q.filters.includes("eq:status:completed") && q.filters.includes("gte:delivered_units:1"))).toBe(true);
+    expect(j.missions.successPctPrev).toBe(75);
+  });
+
+  it("selects named columns only: the plan's stages and quantity by JSON path, never the whole plan_public", async () => {
+    await get();
+    expect(windowQueries().length).toBeGreaterThan(0);
+    for (const q of windowQueries()) {
+      expect(q.cols).toContain("stages:plan_public->stages");
+      expect(q.cols).toContain("quantity:plan_public->quantity");
+      expect(q.cols.split(",")).not.toContain("plan_public");
+      expect(q.cols).not.toContain("*");
+    }
+  });
+
+  it("returns recentMissions: the newest 8 requests (no add-on row), only id, status, created_at, delivered_units and user_id", async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ...row({ id: `msn_r${i}`, status: i === 0 ? "executing" : "completed", delivered_units: i, created_at: ago(i * 60_000) }), user_id: `u${i}` }));
+    state.windowRows = [rows[0], { ...rows[1], id: "msn_addon", addon: { of: "msn_r0" } }, ...rows.slice(1)];
+    const j = await (await get()).json();
+    expect(j.recentMissions).toHaveLength(8);
+    expect(j.recentMissions.map((m: { id: string }) => m.id)).toEqual(["msn_r0", "msn_r1", "msn_r2", "msn_r3", "msn_r4", "msn_r5", "msn_r6", "msn_r7"]);
+    expect(j.recentMissions[0]).toEqual({ id: "msn_r0", status: "executing", created_at: rows[0].created_at, delivered_units: 0, user_id: "u0" });
+  });
+
+  it("?part=live reads only the running missions (the 60 s tiles) and returns only the live numbers", async () => {
+    state.liveRows = [row({ status: "executing", lease_until: ago(-5000) }), row({ status: "planning", lease_until: ago(20 * 60_000) })];
+    const j = await (await get("?part=live")).json();
+    expect(state.queries).toHaveLength(1);
+    expect(state.filters).toEqual(["in:status:planning|executing"]);
+    expect(j).toEqual({ live: { running: 1, stalled: 1, stalledMinMinutes: 20, failed24h: 0 } });
   });
 
   it("a failed read is an error the card can show, not zeros", async () => {
