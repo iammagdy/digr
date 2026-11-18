@@ -1398,6 +1398,33 @@ describe("T05: draw R5", () => {
     }
   });
 
+  it.each([
+    ["part_not_frozen refusal", { data: { success: false, error: "part_not_frozen" }, error: null }],
+    ["group_halted refusal", { data: { success: false, error: "group_halted" }, error: null }],
+    ["deadline_passed refusal", { data: { success: false, error: "deadline_passed" }, error: null }],
+    ["rpc error", { data: null, error: { message: "rpc down" } }],
+  ] as Array<[string, any]>)("(d3) %s ⇒ one claim, one draw call, no part-2 job, no S2 line, no close, nothing drawn", async (_n, ans) => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.answer.draw = ans;
+    const r = await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+    expect([r.claims, r.drawn, r.closed]).toEqual([1, 0, 0]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(1);
+    expect(w.events).toEqual([]);
+  });
+
+  it("(d3) a draw that times out (5 s against the 4 s limit) ⇒ one claim, one draw call, no part-2 job, no S2 line, no close, nothing drawn", async () => {
+    const w = makeWorld();
+    w.oneGroupWithPartsDone(1);
+    w.latency.draw = 5_000;
+    const r = await run(w);
+    expect(w.rpcCalls.map((c) => c.name)).toEqual(["claim_next_job_group", "draw_next_group_part_atomic"]);
+    expect([r.claims, r.drawn, r.closed]).toEqual([1, 0, 0]);
+    expect(w.jobsOfGroup("grp_1").length).toBe(1);
+    expect(w.events).toEqual([]);
+  });
+
   it("(e) STOP_AFTER_EMPTY_PARTS = 0 never stops early: two empty parts and a part left ⇒ the draw is the decision, no close", async () => {
     const w = makeWorld();
     w.oneGroupWithParts([part("completed", 0, 0), part("completed", 0, 0)]);
