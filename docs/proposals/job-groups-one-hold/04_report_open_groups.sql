@@ -10,6 +10,10 @@ WITH r1 AS (
     (g.next_part - 1)::int AS part_index,
     p.job_id::text AS job_id,
     j.status::text AS status,
+    j.lease_until::timestamptz AS lease_until,
+    j.updated_at::timestamptz AS updated_at,
+    g.last_attempt_at::timestamptz AS last_attempt_at,
+    g.closing_notice_at::timestamptz AS closing_notice_at,
     ((g.hold_credits - g.drawn_credits) + CASE WHEN j.status IN ('queued','running') THEN j.reserved_credits ELSE 0 END)::numeric AS points_still_held,
     (now() >= g.deadline_at + interval '2 hours 15 minutes')::boolean AS overdue,
     NULL::text AS close_reason,
@@ -28,6 +32,10 @@ r3 AS (
     p.part_index::int AS part_index,
     j.id::text AS job_id,
     j.status::text AS status,
+    NULL::timestamptz AS lease_until,
+    NULL::timestamptz AS updated_at,
+    NULL::timestamptz AS last_attempt_at,
+    NULL::timestamptz AS closing_notice_at,
     NULL::numeric AS points_still_held,
     NULL::boolean AS overdue,
     COALESCE(g.close_reason, 'none')::text AS close_reason,
@@ -55,6 +63,10 @@ r2 AS (
       WHEN to_regclass('public.driver_heartbeat') IS NULL THEN 'not_installed'
       ELSE 'installed'
     END::text AS status,
+    NULL::timestamptz AS lease_until,
+    NULL::timestamptz AS updated_at,
+    NULL::timestamptz AS last_attempt_at,
+    NULL::timestamptz AS closing_notice_at,
     NULL::numeric AS points_still_held,
     NULL::boolean AS overdue,
     NULL::text AS close_reason,
@@ -72,7 +84,7 @@ r2 AS (
         )
     END::text AS detail
 )
-SELECT section, group_id, user_id, part_index, job_id, status, points_still_held, overdue, close_reason, driver_silence, detail
+SELECT section, group_id, user_id, part_index, job_id, status, lease_until, updated_at, last_attempt_at, closing_notice_at, points_still_held, overdue, close_reason, driver_silence, detail
 FROM (
   SELECT * FROM r1
   UNION ALL
