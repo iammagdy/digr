@@ -25,6 +25,7 @@ const S = vi.hoisted(() => ({
   ops: [] as { op: string; bucket?: string; path?: string; bytes?: string; name?: string; args?: any }[],
   inserts: [] as any[],
   tables: [] as string[],
+  mission: null as any,
 }));
 
 function query(table: string) {
@@ -39,7 +40,8 @@ function query(table: string) {
       if (table === "job_group_parts") return S.partTimeout ? never() : { data: S.parts[f.job_id] ?? null, error: S.partError };
       if (table === "job_group_frozen") return S.frozenTimeout ? never() : { data: S.frozen[f.job_id] ?? null, error: S.frozenError };
       if (table === "credit_ledger") return { data: f.id && S.ledger.has(f.id) ? { id: f.id } : null, error: null };
-      return { data: null, error: null };               // missions, ...
+      if (table === "missions") return { data: S.mission, error: null };     // a compiled mission when a test sets one (methodologyMissionOfJob)
+      return { data: null, error: null };
     },
     single: async () => ({ data: S.jobs[f.id] ?? null, error: null }),
     then: (res: any, rej: any) => Promise.resolve(table === "artifact_versions" ? { data: S.avRows.filter((r) => r.job_id === f.job_id), error: null } : { data: [], error: null }).then(res, rej),
@@ -71,6 +73,20 @@ vi.mock("@/functions/shared/fileGenerators", async (importOriginal) => {
   const rec = (tag: string) => (payload: any) => { S.ops.push({ op: `gen:${tag}`, name: names(payload).join(",") }); return Buffer.from(`${tag}|${names(payload).join(",")}`); };
   return { ...actual, generateExcelReport: async (p: any) => rec("XLSX")(p), generatePdfReport: async (p: any) => rec("PDF")(p), generateCsvReport: (p: any) => rec("CSV")(p) };
 });
+vi.mock("@/lib/agentMission/methodology/readWorkbook", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agentMission/methodology/readWorkbook")>();
+  return {
+    ...actual,
+    readWorkbookMethodology: async (bytes: any) => {
+      S.ops.push({ op: "wb:read", bytes: Buffer.from(bytes).toString("utf8") });
+      return { items: [{ label: "صيغة الاستشهاد المقترحة", values: ["CITATION-M"] }], table: { head: [], rows: [] }, reasons: [], sheets: [] };
+    },
+  };
+});
+vi.mock("@/lib/agentMission/methodology/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agentMission/methodology/pdf")>();
+  return { ...actual, renderMethodologyPdf: async () => { S.ops.push({ op: "wb:render" }); return Buffer.from("MISSION-PDF"); } };
+});
 import { POST as artifactsPost } from "@/app/api/jobs/[id]/artifacts/route";
 import { POST as methodologyPost } from "@/app/api/jobs/[id]/methodology/route";
 
@@ -84,7 +100,7 @@ const NOT_COMPLETE_EDIT_AR = "لا يمكن تعديل النتيجة قبل ا�
 const NOT_COMPLETE_METHODOLOGY_AR = "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب.";
 
 const MUTABLE: [string, string][] = ["results", "partials"].flatMap((b) => ["u/j/data.json", "j/data.json", "results/j/data.json", "partials/j/data.json", "json_j"].map((p) => [b, p] as [string, string]));
-function reset() { S.jobs = {}; S.parts = {}; S.frozen = {}; S.avRows = []; S.ledger = new Set(); S.partError = null; S.partTimeout = false; S.frozenError = null; S.frozenTimeout = false; S.buckets = { results: {}, partials: {} }; S.storageErr = null; S.ops = []; S.inserts = []; S.tables = []; }
+function reset() { S.jobs = {}; S.parts = {}; S.frozen = {}; S.avRows = []; S.ledger = new Set(); S.partError = null; S.partTimeout = false; S.frozenError = null; S.frozenTimeout = false; S.buckets = { results: {}, partials: {} }; S.storageErr = null; S.ops = []; S.inserts = []; S.tables = []; S.mission = null; }
 /** a completed group part frozen as `dataset`; every data.json of both buckets = `mutable`; a paid revision row for version 2 and the first artifact version exist. */
 function seed(opts: { dataset?: string; mutable?: string; status?: string; group?: boolean; frozen?: boolean } = {}) {
   const dataset = opts.dataset ?? A; const sh = sha(dataset); const fp = `u/j/frozen-${sh}.json`;
@@ -305,5 +321,52 @@ describe("case (8) NOT A GROUP PART: today's behaviour is kept (the first readab
     seed({ mutable: P }); S.buckets.results["u/j/data.json"] = O; S.ops = [];
     expect((await run("dataset")).value).toBe(A);
     expect(downloads()).toEqual([`results:${frozenPath}`]);
+  });
+});
+
+// =====================================================================================================================================================
+describe("compiled-mission regression (PR-5 r2): a delivered, owned COMPILED MISSION never touches the group lookup", () => {
+  const MISSION = { id: "msn_aaaaaaaaaaaaaaaaaaaa", user_id: "u", status: "completed", job_id: "j", delivered_units: 3, request_text: "هات ثلاث شركات", plan_public: { compiled: true }, files: [{ name: "result.xlsx", path: "result.xlsx", kind: "xlsx" }], created_at: "2026-11-18T10:00:00Z", updated_at: "2026-11-18T11:00:00Z" };
+  const seedMission = () => {
+    seed({ group: false, mutable: B });                                   // an ordinary (non-group) completed job, data.json = B must NOT be used
+    S.mission = { ...MISSION };
+    S.buckets["agent-missions"] = { [`${MISSION.id}/result.xlsx`]: "WORKBOOK-BYTES" };
+    S.ops = []; S.tables = [];
+  };
+  /** the mission path ran exactly as before: workbook read from the agent bucket, PDF rendered from it, uploaded, ONE purchase rpc after that, no 503, and the group tables were never queried. */
+  const expectMissionPath = (out: Out) => {
+    expect(out.status).toBe(200); expect(out.body.success).toBe(true);
+    expect(out.body.chargedPoints).toBe(50); expect(out.body.methodologyText).toBe("CITATION-M");
+    expect(out.body.downloadName).toContain(".pdf"); expect(out.body.downloadName).not.toContain("منهجية البحث -");   // the mission's own name, not the saved-data job name
+    expect(S.tables).toContain("missions");
+    expect(S.tables).not.toContain("job_group_parts"); expect(S.tables).not.toContain("job_group_frozen");           // NEVER queried
+    expect(downloads()).toEqual([`agent-missions:${MISSION.id}/result.xlsx`]);                                         // the workbook, and no data.json of either bucket
+    expect(S.ops.filter((o) => o.op === "wb:read").map((o) => o.bytes)).toEqual(["WORKBOOK-BYTES"]);
+    expect(S.ops.filter((o) => o.op === "wb:render").length).toBe(1);
+    expect(gens()).toEqual([]);                                                                                        // the saved-data PDF generator was not used
+    expect(ops("upload").map((o) => [o.bucket, o.path, o.bytes])).toEqual([["results", "u/j/methodology-addon.pdf", "MISSION-PDF"]]);
+    expect(rpcs().map((r) => [r.name, r.args])).toEqual([["purchase_methodology_atomic", { p_user_id: "u", p_job_id: "j", p_amount: 50, p_note: expect.any(String) }]]);
+    const order = S.ops.map((o) => o.op);
+    expect(order.indexOf("rpc")).toBeGreaterThan(order.indexOf("wb:render")); expect(order.indexOf("rpc")).toBeGreaterThan(order.indexOf("upload"));
+  };
+  it("control: no lookup failure => the same mission path (200, one rpc, group tables never queried)", async () => {
+    seedMission();
+    expectMissionPath(await run("methodology"));
+  });
+  it("variant 1: the job_group_parts lookup would answer XX000 => the mission is still served, no 503, the lookup is never made", async () => {
+    seedMission(); S.partError = { code: "XX000", message: "lookup error" };
+    expectMissionPath(await run("methodology"));
+  });
+  it("variant 2: the job_group_parts lookup would time out => the mission is still served, no 503, the lookup is never made", async () => {
+    vi.useFakeTimers();
+    seedMission(); S.partTimeout = true; S.frozenTimeout = true;
+    const p = run("methodology"); await vi.advanceTimersByTimeAsync(4_500);
+    expectMissionPath(await p);
+  });
+  it("a compiled mission that is NOT completed still gets the status 409 first (no workbook read, no rpc)", async () => {
+    seedMission(); S.jobs.j.status = "running";
+    const out = await run("methodology");
+    expect(out.status).toBe(409); expect(out.body.error).toBe(NOT_COMPLETE_METHODOLOGY_AR);
+    expect(S.tables).not.toContain("job_group_parts"); expect(rpcs()).toEqual([]); expect(downloads()).toEqual([]);
   });
 });
