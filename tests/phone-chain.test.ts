@@ -190,13 +190,15 @@ describe("the plan: validators and company-phone searches ranked from the catalo
     const usd = list.map((m) => m.usd);
     expect(usd[0]).toBeLessThanOrEqual(usd[usd.length - 1]);
   });
-  it("a phone step carries its validators, its company-phone searches and the type key, priced at finder + assumed fallback share + search + validator; its type column follows its status column", () => {
+  // CHANGED (DT-20261118-03, Megz D-0084): the person's phone step carries no company-phone search any more (before: company_phone [MAPS], priced for the share the finder misses)
+  it("a phone step carries its validators and the type key, never a company-phone search, priced at finder + validator; its type column follows its status column", () => {
     const stages = [{ key: "people", title_ar: "موظفو كل شركة", parent_key: "companies", deliver: true, role_preference: { role: "manager" }, columns: [{ key: "phone", kind: "phone" }] }];
     const [step] = buildContactSteps(stages as any, "رقم التليفون", () => [FIND], (kind) => (kind === "phone" ? { validators: [VALIDATE], company_phone: [MAPS] } : {}));
     expect(step.type_key).toBe("phone_type");
     // CHANGED (owner decision after #321): the company-phone search is priced for the share of persons the finder misses (measured), not for everyone
     const chain = chainExpectation([FIND], "phone");
-    expect(step.per_person_usd).toBeCloseTo(chain.costUsd + chain.missShare * MAPS.usd + VALIDATE.usd, 9);
+    expect(step.company_phone).toBeUndefined();
+    expect(step.per_person_usd).toBeCloseTo(chain.costUsd + VALIDATE.usd, 9);
     const cols = withContactColumns("people", [{ key: "full_name", title_ar: "الاسم" }, { key: "phone", title_ar: "رقم التليفون", kind: "phone" as const }], [step]);
     expect(cols.map((c) => c.key)).toEqual(["full_name", "phone", "phone_status", "phone_type"]);
     expect(cols[3].title_ar).toBe("نوع الرقم");

@@ -68,14 +68,15 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(worst / DAILY_CAP_USD).toBeLessThan(2 / 3);
     expect(worst).toBeLessThan(executionBudgetUsd(p.price.reservePoints));
   });
-  it("the chain behind the price: e-mail blitz, anyapi, dropleads then a verifier; phone blitz, quickenrich, then the company's phone and a validator; no call above 0.02 USD", () => {
+  // CHANGED (DT-20261118-03, Megz D-0084): the person's phone step has no company-phone search (before: «then the company's phone»; company_phone non-empty)
+  it("the chain behind the price: e-mail blitz, anyapi, dropleads then a verifier; phone blitz, quickenrich and a validator, never the company's phone; no call above 0.02 USD", () => {
     const steps = priced().contact_steps ?? [];
     const email = steps.find((s) => s.kind === "email")!;
     const phone = steps.find((s) => s.kind === "phone")!;
     expect(email.finders.map((f) => f.id)).toEqual(["blitzapi.people.email.find", "anyapi.linkedin.email.work.find", "dropleads.people.email.find"]);
     expect(email.verifiers!.length).toBeGreaterThan(0);
     expect(phone.finders.map((f) => f.id)).toEqual(["blitzapi.people.phone.find", "quickenrich.people.phone.find"]);
-    expect(phone.company_phone!.length).toBeGreaterThan(0);
+    expect(phone.company_phone).toBeUndefined();
     for (const f of [...email.finders, ...phone.finders]) expect(f.usd).toBeLessThanOrEqual(0.02);
     expect(email.max_person_usd).toBeCloseTo(0.000495 + 0.011 + 0.018 + 0.00178, 6);
   });

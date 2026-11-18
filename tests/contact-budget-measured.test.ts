@@ -54,9 +54,10 @@ describe("the step's price and cap from the chain", () => {
     expect(e.max_person_usd).toBeCloseTo(0.000495 + 0.004834 + 0.011 + 0.00178, 9);
     expect(e.max_person_usd!).toBeGreaterThan(e.per_person_usd);
   });
-  it("phone: expected cost carries the dear third finder only for those the first two miss, the company phone and the validator; the cap carries the whole chain", () => {
+  // CHANGED (DT-20261118-03, Megz D-0084): a person's phone step carries no company-number search (the company's number is a column of the company), so its cap is the finders and the validator (before: + 0.00015 for the map search)
+  it("phone: expected cost carries the dear third finder only for those the first two miss and the validator; the cap carries the whole chain", () => {
     const p = steps().find((s) => s.kind === "phone")!;
-    expect(p.max_person_usd).toBeCloseTo(0.000495 + 0.004834 + 0.0445 + 0.00015 + 0.000001, 9);
+    expect(p.max_person_usd).toBeCloseTo(0.000495 + 0.004834 + 0.0445 + 0.000001, 9);
     expect(p.per_person_usd).toBeGreaterThan(0.01);
     expect(p.per_person_usd).toBeLessThan(p.max_person_usd!);
   });
