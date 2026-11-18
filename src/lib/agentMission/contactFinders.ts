@@ -269,9 +269,14 @@ export function missingInputsFor(finder: FinderInfo, p: PersonFacts): string[] {
 export interface FoundContact { value: string; status: "verified" | "unverified" }
 const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
 // DT-20261118-03 (D-0084): every phone answer shape of the catalog's person-phone finders (quickenrich employee_phone, dropleads/leadmagic mobile_number, limadata phone_numbers[].number, tomba intl/e164_format, aviato phones[].phoneNumber)
-const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$|^number$/i;
-/** A phone written as a bare string inside a list (contactout phone: ["+1…"], aiark data: [["+1…"]]): international (+) or national (0) digits only, never a date. */
-const PHONE_LIKE = /^(\+\d|0\d)[\d\s().-]{6,19}$/;
+const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$/i;
+/** A number inside a phone container (limadata phone_numbers[].number, aviato phones[].phoneNumber): «number» alone is never a phone key. */
+const PHONE_ITEM_KEYS = /^(number|phone_?number|value)$/i;
+/** Whose number it is NOT (BUG HUNTER Gate 1 delta P1, D-0084): a fax, an office or switchboard line, the company's or employer's, by the key it sits under or the type the finder gives it. */
+const NOT_PERSONAL_KEY = /fax|company|office|employer|organi[sz]ation|head_?quarter|\bhq\b|^hq|switchboard|reception|main_?(line|phone|number)/i;
+const NOT_PERSONAL_TYPE = /^(fax|office|switchboard|reception|company|main|hq)$/i;
+/** A phone written as a bare string inside a list (contactout phone: ["+1…"], aiark data: [["+1…"]]): international form only (a leading +), never a date, a postal code or an id. */
+const PHONE_LIKE = /^\+\d[\d\s().-]{6,19}$/;
 /** A value that is nothing but an address (optionally a mailto: link). */
 const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
@@ -285,19 +290,22 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
   // LESS SURE FINDS, taken only when no key named like an address gave one: any key with «mail» in its name, then any value that IS an address (live 2026-11-01: a finder BILLED a hit and the cell stayed empty, because the key was not one of the few names above)
   const loose: string[] = [];
   const stray: string[] = [];
-  const walk = (node: unknown, depth: number): void => {
+  const walk = (node: unknown, depth: number, inPhone = false, notPersonal = false): void => {
     if (depth > 6 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else if (typeof x === "string" && kind === "phone" && PHONE_LIKE.test(x.trim())) seen.push(x.trim()); else walk(x, depth + 1); } return; }
+    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else if (typeof x === "string" && kind === "phone" && !notPersonal && PHONE_LIKE.test(x.trim())) seen.push(x.trim()); else walk(x, depth + 1, inPhone, notPersonal); } return; }
     if (typeof node !== "object") return;
     const o = node as Record<string, unknown>;
+    if (kind === "phone" && NOT_PERSONAL_TYPE.test(text(o.type ?? o.line_type ?? o.kind ?? o.label ?? ""))) return;
     for (const [k, v] of Object.entries(o)) {
-      if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { const t = text(v); if (t) seen.push(t); }
+      const np = notPersonal || (kind === "phone" && NOT_PERSONAL_KEY.test(k));
+      if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { if (kind === "phone" && np) continue; const t = text(v); if (t) seen.push(t); }
+      else if (kind === "phone" && inPhone && PHONE_ITEM_KEYS.test(k) && (typeof v === "string" || typeof v === "number")) { if (np) continue; const t = text(v); if (t) seen.push(t); }
       else if (kind === "email" && typeof v === "string" && /mail/i.test(k) && !/status|valid|verif|deliver|score|quality|domain|provider/i.test(k) && v.includes("@")) { const t = text(v); if (t) loose.push(t); }
       else if (kind === "email" && typeof v === "string" && ADDRESS_ONLY.test(v.trim().replace(/^mailto:/i, ""))) { stray.push(text(v)); }
       else if (kind === "email" && /^(verification|email_status|status|verified|deliverability|validity)$/i.test(k)) {
         const s = typeof v === "object" && v !== null ? text((v as Record<string, unknown>).status) : text(v);
         if (v === true || GOOD_STATUS.test(s)) sourceStatus = sourceStatus ?? "good"; else if (v === false || BAD_STATUS.test(s)) sourceStatus = "bad";
-      } else if (typeof v === "object") walk(v, depth + 1);
+      } else if (typeof v === "object") walk(v, depth + 1, inPhone || (kind === "phone" && /phone|mobile|tel/i.test(k)), np);
     }
   };
   walk(page, 0);
