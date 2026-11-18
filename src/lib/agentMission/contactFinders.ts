@@ -132,15 +132,38 @@ export function profileLookupSourcesOf(catalog: TregCatalog, isAllowed: (id: str
   return rankedHelpers(catalog.endpoints.filter((e) => isAllowed(e.id) && usable(e)), catalog, stats, now, { maxUsd: PHONE_FINDER_MAX_USD });
 }
 
+/**
+ * THE MOST NODES ONE WALK OF A PROVIDER'S ANSWER VISITS (QA #575 FAIL 1): the guard against a huge or self-referencing answer is a node count and a seen-set, never a depth (a page may sit under any number of unnamed objects).
+ * The walk keeps its own stack, so a deeply nested answer cannot overflow the call stack.
+ */
+export const ANSWER_WALK_MAX_NODES = 20_000;
+/** Every node under `root` in document order (depth first, each object once), at most ANSWER_WALK_MAX_NODES; `enter(node)` false keeps the walk out of that object's values. */
+function* answerNodes(root: unknown, enter: (node: object) => boolean = () => true): Generator<unknown> {
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  let budget = ANSWER_WALK_MAX_NODES;
+  while (stack.length > 0 && budget > 0) {
+    const node = stack.pop();
+    budget -= 1;
+    if (node !== null && typeof node === "object") {
+      if (seen.has(node)) continue;
+      seen.add(node);
+    }
+    yield node;
+    if (node === null || typeof node !== "object" || !enter(node)) continue;
+    const values = Array.isArray(node) ? node : Object.values(node as Record<string, unknown>);
+    for (let i = values.length - 1; i >= 0; i -= 1) stack.push(values[i]);
+  }
+}
+
 /** The professional page in a lookup's answer: the first value anywhere in it that is a person's LinkedIn page («/in/…»), given with https://. */
 export function profileUrlIn(page: unknown): string | null {
-  const walk = (node: unknown, depth: number): string | null => {
-    if (typeof node === "string") { const m = LINKEDIN_PERSON.exec(node.trim()); return m ? (/^https?:\/\//i.test(m[0]) ? m[0] : `https://${m[0]}`) : null; }
-    if (depth > 6 || node === null || typeof node !== "object") return null;
-    for (const v of Array.isArray(node) ? node.slice(0, 50) : Object.values(node as Record<string, unknown>)) { const u = walk(v, depth + 1); if (u) return u; }
-    return null;
-  };
-  return walk(page, 0);
+  for (const node of answerNodes(page)) {
+    if (typeof node !== "string") continue;
+    const m = LINKEDIN_PERSON.exec(node.trim());
+    if (m) return /^https?:\/\//i.test(m[0]) ? m[0] : `https://${m[0]}`;
+  }
+  return null;
 }
 
 /** The key a stored person row keeps the professional page under when the planner's columns have no place for it (never a column of the file). */
@@ -153,26 +176,19 @@ export function withSourceProfiles<R extends Record<string, unknown>>(page: unkn
   const key = (n: string): string => n.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
   const nameOf = (o: Record<string, unknown>): string => text(o.full_name) || text(o.fullName) || text(o.name) || [text(o.first_name ?? o.firstName), text(o.last_name ?? o.lastName)].filter(Boolean).join(" ");
-  const own = (o: Record<string, unknown>, depth: number): string | null => {
-    for (const v of Object.values(o)) {
-      if (typeof v === "string" && LINKEDIN_PERSON.test(v.trim())) return profileUrlIn(v);
-      if (Array.isArray(v)) { const s = v.find((x) => typeof x === "string" && LINKEDIN_PERSON.test(x.trim())); if (s) return profileUrlIn(s); }
-      if (isObj(v) && depth < 2 && !nameOf(v)) { const u = own(v, depth + 1); if (u) return u; }
-    }
+  // the person's own page: among the person object's values at ANY depth, never inside a nested object that names somebody else (QA #575 FAIL 1: three unnamed levels down was cut off)
+  const own = (o: Record<string, unknown>): string | null => {
+    for (const v of answerNodes(o, (n) => n === o || Array.isArray(n) || !nameOf(n as Record<string, unknown>))) if (typeof v === "string" && LINKEDIN_PERSON.test(v.trim())) return profileUrlIn(v);
     return null;
   };
   const byName = new Map<string, string>();
-  const walk = (node: unknown, depth: number): void => {
-    if (depth > 7 || node === null || typeof node !== "object") return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 500)) walk(x, depth + 1); return; }
-    const o = node as Record<string, unknown>;
-    const inner = isObj(o.person) ? o.person : null;
-    const name = nameOf(o) || (inner ? nameOf(inner) : "");
-    const url = name ? own(o, 0) ?? (inner ? own(inner, 0) : null) : null;
+  for (const node of answerNodes(page)) {
+    if (!isObj(node)) continue;
+    const inner = isObj(node.person) ? node.person : null;
+    const name = nameOf(node) || (inner ? nameOf(inner) : "");
+    const url = name ? own(node) ?? (inner ? own(inner) : null) : null;
     if (name && url && !byName.has(key(name))) byName.set(key(name), url);
-    for (const v of Object.values(o)) if (typeof v === "object") walk(v, depth + 1);
-  };
-  walk(page, 0);
+  }
   if (byName.size === 0) return [...rows];
   return rows.map((r) => {
     if (Object.values(r).some((v) => LINKEDIN_PERSON.test(text(v)))) return r;
