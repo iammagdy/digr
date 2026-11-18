@@ -205,6 +205,28 @@ async function runFreeze(
   return p;
 }
 
+async function runFreezeBounded(
+  w: ReturnType<typeof makeWorld>,
+  advanceMs: number,
+  over: Partial<Parameters<typeof freezeGroupPart>[1]> = {}
+): Promise<FreezeOutcome | "PENDING" | "THROWS"> {
+  let out: FreezeOutcome | "PENDING" | "THROWS" = "PENDING";
+  freezeGroupPart(w.admin, {
+    groupId: "grp_1",
+    partIndex: 1,
+    job: { id: jobId, user_id: uid, delivered_units: 10 },
+    ...over,
+  })
+    .then((res) => {
+      out = res;
+    })
+    .catch(() => {
+      out = "THROWS";
+    });
+  await vi.advanceTimersByTimeAsync(advanceMs);
+  return out;
+}
+
 describe("jobGroupFreeze", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
