@@ -253,6 +253,7 @@ import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
 import { RELEASE_NEUTRAL_REASON_AR, RETRY_CAUSE_AR, releaseTextAr } from "../src/lib/releaseText";
 import { sendPlatformEmail, getRecipient } from "../src/lib/server/sendPlatformEmail";
+import { releasedNoticeFull } from "../src/lib/server/jobNotices";
 
 function expectReleased(actual: unknown, expectedBase: string): void {
   expect(actual).toBe(releaseTextAr(expectedBase, db.targetVolumeMax));
@@ -2519,6 +2520,15 @@ describe("T-M chain (DT-06)", () => {
       expectNoBareFailed(customerTexts({ rpcCalls: db.rpcCalls, events: db.events, jobs: db.jobs, json: last.json }));
       expectReleasedZeroOf(storedText(mode), db.targetVolumeMax);
       expectMoney("released", { calls: mode === "CRASH" ? 0 : 1 });
+      if (mode === "CRASH") {
+        // the 5th failure released the job INSIDE record_chunk_failure; the SQL answer has no released_credits, so the customer's notice is the NO-NUMBER text (route.ts:2764, jobNotices.ts releasedNoticeFull)
+        const released = db.notices.filter((n: any) => n.id === `notif_released_${JOB}`);
+        expect(released).toHaveLength(1);
+        expect(released[0].title).toBe(releasedNoticeFull(0).title);
+        expect(released[0].body).toBe(releasedNoticeFull(0).body);
+        expect(released[0].body).not.toMatch(/[0-9٠-٩]/);
+        expect(released[0].body).toBe("تعذّر استكمال طلبك. حجز مؤقت مُحرَّر كاملًا دون أي خصم.");
+      }
     });
   }
 });
