@@ -140,3 +140,15 @@ describe("the person-phone chain, from catalog metadata only", () => {
     expect(finderParamsFor(anyOf, personFactsOf({ id: "p1", linkedin: "linkedin.com/in/mina" }, columns, { website: "orascom-em.com.eg" }))).toEqual({ domain: "orascom-em.com.eg", linkedin: "https://linkedin.com/in/mina" });
   });
 });
+
+// DT-20261118-03 fix round 1 (BUG HUNTER Gate 2 P2): a phone CONTAINER is known by a whole word of its key, never by letters inside another word
+describe("DT-20261118-03 fix round 1: a phone container is a whole key word", () => {
+  it("hotel, intelligence and telemetry are not phones; phoneNumbers, mobile_phones and telephone are", () => {
+    expect(foundContactIn("phone", { hotel: { number: 5000000 } })).toBeNull();
+    expect(foundContactIn("phone", { intelligence: { value: "12345678" } })).toBeNull();
+    expect(foundContactIn("phone", { telemetry: { number: "98765432" } })).toBeNull();
+    expect(foundContactIn("phone", { phoneNumbers: [{ number: "+201001234567" }] })?.value.replace(/\D/g, "")).toBe("201001234567");
+    expect(foundContactIn("phone", { mobile_phones: [{ value: "+201001234567" }] })?.value.replace(/\D/g, "")).toBe("201001234567");
+    expect(foundContactIn("phone", { telephone: { number: "+201001234567" } })?.value.replace(/\D/g, "")).toBe("201001234567");
+  });
+});
