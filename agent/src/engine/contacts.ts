@@ -341,8 +341,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const companyAddresses = (parentId: string): Set<string> => new Set(Object.values(items.acceptedRows(stage.parent_key ?? "").find((r) => String(r.id) === parentId) ?? {}).map(addressOf).filter(isAddress));
   const isCompanyAddress = (parentId: string, v: unknown): boolean => step.kind === "email" && stage.parent_key !== null && companyAddresses(parentId).has(addressOf(v));
-  /** The address each person ends with, per company: an address held by 2+ people of one company is cleared from all of them at the end of the step. */
-  const holders = new Map<string, Array<{ id: string; counted: boolean }>>();
+  /** The people whose address THIS run found and counted (the count drops back when the address turns out to be shared); who shares an address is read from the stage's rows at the end of the step. */
+  const foundIds = new Set<string>();
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
@@ -476,7 +476,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
         if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
-        if (step.kind === "email" && stage.parent_key !== null) { const key = `${parentId}|${addressOf(value)}`; holders.set(key, [...(holders.get(key) ?? []), { id: String(row.id), counted: Boolean(hit) }]); }
+        if (step.kind === "email" && hit) foundIds.add(String(row.id));
       }
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();
@@ -484,9 +484,20 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     },
     async finish(): Promise<void> {
       // one address held by 2+ people of the same company is the company's, nobody's own: cleared from every one of them
-      for (const list of holders.values()) {
-        if (list.length < 2) continue;
-        for (const h of list) { pending.push({ t: "clear", stage: step.stage_key, id: h.id, keys: [step.column_key, step.status_key] }); if (h.counted) { found -= 1; out.filled.email -= 1; } }
+      // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
+      await flush();
+      if (step.kind === "email" && stage.parent_key !== null) {
+        const byAddress = new Map<string, string[]>();
+        for (const r of items.acceptedRows(step.stage_key)) {
+          const address = addressOf(r[step.column_key]);
+          if (!isAddress(address)) continue;
+          const key = `${String(r.parent_id ?? "")}|${address}`;
+          byAddress.set(key, [...(byAddress.get(key) ?? []), String(r.id)]);
+        }
+        for (const ids of byAddress.values()) {
+          if (ids.length < 2) continue;
+          for (const id of ids) { pending.push({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key] }); if (foundIds.has(id)) { found -= 1; out.filled.email -= 1; } }
+        }
       }
       await flush();
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
