@@ -24,6 +24,8 @@ function makeWorld(): {
   latency: { read: number; upload: number; download: number; rpc: number };
   readLatency: Map<string, number>;
   readFails: Set<string>;
+  byteHang: Set<string>;
+  byteReject: Set<string>;
   reads: string[];
   f5: { calls: any[]; committed: any[]; dropOnTimeout: boolean; failNext: boolean; answer?: (args: any) => any };
 } {
@@ -32,6 +34,14 @@ function makeWorld(): {
   const latency = { read: 0, upload: 0, download: 0, rpc: 0 };
   const readLatency = new Map<string, number>();
   const readFails = new Set<string>();
+  const byteHang = new Set<string>();
+  const byteReject = new Set<string>();
+  const dataFor = (path: string, buf: Buffer): any =>
+    byteHang.has(path)
+      ? { arrayBuffer: () => new Promise<ArrayBuffer>(() => {}) }
+      : byteReject.has(path)
+        ? { arrayBuffer: () => Promise.reject(new Error("byte read failed")) }
+        : new Blob([buf as any]);
   const reads: string[] = [];
   const f5: { calls: any[]; committed: any[]; dropOnTimeout: boolean; failNext: boolean; answer?: (args: any) => any } = {
     calls: [],
@@ -47,6 +57,8 @@ function makeWorld(): {
     latency,
     readLatency,
     readFails,
+    byteHang,
+    byteReject,
     reads,
     f5,
   };
@@ -60,7 +72,7 @@ function makeWorld(): {
           if (readFails.has(path)) {
             resolve({ data: null, error: { message: "upstream error", statusCode: "500" } });
           } else if (partials.has(path)) {
-            resolve({ data: new Blob([partials.get(path)! as any]), error: null });
+            resolve({ data: dataFor(path, partials.get(path)!), error: null });
           } else {
             resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
           }
@@ -88,7 +100,7 @@ function makeWorld(): {
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (results.has(path)) {
-            resolve({ data: new Blob([results.get(path)! as any]), error: null });
+            resolve({ data: dataFor(path, results.get(path)!), error: null });
           } else {
             resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
           }
