@@ -103,6 +103,13 @@ describe("PR-5 saved dataset readers", () => {
     await expect(readJobDatasetText(db, { id: "j", user_id: "u" })).resolves.toBe(expectedText);
     await expect(jobHasSavedData(db, { jobId: "j", userId: "u" })).resolves.toBe(expectedSaved);
   });
+  it("keeps compiled methodology missions outside group lookup failures", async () => {
+    const source = await import("node:fs").then(({ readFileSync }) => readFileSync("src/app/api/jobs/[id]/methodology/route.ts", "utf8"));
+    const missionBranch = source.indexOf("if (mission) {");
+    const groupLookup = source.indexOf("groupDataset = await groupPartDataset");
+    expect(missionBranch).toBeGreaterThanOrEqual(0);
+    expect(groupLookup).toBeGreaterThan(missionBranch);
+  });
 });
 
 describe("PR-4 real download and data readers", () => {
