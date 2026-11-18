@@ -35,6 +35,9 @@ vi.mock("../src/lib/server/multiProvider/jobGroups", async (importOriginal) => {
   return {
     ...actual,
     reconcileJobGroups: vi.fn(async (admin: any, opts: any) => {
+      if (currentDriveWorld?.rejectReconcile || currentWatchdogWorld?.rejectReconcile) {
+        throw new Error("reconcile rejected");
+      }
       if (
         (currentDriveWorld && currentDriveWorld.neverResolves === "from(job_groups)") ||
         (currentWatchdogWorld && currentWatchdogWorld.neverResolves === "from(job_groups)")
