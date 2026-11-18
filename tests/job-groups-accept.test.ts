@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { isGroupQuoteItems, planSplit } from "../src/lib/server/multiProvider/jobGroupPlan";
+import { isGroupQuoteItems, planSplit, hasJobGroupRpc } from "../src/lib/server/multiProvider/jobGroupPlan";
 import { reserveForUnits, DEFAULT_PRICING_BASIS } from "../src/lib/recordPricing";
 
 describe("DT-05 PR-9 group approval", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it.each([
     [[], false],
     [null, false],
@@ -41,5 +45,52 @@ describe("DT-05 PR-9 group approval", () => {
     } else if (X === 40 * V) {
       expect(r.hold).toBe(12_880);
     }
+  });
+
+  // T02 readiness probe
+  const probeAnswer = (data: any, error: any = null) => ({ data, error });
+  function adminWith(answer: () => Promise<any>) {
+    const rpc = vi.fn(async (_n: string, _a: any) => answer());
+    return { rpc } as any;
+  }
+
+  it("the probe uses the plan's call and answers true only for quote_not_found", async () => {
+    const a = adminWith(async () => probeAnswer({ success: false, error: "quote_not_found" }));
+    expect(await hasJobGroupRpc(a)).toBe(true);
+    const [name, args] = a.rpc.mock.calls[0];
+    expect(name).toBe("accept_group_quote_atomic");
+    expect(args).toEqual({
+      p_quote_id: expect.stringMatching(/^__diger_group_probe_[0-9a-f]+$/),
+      p_user_id: "00000000-0000-0000-0000-000000000000",
+      p_expected_quote_hash: "probe",
+      p_points_cap: 1,
+      p_start_event_ar: "probe",
+    });
+  });
+
+  it.each([
+    ["PGRST202", probeAnswer(null, { code: "PGRST202", message: "x" })],
+    ["42883", probeAnswer(null, { code: "42883", message: "x" })],
+    ["42501", probeAnswer(null, { code: "42501", message: "x" })],
+    ["an unknown code", probeAnswer(null, { code: "XX999", message: "boom" })],
+    ["another answer (hash mismatch)", probeAnswer({ success: false, error: "quote_hash_mismatch" })],
+    ["a success answer", probeAnswer({ success: true })],
+    ["an empty answer", probeAnswer(null)],
+    ["quote_not_found with an extra error", probeAnswer({ success: false, error: "quote_not_found" }, { message: "x" })],
+  ])("(f) probe answers %s ⇒ false", async (_n, answer) => {
+    expect(await hasJobGroupRpc(adminWith(async () => answer))).toBe(false);
+  });
+
+  it("(f) a thrown transport error ⇒ false; no rpc function ⇒ false", async () => {
+    expect(await hasJobGroupRpc(adminWith(async () => { throw new Error("net"); }))).toBe(false);
+    expect(await hasJobGroupRpc({})).toBe(false);
+  });
+
+  it("(f) a probe that never resolves ⇒ false after 4 s", async () => {
+    vi.useFakeTimers();
+    const p = hasJobGroupRpc(adminWith(() => new Promise(() => {})));
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(await p).toBe(false);
+    vi.useRealTimers();
   });
 });

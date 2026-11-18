@@ -1,4 +1,5 @@
 import { reserveForUnits } from "../../recordPricing";
+import { withTimeout, TIMED_OUT } from "./jobGroupShared";
 
 export function isGroupQuoteItems(items: unknown): boolean {
   if (!Array.isArray(items) || items.length !== 1) {
@@ -42,4 +43,35 @@ export function planSplit(args: {
   const hold = partReserves.reduce((a, b) => a + b, 0);
 
   return { K, Y, partVolumes, partReserves, hold };
+}
+
+export async function hasJobGroupRpc(admin: any): Promise<boolean> {
+  try {
+    if (typeof admin?.rpc !== "function") {
+      return false;
+    }
+    const probeId = "__diger_group_probe_" + Math.random().toString(16).slice(2);
+    const res: any = await withTimeout(
+      admin.rpc("accept_group_quote_atomic", {
+        p_quote_id: probeId,
+        p_user_id: "00000000-0000-0000-0000-000000000000",
+        p_expected_quote_hash: "probe",
+        p_points_cap: 1,
+        p_start_event_ar: "probe",
+      }),
+      4_000
+    );
+    if (res === TIMED_OUT || res?.error) {
+      return false;
+    }
+    const data = res?.data;
+    return (
+      typeof data === "object" &&
+      data !== null &&
+      data.success === false &&
+      data.error === "quote_not_found"
+    );
+  } catch {
+    return false;
+  }
 }
