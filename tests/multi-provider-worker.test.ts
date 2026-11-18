@@ -176,7 +176,8 @@ vi.mock("../src/lib/supabase/server", () => ({
         db.failCount += 1;
         // DT-20261117-04 CI r1 (kept): like the real function, a recorded failure clears the job's lease; otherwise the fake's own «lease not expired» rule refuses the next claim.
         if (job) job.lease_until = null;
-        if (db.failCount < 5) return { data: { success: true, released: false, attempts: db.failCount }, error: null };
+        const delaySeconds = Math.min(10 * 2 ** (db.failCount - 1), 300);               // the SQL: LEAST(10 * 2^(n-1), 300)
+        if (db.failCount < 5) return { data: { success: true, failed_permanently: false, attempt_count: db.failCount, delay_seconds: delaySeconds, next_attempt_at: new Date(Date.now() + delaySeconds * 1000).toISOString(), job_id: args.p_job_id }, error: null };
         // the 5th failure: the SQL releases the job INSIDE the function and answers failed_permanently, attempt_count, released, job_id (no released_credits): migration 20261012162016:240-260
         if (job) fakeRelease(job.id, `Exceeded maximum retry attempts (5): ${args.p_error_message}`, "record_chunk_failure");
         db.onFifthFailure?.(job);
@@ -2630,5 +2631,17 @@ describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", (
     expect(later.data).toMatchObject({ success: true, already_released: true });
     expect(effectiveReleases()).toBe(1);
     expect(db.jobs[0].error_message).toBe("Exceeded maximum retry attempts (5): boom");
+  });
+
+  it("F2h the non-terminal answer follows the SQL", async () => {
+    resetDb({ target: 5 });                                                           // failCount 0; the job stays running (the SQL's queued status is not modelled, D6)
+    for (const [attempt, delay] of [[1, 10], [2, 20], [3, 40], [4, 80]] as const) {
+      const res = await rpc("record_chunk_failure", { p_job_id: JOB, p_error_message: "retry text" });
+      expect(res.error).toBeNull();
+      expect(res.data).toEqual({ success: true, failed_permanently: false, attempt_count: attempt, delay_seconds: delay, next_attempt_at: expect.any(String), job_id: JOB });
+      expect("released" in res.data).toBe(false);                                     // the SQL has no `released` and no `attempts` on this answer
+      expect("attempts" in res.data).toBe(false);
+    }
+    expect(db.failCount).toBe(4);
   });
 });
