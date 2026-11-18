@@ -12,6 +12,7 @@ import { isCompanyStage } from "./entities";
 import { emailOnOtherDomain } from "./emailVerification";
 import { isRoleMailbox } from "./people";
 import { isPersonalMailDomain } from "../multiProvider/policy";
+import { COMPANY_EMAIL_STATUS_TITLE_AR, COMPANY_EMAIL_TITLE_AR } from "./taskContracts";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -46,6 +47,8 @@ export interface ContactStep {
   type_key?: string;
   /** Set on a step of the COMPANY (audit 2026-11, taskContracts.ts): `stage_key` is the stage whose rows are the companies; the e-mail step looks up the company's own role mailbox (`finders` are mailbox listers), the phone step the company's HQ phone (`company_phone` are the map searches). Absent: a step of the people of a stage. */
   level?: "company";
+  /** A company e-mail step of a COMPANIES-ONLY request (no people under the companies): its two columns are added by withContactColumns (a companies and people delivery gets them from taskContracts.ts). */
+  own_columns?: true;
 }
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
@@ -96,6 +99,8 @@ export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: Tr
  * Above the ceiling a finder is not part of the step; the plan then prices and caps the chain without it. It limits the CHAIN only (the cap and the price are derived from the chain), never the customer's quantity.
  */
 export const FALLBACK_FINDER_MAX_USD = 0.02;
+/** A PERSON-PHONE finder may cost up to this much a call (Megz D-0085: «ارفعه لـ٥ سنت»): the person's own phone is core (D-0084), and the finders that find it more often cost more. The chain is still chosen by catalog capability, price and measured rate only. */
+export const PHONE_FINDER_MAX_USD = 0.05;
 /** What a FOUND value costs: the price of a call over the measured share of calls that find one (finderStats.ts); finders are ranked by it, cheapest first. */
 export const finderRankKey = (f: { id: string; usd: number }, kind: FinderKind): number => f.usd / finderHitRate(f.id, kind);
 
@@ -104,7 +109,7 @@ export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowe
   const caps = kind === "email" ? EMAIL_FINDER_CAPABILITIES : PHONE_CAPABILITIES;
   const usable = (e: CatalogEndpoint): boolean => !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
   const group = catalog.endpoints.filter((e) => e.capability && caps.has(e.capability) && isAllowed(e.id) && usable(e));
-  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: FALLBACK_FINDER_MAX_USD });
+  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD });
 }
 
 /** The e-mail verifiers of the catalog this account may buy, cheapest first (the same ranking as every source): direct and synchronous (a routed one bills a range, an asynchronous one needs polling), taking only the address, with a known price. */
@@ -175,7 +180,8 @@ export function buildContactSteps(
       const help = aids?.(kind) ?? {};
       const verifiers = kind === "email" && help.verifiers && help.verifiers.length > 0 ? help.verifiers : undefined;
       const validators = kind === "phone" && help.validators && help.validators.length > 0 ? help.validators : undefined;
-      const company_phone = kind === "phone" && help.company_phone && help.company_phone.length > 0 ? help.company_phone : undefined;
+      // D-0084: a person's phone cell holds the PERSON's number only; the company's number is a column of the company (buildCompanySteps), never a stand-in here
+      const company_phone: FinderInfo[] | undefined = undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
       // what one person is EXPECTED to cost (the price): the chain of finders by measured hit rates, then for an e-mail the verifier for those an address was found for, for a phone the company-phone search for those no personal number was found for (one search per company: an upper bound) and
       // the validator every phone goes through. What one person may cost AT MOST (the cap): every finder of the chain, the verifier or the company-phone search and the validator, each at its full price.
@@ -191,10 +197,15 @@ export function buildContactSteps(
   return out;
 }
 
+/** A stage's e-mail column, known by STRUCTURE (D-0086: never by the words of its title): marked kind «work_email», or keyed as an e-mail. */
+export const isEmailColumn = (c: { key: string; kind?: string }): boolean => c.kind === "work_email" || /mail/i.test(c.key);
 /** The stage columns with the step's contact column (added when the planner left it out) and, right after it, the Arabic status column. A plan without steps is returned as it is. Idempotent. */
 export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string; type_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
   // (a step of the COMPANY has its own columns, taskContracts.ts: it never adds a person's e-mail or phone column to the company's stage)
   const mine = (steps ?? []).filter((s) => s.stage_key === stageKey && s.level === undefined);
+  // THE COMPANY'S OWN E-MAIL OF A COMPANIES-ONLY REQUEST: its two columns are added here when the stage holds no e-mail column (a companies and people delivery gets them from taskContracts.ts)
+  const companyEmail = (steps ?? []).find((s) => s.stage_key === stageKey && s.level === "company" && s.kind === "email" && s.own_columns === true);
+  if (companyEmail && !columns.some(isEmailColumn)) return [...withContactColumns(stageKey, columns, mine), { key: companyEmail.column_key, title_ar: COMPANY_EMAIL_TITLE_AR } as C, { key: companyEmail.status_key, title_ar: COMPANY_EMAIL_STATUS_TITLE_AR, status_of: companyEmail.column_key } as C];
   if (mine.length === 0) return [...columns];
   let out: C[] = [...columns];
   for (const s of mine) {
@@ -223,13 +234,15 @@ export function verifierParamsFor(verifier: FinderInfo, email: string): Record<s
 /** What one person gives a finder. */
 export interface PersonFacts { linkedin: string | null; name: string | null; first: string | null; last: string | null; domain: string | null; company: string | null }
 
-const LINKEDIN_PERSON = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
+// DT-20261118-03: a profile written without its scheme («linkedin.com/in/…», as some people sources give it) is the same profile; it is given to a finder with https://
+const LINKEDIN_PERSON = /^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
 const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
 const bareDomain = (v: unknown): string | null => { const t = text(v); if (!t || /linkedin\./i.test(t)) return null; const d = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]; return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d) ? d.toLowerCase() : null; };
 
 /** The facts of a person row (and of its company's row): decided by code from the values, not from the planner's key names alone. */
 export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArray<{ key: string; title_ar?: string; kind?: string }>, parent: Record<string, unknown> | null): PersonFacts {
-  const linkedin = Object.values(row).map(text).find((v) => LINKEDIN_PERSON.test(v)) ?? null;
+  const profile = Object.values(row).map(text).find((v) => LINKEDIN_PERSON.test(v)) ?? null;
+  const linkedin = profile === null ? null : /^https?:\/\//i.test(profile) ? profile : `https://${profile}`;
   const name = nameKeysOf(columns).map((k) => text(row[k])).filter(Boolean).join(" ").trim() || null;
   const parts = name ? name.split(/\s+/) : [];
   const domainKey = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/(website|domain|site|url)/i.test(k)) { const d = bareDomain(v); if (d) return d; } return null; };
@@ -238,7 +251,8 @@ export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArr
 }
 
 /** The call parameters of a finder for a person, or null when the person lacks what the finder REQUIRES (it is then skipped for this person). At least one identifying input must be filled. */
-export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<string, string> | null {
+/** `forPerson` false: a COMPANY lookup (the company e-mail listers take only the domain), where no person identifier is required. */
+export function finderParamsFor(finder: FinderInfo, p: PersonFacts, forPerson = true): Record<string, string> | null {
   const value: Record<ReturnType<typeof inputKindOf> & string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
   const params: Record<string, string> = {};
   for (const i of finder.inputs) {
@@ -247,12 +261,33 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<stri
     // a «name» input takes the whole name only when the finder has no first/last pair of its own (the whole name is also enough for the pair's finders, which split it)
     if (v) params[i.name] = v; else if (i.required) return null;
   }
+  // A PERSON FINDER NEEDS A PERSON (BUG HUNTER Gate 1 delta, PR-2c): a call with only the company's domain or name is a paid call about nobody; at least a profile or a name must go with it
+  if (forPerson && !finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last"].includes(inputKindOf(i.name) ?? ""))) return null;
   return Object.keys(params).length > 0 ? params : null;
+}
+
+/** The inputs a finder REQUIRES that this person lacks (all its known inputs when none is filled): why it was not tried for this person. Empty when it can be called. */
+export function missingInputsFor(finder: FinderInfo, p: PersonFacts): string[] {
+  if (finderParamsFor(finder, p) !== null) return [];
+  const value: Record<string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
+  const required = finder.inputs.filter((i) => i.required && !value[inputKindOf(i.name) ?? ""]).map((i) => i.name);
+  return required.length > 0 ? required : finder.inputs.filter((i) => inputKindOf(i.name) !== null).map((i) => i.name);
 }
 
 export interface FoundContact { value: string; status: "verified" | "unverified" }
 const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
-const PHONE_KEYS = /^((mobile|direct|work)_?)?(phone|tel)(_?number)?$|^mobile$/i;
+// DT-20261118-03 (D-0084): every phone answer shape found in the example answers of the catalog's person-phone finders (employee_phone, mobile_number, phone_numbers[].number, intl/e164_format, phones[].phoneNumber); the catalog gives no typed output field for most of them
+const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$/i;
+/** A number inside a phone container (phone_numbers[].number, phones[].phoneNumber): «number» alone is never a phone key. */
+const PHONE_ITEM_KEYS = /^(number|phone_?number|value)$/i;
+/** A PHONE CONTAINER is known by a whole word of its key, snake_case or camelCase («phones», «mobilePhone», «telephone_numbers»): «hotel», «intelligence», «telemetry» only contain the letters (BUG HUNTER Gate 2 P2). */
+const PHONE_CONTAINER_WORD = /^(phones?|mobiles?|tel|telephones?|phonenumbers?|cellphones?)$/i;
+const isPhoneContainerKey = (k: string): boolean => k.replace(/([a-z0-9])([A-Z])/g, "$1_$2").split(/[^A-Za-z0-9]+/).some((w) => PHONE_CONTAINER_WORD.test(w));
+/** Whose number it is NOT (BUG HUNTER Gate 1 delta P1, D-0084): a fax, an office or switchboard line, the company's or employer's, by the key it sits under or the type the finder gives it. */
+const NOT_PERSONAL_KEY = /fax|company|office|employer|organi[sz]ation|head_?quarter|\bhq\b|^hq|switchboard|reception|main_?(line|phone|number)/i;
+const NOT_PERSONAL_TYPE = /^(fax|office|switchboard|reception|company|main|hq)$/i;
+/** A phone written as a bare string inside a list (phone: ["+1…"], data: [["+1…"]]): international form only (a leading +), never a date, a postal code or an id. */
+const PHONE_LIKE = /^\+\d[\d\s().-]{6,19}$/;
 /** A value that is nothing but an address (optionally a mailto: link). */
 const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
@@ -266,19 +301,22 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
   // LESS SURE FINDS, taken only when no key named like an address gave one: any key with «mail» in its name, then any value that IS an address (live 2026-11-01: a finder BILLED a hit and the cell stayed empty, because the key was not one of the few names above)
   const loose: string[] = [];
   const stray: string[] = [];
-  const walk = (node: unknown, depth: number): void => {
+  const walk = (node: unknown, depth: number, inPhone = false, notPersonal = false): void => {
     if (depth > 6 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else walk(x, depth + 1); } return; }
+    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else if (typeof x === "string" && kind === "phone" && !notPersonal && PHONE_LIKE.test(x.trim())) seen.push(x.trim()); else walk(x, depth + 1, inPhone, notPersonal); } return; }
     if (typeof node !== "object") return;
     const o = node as Record<string, unknown>;
+    if (kind === "phone" && NOT_PERSONAL_TYPE.test(text(o.type ?? o.line_type ?? o.kind ?? o.label ?? ""))) return;
     for (const [k, v] of Object.entries(o)) {
-      if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { const t = text(v); if (t) seen.push(t); }
+      const np = notPersonal || (kind === "phone" && NOT_PERSONAL_KEY.test(k));
+      if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { if (kind === "phone" && np) continue; const t = text(v); if (t) seen.push(t); }
+      else if (kind === "phone" && inPhone && PHONE_ITEM_KEYS.test(k) && (typeof v === "string" || typeof v === "number")) { if (np) continue; const t = text(v); if (t) seen.push(t); }
       else if (kind === "email" && typeof v === "string" && /mail/i.test(k) && !/status|valid|verif|deliver|score|quality|domain|provider/i.test(k) && v.includes("@")) { const t = text(v); if (t) loose.push(t); }
       else if (kind === "email" && typeof v === "string" && ADDRESS_ONLY.test(v.trim().replace(/^mailto:/i, ""))) { stray.push(text(v)); }
       else if (kind === "email" && /^(verification|email_status|status|verified|deliverability|validity)$/i.test(k)) {
         const s = typeof v === "object" && v !== null ? text((v as Record<string, unknown>).status) : text(v);
         if (v === true || GOOD_STATUS.test(s)) sourceStatus = sourceStatus ?? "good"; else if (v === false || BAD_STATUS.test(s)) sourceStatus = "bad";
-      } else if (typeof v === "object") walk(v, depth + 1);
+      } else if (typeof v === "object") walk(v, depth + 1, inPhone || (kind === "phone" && isPhoneContainerKey(k)), np);
     }
   };
   walk(page, 0);
@@ -352,19 +390,21 @@ export function buildCompanySteps(
   stages: ReadonlyArray<{ key: string; title_ar: string; parent_key: string | null; deliver: boolean; role_preference?: unknown }>,
   listers: ReadonlyArray<FinderInfo>,
   aids: (kind: FinderKind) => ContactAids,
+  wants: { email: boolean; hasEmailColumn?: (stageKey: string) => boolean } = { email: false },
 ): ContactStep[] {
   const out: ContactStep[] = [];
   for (const st of stages) {
     if (!st.deliver || st.parent_key !== null || !isCompanyStage(st)) continue;
-    if (!stages.some((p) => p.deliver && p.parent_key === st.key && isPeopleStage(p))) continue;
+    const withPeople = stages.some((p) => p.deliver && p.parent_key === st.key && isPeopleStage(p));
+    if (!withPeople && (!wants.email || wants.hasEmailColumn?.(st.key) === true)) continue;
     if (listers.length > 0) {
       const verifiers = aids("email").verifiers;
       const verifierUsd = verifiers && verifiers.length > 0 ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0;
       const perCompany = listers[0].usd + verifierUsd;
-      out.push({ kind: "email", level: "company", stage_key: st.key, column_key: COMPANY_EMAIL_KEY, status_key: statusKeyOf(COMPANY_EMAIL_KEY), per_person_usd: perCompany, max_person_usd: perCompany, finders: listers.slice(0, FINDERS_PER_STEP), ...(verifiers && verifiers.length > 0 ? { verifiers } : {}) });
+      out.push({ kind: "email", level: "company", stage_key: st.key, column_key: COMPANY_EMAIL_KEY, status_key: statusKeyOf(COMPANY_EMAIL_KEY), per_person_usd: perCompany, max_person_usd: perCompany, finders: listers.slice(0, FINDERS_PER_STEP), ...(verifiers && verifiers.length > 0 ? { verifiers } : {}), ...(withPeople ? {} : { own_columns: true as const }) });
     }
     const maps = aids("phone").company_phone;
-    if (maps && maps.length > 0) {
+    if (withPeople && maps && maps.length > 0) {
       const first = chainPriceUsd(maps, 1);
       out.push({ kind: "phone", level: "company", stage_key: st.key, column_key: COMPANY_PHONE_KEY, status_key: statusKeyOf(COMPANY_PHONE_KEY), per_person_usd: first, max_person_usd: Math.max(first, chainPriceUsd(maps, FINDERS_PER_STEP)), finders: [], company_phone: maps });
     }

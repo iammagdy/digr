@@ -45,38 +45,45 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(p.price.deliveredRows).toBe(15);
     expect(stage.pages_per_parent).toBe(3);
     // the numbers of this run: unit 100.58 points, the most that can be charged 1,509 points, the hold 1,736 (CHANGED in PR 1 part b: the company's own e-mail and HQ phone steps are in the price, five companies x 0.0108 USD; before: 80.73, 1,211, 1,393; before #322: 24.81, 373, 429)
-    expect(p.price.maxChargePoints).toBeGreaterThan(1400);
-    expect(p.price.maxChargePoints).toBeLessThan(1600);
-    expect(p.price.reservePoints).toBeGreaterThan(1600);
-    expect(p.price.reservePoints).toBeLessThan(1850);
+    // CHANGED (DT-20261118-03 PR-2c, Megz D-0085): the person-phone chain may use finders up to 0.05 USD a call (the ones that find the person's own phone more often), so the price rises: max 2,603, hold 2,993 on these fakes (before: max 1,400-1,600, hold 1,600-1,850)
+    expect(p.price.maxChargePoints).toBeGreaterThan(2500);
+    expect(p.price.maxChargePoints).toBeLessThan(2700);
+    expect(p.price.reservePoints).toBeGreaterThan(2900);
+    expect(p.price.reservePoints).toBeLessThan(3100);
   });
   it("it stays inside the job cap", () => {
     const p = priced();
     expect(p.price.overCap).toBe(false);
     expect(p.price.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
   });
-  it("the EXPECTED provider cost is about a quarter of the provider's daily cap (0.80 USD), and even the WORST case (every person goes through every finder, every page is read) is under two thirds of it and inside the job's own call budget", () => {
+  // CHANGED (DT-20261118-03 fix round 1, BUG HUNTER Gate 2 P0; Megz D-0085 and its addendum): the daily cap is ONE number for all of TREG, every vendor together (agent/src/gateway.ts:295 reserves under provider «treg»;
+  // supabase/migrations/20261016205259_fix_provider_spend_scope.sql:19-26 sums every TREG cost against it). With the 0.05 USD phone chain a standard request expects about 56% of the 0.80 USD cap and may plan up to about 145% of it:
+  // two such requests a day use up the default cap (accepted in the D-0085 addendum; the cap is raised in admin). Before: expected < 1/3 and worst < 2/3 of the cap.
+  it("the EXPECTED TREG cost is under 60% of the TREG-wide daily cap (0.80 USD), and even the WORST case (every person goes through every finder, every page is read) is under 150% of it and inside the job's own call budget", () => {
     const p = priced();
     const expected = p.price.providerCostUsd ?? 0;
     expect(expected).toBeGreaterThan(0.15);
-    expect(expected / DAILY_CAP_USD).toBeLessThan(1 / 3);
+    expect(expected).toBeLessThan(DAILY_CAP_USD * 0.6);
     const people = p.stages.find((s) => s.key === "people")!;
     const pages = people.planned_rows * ((people.pages_per_parent ?? 1) * (people.page_cost_usd ?? 0)) / (people.per_parent_rows ?? 1);
     // CHANGED (PR 1 part b): each step's cap is per row of ITS OWN stage (the company steps: the five companies, not the ten people)
     const chain = (p.contact_steps ?? []).reduce((n, st) => n + (st.max_person_usd ?? st.per_person_usd) * p.stages.find((x) => x.key === st.stage_key)!.planned_rows, 0);
     const worst = pages + chain + 0.0001;
-    expect(worst / DAILY_CAP_USD).toBeLessThan(2 / 3);
+    expect(worst).toBeLessThan(DAILY_CAP_USD * 1.5);
     expect(worst).toBeLessThan(executionBudgetUsd(p.price.reservePoints));
   });
-  it("the chain behind the price: e-mail blitz, anyapi, dropleads then a verifier; phone blitz, quickenrich, then the company's phone and a validator; no call above 0.02 USD", () => {
+  // CHANGED (DT-20261118-03, Megz D-0084): the person's phone step has no company-phone search (before: «then the company's phone»; company_phone non-empty)
+  // CHANGED (DT-20261118-03 PR-2c, Megz D-0085): the phone chain is chosen up to 0.05 USD a call: blitz, aiark, tomba (before: blitz, quickenrich, every call up to 0.02)
+  it("the chain behind the price: e-mail blitz, anyapi, dropleads then a verifier (up to 0.02 USD a call); phone blitz, aiark, tomba and a validator (up to 0.05), never the company's phone", () => {
     const steps = priced().contact_steps ?? [];
     const email = steps.find((s) => s.kind === "email")!;
     const phone = steps.find((s) => s.kind === "phone")!;
     expect(email.finders.map((f) => f.id)).toEqual(["blitzapi.people.email.find", "anyapi.linkedin.email.work.find", "dropleads.people.email.find"]);
     expect(email.verifiers!.length).toBeGreaterThan(0);
-    expect(phone.finders.map((f) => f.id)).toEqual(["blitzapi.people.phone.find", "quickenrich.people.phone.find"]);
-    expect(phone.company_phone!.length).toBeGreaterThan(0);
-    for (const f of [...email.finders, ...phone.finders]) expect(f.usd).toBeLessThanOrEqual(0.02);
+    expect(phone.finders.map((f) => f.id)).toEqual(["blitzapi.people.phone.find", "aiark.people.phone.find", "tomba.people.phone.find"]);
+    expect(phone.company_phone).toBeUndefined();
+    for (const f of email.finders) expect(f.usd).toBeLessThanOrEqual(0.02);
+    for (const f of phone.finders) expect(f.usd).toBeLessThanOrEqual(0.05);
     expect(email.max_person_usd).toBeCloseTo(0.000495 + 0.011 + 0.018 + 0.00178, 6);
   });
 });

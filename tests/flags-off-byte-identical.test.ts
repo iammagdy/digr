@@ -29,6 +29,9 @@ import { isInternalEvent } from "../src/lib/agentMission/eventText";
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-01T12:00:00Z")); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // LIVE CHECK 16 NOV 2026 CHANGED: only the `planView` and `finalView` digests of the five worlds were re-pinned: the customer view gained `fileRowsAr` (what the delivered file holds, shown on the file button), and counts of 100 and above follow the last two digits (g4 also re-pinned `workbook` for that wording).
+// DT-20261118-03 CHANGED (Megz D-0084, D-0085): every section of g1_electromechanical / g2_petroleum was re-pinned, compared section by section with the commit before: the person rows no longer carry the company's number as
+// their phone (8 of 10 «رقم الشركة» before, 0 now in these fake worlds, whose answers hold no personal number), the person-phone chain is blitz, aiark, tomba up to 0.05 USD a call (no company-number search and no validator call for it),
+// and the price follows (hold 1,341 -> 2,569, charge 1,166 -> 2,234 points for the same 15 rows). The three other worlds are unchanged.
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
 const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);
 const norm = (value: unknown): string => JSON.stringify(value, (k, v) => {

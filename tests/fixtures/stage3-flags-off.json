@@ -1,23 +1,23 @@
 {
- "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring. MERGE-TIME UPDATE (integration rehearsal on main 9b478568): only the three `file` digests changed (main's Round 37 changed the Excel title and the methodology wording); plan, rows and status are unchanged. The new values were first obtained on PLAIN main with this test copied in (no Stage 2, 3 or 4 code), then equal on the integrated tree. ROUND 58 CHANGED: only the three `file` digests changed (the first sheet's delivery sentence now adds the companies and each detail step: «منها ٥ شركات، و١٠ من «موظفو كل شركة».»); plan, rows and status are unchanged. ROUND 59 CHANGED: only the three `file` digests changed (the company check of companyQuality.ts adds the summary's limits lines: no source link per record, identity consistency checked without visiting the sites); plan, rows and status are unchanged.",
+ "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring. MERGE-TIME UPDATE (integration rehearsal on main 9b478568): only the three `file` digests changed (main's Round 37 changed the Excel title and the methodology wording); plan, rows and status are unchanged. The new values were first obtained on PLAIN main with this test copied in (no Stage 2, 3 or 4 code), then equal on the integrated tree. ROUND 58 CHANGED: only the three `file` digests changed (the first sheet's delivery sentence now adds the companies and each detail step: «منها ٥ شركات، و١٠ من «موظفو كل شركة».»); plan, rows and status are unchanged. ROUND 59 CHANGED: only the three `file` digests changed (the company check of companyQuality.ts adds the summary's limits lines: no source link per record, identity consistency checked without visiting the sites); plan, rows and status are unchanged. DT-20261118-03 PR-2b CHANGED (Megz D-0084): a person's phone step no longer carries the company-number search, so the three plan digests change and each world's charge falls from 1,166 to 1,085 points (status: one map search fewer priced per person); rows and files are unchanged. DT-20261118-03 UPDATE (D-0084, D-0085): rewritten by the writer; the person rows no longer carry the company's number as their phone, the replays charge 2,234 instead of 1,085 points (the 0.05 USD phone chain), plan g2 follows the chain.",
  "worlds": {
   "g1": {
-   "plan": "1888dae8e59550ef",
-   "status": "completed:15:1166:",
-   "rows": "41f55870952c05e7",
-   "file": "c066bbb24a2221c7"
+   "plan": "c00680cd2bbf481b",
+   "status": "completed:15:2234:",
+   "rows": "1203faa263e79c7c",
+   "file": "4b333fe9ea75e27f"
   },
   "g2": {
-   "plan": "961143cf26b45bd3",
-   "status": "completed:15:1166:",
-   "rows": "5a2f08c7df649367",
-   "file": "a134c19831fac2ef"
+   "plan": "2d06765b5a403f08",
+   "status": "completed:15:2234:",
+   "rows": "5a146fb142d3f0e5",
+   "file": "d75b320bb2b10b1c"
   },
   "live_7539_words": {
-   "plan": "1888dae8e59550ef",
-   "status": "completed:15:1166:",
-   "rows": "41f55870952c05e7",
-   "file": "050127832095a994"
+   "plan": "c00680cd2bbf481b",
+   "status": "completed:15:2234:",
+   "rows": "1203faa263e79c7c",
+   "file": "88e24557226030bc"
   }
  }
 }

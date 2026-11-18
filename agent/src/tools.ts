@@ -3,7 +3,7 @@ import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { contactVerificationQuestionIssue } from "../../src/lib/agentMission/contactQuestion";
-import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies } from "../../src/lib/agentMission/childSources";
+import { PEOPLE_PLATFORM, childStepSourcesFor, identifierTier, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies, rankedPeopleSources } from "../../src/lib/agentMission/childSources";
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
 import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMission/taskContracts";
@@ -109,6 +109,8 @@ export const GIVE_UP_REFUSALS_MAX = 2;
 export const PEOPLE_SEND_BACKS_MAX = 3;
 
 export interface ToolContext {
+  /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
+  peopleOfCompanies?: boolean;
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */
@@ -411,6 +413,17 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             else { m.effective *= 3; m.view = { ...m.view, link_note: "no people source takes a field of this source's rows as input: the people of each company could not be asked for" }; }
           }
           merged.sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
+        }
+        // THE PEOPLE OF EACH COMPANY, BY THE REQUEST'S STRUCTURE (DT-20261118-03 PR-7, Megz D-0086: never by the words typed; BH-2: «managers» gave 0 hits): when the planner understood a people step under a companies step, or the search is on the
+        // people platform, the people sources of a company join the candidates, ranked by what their rows give the e-mail and phone finders (a profile, then a name, then nothing), then by price over rate. A search whose best matches are the companies themselves is left as it is.
+        if ((ctx.peopleOfCompanies === true || platform === PEOPLE_PLATFORM) && !merged.slice(0, 3).some((m) => ctx.catalog.byId.get(m.id)?.capability === "companies.search")) {
+          const allowedHere = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          const people = rankedPeopleSources(ctx.catalog, allowedHere, now);
+          const givesOf = new Map(people.map((p) => [p.id, p.gives] as const));
+          const have = new Set(merged.map((m) => m.id));
+          for (const p of people) if (!have.has(p.id)) merged.push({ id: p.id, effective: p.effectiveUsd, view: catalogHitView(ctx.catalog.byId.get(p.id)!, ctx.catalog, 0, p.effectiveUsd) });
+          for (const m of merged) { const gives = givesOf.get(m.id); if (gives) m.view = { ...m.view, person_gives: gives }; }
+          merged.sort((x, y) => (givesOf.has(x.id) ? identifierTier(givesOf.get(x.id)!) : 3) - (givesOf.has(y.id) ? identifierTier(givesOf.get(y.id)!) : 3) || x.effective - y.effective || x.id.localeCompare(y.id));
         }
         const ordered = applyReverseOrder(merged, (x) => x.id);
         const top: Array<Record<string, any>> = ordered.slice(0, limit).map((m, i) => ({ ...m.view, rank: i + 1, ...(SESSION_RESTRICTED_SOURCES[m.id] ? { limit_note: SESSION_RESTRICTED_SOURCES[m.id].message } : {}) }));

@@ -17,9 +17,15 @@ describe("vercel.json ignoreCommand (exit 0 skips the build, exit 1 builds it)",
     expect(run({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_MESSAGE: "feat: something" })).toBe(1);
     expect(run({ VERCEL_ENV: "preview" })).toBe(1);
   });
+  it("a preview of a team/* branch is skipped whatever the message; other branches are not (D-0086)", () => {
+    expect(run({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "team/DT-20261118-03-pr1-two-managers", VERCEL_GIT_COMMIT_MESSAGE: "feat: something" })).toBe(0);
+    expect(run({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "feature/team/x", VERCEL_GIT_COMMIT_MESSAGE: "feat: something" })).toBe(1);
+    expect(run({ VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "teamwork", VERCEL_GIT_COMMIT_MESSAGE: "feat: something" })).toBe(1);
+  });
   it("production always builds, even if the message carries the marker", () => {
     expect(run({ VERCEL_ENV: "production", VERCEL_GIT_COMMIT_MESSAGE: "Merge pull request [skip ci]" })).toBe(1);
     expect(run({ VERCEL_ENV: "production", VERCEL_GIT_COMMIT_MESSAGE: "x" })).toBe(1);
+    expect(run({ VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "team/x", VERCEL_GIT_COMMIT_MESSAGE: "x" })).toBe(1);
   });
   it("an unset or unknown environment builds (fail towards building)", () => {
     expect(run({})).toBe(1);

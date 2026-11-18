@@ -76,9 +76,10 @@ describe("the benchmark shapes, through a whole mission", () => {
     expect(emails.filter(Boolean).length).toBe(8);
     emails.forEach((e, i) => expect(emailStatus[i]).toBe(e ? "موثّق" : ""));
     const phones = s.col("هاتف / محمول المسؤول");
-    expect(phones.filter(Boolean).length).toBe(10);
-    expect(new Set(s.col("حالة توثيق هاتف / محمول المسؤول"))).toEqual(new Set(["موثّق"]));
-    expect(new Set(s.col("نوع الرقم"))).toEqual(new Set(["رقم الشركة"]));
+    // CHANGED (DT-20261118-03, Megz D-0084): no personal phone found, so the person's cell stays EMPTY; the company's head-office phone is a column of the company, never a stand-in here
+    expect(phones.filter(Boolean).length).toBe(0);
+    expect(new Set(s.col("حالة توثيق هاتف / محمول المسؤول")).has("موثّق")).toBe(false);
+    expect(new Set(s.col("نوع الرقم")).has("رقم الشركة")).toBe(false);
     // the type column sits right after the phone's status column
     expect(s.header.indexOf("نوع الرقم")).toBe(s.header.indexOf("حالة توثيق هاتف / محمول المسؤول") + 1);
     // two decision makers of one company share the company's phone, found by ONE search per company
