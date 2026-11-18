@@ -39,6 +39,36 @@ export function buildPartItem(firstItem: any, partIndex: number, groupId: string
   return clone;
 }
 
+async function closeGroupAtomic(
+  admin: any,
+  opts: {
+    gid: string;
+    reason: string;
+    Z: number;
+    C: number;
+    group: any;
+    partReleaseAr: string | null;
+  }
+) {
+  return await withTimeout(
+    admin.rpc("close_job_group_atomic", {
+      p_group_id: opts.gid,
+      p_reason: opts.reason,
+      p_final_line_ar: groupFinalLineAr({
+        reason: opts.reason as any,
+        Z: opts.Z,
+        X: opts.group.asked_original,
+        Y: opts.group.reachable,
+        C: opts.C,
+      }),
+      p_delivered_total: opts.Z,
+      p_charged_total: opts.C,
+      p_part_release_ar: opts.partReleaseAr,
+    }),
+    4_000
+  );
+}
+
 export async function reconcileJobGroups(
   admin: any,
   opts: {
@@ -97,9 +127,13 @@ export async function reconcileJobGroups(
           console.error("[job-groups:overdue-check-failed]", { source: opts.source });
           logged = true;
         }
-      } else if (typeof q?.count === "number" && q.count > 0) {
-        isOverdue = true;
-        console.error("[job-groups:overdue]", { count: q.count, source: opts.source });
+      } else if (typeof q?.count === "number") {
+        if (q.count > 0) {
+          isOverdue = true;
+          console.error("[job-groups:overdue]", { count: q.count, source: opts.source });
+        }
+      } else {
+        return { installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 };
       }
     }
 
@@ -288,23 +322,14 @@ export async function reconcileJobGroups(
               }
             }
 
-            const closeRes: any = await withTimeout(
-              admin.rpc("close_job_group_atomic", {
-                p_group_id: gid,
-                p_reason: "deadline_stuck",
-                p_final_line_ar: groupFinalLineAr({
-                  reason: "deadline_stuck",
-                  Z,
-                  X: group.asked_original,
-                  Y: group.reachable,
-                  C,
-                }),
-                p_delivered_total: Z,
-                p_charged_total: C,
-                p_part_release_ar: GROUP_PART_STOPPED_AR,
-              }),
-              4_000
-            );
+            const closeRes: any = await closeGroupAtomic(admin, {
+              gid,
+              reason: "deadline_stuck",
+              Z,
+              C,
+              group,
+              partReleaseAr: GROUP_PART_STOPPED_AR,
+            });
 
             if (closeRes === TIMED_OUT || closeRes?.error) {
               continue;
@@ -391,23 +416,14 @@ export async function reconcileJobGroups(
         }
 
         if (reason) {
-          const closeRes: any = await withTimeout(
-            admin.rpc("close_job_group_atomic", {
-              p_group_id: gid,
-              p_reason: reason,
-              p_final_line_ar: groupFinalLineAr({
-                reason: reason as any,
-                Z,
-                X: group.asked_original,
-                Y: group.reachable,
-                C,
-              }),
-              p_delivered_total: Z,
-              p_charged_total: C,
-              p_part_release_ar: reason === "deadline_stuck" ? GROUP_PART_STOPPED_AR : null,
-            }),
-            4_000
-          );
+          const closeRes: any = await closeGroupAtomic(admin, {
+            gid,
+            reason,
+            Z,
+            C,
+            group,
+            partReleaseAr: reason === "deadline_stuck" ? GROUP_PART_STOPPED_AR : null,
+          });
 
           if (closeRes === TIMED_OUT || closeRes?.error) {
             continue;

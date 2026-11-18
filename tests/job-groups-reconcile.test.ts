@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import {
   TICK_BUDGET_MS,
@@ -1793,5 +1794,33 @@ describe("T12: watchdog pass", () => {
     const res = await p;
     expect(res.status).toBe(200);
     expect((await res.json()).groups).toBeNull();
+  });
+});
+
+describe("T13: inertness and recorder", () => {
+  it("(f) the recorder shows no rpc other than claim / freeze_and_settle / release_unfrozen / draw / close from the whole suite of scenarios", async () => {
+    const allowed = new Set([
+      "claim_next_job_group",
+      "freeze_and_settle_group_part_atomic",
+      "release_unfrozen_group_part_atomic",
+      "draw_next_group_part_atomic",
+      "close_job_group_atomic",
+    ]);
+    for (const name of w_all_rpc_names_seen_in_this_file) {
+      expect(allowed.has(name)).toBe(true);
+    }
+  });
+
+  it("source guard: jobGroups.ts never names reserve, accept, settle or release functions directly", () => {
+    const src = readFileSync("src/lib/server/multiProvider/jobGroups.ts", "utf8");
+    expect(src).not.toMatch(
+      /reserve_credits|accept_quote_atomic|accept_group_quote_atomic|settle_job_atomic|release_job_atomic|credit_ledger/
+    );
+    expect([...src.matchAll(/rpc\("([a-z_]+)"/g)].map((m) => m[1]).sort()).toEqual([
+      "claim_next_job_group",
+      "close_job_group_atomic",
+      "draw_next_group_part_atomic",
+      "release_unfrozen_group_part_atomic",
+    ]);
   });
 });
