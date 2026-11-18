@@ -18,13 +18,21 @@ export async function backfillChainFinalLines(admin: any, opts: { nowMs: number 
       if (!Array.isArray(quote.items) || quote.items.length !== 1 || !isChainSlug(quote.items[0]?.capabilitySlug) || isGroupQuoteItems(quote.items)) continue;
       const jobId = `job_quote_${createHash("md5").update(String(quote.id)).digest("hex")}`;
       const { data: job } = await admin.from("jobs").select("id,user_id,status,delivered_units,target_volume_max,updated_at").eq("id", jobId).maybeSingle();
-      if (!job || job.status !== "completed" || !job.updated_at || Date.parse(job.updated_at) > opts.nowMs - 180_000) continue;
-      const { data: events } = await admin.from("job_events").select("message").eq("job_id", job.id);
+      const updatedAt = Date.parse(job?.updated_at);
+      if (!job || job.status !== "completed" || !Number.isFinite(updatedAt) || updatedAt > opts.nowMs - 180_000) continue;
+      let eventsResult: any;
+      try { eventsResult = await admin.from("job_events").select("message").eq("job_id", job.id); }
+      catch { continue; }
+      if (eventsResult?.error) continue;
+      const events = eventsResult?.data;
       if ((events || []).some((event: any) => typeof event.message === "string" && event.message.startsWith("المسلَّم "))) continue;
       const x = Number(job.delivered_units) || 0, n = Number(job.target_volume_max) || 0;
       const count = `المسلَّم ${toArabicDigits(x)} من ${toArabicDigits(n)} مطلوب.`;
-      const stored = await admin.storage.from("partials").download(`final_line/${job.id}.json`);
-      const parsed = !stored.error && stored.data ? JSON.parse(await stored.data.text()) : null;
+      let parsed: any = null;
+      try {
+        const stored = await admin.storage.from("partials").download(`final_line/${job.id}.json`);
+        if (!stored.error && stored.data) parsed = JSON.parse(await stored.data.text());
+      } catch { parsed = null; }
       const valid = parsed?.v === 1 && parsed.deliveredUnits === x && parsed.targetMax === n && typeof parsed.messageAr === "string" && parsed.messageAr.startsWith(count) && checkCustomerText(parsed.messageAr).issues.length === 0;
       const message = valid ? parsed.messageAr : x < n ? `${count} ${NEUTRAL_STOP_REASON_AR}` : count;
       await admin.from("job_events").insert({ job_id: job.id, user_id: job.user_id, message, units: 0, event_type: "info" });
