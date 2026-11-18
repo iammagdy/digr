@@ -55,6 +55,23 @@ const stage = { key: "companies", title_ar: "شركات المقاولات في 
   columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "activity", title_ar: "النشاط" }, { key: "website", title_ar: "الموقع" }, { key: "phone", title_ar: "التليفون", kind: "phone" }, { key: "address", title_ar: "العنوان" }],
   sample_rows: [{ id: "cairobuild.com.eg", name: "Cairo Build", activity: "Construction", website: "cairobuild.com.eg", phone: "+20 2 2222 3333", address: "مدينة نصر، القاهرة" }] };
 
+describe("DT-20261118-03 F2-a: an e-mail column is known by its structure, never by the words of its title (D-0086)", () => {
+  it("a column marked kind work_email, or keyed as an e-mail, is the stage's e-mail column; a title that only says «البريد» or «الإيميل» decides nothing", () => {
+    const steps = buildCompanySteps([company], lister, aidsOf, { email: true });
+    const titled = [{ key: "name", title_ar: "اسم الشركة" }, { key: "contact_line", title_ar: "البريد" }];
+    expect(withContactColumns("companies", titled, steps)).toEqual([...titled, ...EMAIL_COLUMNS]);
+    const marked = [{ key: "name", title_ar: "اسم الشركة" }, { key: "contact_line", title_ar: "التواصل", kind: "work_email" as const }];
+    expect(withContactColumns("companies", marked, steps)).toEqual(marked);
+  });
+  it("the plan gives the company e-mail step when a column is only titled «الإيميل», and not when a column is marked work_email", () => {
+    const titledStage = { ...stage, columns: [...stage.columns, { key: "contact_line", title_ar: "الإيميل" }] };
+    const c = validateAndPricePlan({ summary_ar: "شركات مقاولات في القاهرة.", stages: [titledStage] }, lookup(true));
+    expect(c.ok, JSON.stringify(c)).toBe(true);
+    if (!c.ok) return;
+    expect((c.plan.contact_steps ?? []).filter((s) => s.level === "company").map((s) => s.kind)).toEqual(["email"]);
+  });
+});
+
 describe("DT-20261118-03 F2-a: the plan of «١٠ شركات مقاولات في القاهرة بالإيميل والتليفون»", () => {
   it("a phone-only companies plan gets the company e-mail step by code, and the card says the price includes it", () => {
     const c = validateAndPricePlan({ summary_ar: "شركات مقاولات في القاهرة.", stages: [stage] }, lookup(true));
