@@ -2597,7 +2597,7 @@ describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", (
   it("F2g the 5th failure is an effective release", async () => {
     resetDb({ target: 5 }); db.failCount = 4;
     const fifth = await rpc("record_chunk_failure", { p_job_id: JOB, p_error_message: "boom" });
-    expect(fifth.data).toMatchObject({ success: true, released: true });
+    expect(fifth.data).toEqual({ success: true, failed_permanently: true, attempt_count: 5, released: true, job_id: JOB });   // the SQL shape (20261012162016:252-258): no released_credits, no attempts
     expect(db.jobs[0]).toMatchObject({ status: "failed", charged_credits: 0, error_message: "Exceeded maximum retry attempts (5): boom" });
     expect(db.ledger).toEqual([{ id: `rel_${JOB}`, job_id: JOB, user_id: "user_1", type: "release", delta: 575, by: "record_chunk_failure" }]);
     expect(effectiveReleases()).toBe(1);
