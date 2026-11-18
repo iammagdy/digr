@@ -196,7 +196,7 @@ describe("T7 source guards (DT-20261117-06)", () => {
 
   it("T7 probeStep has no private counter; the L1 loop shares one primary budget; each downstream call has its own fresh 6", () => {
     expect(planner).not.toMatch(/let calls\b/);
-    expect(planner).toContain("probeStep(step, rest, parent, deps, probeBudget, trace)");
+    expect(planner).toContain("probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace)");
     expect(planner).toContain("probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP })");
     expect(planner).toContain("probeStep(step, [webOption], null, deps, { left: MAX_PROBES_PER_STEP })");
     expect(planner).toContain("probeStep(step, [fcOption], null, deps, { left: MAX_PROBES_PER_STEP })");
