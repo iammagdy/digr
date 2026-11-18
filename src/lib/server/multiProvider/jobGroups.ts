@@ -1,3 +1,5 @@
+import { withTimeout, TIMED_OUT, isMissingSchema } from "./jobGroupShared";
+
 export const TICK_BUDGET_MS = 45_000;
 export const MIN_LEFT_FOR_CLAIM_MS = 35_000;
 export const MAX_CLAIMS_PER_TICK = 10;
@@ -23,4 +25,88 @@ export function buildPartItem(firstItem: any, partIndex: number, groupId: string
   };
   delete clone.params.excludeRowKeys;
   return clone;
+}
+
+export async function reconcileJobGroups(
+  admin: any,
+  opts: {
+    nowMs: number;
+    source: "drive" | "watchdog";
+    budgetMs: number;
+    now?: () => number;
+  }
+): Promise<{
+  installed: boolean;
+  claims: number;
+  frozen: number;
+  released: number;
+  drawn: number;
+  closed: number;
+}> {
+  try {
+    const tickDeadline = opts.nowMs + opts.budgetMs;
+    const now = opts.now ?? Date.now;
+    let logged = false;
+
+    if (tickDeadline - now() >= 4_000) {
+      let q: any;
+      try {
+        q = await withTimeout(
+          admin
+            .from("job_groups")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "open")
+            .lt("deadline_at", new Date(opts.nowMs - OVERDUE_AFTER_MS).toISOString()),
+          4_000
+        );
+      } catch (err) {
+        if (isMissingSchema(err)) {
+          return { installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 };
+        }
+        if (!logged) {
+          console.error("[job-groups:overdue-check-failed]", { source: opts.source });
+          logged = true;
+        }
+        q = null;
+      }
+
+      if (q === TIMED_OUT) {
+        if (!logged) {
+          console.error("[job-groups:overdue-check-failed]", { source: opts.source });
+          logged = true;
+        }
+      } else if (q?.error) {
+        if (isMissingSchema(q.error)) {
+          return { installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 };
+        }
+        if (!logged) {
+          console.error("[job-groups:overdue-check-failed]", { source: opts.source });
+          logged = true;
+        }
+      } else if (typeof q?.count === "number" && q.count > 0) {
+        console.error("[job-groups:overdue]", { count: q.count, source: opts.source });
+      }
+    }
+
+    return {
+      installed: true,
+      claims: 0,
+      frozen: 0,
+      released: 0,
+      drawn: 0,
+      closed: 0,
+    };
+  } catch (err) {
+    if (isMissingSchema(err)) {
+      return { installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 };
+    }
+    return {
+      installed: true,
+      claims: 0,
+      frozen: 0,
+      released: 0,
+      drawn: 0,
+      closed: 0,
+    };
+  }
 }
