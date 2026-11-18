@@ -222,7 +222,7 @@ export function groupFinalLineAr(args: { reason: GroupCloseReason; Z: number; X:
     }
     reasonClause = ` السبب: ${R}`;
   }
-  return `المسلَّم ${toArabicDigits(args.Z)} من ${toArabicDigits(args.X)} مطلوب.${reasonClause} الخصم الإجمالي ${pointsAr(args.C, toArabicDigits)}، وحُرِّر باقي الحجز.`;
+  return `المسلَّم ${toArabicDigits(args.Z)} من ${toArabicDigits(args.X)} مطلوب.${reasonClause} الخصم الإجمالي ${pointsAr(args.C, toArabicDigits)}، والباقي حجز مؤقت مُحرَّر.`;
 }
 
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
