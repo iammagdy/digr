@@ -178,7 +178,8 @@ export function buildContactSteps(
       const help = aids?.(kind) ?? {};
       const verifiers = kind === "email" && help.verifiers && help.verifiers.length > 0 ? help.verifiers : undefined;
       const validators = kind === "phone" && help.validators && help.validators.length > 0 ? help.validators : undefined;
-      const company_phone = kind === "phone" && help.company_phone && help.company_phone.length > 0 ? help.company_phone : undefined;
+      // D-0084: a person's phone cell holds the PERSON's number only; the company's number is a column of the company (buildCompanySteps), never a stand-in here
+      const company_phone: FinderInfo[] | undefined = undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
       // what one person is EXPECTED to cost (the price): the chain of finders by measured hit rates, then for an e-mail the verifier for those an address was found for, for a phone the company-phone search for those no personal number was found for (one search per company: an upper bound) and
       // the validator every phone goes through. What one person may cost AT MOST (the cap): every finder of the chain, the verifier or the company-phone search and the validator, each at its full price.
