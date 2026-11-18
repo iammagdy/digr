@@ -44,4 +44,19 @@ describe("DT-05 PR-3 group texts", () => {
     expect(checkCustomerText(expected).issues).toEqual([]);
   });
   it("a delivered-in-full request has no reason clause", () => { expect(copy.groupFinalLineAr({ reason: "all_parts_done", Z: 120, X: 120, Y: 120, C: 1200 })).not.toContain("السبب"); });
+
+  const PROVIDER = /treg|tomba|icypeas|firecrawl|context\.?dev|hunter|apollo|blitz|aviato|enrichlayer|serp|reoon/i;
+  const S5_ARGS = [{ reason: "all_parts_done", Z: 120, X: 120, Y: 120, C: 1200 }, { reason: "all_parts_done", Z: 1600, X: 2000, Y: 1600, C: 6000 }, { reason: "all_parts_done", Z: 100, X: 120, Y: 120, C: 1000 }, { reason: "deadline", Z: 40, X: 120, Y: 120, C: 400 }, { reason: "deadline_stuck", Z: 40, X: 120, Y: 120, C: 400 }, { reason: "empty_parts", Z: 40, X: 120, Y: 120, C: 400 }, { reason: "part_unfrozen", Z: 40, X: 120, Y: 120, C: 0 }] as const;
+  const NEW_TEXTS: string[] = [copy.NEUTRAL_STOP_REASON_AR, copy.GROUP_UNAVAILABLE_AR, copy.GROUP_OPERATOR_CLOSE_AR, copy.GROUP_PART_STOPPED_AR, copy.GROUP_PART_FILE_PENDING_AR, copy.GROUP_PART_FILE_UNAVAILABLE_AR, copy.GROUP_PARTS_TITLE_AR, copy.GROUP_PARTS_UNAVAILABLE_AR, copy.GROUP_PART_UNFROZEN_RELEASED_AR, copy.GROUP_CLOSING_NOTICE_AR, copy.splitCardLineAr({ parts: 3, perPart: 40, reachable: 120, askedOriginal: 120, hold: 1200 }), copy.splitCardLineAr({ parts: 40, perPart: 40, reachable: 1600, askedOriginal: 2000, hold: 6000 }), copy.groupStartLineAr({ hold: 1200, parts: 3 }), copy.groupDrawLineAr({ k: 2, K: 3, Z: 40, Y: 120 }), copy.groupPartLinkAr(2, 3), ...S5_ARGS.map((a) => copy.groupFinalLineAr(a))];
+  it("every group text is in ALL_CUSTOMER_STRINGS, passes the customer-text guard and names no provider", () => {
+    const all = copy.ALL_CUSTOMER_STRINGS();
+    for (const t of NEW_TEXTS) { expect(all).toContain(t); expect(checkCustomerText(t).issues, t).toEqual([]); expect(t).not.toMatch(PROVIDER); }
+  });
+  it("no new group text contains «زر» (there is no button in this feature)", () => {
+    expect(NEW_TEXTS.length).toBe(22);
+    for (const t of NEW_TEXTS) expect(t).not.toContain("زر");
+  });
+  it("S3 is not exported: the group/split exports are exactly the plan's list", () => {
+    expect(Object.keys(copy).filter((k) => /group|split/i.test(k)).sort()).toEqual(["GROUP_CLOSING_NOTICE_AR", "GROUP_OPERATOR_CLOSE_AR", "GROUP_PARTS_TITLE_AR", "GROUP_PARTS_UNAVAILABLE_AR", "GROUP_PART_FILE_PENDING_AR", "GROUP_PART_FILE_UNAVAILABLE_AR", "GROUP_PART_STOPPED_AR", "GROUP_PART_UNFROZEN_RELEASED_AR", "GROUP_UNAVAILABLE_AR", "groupDrawLineAr", "groupFinalLineAr", "groupPartLinkAr", "groupStartLineAr", "splitCardLineAr"]);
+  });
 });
