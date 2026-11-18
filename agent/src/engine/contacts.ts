@@ -80,6 +80,27 @@ export const contactSrcKey = (column: string): string => `_src_${column}`;
 export const contactCallKey = (column: string): string => `_call_${column}`;
 const provenanceOf = (column: string, endpointId: string, callId: string): Record<string, string> => ({ [contactSrcKey(column)]: endpointId, [contactCallKey(column)]: callId });
 
+/** An internal file of the mission (the admin and the team read it): a write that fails is LOGGED, never swallowed (QA #575 FAIL 3), and never ends the step. */
+async function putInternalFile(deps: Pick<ContactDeps, "store" | "missionId" | "log">, relPath: string, body: unknown): Promise<void> {
+  try { await deps.store.putFile(deps.missionId, relPath, JSON.stringify(body), "application/json"); }
+  catch (e) { (deps.log ?? console.warn)(`contact_file_write_failed ${deps.missionId} ${relPath} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
+}
+
+/**
+ * THE ATTEMPTS FILE OF A STEP, contacts/attempts_<stage>_<kind>.json (DT-20261118-05 item 3): what every finder answered, the people, why the run stopped and, when it stopped, how many people it never reached. A RESUMED run ADDS its outcomes to
+ * the file a run before it wrote: its people already have their final cells, so it asks nobody and must not erase why they are empty (Gate 2 P2).
+ */
+async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_key" | "kind">, now: { outcomes: ReadonlyMap<string, number>; people: number; reached: number; stopped: string | null }): Promise<void> {
+  const relPath = `contacts/attempts_${step.stage_key}_${step.kind}.json`;
+  let before: unknown = null;
+  try { before = JSON.parse((await deps.store.getFile(deps.missionId, relPath)) ?? "null"); } catch (e) { (deps.log ?? console.warn)(`contact_file_read_failed ${deps.missionId} ${relPath} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
+  const outcomes: Record<string, number> = {};
+  const prior = (before as { outcomes?: unknown } | null)?.outcomes;
+  if (prior !== null && typeof prior === "object") for (const [k, n] of Object.entries(prior as Record<string, unknown>)) if (typeof n === "number" && Number.isFinite(n)) outcomes[k] = n;
+  for (const [k, n] of now.outcomes) outcomes[k] = (outcomes[k] ?? 0) + n;
+  await putInternalFile(deps, relPath, { outcomes, people: now.people, stopped: now.stopped, ...(now.stopped !== null ? { not_reached: Math.max(0, now.people - now.reached) } : {}) });
+}
+
 /**
  * ONE PASS PER PEOPLE STAGE, DECISION MAKERS FIRST: the people are taken in the order of their titles (roles.ts) and EACH person gets every step of the plan (the e-mail with its verifier, then the phone with its validator) before the next person is looked at. When the money or the
  * time ends, the chief executive and the general manager have all their cells and the ones left without are the people of the lowest titles. Each step keeps its own spend against its own priced cap; the job budget is shared and ends everything at once.
@@ -100,12 +121,16 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
   const steps = [...(plan.contact_steps ?? [])].filter((x) => x.level === undefined).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
   // THE COMPANY'S OWN E-MAIL AND HQ PHONE FIRST (the owner's top priority, reference A columns 5 and 6): before the people's steps spend any of the job's budget
   const companySteps = (plan.contact_steps ?? []).filter((x) => x.level === "company");
+  const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
+  // A PEOPLE STEP THE RUN NEVER REACHED still writes its attempts file, with the reason (QA #575 FAIL 3: a stop in the company stage left no file)
+  const notReached = async (keys: ReadonlyArray<string>, stop: ContactStop): Promise<void> => {
+    for (const step of steps.filter((x) => keys.includes(x.stage_key))) await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+  };
   for (const stageKey of [...new Set(companySteps.map((x) => x.stage_key))]) {
     const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out);
-    if (stopped) { out.stopped = stopped; return out; }
+    if (stopped) { out.stopped = stopped; await notReached(stageKeys, stopped); return out; }
   }
-  const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
-  for (const stageKey of stageKeys) {
+  for (const [i, stageKey] of stageKeys.entries()) {
     const stage = plan.stages.find((s) => s.key === stageKey);
     if (!stage) continue;
     const rows = items.acceptedRows(stageKey);
@@ -118,10 +143,11 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
     try {
       outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row); if (stopped) break outer; }
     } finally {
-      for (const runner of runners) await runner.finish();
+      // the group's stop is every step's stop (Gate 2 P2: only the runner that saw it said why)
+      for (const runner of runners) await runner.finish(stopped);
       out.spentUsd += deps.budget.spentUsd() - groupStart;
     }
-    if (stopped) { out.stopped = stopped; break; }
+    if (stopped) { out.stopped = stopped; await notReached(stageKeys.slice(i + 1), stopped); break; }
   }
   return out;
 }
@@ -337,12 +363,14 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
   return { attempt, down };
 }
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
   // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
   const outcomes = new Map<string, number>();
   let stoppedBy: string | null = null;
+  // the people this step was run for (the rest, when the run stopped, are counted as never reached)
+  let reached = 0;
   // THE COMPANY MAILBOX, BY STRUCTURE (DT-20261118-03 PR-3, D-0086): an address that is on the person's company row, or that 2+ people of the same company share, is the company's, never one person's
   const addressOf = (v: unknown): string => String(v ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -414,6 +442,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   };
   return {
     async process(row: Row): Promise<ContactStop | null> {
+      reached += 1;
       let stopRun: ContactStop | null = null;
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
@@ -525,7 +554,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       if (pending.length >= COMMIT_EVERY) await flush();
       return stopRun;
     },
-    async finish(): Promise<void> {
+    async finish(stop: ContactStop | null = null): Promise<void> {
       // one address held by 2+ people of the same company is the company's, nobody's own: cleared from every one of them
       // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
       await flush();
@@ -545,8 +574,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       await flush();
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
       // EVERY RUN writes it (DT-20261118-05 item 3), also when nobody could be asked: the next live run proves why a cell is empty
-      await deps.store.putFile(deps.missionId, `contacts/attempts_${step.stage_key}_${step.kind}.json`, JSON.stringify({ outcomes: Object.fromEntries(outcomes), people: peopleCount, stopped: stoppedBy }), "application/json").catch(() => undefined);
-      if (notTried.size > 0) await deps.store.putFile(deps.missionId, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, JSON.stringify(Object.fromEntries(notTried)), "application/json").catch(() => undefined);
+      await writeAttempts(deps, step, { outcomes, people: peopleCount, reached, stopped: stoppedBy ?? stop });
+      if (notTried.size > 0) await putInternalFile(deps, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, Object.fromEntries(notTried));
       await items.mirror(step.stage_key);
       try {
         await deps.addEvent({ kind: "progress", message_ar: `بحث ${STEP_LABEL_AR[step.kind]} لصناع القرار: وُجد لـ ${toArabicDigits(found)} من ${toArabicDigits(peopleCount)}.`, counts: { saved: found, planned: peopleCount } });
