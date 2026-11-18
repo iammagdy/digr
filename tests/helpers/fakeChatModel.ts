@@ -16,7 +16,7 @@ const REPLIES: Record<string, string> = {
 
 export interface FakeModelOptions {
   /** Overrides the type the fake gives to a message (a model that is wrong or unsure). */
-  override?: (text: string) => Partial<{ type: string; reply: string; count: number | null; reason: string }> | "fail" | "garbage" | undefined;
+  override?: (text: string) => Partial<{ type: string; reply: string; count: number | null; count_text: string | null; reason: string }> | "fail" | "garbage" | undefined;
 }
 
 export interface FakeChatModel { call: ChatModelCall; calls: ChatModelInput[] }
@@ -41,7 +41,7 @@ export function fakeChatModel(entries: CorpusEntry[] = CORPUS, options: FakeMode
     const hasOpen = /OPEN_REQUEST: (?!none)/.test(input.system);
     const reply = o?.reply ?? (type === "data_request" || (type === "edit_of_open_request" && hasOpen) ? "" : REPLIES[type] ?? "");
     const count = o && "count" in o ? o.count ?? null : entry?.count ?? null;
-    return { ok: true, text: JSON.stringify({ type, reason: o?.reason ?? "corpus", reply, count }), usage: { inputTokens: 900, outputTokens: 120 } };
+    return { ok: true, text: JSON.stringify({ type, reason: o?.reason ?? "corpus", reply, count, ...(o && "count_text" in o ? { count_text: o.count_text } : {}) }), usage: { inputTokens: 900, outputTokens: 120 } };
   };
   return { call, calls };
 }
