@@ -2,6 +2,24 @@ import { createHash } from "node:crypto";
 import { dedupeIdentityFor } from "../rowDedupe";
 import { TIMED_OUT, withTimeout, frozenPathFor } from "./jobGroupShared";
 
+async function downloadWithin(
+  call: PromiseLike<{ data: any; error: any }>,
+  ms: number
+): Promise<{ data: Buffer | null; error: any } | typeof TIMED_OUT> {
+  return withTimeout(
+    (async () => {
+      const res = await call;
+      if (res.error || !res.data) {
+        return { data: null, error: res.error ?? null };
+      }
+      const raw = res.data;
+      const buf: Buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(await raw.arrayBuffer());
+      return { data: buf, error: null };
+    })(),
+    ms
+  );
+}
+
 export const FREEZE_BUDGET_MS = 30_000;
 export const FREEZE_IO_TIMEOUT_MS = 5_000;
 export const FREEZE_RPC_TIMEOUT_MS = 4_000;
@@ -46,7 +64,7 @@ export async function freezeGroupPart(
     const candidate = candidates[index];
     let downloadResult: any;
     try {
-      downloadResult = await withTimeout(
+      downloadResult = await downloadWithin(
         admin.storage.from(candidate.bucket).download(candidate.path),
         FREEZE_IO_TIMEOUT_MS
       );
@@ -74,12 +92,7 @@ export async function freezeGroupPart(
       return "retry";
     }
 
-    let bytes: Buffer;
-    try {
-      bytes = Buffer.isBuffer(data) ? data : Buffer.from(await data.arrayBuffer());
-    } catch {
-      return "retry";
-    }
+    const bytes: Buffer = data;
 
     let parsed: any;
     try {
