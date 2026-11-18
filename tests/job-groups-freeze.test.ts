@@ -49,7 +49,7 @@ function makeWorld(): {
           if (readFails.has(path)) {
             resolve({ data: null, error: { message: "upstream error", statusCode: "500" } });
           } else if (partials.has(path)) {
-            resolve({ data: new Blob([partials.get(path)!]), error: null });
+            resolve({ data: new Blob([partials.get(path)! as any]), error: null });
           } else {
             resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
           }
@@ -77,7 +77,7 @@ function makeWorld(): {
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (results.has(path)) {
-            resolve({ data: new Blob([results.get(path)!]), error: null });
+            resolve({ data: new Blob([results.get(path)! as any]), error: null });
           } else {
             resolve({ data: null, error: { message: "Object not found", statusCode: "404" } });
           }
@@ -197,5 +197,67 @@ describe("jobGroupFreeze", () => {
       { bucket: "partials", path: "u1/job_p1/data.json" },
       { bucket: "partials", path: "job_p1/data.json" },
     ]);
+  });
+
+  it("(e) UNKNOWN FIRST: candidate 1 times out ⇒ retry, no upload, candidate 2 never read", async () => {
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(10)));
+    w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
+    w.readLatency.set("u1/job_p1/data.json", 5_100);
+    expect(await runFreeze(w)).toBe("retry");
+    expect(w.reads).toEqual(["u1/job_p1/data.json"]);
+    expect(w.results.size).toBe(0);
+  });
+  it("a candidate with 9 rows is skipped with a warning and the second one is taken (read order: first, then second)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
+    w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
+    await runFreeze(w); // still "retry" at this task (no upload yet)
+    expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
+    expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 0 });
+  });
+  it.each([
+    ["both absent", (w: any) => {}],
+    [
+      "both malformed",
+      (w: any) => {
+        w.partials.set("u1/job_p1/data.json", Buffer.from("not json"));
+        w.partials.set("job_p1/data.json", Buffer.from('{"rows":5}'));
+      },
+    ],
+    [
+      "rows differ from delivered",
+      (w: any) => {
+        w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
+        w.partials.set("job_p1/data.json", bytesOf(rowsOf(11)));
+      },
+    ],
+    [
+      "a row without identity (an empty object: no id, no site, no name)",
+      (w: any) => {
+        w.partials.set("u1/job_p1/data.json", bytesOf([...rowsOf(9), {}]));
+        w.partials.set("job_p1/data.json", bytesOf([...rowsOf(9), {}]));
+      },
+    ],
+    [
+      "duplicate identity",
+      (w: any) => {
+        const r = rowsOf(9);
+        w.partials.set("u1/job_p1/data.json", bytesOf([...r, r[0]]));
+        w.partials.set("job_p1/data.json", bytesOf([...r, r[0]]));
+      },
+    ],
+  ])("(g) UNFREEZABLE: %s", async (_n, setup) => {
+    const w = makeWorld();
+    setup(w);
+    expect(await runFreeze(w)).toBe("unfreezable");
+    expect(w.results.size).toBe(0);
+    expect(w.f5.calls).toEqual([]);
+  });
+  it("(g) delivered_units 0 ⇒ unfreezable, no reads", async () => {
+    const w = makeWorld();
+    expect(await runFreeze(w, { job: { id: jobId, user_id: uid, delivered_units: 0 } })).toBe("unfreezable");
+    expect(w.reads).toEqual([]);
   });
 });
