@@ -22,5 +22,5 @@ export function durationAr(seconds: number | null | undefined): string {
   return rest === 0 ? minutesText : `${minutesText} و${formatAr(rest)} ${secondWord}`;
 }
 
-export const RANGE_LABEL_AR = { today: "اليوم", "7d": "آخر ٧ أيام", all: "الكل" } as const;
+export const RANGE_LABEL_AR = { today: "اليوم", "7d": "آخر ٧ أيام", "14d": "آخر ١٤ يومًا", all: "الكل" } as const;
 export const percentAr = (part: number, whole: number): string => (whole > 0 ? `${formatAr(Math.round((part / whole) * 1000) / 10, 1)}٪` : "—");

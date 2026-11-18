@@ -23,6 +23,11 @@ export const FAILED_RECENT_MS = 24 * 60 * 60 * 1000;
 export const OVERVIEW_ROW_CAP = 5000;
 export const OVERVIEW_COLUMNS = `id,status,delivered_units,reserved_points,charged_points,plan_public,lease_until,created_at,updated_at,${ADDON_MARKER_COLUMN}`;
 const DAY_MS = 86_400_000;
+/**
+ * The JSON path of the add-on marker for a COUNT (no rows come back, so withoutAddonRows cannot run): `.is(ADDON_PLAN_PATH, null)` keeps the rows whose `plan` has no `addon` key.
+ * A key present with a JSON null is not SQL NULL, so it is left out, like hasAddonMarker does (addonMarker.ts).
+ */
+export const ADDON_PLAN_PATH = "plan->addon";
 
 export interface OverviewMissionRow {
   id: string;
