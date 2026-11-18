@@ -18,11 +18,11 @@ const columns = [{ key: "full_name", title_ar: "الاسم" }, { key: "job_title
 const person = (i: number, title: string) => ({ id: `p${i}`, parent_id: "c1", full_name: `Person${i} Name${i}`, job_title: title, linkedin: `https://www.linkedin.com/in/person${i}`, email: "", phone: "" });
 const PEOPLE = [person(1, "Site Engineer"), person(2, "Chief Executive Officer"), person(3, "Accountant"), person(4, "General Manager"), person(5, "Technician")];
 
-async function world(opts: { answers: (endpoint: string, params: Record<string, unknown>) => unknown | "refuse" | "fail"; steps?: ContactStep[]; ceilingUsd?: number; people?: typeof PEOPLE }) {
+async function world(opts: { answers: (endpoint: string, params: Record<string, unknown>) => unknown | "refuse" | "fail"; steps?: ContactStep[]; ceilingUsd?: number; people?: Array<ReturnType<typeof person> & Record<string, unknown>>; companyEmail?: string }) {
   const store = createMemoryStore();
   const items = await ItemStore.open(store, MISSION);
   await items.commit([
-    { t: "item", stage: "companies", id: "c1", state: "accepted", by: "rule", row: { id: "c1", name: "Orascom EM", website: "https://www.orascom-em.com.eg/home" } },
+    { t: "item", stage: "companies", id: "c1", state: "accepted", by: "rule", row: { id: "c1", name: "Orascom EM", website: "https://www.orascom-em.com.eg/home", ...(opts.companyEmail ? { company_email: opts.companyEmail } : {}) } },
     ...(opts.people ?? PEOPLE).map((p) => ({ t: "item" as const, stage: "people", id: p.id, state: "accepted" as const, by: "rule" as const, row: { ...p } })),
   ]);
   const steps: ContactStep[] = opts.steps ?? [
@@ -101,14 +101,27 @@ describe("the engine fills the cells of the people it delivered", () => {
     expect(cellsOf(w.items, "p5")).toMatchObject({ email: "", email_status: "", phone: "", phone_status: "" });
     expect(w.items.acceptedRows("people").length).toBe(5);
   });
-  it("DT-20261118-03 F1-d: the company's own role mailbox (info@ on the person's company domain) is never a person's e-mail; the next finder is asked", async () => {
-    const w = await world({ people: [person(1, "General Manager")], steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }], answers: (ep) => (ep === EMAIL_A.id ? { email: "info@orascom-em.com.eg" } : ep === EMAIL_B.id ? { email: "ahmed@orascom-em.com.eg" } : null) });
+  // DT-20261118-03 PR-3, rewritten STRUCTURALLY (Megz D-0086: no word list): an address is the company's mailbox when it equals an address of the person's company row, or when 2+ people of the same company share it
+  const EMAIL_ONLY = (per = 0.02): ContactStep[] => [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: per, finders: [EMAIL_A, EMAIL_B] }];
+  it("DT-20261118-03 PR-3: the company row's own address found for a person is withheld; the next finder is asked", async () => {
+    const w = await world({ companyEmail: "info@orascom-em.com.eg", people: [person(1, "General Manager")], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "info@orascom-em.com.eg" } : ep === EMAIL_B.id ? { email: "ahmed@orascom-em.com.eg" } : null) });
     await w.run();
     expect(cellsOf(w.items, "p1")).toMatchObject({ email: "ahmed@orascom-em.com.eg", email_status: "غير موثّق" });
     expect(w.calls.map((c) => c.endpoint)).toEqual([EMAIL_A.id, EMAIL_B.id]);
   });
-  it("DT-20261118-03 F1-d: a General Manager row keeps gm@<domain> (not withheld as a generic mailbox)", async () => {
-    const w = await world({ people: [person(1, "General Manager")], steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }], answers: (ep) => (ep === EMAIL_A.id ? { email: "gm@orascom-em.com.eg" } : null) });
+  it("DT-20261118-03 PR-3 (QA FAIL #571): an address the people source already gave that is the company's own is cleared and the finders are asked, whatever its status", async () => {
+    const w = await world({ companyEmail: "info@orascom-em.com.eg", people: [{ ...person(1, "General Manager"), email: "info@orascom-em.com.eg", email_status: "موثّق" }], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "ahmed@orascom-em.com.eg" } : null) });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "ahmed@orascom-em.com.eg", email_status: "غير موثّق" });
+  });
+  it("DT-20261118-03 PR-3: one address found for two people of the same company is nobody's own: both cells stay empty", async () => {
+    const w = await world({ people: [person(1, "General Manager"), person(2, "Chief Executive Officer")], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "sales@orascom-em.com.eg" } : null) });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "", email_status: "" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: "", email_status: "" });
+  });
+  it("DT-20261118-03 PR-3: a person's own role-like address (gm@, sales@) that only they have and that is not the company row's is kept: no word decides", async () => {
+    const w = await world({ companyEmail: "info@orascom-em.com.eg", people: [person(1, "General Manager")], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "gm@orascom-em.com.eg" } : null) });
     await w.run();
     expect(cellsOf(w.items, "p1")).toMatchObject({ email: "gm@orascom-em.com.eg", email_status: "غير موثّق" });
     expect(w.calls.map((c) => c.endpoint)).toEqual([EMAIL_A.id]);
