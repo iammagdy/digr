@@ -627,7 +627,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
   }
-  type Outcome = { committed: number; settles: number; releases: number; charge: number; rows: number; releaseText: string | null };
+  type Outcome = { committed: number; settles: number; releases: number; effective: number; net: number; answers: Array<boolean | undefined>; charge: number | undefined; rows: number; releaseText: string | null };
   async function ptOutcome(): Promise<Outcome> {
     const buf = db.results.get(`user_1/${JOB}/result.xlsx`);
     let rows = 0;
@@ -636,15 +636,14 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       await wb.xlsx.load(buf as any);
       rows = Math.max(0, wb.worksheets[0].rowCount - 1);
     }
-    const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
-    const lastRel = relCalls.length > 0 ? relCalls[relCalls.length - 1] : null;
     return {
       committed: db.deliveredUnits,
       settles: rpcCount("settle_job_atomic"),
       releases: rpcCount("release_job_atomic"),
-      charge: db.jobs[0].charged_credits ?? 0,
+      effective: effectiveReleases(), net: netDebit(), answers: releaseAnswers().map((a: any) => a.already_released),
+      charge: db.jobs[0].charged_credits,
       rows,
-      releaseText: lastRel ? lastRel.args.p_error_message ?? null : null,
+      releaseText: db.jobs[0].error_message ?? null,
     };
   }
   async function sweepAfter31Minutes(): Promise<void> {
@@ -2094,7 +2093,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       await afterRun?.();
     }
     expect(out.chain.rows).toBeGreaterThanOrEqual(out.main.rows);                       // (i) chain delivers at least what main delivers
-    expect(out.chain.releases > 0 && out.main.settles > 0).toBe(false);               // (ii) chain never releases where main settles
+    expect((out.chain.releases > 0 || out.chain.effective > 0) && out.main.settles > 0).toBe(false);               // (ii) chain never releases where main settles
     for (const mode of ["main", "chain"] as const) expect(out[mode].charge).toBe(out[mode].settles ? Math.ceil(out[mode].rows * 100) : 0);   // (iii) unit price 100 of prepareJob
     if (identical) { expect(out.chain).toEqual(out.main); expect(out.main.committed).toBeGreaterThan(0); }   // (iv) R2 and R4 identical, and units WERE committed (the rows are lost, not never delivered)
   });
