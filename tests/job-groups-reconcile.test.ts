@@ -1758,6 +1758,24 @@ describe("T10: fairness through F4", () => {
     expect(w.claimedIds.indexOf("grp_closable") + 1).toBe(1);
   });
 
+  it("(j2) STARVATION BOUND FOR REAL: 25 never-attempted groups whose draw times out and a closable group attempted 40 s ago (it sorts after them) ⇒ each of the 25 is claimed once and its draw attempted once, the closable group is exactly the 26th claim and closes (the plan row's bound of 26 claims, met with equality)", async () => {
+    const w = makeWorld();
+    w.manyGroups({ stuckDrawers: 25, closable: 1 });
+    w.group("grp_closable").last_attempt_at = new Date(NOW0 - 40_000).toISOString();
+    w.latency.draw = 5_000;
+    for (let i = 0; i < 40 && w.group("grp_closable").status !== "closed"; i++) {
+      await run(w);
+      vi.advanceTimersByTime(31_000);
+    }
+    expect(w.group("grp_closable").status).toBe("closed");
+    expect(w.claimedIds.indexOf("grp_closable") + 1).toBe(26);
+    expect(new Set(w.claimedIds.slice(0, 25)).size).toBe(25);
+    expect(w.claimedIds.slice(0, 25).every((id) => id.startsWith("grp_stuck_"))).toBe(true);
+    const drawn = w.rpcCalls.filter((c) => c.name === "draw_next_group_part_atomic").map((c) => c.args.p_group_id);
+    for (let i = 1; i <= 25; i++) expect(drawn).toContain(`grp_stuck_${i}`);
+    expect(w.rpcCalls.filter((c) => c.name === "close_job_group_atomic").length).toBe(1);
+  });
+
   it("(j) 30 groups with a running part and 1 closable ⇒ the closable group is closed at the first claim", async () => {
     const w = makeWorld();
     w.manyGroups({ runningParts: 30, closable: 1 });
