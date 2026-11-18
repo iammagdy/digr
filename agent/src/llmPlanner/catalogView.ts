@@ -166,10 +166,14 @@ export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
  * WHAT THE CATALOG CAN DO FOR THE PEOPLE OF A COMPANY, from its own structure (DT-20261118-05 RCA2): the capabilities whose items are the people of a company, and whether e-mail and phone finders for a person exist. The planner is told, so a request for the staff, managers or owners
  * of companies, with their e-mails or phones, is planned as a child step of the companies and never answered «no source gives it» while the catalog has them. Nothing here reads the customer's words.
  */
+/** The people-of-company capabilities this account may use (empty: the catalog cannot give the people of a company). */
+export function peopleOfCompanyCapabilitiesOf(catalog: TregCatalog, access: AccountAccess | null): string[] {
+  return [...new Set(catalog.endpoints.filter((e) => usableEndpoint(e, catalog, access)).map(capabilityOf).filter((c) => PEOPLE_OF_COMPANY_CAPABILITIES.has(c)))].sort();
+}
 export function peopleOfCompanyHint(catalog: TregCatalog, access: AccountAccess | null): string {
   const usable = catalog.endpoints.filter((e) => usableEndpoint(e, catalog, access));
-  const people = [...new Set(usable.map(capabilityOf).filter((c) => PEOPLE_OF_COMPANY_CAPABILITIES.has(c)))].sort();
+  const people = peopleOfCompanyCapabilitiesOf(catalog, access);
   if (people.length === 0) return "";
   const has = (caps: ReadonlySet<string>): boolean => usable.some((e) => e.capability !== undefined && e.capability !== null && caps.has(e.capability));
-  return `PEOPLE OF COMPANIES (from this catalog): the items of these capabilities are the people who work at a company: ${people.join(", ")}. When the customer asks for the people of companies (their staff, managers, owners or decision makers, in any words), plan a child step of the companies step with one of them, deliver true. The system then looks up each person's own e-mail${has(EMAIL_FINDER_CAPABILITIES) ? " (e-mail finders exist)" : ""} and phone${has(PHONE_CAPABILITIES) ? " (phone finders exist)" : ""} by itself: never write that these people or their e-mails or phones are unavailable while this line is here.`;
+  return `PEOPLE OF COMPANIES (from this catalog): the items of these capabilities are the people who work at a company: ${people.join(", ")}. When the customer asks for the people of companies (their staff, managers, owners or decision makers, in any words), plan a child step of the companies step with one of them, deliver true, and answer people_of_companies. The system then looks up each person's own e-mail${has(EMAIL_FINDER_CAPABILITIES) ? " (e-mail finders exist)" : ""} and phone${has(PHONE_CAPABILITIES) ? " (phone finders exist)" : ""} by itself: never write that these people or their e-mails or phones are unavailable while this line is here.`;
 }

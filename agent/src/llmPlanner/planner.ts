@@ -7,6 +7,7 @@ import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
+import { peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -71,7 +72,7 @@ export interface UnderstoodStep {
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
 }
 export interface Understanding {
-  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; steps: UnderstoodStep[];
+  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; steps: UnderstoodStep[];
 }
 
 export type LlmPlanResult =
@@ -172,7 +173,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
   if (!isObj(u)) return { ok: false, error: "the answer is not an object" };
   const decision = u.decision === "ask" || u.decision === "cannot" ? u.decision : "plan";
   const understanding_ar = str(u.understanding_ar);
-  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true, ...(u.accepts_available === true ? { accepts_available: true } : {}) } as Understanding;
+  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true, ...(u.accepts_available === true ? { accepts_available: true } : {}), ...(peopleOfCompaniesAskOf(u.people_of_companies).asked ? { people_of_companies: peopleOfCompaniesAskOf(u.people_of_companies) } : {}) } as Understanding;
   if (decision === "ask") {
     const q = str(u.question_ar);
     if (!q) return { ok: false, error: "decision ask needs question_ar" };
@@ -482,7 +483,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80)).filter((o): o is string => o !== null), understanding: u, costUsd };
-  if (u.decision === "cannot") return { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
+  // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
+  if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
   await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");

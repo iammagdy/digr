@@ -4,12 +4,12 @@ import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
 import { RAW_PATH, type Gateway, type GatewayCallResult } from "../gateway";
 import type { WebGateway } from "../webGateway";
 import { webRequestOf } from "../engine/sourceGateway";
-import { directWebEndpoints } from "./catalogView";
+import { directWebEndpoints, peopleOfCompanyCapabilitiesOf } from "./catalogView";
 import type { AgentStore, MissionRecord } from "../types";
 import type { StoredCustomerWords } from "../../../src/lib/agentMission/customerWords";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
-import { planWithLlm, type LlmPlanResult, type PlannerModel } from "./planner";
+import { planWithLlm, type LlmPlanResult, type PlannerModel, type Understanding } from "./planner";
 
 /**
  * THE LLM PLANNER INSIDE THE WORKER: the model, the customer's words and the question it asked, and which requests it plans. The switch is `llm_planner_v1` (src/lib/agentMission/llmPlannerFlag.ts).
@@ -25,7 +25,13 @@ export const LLM_PLANNER_STATE_FILE = "state/llm_planner.json";
  */
 export const B2B_PLATFORMS: ReadonlySet<string> = new Set(["companies", "people"]);
 /** Company and people research goes on to its own path: a step on a B2B platform key OR a step whose tool is a people-of-company capability (the catalog files those under «linkedin» too). */
-export const handsOverToB2B = (u: { steps: ReadonlyArray<{ platform: string; capability?: string | null }> }): boolean => u.steps.some((s) => B2B_PLATFORMS.has(s.platform) || isPeopleOfCompanyStep(s));
+export const handsOverToB2B = (u: { steps: ReadonlyArray<{ platform: string; capability?: string | null }>; people_of_companies?: { asked: boolean } | null }, catalogHasPeople = false): boolean =>
+  u.steps.some((s) => B2B_PLATFORMS.has(s.platform) || isPeopleOfCompanyStep(s)) || (catalogHasPeople && u.people_of_companies?.asked === true);
+/** Whether the planner plans what the model understood: not a company-and-people request, and not a request whose required answer says the people of the companies were asked while this catalog can give them (DT-20261118-08: code acts on the answer even when the model wrote no people step). */
+export function acceptOf(catalog: TregCatalog, access: AccountAccess | null): (u: Understanding) => boolean {
+  const catalogHasPeople = peopleOfCompanyCapabilitiesOf(catalog, access).length > 0;
+  return (u) => !handsOverToB2B(u, catalogHasPeople);
+}
 
 interface PlannerState { asked: Array<{ question_ar: string; answer: string | null; scout?: boolean }> }
 
@@ -94,7 +100,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       pricingSettings: input.pricingSettings,
       today: cairoDayOf(input.now),
       onProgress: async (lineAr) => { await store.addEvent(mission.id, { kind: "progress", message_ar: lineAr }); },
-      accept: (u) => !handsOverToB2B(u),
+      accept: acceptOf(input.catalog, input.access),
       ...(input.log ? { log: input.log } : {}),
     },
   );

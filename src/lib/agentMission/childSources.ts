@@ -84,13 +84,31 @@ export function asksPeopleOfCompanies(steps: ReadonlyArray<{ key: string; parent
 /** The same structure with its facts, as the planning model wrote them (its own titles and the count per company it read, never a word list): what the plan check needs to treat the people of the companies as a step. */
 /** A step is the PEOPLE of another step's items by what its tool IS (a people-of-company capability of the catalog), whatever platform key the model gave it (the catalog files these tools under «companies», «people» and «linkedin»). */
 export const isPeopleOfCompanyStep = (s: { platform: string; capability?: string | null }): boolean => s.platform === PEOPLE_PLATFORM || (typeof s.capability === "string" && PEOPLE_OF_COMPANY_CAPABILITIES.has(s.capability));
-export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>): { noun_ar: string; parent_ar: string; per_parent: number | null } | null {
+/**
+ * WHAT THE CUSTOMER ASKED ABOUT THE PEOPLE OF THE COMPANIES, as the planning model answered it in its REQUIRED `people_of_companies` field (DT-20261118-08): whether they were asked, the people as
+ * the customer named them, the count per company the model read (digits, the dual or words; 0 = none given) and the person contacts asked. Code acts on this answer even when the model wrote no
+ * people step (live after #575: «شركتين مقاولات … ومسؤولي الإدارة فيهم بأرقامهم الشخصية» got no people step). Code never reads the customer's words for it.
+ */
+export interface PeopleOfCompaniesAsk { asked: boolean; title_ar: string; per_company: number | null; contact_kinds: Array<"email" | "phone"> }
+export function peopleOfCompaniesAskOf(raw: unknown): PeopleOfCompaniesAsk {
+  const o = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const per = typeof o.per_company === "number" && Number.isInteger(o.per_company) && o.per_company > 0 ? o.per_company : null;
+  const kinds = Array.isArray(o.contact_kinds) ? [...new Set(o.contact_kinds.filter((k): k is "email" | "phone" => k === "email" || k === "phone"))] : [];
+  return { asked: o.asked === true, title_ar: typeof o.title_ar === "string" ? o.title_ar.trim().slice(0, 60) : "", per_company: per, contact_kinds: kinds };
+}
+export interface UnderstoodPeople { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> }
+/** The people of the companies as the planner understood them: the people step it wrote, else its required answer (the parent is then the first top-level step it wrote). The answer's count and contacts complete a step that has none. */
+export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>, ask?: PeopleOfCompaniesAsk | null): UnderstoodPeople | null {
+  const extra = ask?.asked ? { contact_kinds: ask.contact_kinds } : {};
   for (const s of steps) {
     const parent = s.parent !== null && isPeopleOfCompanyStep(s) ? steps.find((p) => p.key === s.parent) : undefined;
     // the parent of a people step is the companies step by structure; its own platform key is not read (a companies step may be a map search or a business directory)
-    if (parent) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent };
+    if (parent) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent ?? (ask?.asked ? ask.per_company : null), ...extra };
   }
-  return null;
+  if (!ask?.asked) return null;
+  const top = steps.find((s) => s.parent === null);
+  if (!top) return null;
+  return { noun_ar: ask.title_ar || "الأشخاص", parent_ar: top.title_ar, per_parent: ask.per_company, ...extra };
 }
 
 /** What a person row of a source gives the e-mail and phone finders: a professional page (a LinkedIn profile), a name, a domain. Read from the catalog's own field names and example answer (values like «linkedin.com/in/…»), never from the request. */
