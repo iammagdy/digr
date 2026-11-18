@@ -173,12 +173,12 @@ export type GroupCloseReason = "all_parts_done" | "deadline" | "deadline_stuck" 
 export const NEUTRAL_STOP_REASON_AR = "السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد.";
 export const GROUP_UNAVAILABLE_AR = "تعذّر بدء الطلب المقسَّم الآن، ولم يُحجز أي شيء. حاول مرة أخرى بعد قليل.";
 export const GROUP_OPERATOR_CLOSE_AR = "أوقفنا الأجزاء الباقية من هذا الطلب من جانبنا.";
-export const GROUP_PART_STOPPED_AR = "أوقفنا هذا الجزء من الطلب لتجاوزه المدة المتاحة، ولم يُخصم عنه شيء، وحُرِّر حجزه.";
+export const GROUP_PART_STOPPED_AR = "أوقفنا هذا الجزء من الطلب لتجاوزه المدة المتاحة، ولم يُخصم عنه شيء، وما حُجز له حجز مؤقت مُحرَّر.";
 export const GROUP_PART_FILE_PENDING_AR = "ملف هذا الجزء قيد التجهيز ولم يُتح للتحميل بعد. حاول مرة أخرى لاحقًا.";
 export const GROUP_PART_FILE_UNAVAILABLE_AR = "تعذّر تحميل ملف هذا الجزء الآن. حاول مرة أخرى لاحقًا.";
 export const GROUP_PARTS_TITLE_AR = "أجزاء هذا الطلب";
 export const GROUP_PARTS_UNAVAILABLE_AR = "تعذّر تحميل روابط أجزاء هذا الطلب الآن. حاول مرة أخرى لاحقًا.";
-export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وحُرِّر حجزه.";
+export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وما حُجز له حجز مؤقت مُحرَّر.";
 export const GROUP_CLOSING_NOTICE_AR = "انتهت المدة المتاحة لتنفيذ طلبك، ونعمل الآن على إيقاف الجزء الجاري وإنهاء الطلب. تبقى النقاط محجوزة حتى ذلك الحين، ولن يُخصم منها إلا ثمن ما سُلِّم فعلًا.";
 
 export function splitCardLineAr(split: { parts: number; perPart: number; reachable: number; askedOriginal: number; hold: number }): string {
