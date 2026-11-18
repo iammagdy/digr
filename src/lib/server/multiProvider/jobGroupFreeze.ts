@@ -176,5 +176,56 @@ export async function freezeGroupPart(
     }
   }
 
+  const sortedKeys = [...selectedCandidate.ids].sort();
+
+  let rpcResult: any;
+  try {
+    rpcResult = await withTimeout(
+      admin.rpc("freeze_and_settle_group_part_atomic", {
+        p_group_id: args.groupId,
+        p_part_index: args.partIndex,
+        p_job_id: job.id,
+        p_path: path,
+        p_sha256: sha,
+        p_row_count: job.delivered_units,
+        p_keys: sortedKeys,
+      }),
+      FREEZE_RPC_TIMEOUT_MS
+    );
+  } catch {
+    return "retry";
+  }
+
+  if (rpcResult === TIMED_OUT || !rpcResult) {
+    return "retry";
+  }
+
+  if (rpcResult.error) {
+    return "retry";
+  }
+
+  const data = rpcResult.data;
+  if (!data || typeof data !== "object") {
+    return "retry";
+  }
+
+  if (data.success === true || data.error === "freeze_conflict") {
+    return "frozen";
+  }
+
+  const errCode = data.error;
+  if (
+    errCode === "invalid_path" ||
+    errCode === "count_mismatch" ||
+    errCode === "keys_mismatch" ||
+    errCode === "keys_overlap"
+  ) {
+    return "unfreezable";
+  }
+
+  if (errCode === "part_not_awaiting_freeze") {
+    return "retry";
+  }
+
   return "retry";
 }

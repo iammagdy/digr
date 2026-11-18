@@ -40,10 +40,21 @@ function makeWorld(): {
     failNext: false,
   };
 
+  const world: any = {
+    admin: null,
+    partials,
+    results,
+    latency,
+    readLatency,
+    readFails,
+    reads,
+    f5,
+  };
+
   const partialsBucket = {
     download: async (path: string) => {
       reads.push(path);
-      const lat = readLatency.get(path) ?? latency.read;
+      const lat = world.readLatency.get(path) ?? world.latency.read;
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (readFails.has(path)) {
@@ -57,7 +68,7 @@ function makeWorld(): {
       });
     },
     upload: async (path: string, bytes: any, _opts?: any) => {
-      const lat = latency.upload;
+      const lat = world.latency.upload;
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (partials.has(path)) {
@@ -73,7 +84,7 @@ function makeWorld(): {
 
   const resultsBucket = {
     download: async (path: string) => {
-      const lat = latency.download;
+      const lat = world.latency.download;
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (results.has(path)) {
@@ -85,7 +96,7 @@ function makeWorld(): {
       });
     },
     upload: async (path: string, bytes: any, _opts?: any) => {
-      const lat = latency.upload;
+      const lat = world.latency.upload;
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (results.has(path)) {
@@ -110,7 +121,7 @@ function makeWorld(): {
     rpc: async (name: string, args: any) => {
       if (name !== "freeze_and_settle_group_part_atomic") throw new Error("unknown rpc: " + name);
       f5.calls.push(args);
-      const lat = latency.rpc;
+      const lat = world.latency.rpc;
       return new Promise<{ data: any; error: any }>((resolve) => {
         setTimeout(() => {
           if (f5.failNext) {
@@ -164,7 +175,8 @@ function makeWorld(): {
     },
   };
 
-  return { admin, partials, results, latency, readLatency, readFails, reads, f5 };
+  world.admin = admin;
+  return world;
 }
 
 async function runFreeze(
@@ -183,7 +195,7 @@ async function runFreeze(
 
 describe("jobGroupFreeze", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(0);
   });
   afterEach(() => {
@@ -282,8 +294,9 @@ describe("jobGroupFreeze", () => {
     expect(w.f5.calls).toEqual([]);
     expect(w.results.size).toBe(1); // it landed
     w.latency = { read: 4_900, upload: 4_900, download: 4_900, rpc: 3_900 };
-    expect(await runFreeze(w)).toBe("retry");
-    expect(w.results.size).toBe(1); // (the F5 call comes in T05; here the second call reaches the download and stops)
+    expect(await runFreeze(w)).toBe("frozen");
+    expect(w.results.size).toBe(1);
+    expect(w.f5.committed.length).toBe(1);
   });
   it("(h) different bytes at the existing frozen name ⇒ retry + the mismatch log, no F5", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -293,6 +306,85 @@ describe("jobGroupFreeze", () => {
     w.results.set(frozenPathFor(uid, jobId, shaOf(b)), Buffer.from("other bytes"));
     expect(await runFreeze(w)).toBe("retry");
     expect(err).toHaveBeenCalledWith("[job-groups:frozen-object-mismatch]", { jobId });
+    expect(w.f5.calls).toEqual([]);
+  });
+
+  it("(a) NEAR-TIMEOUT, ONE CALL: every read, upload, download 4.9 s and F5 3.9 s ⇒ frozen in one call, F5 once with candidate 2's sha, 23.5 s of fake time", async () => {
+    const w = makeWorld();
+    const b2 = bytesOf(rowsOf(10, "b"));
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
+    w.partials.set("job_p1/data.json", b2);
+    w.results.set(frozenPathFor(uid, jobId, shaOf(b2)), b2);
+    w.latency = { read: 4_900, upload: 4_900, download: 4_900, rpc: 3_900 };
+    expect(await runFreeze(w)).toBe("frozen");
+    expect(Date.now()).toBe(23_500);
+    expect(w.f5.calls).toEqual([
+      {
+        p_group_id: "grp_1",
+        p_part_index: 1,
+        p_job_id: jobId,
+        p_path: frozenPathFor(uid, jobId, shaOf(b2)),
+        p_sha256: shaOf(b2),
+        p_row_count: 10,
+        p_keys: rowsOf(10, "b")
+          .map(dedupeIdentityFor("company") as any)
+          .sort(),
+      },
+    ]);
+  });
+  it("(c) RESUME — F5 ERROR: call 1 errors without commit ⇒ retry; call 2 ⇒ frozen; one object, one commit", async () => {
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(10)));
+    w.f5.failNext = true;
+    expect(await runFreeze(w)).toBe("retry");
+    expect(await runFreeze(w)).toBe("frozen");
+    expect(w.results.size).toBe(1);
+    expect(w.f5.committed.length).toBe(1);
+  });
+  it("(d) >1 CANDIDATE ACROSS CLAIMS: A uploaded and F5 times out uncommitted; then B freezes; a late A answers freeze_conflict, mapped to frozen with no second commit", async () => {
+    const w = makeWorld();
+    const A = bytesOf(rowsOf(10, "a")),
+      B = bytesOf(rowsOf(10, "b"));
+    w.partials.set("u1/job_p1/data.json", A);
+    w.latency.rpc = 4_100;
+    w.f5.dropOnTimeout = true;
+    expect(await runFreeze(w)).toBe("retry");
+    expect(w.f5.committed).toEqual([]);
+    w.latency.rpc = 0;
+    w.f5.dropOnTimeout = false;
+    w.partials.delete("u1/job_p1/data.json");
+    w.partials.set("job_p1/data.json", B);
+    expect(await runFreeze(w)).toBe("frozen");
+    expect(w.f5.committed.map((c) => c.p_sha256)).toEqual([shaOf(B)]);
+    w.partials.set("u1/job_p1/data.json", A);
+    w.partials.delete("job_p1/data.json");
+    expect(await runFreeze(w)).toBe("frozen");
+    expect(w.f5.committed.length).toBe(1);
+    expect(w.f5.calls.length).toBe(3);
+  });
+  it.each(["invalid_path", "count_mismatch", "keys_mismatch", "keys_overlap"])(
+    "(g) F5 refusal %s ⇒ unfreezable",
+    async (code) => {
+      const w = makeWorld();
+      w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(10)));
+      w.f5.answer = () => ({ data: { success: false, error: code }, error: null });
+      expect(await runFreeze(w)).toBe("unfreezable");
+    }
+  );
+  it("F5 part_not_awaiting_freeze ⇒ retry", async () => {
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(10)));
+    w.f5.answer = () => ({ data: { success: false, error: "part_not_awaiting_freeze" }, error: null });
+    expect(await runFreeze(w)).toBe("retry");
+  });
+  it("candidate 1 fails Z2 and candidate 2 read times out ⇒ retry, never unfreezable", async () => {
+    const w = makeWorld();
+    w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
+    w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
+    w.readLatency.set("job_p1/data.json", 5_100);
+    expect(await runFreeze(w)).toBe("retry");
+    expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
+    expect(w.results.size).toBe(0);
     expect(w.f5.calls).toEqual([]);
   });
 });
