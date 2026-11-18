@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { isAccountSuspended, suspendedResponse } from "@/lib/server/accountSuspension";
 import { createAndSaveManagedQuote, PlanState } from "@/functions/shared/planManager";
 import { getEnabledCapabilitiesWithCoreServices, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { calculateBalance } from "@/lib/supabase/ledger";
@@ -31,6 +32,8 @@ export async function POST(req: NextRequest) {
       : await supabase.auth.getUser();
     const user = authData?.user;
     if (!user) return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
+    // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Tier A): asked of the sign-in service, not read from the token (a token issued before the ban is still readable until it expires)
+    if (await isAccountSuspended(() => createAdminClient(), user.id, user as { banned_until?: string | null })) return suspendedResponse();
 
     const admin = createAdminClient();
     const { data: quoteDoc } = await admin.from("plans_quotes").select("*").eq("id", sampleQuoteId).maybeSingle();

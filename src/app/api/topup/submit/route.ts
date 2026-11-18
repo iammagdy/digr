@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import crypto from "crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { isAccountSuspended, suspendedResponse } from "@/lib/server/accountSuspension";
 import { resolveTrustedEmailVerified } from "@/lib/server/trustedEmailVerification";
 import {
   sendPlatformEmail,
@@ -70,6 +71,8 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       );
     }
+    // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Tier A): asked of the sign-in service, not read from the token (a token issued before the ban is still readable until it expires)
+    if (await isAccountSuspended(() => createAdminClient(), user.id, user as { banned_until?: string | null })) return suspendedResponse({ reason: "suspended" });
 
     // Email verification check
     const emailVerified = await resolveTrustedEmailVerified(supabase, user, authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : undefined);
