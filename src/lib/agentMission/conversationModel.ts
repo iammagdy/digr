@@ -327,13 +327,25 @@ const normalizeWords = (raw: string): string => normalizeDigits(String(raw ?? ""
 /** The numbers written in a message, as integers. */
 const writtenNumbers = (message: string): number[] => (normalizeWords(message).match(/\d+/g) ?? []).map(Number).filter((n) => Number.isSafeInteger(n));
 
+/**
+ * THE NUMBER THE CITED WORDS SAY (QA #575 FAIL 2: {count: 700, count_text: «شركتين»} passed because the words are in the message). A number in words is read by the reader the reply guard already uses (numberWords.ts: the grammar of
+ * Arabic cardinals, no list of services or providers); words that hold no number word may only be the Arabic DUAL of a noun («شركتين»، «تعليقين»: one word ending in ين or ان), which means two. Anything else says no number.
+ */
+function countOfWords(words: string): number | null {
+  const said = wordNumbersIn(words, 1);
+  if (said.length > 0) return said.length === 1 ? said[0] : null;
+  const tokens = words.split(" ");
+  return tokens.length === 1 && /^\p{L}{2,}(?:ين|ان)$/u.test(tokens[0]) ? 2 : null;
+}
+
 /** A count of items the model returned is kept only when the customer WROTE that number. */
 function supportedCount(message: string, count: number | null, countText: string | null = null): number | null {
   if (count === null) return null;
   if (writtenNumbers(message).includes(count)) return count;
-  // THE COUNT WRITTEN IN WORDS («شركتين», «اتنين», «عشر»): the model says which words of the message wrote it, and code checks those words are really in the message (no number-word list; a count the message does not hold is still dropped)
+  // THE COUNT WRITTEN IN WORDS («شركتين», «اتنين», «عشر»): the model says which words of the message wrote it; code checks those words are really in the message AND say the same number (a count the words do not say is dropped)
   const words = normalizeWords(countText ?? "");
-  return words.length >= 2 && !/\d/.test(words) && normalizeWords(message).includes(words) ? count : null;
+  if (words.length < 2 || /\d/.test(words) || !normalizeWords(message).includes(words)) return null;
+  return countOfWords(words) === count ? count : null;
 }
 
 /** The words that open a short edit of a plan («خليها ٥٠٠»، «بس ١٠٠ تغريدة»، «قلّلها لـ ...»، «عدّل العدد»). */
