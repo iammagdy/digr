@@ -2835,7 +2835,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
       expect(settleCalls).toHaveLength(1);
       expect(settleCalls[0].args).toMatchObject({ p_job_id: JOB, p_points_cap: 25_000, p_result_file_id: `user_1/${JOB}/result.xlsx` });
-      expect(db.ledger.filter((row) => row.type === "charge")).toEqual([{ id: `chg_${JOB}`, job_id: JOB, user_id: "user_1", type: "charge", delta: -Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved), by: "settle_job_atomic" }]);
+      // 3 delivered × 100 points = 300; reserve is 345, so it does not cap the charge.
+      expect(db.ledger.filter((row) => row.type === "charge")).toEqual([{ id: `chg_${JOB}`, job_id: JOB, user_id: "user_1", type: "charge", delta: -300, by: "settle_job_atomic" }]);
       expect(db.jobs[0].status).toBe("completed");
     });
   });
