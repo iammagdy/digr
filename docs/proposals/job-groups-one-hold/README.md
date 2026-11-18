@@ -13,6 +13,7 @@ For large requests where target volume exceeds what a single provider execution 
 
 ## 2. Apply Order (GATE S)
 This proposal is applied at **GATE S** (after PR-9 is merged & deployed, and before PR-4; PR-4, PR-5, PR-12, and then PR-10 follow it).
+Production runs the hand-applied 25,000-cap versions of create_quote_atomic and settle_job_atomic (pasted with CRLF); the V1 expected values are production's (D-0064). Re-pasting either function changes its value and 00 shows ✗ = STOP.
 Megz executes each script in the Supabase SQL Editor and sends the screenshot of each result back to COMMANDER:
 
 1. **Run Proof on Scratch Postgres**:

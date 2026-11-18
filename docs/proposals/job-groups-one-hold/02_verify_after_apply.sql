@@ -10,11 +10,11 @@ WITH
 ref_fn(label, proname, nargs, ref_md5) AS (
   VALUES
   ('accept_quote_atomic (3 args)', 'accept_quote_atomic', 3, '47ec0be98e37b115cb81ba43ed5e4e17'),
-  ('create_quote_atomic (8 args)', 'create_quote_atomic', 8, 'f65faafba82227a9167cde2b34d36e91'),
+  ('create_quote_atomic (8 args)', 'create_quote_atomic', 8, '4cb8d594ad56cb6ce0b6c234031da1c8'),
   ('release_job_atomic (2 args)', 'release_job_atomic', 2, '656bac1dea9a8dfb9a39f04a79de8132'),
   ('release_job_atomic (3 args)', 'release_job_atomic', 3, '87ecb52e24eaed03ad847e58028e5125'),
   ('reserve_credits_atomic (4 args)', 'reserve_credits_atomic', 4, '24df74bec3cd22e75850b418f7b5e094'),
-  ('settle_job_atomic (3 args)', 'settle_job_atomic', 3, '106023a8c6d493958d07570cab7b371b')
+  ('settle_job_atomic (3 args)', 'settle_job_atomic', 3, '401179cc8356cb79682de15e47938582')
 ),
 live_fn AS (
   -- Version-stable hash: only fields that PostgreSQL 15 and 17 store or render identically
@@ -81,8 +81,8 @@ checks AS (
          CASE WHEN fn_count = 6 THEN '✓' ELSE '✗' END
   FROM live_fp
   UNION ALL
-  SELECT 21, 'V1 money functions combined fingerprint (00 and 02 must show the same value)', '54942340e91a38948f249e1e9e67c5c2', COALESCE(fingerprint, 'MISSING'),
-         CASE WHEN fingerprint = '54942340e91a38948f249e1e9e67c5c2' THEN '✓' ELSE '✗' END
+  SELECT 21, 'V1 money functions combined fingerprint (00 and 02 must show the same value)', 'f6620ae7f579998195e21c45ab1a184c', COALESCE(fingerprint, 'MISSING'),
+         CASE WHEN fingerprint = 'f6620ae7f579998195e21c45ab1a184c' THEN '✓' ELSE '✗' END
   FROM live_fp
   UNION ALL
   SELECT 40, 'V2 new tables present with RLS (service_role only)', '4', valid_tables::text,
