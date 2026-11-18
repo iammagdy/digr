@@ -40,9 +40,10 @@ describe("places and countries: found in the request, proved on the item", () =>
     // a text that names both the place and another country is the place's
     expect(placeVerdict(eg, { address: "Egypt and Luxembourg" }, fields)).toBe("pass");
     // a city is asked for: the country alone is no evidence of it, the city is
-    expect(placeVerdict(["EG:cairo"], { address: "Giza, Egypt" }, fields)).toBe("no_evidence");
+    // CHANGED (DT-20261118-03 F2-b, stricter): another city of the same country is evidence AGAINST a city request (before: "no_evidence"; both are left out)
+    expect(placeVerdict(["EG:cairo"], { address: "Giza, Egypt" }, fields)).toBe("other_place");
     expect(placeVerdict(["EG:cairo"], { address: "التجمع الخامس، القاهرة" }, fields)).toBe("pass");
-    expect(placeVerdict(["EG:cairo"], { address: "Alexandria, Egypt" }, fields)).toBe("no_evidence");
+    expect(placeVerdict(["EG:cairo"], { address: "Alexandria, Egypt" }, fields)).toBe("other_place");
   });
 
   it("the filter of the card rejects what the evidence rejects, with its own reason", () => {
