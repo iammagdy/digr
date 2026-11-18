@@ -324,6 +324,10 @@ export function executionPrompt(mission: MissionRecord, plan: PricedPlan, calls:
 }
 
 const clear = { worker_id: null, lease_until: null } as const;
+/** DT-20261117-06 M5 (D-0031, K-2): the customer texts of the mission paths that ended with no settlement: no failure word, no Latin letter, no referral, and no money claim the code has not confirmed. */
+const MISSION_NOT_STARTED_AR = "تعذّر بدء تنفيذ طلبك لأن خطته المعتمدة أو حجزه غير مكتمل لدينا، ولم يُسلَّم منه شيء.";
+const settlementPendingAr = (rows: number): string => `تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(rows)} المطلوبة ولا قيمة الخصم.`;
+const filesNotSavedAr = (rows: number): string => `المسلَّم ${toArabicDigits(0)} من ${toArabicDigits(rows)} مطلوب. السبب: تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
 
 /**
  * PUTS A MISSION BACK IN THE QUEUE: a mission that holds a reserve goes back to «approved» with everything it saved, planning goes back to «queued», with no worker and no lease so any worker takes it.
@@ -909,7 +913,8 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const reserve = Number(mission.reserved_points);
   const unit = Number(mission.unit_price_points);
   if (!plan || !mission.job_id || !(reserve > 0) || !(unit > 0)) {
-    await store.updateMission(mission.id, { status: "failed", error: "the mission has no approved plan or reserve", ...clear });
+    await store.updateMission(mission.id, { status: "failed", error: "the mission has no approved plan or reserve", summary_ar: MISSION_NOT_STARTED_AR, ...clear });
+    await store.addEvent(mission.id, { kind: "result", message_ar: MISSION_NOT_STARTED_AR });
     return;
   }
   const started = await updateRunState(store, mission.id, (r) => ({ ...r, executionStarts: r.executionStarts + 1 }), deps.log);
@@ -1159,12 +1164,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       const released = await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
       // ROUND 56: a release the database refused (already settled, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
       if (!released.ok) {
-        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), execution_llm_usd: Number(llm.toFixed(6)), ...clear });
-        await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
+        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), execution_llm_usd: Number(llm.toFixed(6)), summary_ar: settlementPendingAr(plan.price.deliveredRows), ...clear });
+        await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
         return;
       }
-      await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
-      await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
+      await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, summary_ar: filesNotSavedAr(plan.price.deliveredRows), ...clear });
+      await store.addEvent(mission.id, { kind: "result", message_ar: filesNotSavedAr(plan.price.deliveredRows) });
       await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
       return;
     }
@@ -1178,8 +1183,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
   await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   if (!settled.ok) {
-    await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
-    await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
+    await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), summary_ar: settlementPendingAr(plan.price.deliveredRows), ...clear });
+    await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
     return;
   }
   // A FREE RE-RUN BY THE DIGER TEAM (src/lib/agentMission/freeRerun.ts): what the settlement charged is given back at once, through the existing admin grant (one request id per mission, so
@@ -1321,7 +1326,7 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
       // ROUND 56: a release the database refused (the job was already settled and charged, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
       if (!released.ok) {
         await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), ...clear });
-        await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
+        await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
         return;
       }
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });

@@ -30,6 +30,7 @@ import { regionNameAr } from "../../../../lib/regionNames";
 import { videosCountAr } from "../../../../lib/channelNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { settlementEventAr } from "../../../../lib/releaseWording";
+import { CustomerReasonError, RELEASE_NEUTRAL_REASON_AR, adapterStopError, releaseTextAr, trustedCauseAr } from "../../../../lib/releaseText";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
 import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidence";
@@ -191,17 +192,20 @@ interface ReleaseConfirmation {
   confirmed: boolean;
   data: any;
   diagnostic: string | null;
+  textAr?: string;
 }
 
 async function executeReleaseConfirmation(
   adminClient: any,
   jobId: string,
-  reason: string
+  reason: string,
+  target?: unknown
 ): Promise<ReleaseConfirmation> {
+  const textAr = releaseTextAr(reason, target);
   try {
     const { data: relData, error: relErr } = await adminClient.rpc("release_job_atomic", {
       p_job_id: jobId,
-      p_error_message: reason,
+      p_error_message: textAr,
       p_force: true,
     });
     if (!relErr && Boolean(relData?.success === true || relData?.already_released === true)) {
@@ -220,7 +224,7 @@ async function executeReleaseConfirmation(
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: jobRow.user_id,
-                message: `تعذر استكمال الاستخراج: ${reason} (حجز مؤقت مُحرَّر ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء).`,
+                message: `${textAr}${textAr.includes("حجز مؤقت مُحرَّر") ? "" : ` (حجز مؤقت مُحرَّر ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء).`}`,
                 units: 0,
                 event_type: "error",
               });
@@ -241,7 +245,7 @@ async function executeReleaseConfirmation(
                 Points: toArabicDigits(Math.round(releasedCredits)),
                 // Customer words only: never the internal endpoint id, never a raw upstream message.
                 JobTitle: customerEmailJobTitle(endpointId),
-                Reason: sanitizeActivityError(reason),
+                Reason: sanitizeActivityError(textAr),
                 Balance: toArabicDigits(balance),
               });
             }
@@ -250,7 +254,7 @@ async function executeReleaseConfirmation(
       } catch (emailErr) {
         console.error("[email:refund_failed]", emailErr);
       }
-      return { confirmed: true, data: relData, diagnostic: null };
+      return { confirmed: true, data: relData, diagnostic: null, textAr };
     }
     const diagnostic =
       (typeof relErr?.message === "string" && relErr.message) ||
@@ -337,6 +341,7 @@ export async function POST(req: NextRequest) {
 
   let jobId: string = typeof body?.jobId === "string" ? body.jobId : "";
   let expectedStep: number | undefined = body?.expectedStep;
+  let claimTargetN: number | undefined;
   const adminClient = createAdminClient();
 
   try {
@@ -400,6 +405,7 @@ export async function POST(req: NextRequest) {
       endpoint_id: rawEndpointId = "tiktok-profile",
       unit_price: unitPrice = 1,
     } = claimData;
+    claimTargetN = Number(claimData?.target_volume_max);
 
     // The job's review budget, computed here from the job's own size, never by the model: the per-job rule (every collectable row, up to the per-job
     // ceiling). A job that has not started reviewing takes the previous rule instead when today's review spend has reached REVIEW_DAILY_CEILING_USD or
@@ -431,7 +437,7 @@ export async function POST(req: NextRequest) {
       console.warn("[worker_chunk:gate_blocked]", { jobId, reasonCode: gateStatus.reasonCode });
       const releaseReason =
         "محرك استخراج البيانات المباشر غير مفعل حالياً؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-      const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason);
+      const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason, claimTargetN);
 
       if (!rel.confirmed) {
         return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -464,7 +470,7 @@ export async function POST(req: NextRequest) {
     // A chain job whose feature was switched off after the quote was approved: nothing is called, the whole reserve is released with zero charge.
     if (isChainSlug(spec.capabilitySlug) && !multiProviderEnabled()) {
       const switchedOffAr = "هذه الخدمة غير متاحة حاليًا؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-      const rel = await executeReleaseConfirmation(adminClient, jobId, switchedOffAr);
+      const rel = await executeReleaseConfirmation(adminClient, jobId, switchedOffAr, claimTargetN);
       if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
       return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: switchedOffAr, release: rel.data }, { status: 503 });
     }
@@ -474,7 +480,7 @@ export async function POST(req: NextRequest) {
     // until field-level settlement exists, and release its reserve through the
     // approved atomic release path without making any provider calls.
     if (spec.capabilitySlug === "professional-people-search" && !(await requirePeopleSettlementRpc(adminClient))) {
-      const rel = await executeReleaseConfirmation(adminClient, jobId, PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
+      const rel = await executeReleaseConfirmation(adminClient, jobId, PEOPLE_SETTLEMENT_UNAVAILABLE_AR, claimTargetN);
       if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
       return NextResponse.json(
         {
@@ -619,7 +625,7 @@ export async function POST(req: NextRequest) {
           p_job_id: jobId,
           p_error_message: capErrorMsg,
         });
-        const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
+        const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
         }
@@ -1671,9 +1677,7 @@ export async function POST(req: NextRequest) {
 
     // 9. Handle provider error: record failure and release full reserve with zero charge
     if (!adapterResult.ok) {
-      throw new Error(
-        adapterResult.errorMessageAr || "تعذر استخراج البيانات من المصدر بعد عدة محاولات."
-      );
+      throw adapterStopError(adapterResult.errorMessageAr);
     }
 
     const newDeliveredUnits = effectiveDelivered + acceptedRows.length;
@@ -1763,6 +1767,10 @@ export async function POST(req: NextRequest) {
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
         ? `لم يجد البحث أي ${socialCapability.platform === "facebook" ? "منشور" : "فيديو"} عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : socialCapability.platform === "facebook" ? "فيسبوك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+        : receivedSoFar !== null && receivedSoFar > 0 && receivedFromSource === 0
+        ? `استلمنا من المصدر نتائج عددها ${toArabicDigits(receivedSoFar)} خلال هذا الطلب، ولم يُسلَّم منها شيء لأنها لم تجتز التحقق من مطابقة طلبك${heldShown ? ` (منها ${toArabicDigits(heldShown)} أُحيلت إلى المراجعة ولم تُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+        : receivedSoFar === null
+        ? "لم يُسلَّم أي عنصر مطابق لطلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."
         : "لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
       // The page that ends the job with nothing delivered leaves its own line too, so the panel counts it like every other page.
       try {
@@ -1795,7 +1803,7 @@ export async function POST(req: NextRequest) {
           console.warn("[worker:zero_delivery_diagnostic_warning]", diagErr?.message || "");
         }
       }
-      const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
+      const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr, claimTargetN);
       if (!rel.confirmed) {
         return buildReleaseFailedResponse(jobId, rel.diagnostic);
       }
@@ -2079,7 +2087,7 @@ export async function POST(req: NextRequest) {
           console.error(
             `[worker:assembly_failed] step=${s} reason=${stepCorrupt ? "corrupted_step_file" : "missing_step_file"}`
           );
-          const rel = await executeReleaseConfirmation(adminClient, jobId, partialCorruptMsg);
+          const rel = await executeReleaseConfirmation(adminClient, jobId, partialCorruptMsg, claimTargetN);
           if (!rel.confirmed) {
             return buildReleaseFailedResponse(jobId, rel.diagnostic);
           }
@@ -2091,7 +2099,7 @@ export async function POST(req: NextRequest) {
               chargedCredits: 0,
               deliveredUnits: 0,
               jobId,
-              error: partialCorruptMsg,
+              error: rel.textAr ?? partialCorruptMsg,
               release: rel.data,
             },
             { status: 500 }
@@ -2119,7 +2127,7 @@ export async function POST(req: NextRequest) {
         console.error(
           `[worker:assembly_failed] reason=row_count_mismatch collected=${collectedRows.length} expected=${recordedDeliveredUnits}`
         );
-        const rel = await executeReleaseConfirmation(adminClient, jobId, mismatchMsg);
+        const rel = await executeReleaseConfirmation(adminClient, jobId, mismatchMsg, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);
         }
@@ -2131,7 +2139,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: mismatchMsg,
+            error: rel.textAr ?? mismatchMsg,
             release: rel.data,
           },
           { status: 500 }
@@ -2146,9 +2154,9 @@ export async function POST(req: NextRequest) {
       if (isReportJob && !reportRecord) {
         const reportLostMsg = "تعذر تجهيز التقرير لفقد بيانات الجمع؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
         console.error("[worker:assembly_failed] reason=report_record_missing");
-        const rel = await executeReleaseConfirmation(adminClient, jobId, reportLostMsg);
+        const rel = await executeReleaseConfirmation(adminClient, jobId, reportLostMsg, claimTargetN);
         if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
-        return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: reportLostMsg, release: rel.data }, { status: 500 });
+        return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: rel.textAr ?? reportLostMsg, release: rel.data }, { status: 500 });
       }
       const reportPayload = reportRecord ? payloadFromState(reportRecord) : null;
 
@@ -2393,7 +2401,7 @@ export async function POST(req: NextRequest) {
         );
         const uploadFailReason =
           "تعذر حفظ ملفات النتائج النهائية؛ تم الاحتفاظ بنسخة البيانات في النظام؛ حجز مؤقت مُحرَّر كاملًا دون أي خصم.";
-        const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason);
+        const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);
         }
@@ -2405,7 +2413,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: uploadFailReason,
+            error: rel.textAr ?? uploadFailReason,
             release: rel.data,
           },
           { status: 500 }
@@ -2442,7 +2450,7 @@ export async function POST(req: NextRequest) {
         );
         const avFailReason =
           "تعذر تسجيل نسخة المستندات النهائية؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-        const rel = await executeReleaseConfirmation(adminClient, jobId, avFailReason);
+        const rel = await executeReleaseConfirmation(adminClient, jobId, avFailReason, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);
         }
@@ -2454,7 +2462,7 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: avFailReason,
+            error: rel.textAr ?? avFailReason,
             release: rel.data,
           },
           { status: 500 }
@@ -2470,7 +2478,7 @@ export async function POST(req: NextRequest) {
         .eq("id", jobId)
         .maybeSingle();
       if (!collectionCompleteBeforeSettlement(persistedCompletion, persistedCompletionErr, recordedDeliveredUnits)) {
-        throw new Error("تعذر التحقق من اكتمال جمع البيانات قبل التسوية.");
+        throw new CustomerReasonError("collection_unverified");
       }
 
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
@@ -2709,7 +2717,8 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     console.error("Worker chunk execution failed:", err);
-    const errorMsg = err?.message || "فشل غير متوقع أثناء معالجة الجزء.";
+    const causeAr = trustedCauseAr(err);
+    const finalCauseAr = err instanceof CustomerReasonError ? causeAr : RELEASE_NEUTRAL_REASON_AR;
     if (jobId) {
       try {
         const attemptsToRecord =
@@ -2723,7 +2732,7 @@ export async function POST(req: NextRequest) {
         for (let i = 0; i < attemptsToRecord; i++) {
           const { data: failData } = await adminClient.rpc("record_chunk_failure", {
             p_job_id: jobId,
-            p_error_message: errorMsg,
+            p_error_message: causeAr,
           });
           lastFailureData = failData;
         }
@@ -2734,7 +2743,7 @@ export async function POST(req: NextRequest) {
         let releaseDiagnostic: string | null = null;
 
         if (!releaseConfirmed && body?.retryOnly !== true) {
-          const rel = await executeReleaseConfirmation(adminClient, jobId, errorMsg);
+          const rel = await executeReleaseConfirmation(adminClient, jobId, finalCauseAr, claimTargetN);
           if (rel.confirmed) {
             releaseConfirmed = true;
             releaseResult = {
@@ -2758,8 +2767,34 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // DT-20261117-06 M2c (K-4): the fifth failure released the job INSIDE record_chunk_failure, which stored exactly "Exceeded maximum retry attempts (5): <our cause>". The (J) text replaces it ONLY when it is still exactly that text.
+        if (lastFailureData?.released === true) {
+          const finalAr = releaseTextAr(finalCauseAr, claimTargetN);
+          const expected = `Exceeded maximum retry attempts (5): ${causeAr}`;
+          let casOutcome: "swapped" | "kept" | "failed" = "failed";
+          try {
+            const { data: cas, error: casErr } = await adminClient.from("jobs").update({ error_message: finalAr }).eq("id", jobId).eq("status", "failed").eq("error_message", expected).select("id");
+            if (casErr) console.warn("[worker:retry_text_cas_failed]");
+            else casOutcome = Array.isArray(cas) && cas.length === 1 ? "swapped" : "kept";
+          } catch {
+            console.warn("[worker:retry_text_cas_failed]");
+          }
+          // 0 rows: another writer's text stands and is left alone. Swapped, or the CAS failed (honest fallback): one activity line with the (J) text.
+          if (casOutcome !== "kept") {
+            try {
+              const { data: eventJob } = await adminClient.from("jobs").select("user_id").eq("id", jobId).maybeSingle();
+              if (eventJob?.user_id) {
+                const { error: eventErr } = await adminClient.from("job_events").insert({ job_id: jobId, user_id: eventJob.user_id, message: finalAr, units: 0, event_type: "info" });
+                if (eventErr) console.warn("[worker:retry_text_event_failed]");
+              }
+            } catch {
+              console.warn("[worker:retry_text_event_failed]");
+            }
+          }
+        }
+
         const safeArabicError = releaseConfirmed
-          ? errorMsg
+          ? releaseTextAr(finalCauseAr, claimTargetN)
           : "تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.";
 
         return NextResponse.json(

@@ -20,6 +20,14 @@ const db = vi.hoisted(() => ({
   corruptDownloadPaths: new Set<string>(),
   // the body of every step file ever uploaded: the route deletes the step files once the job has settled
   stepBodies: new Map<string, string>(),
+  // DT-20261117-06 H2 (T-M chain): H1's `record_chunk_failure` counter, the seam inside the 5th call, the jobs compare-and-set fake and its switches, and a `complete_chunk` throw switch. The defaults keep every existing test unchanged.
+  failCount: 0,
+  onFifthFailure: null as null | ((job: any) => void),
+  casError: null as any,
+  casThrows: false,
+  updates: [] as Array<{ patch: any; filters: Array<[string, unknown]> }>,
+  throwCompleteChunkAt: 0,
+  completeCalls: 0,
 }));
 
 function builder(rows: () => any[]) {
@@ -31,6 +39,23 @@ function builder(rows: () => any[]) {
     in: () => api, or: () => api, not: () => api, order: () => api, limit: () => api, gte: () => api, range: () => api,
     maybeSingle: async () => ({ data: apply()[0] ?? null, error: null }),
     then: (resolve: any, reject: any) => Promise.resolve({ data: apply(), error: null }).then(resolve, reject),
+  };
+  return api;
+}
+
+/** DT-20261117-06 H2 (T-M chain): the `jobs.update(patch).eq().eq().eq().select()` compare-and-set of the worker. It records every attempt, can fail (returned error or thrown), and otherwise updates the rows that match ALL filters. */
+function casChain(patch: any) {
+  const filters: Array<[string, unknown]> = [];
+  const api: any = {
+    eq: (col: string, val: unknown) => { filters.push([col, val]); return api; },
+    select: async () => {
+      db.updates.push({ patch, filters: [...filters] });
+      if (db.casThrows) throw new Error("cas_down");
+      if (db.casError) return { data: null, error: db.casError };
+      const hit = db.jobs.filter((row) => filters.every(([col, val]) => row[col] === val));
+      for (const row of hit) Object.assign(row, patch);
+      return { data: hit.map((row) => ({ id: row.id })), error: null };
+    },
   };
   return api;
 }
@@ -69,6 +94,8 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true }, error: null };
       }
       if (name === "complete_chunk") {
+        db.completeCalls += 1;
+        if (db.completeCalls === db.throwCompleteChunkAt) throw new Error("connection reset");
         if (db.delayedCompleteChunkMs > 0) {
           await new Promise((r) => setTimeout(r, db.delayedCompleteChunkMs));
         }
@@ -105,9 +132,15 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true, released_credits: db.reserved }, error: null };
       }
       if (name === "record_chunk_failure") {
-        const failedJob = db.jobs.find((j) => j.id === args.p_job_id);
-        if (failedJob) failedJob.lease_until = null;
-        return { data: { success: true }, error: null };
+        db.failCount += 1;
+        const job = db.jobs.find((row) => row.id === args.p_job_id);
+        // DT-20261117-04 CI r1 (kept): like the real function, a recorded failure clears the job's lease; otherwise the fake's own «lease not expired» rule refuses the next claim.
+        if (job) job.lease_until = null;
+        if (db.failCount < 5) return { data: { success: true, released: false, attempts: db.failCount }, error: null };
+        // the 5th failure: the SQL releases the job and stores this exact text (migration 20261012135525:182-186)
+        if (job) Object.assign(job, { status: "failed", error_message: `Exceeded maximum retry attempts (5): ${args.p_error_message}` });
+        db.onFifthFailure?.(job);
+        return { data: { success: true, released: true, released_credits: db.reserved, attempts: 5 }, error: null };
       }
       return { data: { success: true }, error: null };
     }),
@@ -141,7 +174,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       },
     },
     from: (table: string) => {
-      if (table === "jobs") return builder(() => db.jobs);
+      if (table === "jobs") return { ...builder(() => db.jobs), update: (patch: any) => casChain(patch) };
       if (table === "plans_quotes") return builder(() => db.quotes);
       if (table === "provider_costs") return builder(() => db.costs);
       if (table === "settings_private") return builder(() => db.settings);
@@ -177,6 +210,12 @@ import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeComp
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
+import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
+import { RELEASE_NEUTRAL_REASON_AR, RETRY_CAUSE_AR, releaseTextAr } from "../src/lib/releaseText";
+
+function expectReleased(actual: unknown, expectedBase: string): void {
+  expect(actual).toBe(releaseTextAr(expectedBase, db.targetVolumeMax));
+}
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
 const JOB = jobIdForQuote("quote_chain_1");
@@ -209,6 +248,7 @@ function resetDb(over: { target?: number } = {}) {
   db.quotes = [{ id: "quote_chain_1", user_id: "user_1", items: [{ capabilitySlug: "mp-business-contacts", endpointId: "mp.business.contacts", params: { routeCode: routeCodeOf("chain:contextdev>firecrawl"), requiredFields: ["work_email"], industry: "مقاولات", country: "مصر" }, targetVolumeMax: target, paginationStrategy: "cursor", unitCostUsd: 0.02, pricingUnit: "item" }], output_formats: ["xlsx"] }];
   db.settings = [{ key: "provider_limits", value: { dailyUsd: 0.8, firecrawlDailyUsd: 1, contextdevDailyUsd: 1 } }];
   db.costs = []; db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.reserveDeniedFor = new Set();
+  db.failCount = 0; db.onFifthFailure = null; db.casError = null; db.casThrows = false; db.updates = []; db.throwCompleteChunkAt = 0; db.completeCalls = 0;
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
   db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear();
 }
@@ -698,7 +738,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
     // plan v9 :196 / :310 (P86, D-0026/D-0031): the VALUE of the release text of a chain job is chainZeroDeliveryReasonAr({ target, stop }); this world (8 companies, no e-mail or phone, the real TREG out of the way) ends coverage_end
-    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
+    expectReleased(call.args.p_error_message, chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
   });
 
   it("W-9 settlement fails: returns error and writes no completion or delivered event", async () => {
@@ -724,10 +764,15 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       expect(last.status).toBeGreaterThanOrEqual(400);
 
       const events = db.events.map((e: any) => String(e.message ?? ""));
-      for (const t of events) {
-        expect(t).not.toContain("المسلَّم");
-        expect(t).not.toContain("تم إكمال");
-      }
+      const confirmed = releaseTextAr(RELEASE_NEUTRAL_REASON_AR, 3); // the job's target is 3 (resetDb({ target: 3 }))
+      const releases = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+      expect(releases).toHaveLength(1);
+      expect(releases[0].args.p_error_message).toBe(confirmed); // a release was confirmed with exactly this text
+      for (const t of events) expect(t).not.toContain("تم إكمال");
+      const delivered = events.filter((t) => t.includes("المسلَّم"));
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].startsWith(confirmed)).toBe(true);
+      expect(delivered[0].slice(confirmed.length)).toMatch(/^ \(حجز مؤقت مُحرَّر [^()]+، ولم يُخصم شيء\)\.$/);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -758,7 +803,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const events = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of events) {
         if (t.includes("الموثّق منها")) continue;
-        if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
       }
       // at the count the runner emits NO stop line of ANY kind (plan v9 :122 and :276(b); P65): the old line asked for one. Same check as the F15 style of chain.test.ts.
@@ -812,7 +857,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
       expect(call.args.p_force).toBe(true);
       // plan v9 :196 / :310 (P86): the chain release text; this world (8 companies, no e-mail or phone) ends coverage_end
-      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
+      expectReleased(call.args.p_error_message, chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -851,7 +896,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       expect(relCalls.length).toBe(1);
       const call = relCalls[0];
       // plan v9 :196 / :310: zero delivery of a chain job = chainZeroDeliveryReasonAr; here EVERY candidate is excluded, so nothing is delivered (see the point text)
-      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
+      expectReleased(call.args.p_error_message, chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
       const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of eventTexts) {
@@ -888,10 +933,10 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const call = relCalls[0];
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
-    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
+    expectReleased(call.args.p_error_message, chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
 
     const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
-    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" })));
+    const confirmEvt = eventTexts.find((t) => t.startsWith("المسلَّم ٠ من ") && t.includes(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" })));
     expect(confirmEvt).toBeTruthy();
     expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
     expect(confirmEvt).toContain("ولم يُخصم شيء");
@@ -1769,7 +1814,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const events = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of events) {
         if (t.includes("الموثّق منها")) continue;
-        if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|تم إكمال/);
       }
     } finally {
@@ -1918,16 +1963,17 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       }));
       expect(resStartErr.status).toBe(500);
       const startErrText = String((await resStartErr.json()).error);
-      expect(startErrText).toContain("تعذّر تسجيل بدء الدفعة");
+      // DT-20261117-06 (plan M2, the closed boundary): the start-marker throw is a plain Error, so the customer reads the neutral release text with the count, never the thrown sentence
+      expect(startErrText).toBe(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax));
       // DT-20261117-04 fix-gate2-r1: the customer reads this text (the response, the failure record and the release confirmation): the exact sentence, and no Latin digit (the step number was removed from it)
-      expect(startErrText).toBe("تعذّر تسجيل بدء الدفعة.");
+      expect(startErrText.startsWith("المسلَّم ٠ من ")).toBe(true);
       expect(startErrText).not.toMatch(/[0-9]/);
       const startFailRecord = db.rpcCalls.find((c) => c.name === "record_chunk_failure");
       expect(startFailRecord).toBeDefined();
-      expect(startFailRecord!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
+      expect(startFailRecord!.args.p_error_message).toBe(RETRY_CAUSE_AR);
       const startRelease = db.rpcCalls.find((c) => c.name === "release_job_atomic");
       expect(startRelease).toBeDefined();
-      expect(startRelease!.args.p_error_message).toBe("تعذّر تسجيل بدء الدفعة.");
+      expect(startRelease!.args.p_error_message).toBe(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax));
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -2024,4 +2070,73 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
+});
+
+/** DT-20261117-06 T-M (chain rows, [DEPENDS DT-04]): company contacts and company e-mails through the REAL worker route with this file's fake providers. Its own environment hooks (a top-level sibling of the chain describe). */
+describe("T-M chain (DT-06)", () => {
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = { CRON_SECRET: process.env.CRON_SECRET, ENABLE_MOCK_PROVIDER: process.env.ENABLE_MOCK_PROVIDER, NODE_ENV: process.env.NODE_ENV, VERCEL_ENV: process.env.VERCEL_ENV, MULTI_PROVIDER_ENABLED: process.env.MULTI_PROVIDER_ENABLED, TREG_LIVE: process.env.TREG_LIVE };
+    process.env.CRON_SECRET = "chain-secret"; process.env.ENABLE_MOCK_PROVIDER = "true"; (process.env as any).NODE_ENV = "test"; process.env.VERCEL_ENV = "development";
+    process.env.MULTI_PROVIDER_ENABLED = "true";
+    delete process.env.TREG_LIVE;
+    realTreg.calls.length = 0;
+    setRowAdvisorForTesting(async () => { throw new Error("no advisory review may run on a verified chain row"); });
+  });
+  afterEach(() => {
+    setProviderAdapterForTesting(null); setRowAdvisorForTesting(null); setChainTransportForTesting(null);
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete (process.env as any)[k]; else (process.env as any)[k] = v; }
+    // fail-closed (DT-04 CI r2 safety, after the clean-up above): a test that reached the REAL TREG client fails here, even when the runner caught the thrown error
+    const reachedRealTreg = realTreg.calls.splice(0);
+    expect(reachedRealTreg, "real TREG call in test").toEqual([]);
+  });
+
+  const MODES = ["EMPTY", "ERROR", "DAILY CAP", "TIMEOUT", "CRASH"] as const;
+  const timeoutError = () => new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  async function callRoute(step: number) {
+    const route = await import("../src/app/api/worker/chunk/route");
+    const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: step, disableSelfChain: true }) }));
+    return { status: res.status, json: await res.json() };
+  }
+  /** Drives one job in one failure mode and returns the last response. EMPTY, ERROR, DAILY CAP and TIMEOUT fail every source from the start; CRASH delivers chunk 1 and throws inside chunk 2 until the SQL fake releases at the 5th failure. */
+  async function drive(mode: (typeof MODES)[number], twoRequiredFields: boolean) {
+    resetDb(mode === "CRASH" ? { target: 30 } : {});
+    if (twoRequiredFields) useTwoRequiredFields();
+    let world: FakeCompany[] = defaultFakeWorld(10);
+    let scenario: Parameters<typeof createFakeFetch>[1] = {};
+    if (mode === "EMPTY") { world = []; scenario = { emptyProvider: { firecrawl: true, contextdev: true } }; }
+    if (mode === "ERROR") scenario = { failProvider: { firecrawl: 500, contextdev: 500 } };
+    if (mode === "DAILY CAP") db.reserveDeniedFor = new Set(["treg", "firecrawl", "contextdev"]);
+    if (mode === "CRASH") world = nonTerminalWorld(() => true);
+    const fake = createFakeFetch(world, scenario);
+    // the TREG hook of every mode (DT-04 CI r2): a valid EMPTY answer, a 500 answer, or a timeout; the real TREG client is never reached
+    const tregCall: any = mode === "TIMEOUT" ? (async () => { throw timeoutError(); }) : mode === "ERROR" ? (async () => ({ ok: false, httpStatus: 500, tregCallId: "e", costMicro: 0, latencyMs: 1, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false })) : tregHook();
+    setChainTransportForTesting({ fetchFn: mode === "TIMEOUT" ? (async () => { throw timeoutError(); }) : fake, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall });
+    if (mode === "ERROR") setProviderAdapterForTesting(async () => ({ ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "e", errorCode: "x", errorMessageAr: "" }));
+    else if (mode === "TIMEOUT") setProviderAdapterForTesting(async () => { throw timeoutError(); });
+    else setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    let last = await callRoute(0);
+    if (mode === "CRASH") {
+      expect(last.json.done).not.toBe(true);
+      db.failCount = 4;
+      db.throwCompleteChunkAt = 2;
+      last = await callRoute(db.step);
+    } else {
+      for (let i = 0; i < 12 && last.json.done !== true && last.json.released !== true && last.status < 400; i++) last = await callRoute(db.step);
+    }
+    return last;
+  }
+  /** The stored text of a released job: the last release call's text, or for CRASH (released by the SQL fake) the job row after the compare-and-set. */
+  function storedText(mode: (typeof MODES)[number]): unknown {
+    const releases = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+    return mode === "CRASH" ? db.jobs[0].error_message : releases[releases.length - 1]?.args.p_error_message;
+  }
+
+  for (const [type, twoRequiredFields] of [["company contacts", true], ["company e-mails", false]] as const) {
+    it.each(MODES)(`T-M chain ${type} %s ends released with no failure word and a zero count`, async (mode) => {
+      const last = await drive(mode, twoRequiredFields);
+      expectNoBareFailed(customerTexts({ rpcCalls: db.rpcCalls, events: db.events, jobs: db.jobs, json: last.json }));
+      expectReleasedZeroOf(storedText(mode), db.targetVolumeMax);
+    });
+  }
 });

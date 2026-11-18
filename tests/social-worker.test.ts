@@ -22,6 +22,8 @@ const db = vi.hoisted(() => ({
   slug: "social-youtube-comments",
   /** What `llm_usage` answers to the daily review guard: costs of today's review rows (null = the table is not stubbed), a failing read, and how many reads were made. */
   usage: { rows: null as number[] | null, fail: false, reads: 0 },
+  /** DT-20261117-06 T-M: false makes the spend reserve answer «not allowed» (the daily cap). */
+  spendAllowed: true as boolean,
 }));
 
 function builder(rows: () => any[]) {
@@ -45,7 +47,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       if (name === "claim_job_chunk") {
         return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.slug, unit_price: db.unitPrice }, error: null };
       }
-      if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
+      if (name === "reserve_provider_spend_atomic") return { data: { allowed: db.spendAllowed !== false, cost_id: db.spendAllowed !== false ? 11 : null }, error: null };
       if (name === "commit_provider_spend") return { data: { success: true }, error: null };
       if (name === "complete_chunk") {
         db.step += 1;
@@ -115,8 +117,15 @@ import ExcelJS from "exceljs";
 import { summarizeActivityCounts } from "../src/lib/activityCounts";
 import { UNREVIEWED_SHEET_NOTICE_AR } from "../src/functions/shared/fileGenerators";
 import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
+import { releaseTextAr } from "../src/lib/releaseText";
+
+function expectReleased(actual: unknown, expectedBase: string): void {
+  expect(actual).toBe(releaseTextAr(expectedBase, db.targetVolumeMax));
+}
 import { setReviewDailyGuardForTesting } from "../src/lib/server/reviewDailyGuard";
 import { replySampleOf, setRowAdvisorForTesting, setStrictSocialReviewForTesting, UNREVIEWED_BY_BUDGET_REASON_AR, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
+import { PROVIDER_GENERIC_FAILURE_AR } from "../src/lib/providerFailureText";
+import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
 
 const JOB = jobIdForQuote("quote_social");
 const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
@@ -1371,7 +1380,7 @@ describe("worker: social jobs", () => {
       const { json } = await runYoutube({ videos: [], comments: [] });
       expect(json.released).toBe(true);
       const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
-      expect(String(release.args.p_error_message)).toBe("لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+      expectReleased(String(release.args.p_error_message), "لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
       expect(String(release.args.p_error_message)).not.toContain("لم يُعثر على أي بيانات مطابقة");
     });
   });
@@ -1437,6 +1446,24 @@ describe("worker: social jobs", () => {
       expect(pageLines[1]).toContain("المستلم حتى الآن ٤٠");
       // the panel holds only the newest events: the last line alone still says 40
       expect(summarizeActivityCounts([{ textAr: pageLines[1] }]).received).toBe(40);
+    });
+  });
+
+  describe("T-M social comments (DT-06)", () => {
+    it.each(["EMPTY", "ERROR", "DAILY CAP", "TIMEOUT"] as const)("T-M social comments %s ends released with no failure word and a zero count", async (mode) => {
+      resetDb("social-youtube-comments", { url: YT }, 20, 9);
+      db.spendAllowed = mode !== "DAILY CAP";
+      try {
+        if (mode === "ERROR") setProviderAdapterForTesting(async () => ({ ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "e", errorCode: "x", errorMessageAr: PROVIDER_GENERIC_FAILURE_AR }));
+        else if (mode === "TIMEOUT") setProviderAdapterForTesting(async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); });
+        else setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0.001, costMicro: 1000, tregCallId: "z" }));
+        const { json } = await callWorker();
+        expectNoBareFailed(customerTexts({ rpcCalls: db.rpcCalls, events: db.events, jobs: db.jobs, json }));
+        const releases = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+        expectReleasedZeroOf(releases[releases.length - 1]?.args.p_error_message, 20);
+      } finally {
+        db.spendAllowed = true;
+      }
     });
   });
 });

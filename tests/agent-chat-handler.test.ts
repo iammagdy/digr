@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryDb } from "./helpers/memoryDb";
-import { ChatHandler } from "../src/functions/shared/chatHandler";
+import { CHAT_PREP_REASON_AR, ChatHandler } from "../src/functions/shared/chatHandler";
 
 /** The chat handler with the agent switched on: a research request becomes a mission and nothing else runs (no model planner, no old model turn, no provider). */
 function setup(enabled: boolean | null) {
@@ -51,6 +51,22 @@ describe("the chat hands a research request to the agent", () => {
       expect(r.clarificationItems?.[0]?.id).toBe("social_time_required");
       expect(db.rows("missions")).toHaveLength(0);
       void oldPath;
+    }
+  });
+});
+
+describe("DT-20261117-06 T6: a failed chat turn stores one reviewed constant", () => {
+  it("T6 a thrown turn stores CHAT_PREP_REASON_AR as request_error, whatever the error says", async () => {
+    for (const thrown of [new Error("TypeError: x"), new Error("تعذر الاتصال بفايركرول")]) {
+      const { db, handler, oldPath } = setup(false);
+      handler.deterministicPlanning = false; // a request with a stated period is planned in code (chatHandler.ts:2993); the throw must be reached
+      oldPath.mockImplementation(async () => { throw thrown; });
+      await expect(ask(handler, "هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥")).rejects.toThrow(); // the request names its period: no time-window question (chatHandler.ts:2821); the same text as stall-guard.test.ts:7
+      expect(oldPath).toHaveBeenCalled(); // non-vacuity: the model call really ran and threw
+      const userRows = db.rows("messages").filter((m: any) => m.role === "user");
+      expect(userRows).toHaveLength(1);
+      expect(userRows[0].request_status).toBe("failed");
+      expect(userRows[0].request_error).toBe(CHAT_PREP_REASON_AR);
     }
   });
 });

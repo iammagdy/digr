@@ -626,6 +626,8 @@ export function estimateTokens(text: string): number {
 
 /** Conversation context budget. When reached, older turns are summarized instead of blocking. */
 export const CONTEXT_TOKEN_LIMIT = 40000;
+/** DT-20261117-06 M4 (D-0031): the ONLY text a failed chat turn stores as `request_error` (the turn builds the card; holds happen only in accept-quote, so nothing was held). */
+export const CHAT_PREP_REASON_AR = "تعذّر إعداد طلبك الآن بسبب خلل تقني من جانبنا، ولم يُحجز أو يُخصم أي رصيد. أعد إرسال طلبك بعد قليل.";
 
 /** Max tokens for a single catalog tool_result block sent back to the model. */
 const CATALOG_RESULT_TOKEN_CAP = 2500;
@@ -4837,7 +4839,7 @@ export class ChatHandler {
         };
       }
       if (userMsgId) {
-        const customerError = sanitizeCustomerErrorMessage(err?.message || "تعذر إعداد الطلب.");
+        const customerError = CHAT_PREP_REASON_AR;
         try {
           if (sb) {
             await sb

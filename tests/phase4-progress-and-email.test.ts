@@ -237,7 +237,7 @@ describe("e-mail: what the customer is sent", () => {
     const worker = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(worker).not.toContain("نتائج استخراج ${endpointId}");
     expect(worker).toContain("JobTitle: customerEmailJobTitle(endpointId),");
-    expect(worker).toContain("Reason: sanitizeActivityError(reason),");
+    expect(worker).toContain("Reason: sanitizeActivityError(textAr),");
     expect(customerEmailJobTitle("treg.tiktok.comments")).toBe("بحث تيك توك");
     expect(customerEmailJobTitle("some.unknown.thing")).toBe("بحثك");
     expect(customerEmailJobTitle(null)).toBe("بحثك");

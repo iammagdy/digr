@@ -377,3 +377,21 @@ describe("the customer metadata route, with the feature ON, returns only slugs a
     expect(text).not.toMatch(/firecrawl|contextdev|context\.dev|treg|usd|cost|duration|capabilityLabelAr|provider/i);
   });
 });
+
+import { CHAT_PREP_REASON_AR as DT06_CHAT_PREP_REASON_AR } from "../src/functions/shared/chatHandler";
+import { REASON_AR as DT06_REASON_AR, RELEASE_NEUTRAL_REASON_AR as DT06_NEUTRAL_AR, RETRY_CAUSE_AR as DT06_RETRY_AR, releaseTextAr as dt06ReleaseTextAr } from "../src/lib/releaseText";
+import { checkCustomerText as dt06CheckCustomerText } from "../src/lib/agentMission/text";
+
+describe("T-N (DT-20261117-06): the new customer constants name no provider and show no code", () => {
+  it("T-N DT-06 constants and the composed release texts are Arabic only, pass the customer-text guard, never say «فشل» and name no provider", () => {
+    const texts = [
+      DT06_CHAT_PREP_REASON_AR, DT06_NEUTRAL_AR, DT06_RETRY_AR, ...Object.values(DT06_REASON_AR),
+      dt06ReleaseTextAr(DT06_NEUTRAL_AR, 25000), dt06ReleaseTextAr(DT06_REASON_AR.provider_unavailable, 12),
+    ];
+    for (const t of texts) {
+      expect(dt06CheckCustomerText(t).issues, t).toEqual([]);
+      expect(t, t).not.toMatch(/[A-Za-z]|فشل/);
+      expect(t, t).not.toMatch(/treg|tomba|icypeas|firecrawl|context\.?dev|hunter|apollo|فايركرول|تومبا|ايسبياس/i);
+    }
+  });
+});

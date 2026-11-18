@@ -14,6 +14,8 @@ const db = vi.hoisted(() => ({
   partials: new Map<string, Buffer>(), results: new Map<string, Buffer>(),
   rpcCalls: [] as Array<{ name: string; args: any }>, events: [] as any[], costs: [] as any[],
   step: 0, cursor: null as string | null, deliveredUnits: 0, targetVolumeMax: 5, unitPrice: 193, reserved: 1100,
+  /** DT-20261117-06 T-M: false makes the spend reserve answer «not allowed» (the daily cap). */
+  spendAllowed: true as boolean,
 }));
 
 function builder(rows: () => any[]) {
@@ -34,7 +36,7 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "treg.people.search", unit_price: db.unitPrice }, error: null };
-      if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
+      if (name === "reserve_provider_spend_atomic") return { data: { allowed: db.spendAllowed !== false, cost_id: db.spendAllowed !== false ? 11 : null }, error: null };
       if (name === "commit_provider_spend" || name === "commit_provider_spend_v2") { db.costs.push({ provider: "treg", cost_usd: Number(args.p_actual_cost_usd) || 0 }); return { data: { success: true }, error: null }; }
       if (name === "complete_chunk") {
         db.step += 1; db.deliveredUnits = args.p_new_delivered_units; db.cursor = args.p_new_cursor;
@@ -97,6 +99,8 @@ import { generateExcelReport } from "../src/functions/shared/fileGenerators";
 import { normalizeDataset } from "../src/lib/server/normalizationPipeline";
 import { PEOPLE_COLUMNS, peopleContactCounts, peopleDeliverySentenceAr, peopleShortfallReasonAr, orderPeopleColumns } from "../src/lib/peopleColumns";
 import { peopleDeliveryRow } from "../src/lib/server/peopleDelivery";
+import { PROVIDER_GENERIC_FAILURE_AR } from "../src/lib/providerFailureText";
+import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
 
 const PLAN_PARAMS = {
   limit: 5, title: "CEO", country: "EG", keywords: ["information technology", "software", "technology"],
@@ -415,5 +419,31 @@ describe("the worker end to end (fake storage, an injected source): 3 delivered 
     expect(String(logs[0].message)).not.toMatch(/@|Mona|Omar|linkedin\.com|\+20/);
     // the customer's own events never include it
     expect(db.events.filter((event) => event.event_type !== "lookup_log").every((event) => !/lookups|endpoint/.test(String(event.message)))).toBe(true);
+  });
+
+  describe("T-M people (DT-06)", () => {
+    it.each(["EMPTY", "ERROR", "DAILY CAP", "TIMEOUT"] as const)("T-M people %s ends released with no failure word and a zero count", async (mode) => {
+      db.spendAllowed = mode !== "DAILY CAP";
+      try {
+        if (mode === "ERROR") setProviderAdapterForTesting(async () => ({ ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "e", errorCode: "x", errorMessageAr: PROVIDER_GENERIC_FAILURE_AR }));
+        else if (mode === "TIMEOUT") setProviderAdapterForTesting(async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); });
+        else setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0.001, costMicro: 1000, tregCallId: "z" }));
+        const route = await import("../src/app/api/worker/chunk/route");
+        let last: { status: number; json: any } = { status: 0, json: {} };
+        for (let i = 0; i < 6; i++) {
+          const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST", headers: { authorization: "Bearer people-test-secret" },
+            body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+          }));
+          last = { status: res.status, json: await res.json() };
+          if (last.json.done === true || last.json.released === true || last.status >= 400) break;
+        }
+        expectNoBareFailed(customerTexts({ rpcCalls: db.rpcCalls, events: db.events, jobs: db.jobs, json: last.json }));
+        const releases = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+        expectReleasedZeroOf(releases[releases.length - 1]?.args.p_error_message, 5);
+      } finally {
+        db.spendAllowed = true;
+      }
+    });
   });
 });

@@ -8,6 +8,7 @@ import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission, type MemoryStore } from "../agent/src/memoryStore";
 import { ensureOwned, isOwnershipError, LeaseLostError, OwnershipUnverifiedError } from "../agent/src/ownership";
 import { updateRunState } from "../agent/src/runState";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 import { recoverFromError, runMissionSafely, runPlanning, type RunnerDeps } from "../agent/src/runMission";
 import { runAddonSafely } from "../agent/src/stage4/runAddon";
 import type { Results } from "./helpers/agentFakeWorld";
@@ -369,7 +370,7 @@ describe("review of round 56: a stale run can no longer strand an executing miss
     expect(m.charged_points).not.toBe(0);
     expect(m.error).toMatch(/^settlement /);
     const last = w.store.events[w.store.events.length - 1].message_ar;
-    expect(last).toBe("تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي.");
+    expect(last).toBe(`تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(m.plan!.price.deliveredRows)} المطلوبة ولا قيمة الخصم.`);
     expect(w.notices).not.toContain("failed");
   });
   it("the same in recoverFromError's LAST RESORT (the item log itself cannot be read): a refused release is never told as «nothing was charged»", async () => {
@@ -384,7 +385,7 @@ describe("review of round 56: a stale run can no longer strand an executing miss
     const m = w.store.missions.get(ID)!;
     expect(m).toMatchObject({ status: "failed", worker_id: null, lease_until: null });
     expect(m.charged_points).not.toBe(0);
-    expect(w.store.events[w.store.events.length - 1].message_ar).toBe("تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي.");
+    expect(w.store.events[w.store.events.length - 1].message_ar).toBe(`تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(m.plan!.price.deliveredRows)} المطلوبة ولا قيمة الخصم.`);
     expect(w.notices).not.toContain("failed");
   });
 });

@@ -497,7 +497,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
     const trace = { empties: 0, failures: 0 };
-    const got = await probeStep(step, options, parent, deps, trace);
+    const got = await probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace);
     // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
     // (a tool that answered empty on its searches is evidence even when another option of the step failed to answer at all: live 16 Nov, the second option was refused)
     if (!got && !step.parent && trace.empties > 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
@@ -520,7 +520,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     let secondMore = false;
     const next = !step.parent && step.topic ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && !o.parent) : undefined;
     if (next) {
-      const got2 = await probeStep(step, [next], null, deps);
+      const got2 = await probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP });
       if (got2) {
         const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
         if (map2) {
@@ -543,7 +543,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (webTool && !usedWeb && webEligible) {
       const webOption: ToolOption = { endpoint: webTool, params: { query: phrases[0], limit: 30 }, cursor: null, parent: null, more: phrases.slice(1).map((q) => ({ query: q, limit: 30 })), notCarried: [] };
       triedFirstWeb = true;
-      const got3 = await probeStep(step, [webOption], null, deps);
+      const got3 = await probeStep(step, [webOption], null, deps, { left: MAX_PROBES_PER_STEP });
       if (got3) {
         const map3 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got3.option.endpoint, got3.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got3.items), got3.items);
         if (map3) {
@@ -568,7 +568,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       } else if (!proven && triedFirstWeb) {
         // R3-B: the first web tool gave nothing usable: ONE probe, ONE phrase, no retry
         const fcOption: ToolOption = { endpoint: otherWeb, params: { query: phrases[0], limit: 30 }, cursor: null, parent: null, more: [], notCarried: [] };
-        const gotFc = await probeStep(step, [fcOption], null, deps);
+        const gotFc = await probeStep(step, [fcOption], null, deps, { left: MAX_PROBES_PER_STEP });
         if (gotFc) {
           const mapFc = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, gotFc.option.endpoint, gotFc.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), gotFc.items), gotFc.items);
           if (mapFc) {
@@ -672,8 +672,7 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
 interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
-async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, trace?: { empties: number; failures: number }): Promise<Probed | null> {
-  let calls = 0;
+async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number }): Promise<Probed | null> {
   const callIds: string[] = [];
   for (const option of options) {
     const sets = [option.params, ...option.more];
@@ -682,11 +681,11 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
     if (option.parent && parent && parentValues.length === 0) continue;
     const attempts: Array<{ set: number; parentValue: unknown }> = option.parent && parent ? parentValues.map((v) => ({ set: 0, parentValue: v })) : sets.map((_, i) => ({ set: i, parentValue: null }));
     for (const a of attempts) {
-      if (calls >= MAX_PROBES_PER_STEP) break;
+      if (budget.left <= 0) break;
       const i = a.set;
       let params = { ...sets[i] };
       if (option.parent && parent) params = { ...params, [option.parent.param]: a.parentValue };
-      calls += 1;
+      budget.left -= 1;
       const r = await deps.probe(option.endpoint.id, params);
       callIds.push(r.call_id);
       if (!r.ok) {
@@ -705,7 +704,7 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       const reordered: ToolOption = i === 0 ? option : { ...option, params: sets[i], more: sets.filter((_, j) => j !== i) };
       return { option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds, hasMore: Boolean(r.next_cursor) || r.has_more === true, nextCursor: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
     }
-    if (calls >= MAX_PROBES_PER_STEP) break;
+    if (budget.left <= 0) break;
   }
   return null;
 }
