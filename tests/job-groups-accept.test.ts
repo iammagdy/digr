@@ -274,4 +274,33 @@ describe("DT-05 PR-9 group approval", () => {
     ]);
     expect(r).toMatchObject({ success: true, jobId: "job_old" });
   });
+
+  // D-0060 N2: fail-closed when expectedPlanHash is supplied and quote read fails
+  it.each([
+    ["read returns error", async () => ({ data: null, error: { message: "db error" } })],
+    ["read throws", async () => { throw new Error("network timeout"); }],
+  ])("(N2) when expectedPlanHash is supplied and quote %s ⇒ 503 GROUP_UNAVAILABLE_AR, calling NO accept rpc and NO group rpc", async (_desc, readFn) => {
+    const rpc = vi.fn();
+    const admin = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: readFn,
+          }),
+        }),
+      }),
+      rpc,
+    } as any;
+    const res = await acceptQuoteSupabase(admin, {
+      userId: "u1",
+      quoteId: "q1",
+      expectedPlanHash: "some_hash",
+    });
+    expect(res).toEqual({
+      success: false,
+      statusCode: 503,
+      errorAr: GROUP_UNAVAILABLE_AR,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
 });

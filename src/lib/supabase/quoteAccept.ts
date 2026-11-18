@@ -62,6 +62,21 @@ export async function acceptQuoteSupabase(
       .eq("id", quoteId)
       .single();
 
+    if (qErr || !quoteDoc) {
+      if (expectedPlanHash) {
+        return {
+          success: false,
+          statusCode: 503,
+          errorAr: GROUP_UNAVAILABLE_AR,
+        };
+      }
+      return {
+        success: false,
+        statusCode: 404,
+        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+      };
+    }
+
     if (quoteDoc) {
       if (!hashToVerify) {
         hashToVerify = quoteDoc.quote_hash;
@@ -119,21 +134,20 @@ export async function acceptQuoteSupabase(
           };
         }
       }
-    } else if (!hashToVerify) {
-      return {
-        success: false,
-        statusCode: 404,
-        errorAr: "عرض السعر غير موجود أو تم حذفه.",
-      };
     }
   } catch {
-    if (!hashToVerify) {
+    if (expectedPlanHash) {
       return {
         success: false,
-        statusCode: 404,
-        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+        statusCode: 503,
+        errorAr: GROUP_UNAVAILABLE_AR,
       };
     }
+    return {
+      success: false,
+      statusCode: 404,
+      errorAr: "عرض السعر غير موجود أو تم حذفه.",
+    };
   }
 
   if (groupSplit) { if (!(await hasJobGroupRpc(adminClient))) return { success: false, statusCode: 503, errorAr: GROUP_UNAVAILABLE_AR }; }

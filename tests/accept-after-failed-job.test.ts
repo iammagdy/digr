@@ -192,7 +192,7 @@ describe("approving a new quote after a failed, fully released job in the same c
     it("insufficient balance is the only start failure that talks about the balance, in the server's own sentence", async () => {
       const { acceptQuoteSupabase } = await import("../src/lib/supabase/quoteAccept");
       const rpc = async () => ({ data: { success: false, error: "insufficient_balance", balance: 50 }, error: null });
-      const result = await acceptQuoteSupabase({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: null, error: new Error("x") }) }) }) }), rpc } as any, { userId: "user_1", quoteId: "q", expectedPlanHash: HASH });
+      const result = await acceptQuoteSupabase({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: { quote_hash: HASH, items: [{ capabilitySlug: "treg-companies-research-basic", endpointId: "treg.companies.research.basic", unitCostUsd: 0.02 }] }, error: null }) }) }) }), rpc } as any, { userId: "user_1", quoteId: "q", expectedPlanHash: HASH });
       expect(result.statusCode).toBe(402);
       expect(result.errorAr).toBe("رصيدك الحالي (٥٠ نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.");
     });
