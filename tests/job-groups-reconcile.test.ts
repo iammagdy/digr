@@ -134,6 +134,10 @@ function makeWorld() {
   const latency: Record<string, number> = {};
   const answer: { draw?: any; claim?: any } = {};
   const events: string[] = [];
+  const dueJobs: any[] = [];
+  const claimedIds: string[] = [];
+  const legacyRpcCalls: Array<{ name: string; args: any }> = [];
+  const legacy: { release?: any } = {};
   const partials = new Map<string, Buffer>();
   const results = new Map<string, Buffer>();
   const f5 = {
@@ -699,7 +703,7 @@ function makeWorld() {
               throw new Error("abortAfterReads");
             }
             if (inCol === "status") {
-              return Promise.resolve(finish({ data: [], error: null }));
+              return Promise.resolve(finish({ data: [...dueJobs], error: null }));
             }
             const allJobs: any[] = [];
             for (const jList of parts.values()) {
@@ -719,6 +723,10 @@ function makeWorld() {
       return builder;
     },
     rpc: (name: string, args: any) => {
+      if (name === "release_job_atomic" && legacy.release !== undefined) {
+        legacyRpcCalls.push({ name, args });
+        return stepAnswer(legacy.release ?? { data: null, error: null });
+      }
       w_all_rpc_names_seen_in_this_file.add(name);
       if (
         (name === "draw_next_group_part_atomic" && neverResolves === "rpc draw") ||
@@ -983,6 +991,11 @@ function makeWorld() {
     latency,
     answer,
     events,
+    dueJobs,
+    claimedIds,
+    legacyRpcCalls,
+    legacy,
+    rejectReconcile: false,
     firstItem,
     partials,
     results,
