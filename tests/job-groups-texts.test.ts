@@ -19,4 +19,15 @@ describe("DT-05 PR-3 group texts", () => {
     expect(actual).toBe(expected);
     expect(checkCustomerText(actual).issues).toEqual([]);
   });
+
+  it("splitCardLineAr writes C1 when Y = X", () => {
+    expect(copy.splitCardLineAr({ parts: 3, perPart: 40, reachable: 120, askedOriginal: 120, hold: 1200 })).toBe("طلبت ١٢٠ شركة، وأقصى ما تتسع له المهمة الواحدة ٤٠ شركة بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ٣ أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ١٢٠٠ نقطة مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.");
+  });
+  it("splitCardLineAr writes C1b when Y < X (the 40-part limit)", () => {
+    expect(copy.splitCardLineAr({ parts: 40, perPart: 40, reachable: 1600, askedOriginal: 2000, hold: 6000 })).toBe("طلبت ٢٠٠٠ شركة، وأقصى ما تتسع له المهمة الواحدة ٤٠ شركة بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ٤٠، لذلك أقصى ما يمكن تسليمه في هذا الطلب ١٦٠٠ شركة على ٤٠ أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ٦٠٠٠ نقطة مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.");
+  });
+  it("groupStartLineAr is S1", () => { expect(copy.groupStartLineAr({ hold: 1200, parts: 3 })).toBe("تمت الموافقة على طلبك كاملًا وحُجزت ١٢٠٠ نقطة مرة واحدة. بدأ الجزء ١ من ٣، وستبدأ الأجزاء التالية تلقائيًا بعد انتهاء كل جزء، وفي صفحة تفاصيل أي جزء من الطلب تجد روابط كل أجزائه."); });
+  it("groupDrawLineAr is S2", () => { expect(copy.groupDrawLineAr({ k: 2, K: 3, Z: 40, Y: 120 })).toBe("انتهى الجزء ١ من ٣، والمسلَّم حتى الآن ٤٠ من ١٢٠. بدأ الجزء ٢ تلقائيًا من الحجز الذي وافقت عليه، دون حجز جديد."); });
+  it("groupPartLinkAr is S16", () => { expect(copy.groupPartLinkAr(2, 3)).toBe("الجزء ٢ من ٣"); });
+  it.each([copy.splitCardLineAr({ parts: 3, perPart: 40, reachable: 120, askedOriginal: 120, hold: 1200 }), copy.splitCardLineAr({ parts: 40, perPart: 40, reachable: 1600, askedOriginal: 2000, hold: 6000 }), copy.groupStartLineAr({ hold: 1200, parts: 3 }), copy.groupDrawLineAr({ k: 2, K: 3, Z: 40, Y: 120 }), copy.groupPartLinkAr(2, 3)])("text %# passes checkCustomerText", (t) => { expect(checkCustomerText(t).issues).toEqual([]); });
 });

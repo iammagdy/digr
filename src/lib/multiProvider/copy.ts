@@ -1,5 +1,6 @@
 import { toArabicDigits } from "../arabicDigits";
 import { countPlainAr } from "../planCounts";
+import { pointsAr } from "../pointsFormat";
 
 /**
  * Every customer-facing sentence of the multi-provider feature. Arabic only, Arabic-Indic digits, no emoji, and never a provider name,
@@ -179,6 +180,30 @@ export const GROUP_PARTS_TITLE_AR = "أجزاء هذا الطلب";
 export const GROUP_PARTS_UNAVAILABLE_AR = "تعذّر تحميل روابط أجزاء هذا الطلب الآن. حاول مرة أخرى لاحقًا.";
 export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وحُرِّر حجزه.";
 export const GROUP_CLOSING_NOTICE_AR = "انتهت المدة المتاحة لتنفيذ طلبك، ونعمل الآن على إيقاف الجزء الجاري وإنهاء الطلب. تبقى النقاط محجوزة حتى ذلك الحين، ولن يُخصم منها إلا ثمن ما سُلِّم فعلًا.";
+
+export function splitCardLineAr(split: { parts: number; perPart: number; reachable: number; askedOriginal: number; hold: number }): string {
+  const X = split.askedOriginal;
+  const V = split.perPart;
+  const Y = split.reachable;
+  const K = split.parts;
+  const G = split.hold;
+  if (Y === X) {
+    return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+  }
+  return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ${toArabicDigits(40)}، لذلك أقصى ما يمكن تسليمه في هذا الطلب ${countPlainAr(Y, "companies")} على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+}
+
+export function groupStartLineAr(args: { hold: number; parts: number }): string {
+  return `تمت الموافقة على طلبك كاملًا وحُجزت ${pointsAr(args.hold, toArabicDigits)} مرة واحدة. بدأ الجزء ١ من ${toArabicDigits(args.parts)}، وستبدأ الأجزاء التالية تلقائيًا بعد انتهاء كل جزء، وفي صفحة تفاصيل أي جزء من الطلب تجد روابط كل أجزائه.`;
+}
+
+export function groupDrawLineAr(args: { k: number; K: number; Z: number; Y: number }): string {
+  return `انتهى الجزء ${toArabicDigits(args.k - 1)} من ${toArabicDigits(args.K)}، والمسلَّم حتى الآن ${toArabicDigits(args.Z)} من ${toArabicDigits(args.Y)}. بدأ الجزء ${toArabicDigits(args.k)} تلقائيًا من الحجز الذي وافقت عليه، دون حجز جديد.`;
+}
+
+export function groupPartLinkAr(k: number, K: number): string {
+  return `الجزء ${toArabicDigits(k)} من ${toArabicDigits(K)}`;
+}
 
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
