@@ -107,7 +107,7 @@ describe("runDraft", () => {
 
   it.each([
     ["a Latin word", { ...GOOD, body: "{الاسم}، تحية طيبة،\n\nأصبحت ملفات Excel تصلك أسرع من قبل، جرّب طلبًا جديدًا." }],
-    ["«صف»", { ...GOOD, body: "{الاسم}، تحية طيبة،\n\nأصبح كل صف في ملفك يصلك أسرع من قبل، جرّب طلبًا جديدًا." }],
+    ["«صف»", { ...GOOD, body: "{الاسم}، تحية طيبة،\n\nأصبح ملفك يصلك وفيه ٥٠٠ صف من النتائج، جرّب طلبًا جديدًا." }],
   ])("a reply with %s is refused after exactly one retry, with the guard sentence and the fields", async (_name, bad) => {
     const f = fake([reply(bad), reply(bad), reply(GOOD)]);
     const out = await runDraft(INPUT, f.deps);
