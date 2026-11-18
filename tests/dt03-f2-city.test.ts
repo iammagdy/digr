@@ -41,4 +41,10 @@ describe("DT-20261118-03 F2-b: a city request keeps the other cities of the coun
     // {city: "Cairo", address: "Sheikh Zayed, Giza"} stays other_place because the address field names another city and NOT Cairo
     expect(placeVerdict(["EG:cairo"], { city: "Cairo", address: "Sheikh Zayed, Giza" }, fields)).toBe("other_place");
   });
+  // D-0086 (no hard-coded city list): the rule needs no table of OTHER cities; a town that is in no list still counts against a Cairo request when the address names places and never Cairo
+  it("an address of several parts that never names the asked city is another place, whatever town it names; a one-part street address is not judged", () => {
+    expect(placeVerdict(["EG:cairo"], { city: "Cairo", address: "Kafr El Dawwar, Beheira" }, fields)).toBe("other_place");
+    expect(placeVerdict(["EG:cairo"], { address: "كفر الدوار، البحيرة" }, fields, { bySource: true })).toBe("other_place");
+    expect(placeVerdict(["EG:cairo"], { city: "Cairo", address: "12 Tahrir Street" }, fields)).toBe("pass");
+  });
 });
