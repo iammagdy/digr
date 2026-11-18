@@ -812,6 +812,7 @@ function makeWorld() {
         }
 
         if (nextGroup) {
+          claimedIds.push(nextGroup.id);
           nextGroup.last_attempt_at = new Date(Date.now()).toISOString();
           rpcCalls.push({ name, args });
           if (latency.process) {
