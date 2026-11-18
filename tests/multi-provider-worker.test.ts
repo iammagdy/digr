@@ -2000,8 +2000,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         await dyingWinnerThenWatchdog(mode);
       },
       expected: {
-        main: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
-        chain: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        main: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        chain: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
       },
     },
     {
@@ -2016,8 +2016,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         expect(text).not.toContain("O شركة");
       },
       expected: {
-        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
-        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        main: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
       },
     },
     {
@@ -2027,8 +2027,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2, wDies: true });
       },
       expected: {
-        main: { settles: 0, releases: 1, charge: 0, rows: 0 },
-        chain: { settles: 0, releases: 1, charge: 0, rows: 0 },
+        main: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0 },
+        chain: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0 },
       },
     },
     {
@@ -2043,8 +2043,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         expect(text).not.toContain("O شركة");
       },
       expected: {
-        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
-        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        main: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
       },
     },
     {
@@ -2055,8 +2055,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         await sweepAfter31Minutes();
       },
       expected: {
-        main: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
-        chain: { settles: 0, releases: 1, charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        main: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
+        chain: { settles: 0, releases: 1, effective: 1, net: 0, answers: [false], charge: 0, rows: 0, releaseText: staleReleaseReasonAr(5) },
       },
     },
     {
@@ -2066,8 +2066,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         await raceWithOldWorker({ mode, pause: { kind: "upload", name: "step_0.json" }, oRows: 3, wRows: 2 });
       },
       expected: {
-        main: { settles: 1, releases: 0, charge: 200, rows: 2 },
-        chain: { settles: 1, releases: 0, charge: 200, rows: 2 },
+        main: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
+        chain: { settles: 1, releases: 0, effective: 0, net: 200, answers: [], charge: 200, rows: 2 },
       },
     },
     {
@@ -2077,9 +2077,9 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
         await raceOFirst({ mode, interleaving: "I1", oRows: 3, wRows: 2 });
       },
       expected: {
-        // main's winner O assembles from storage: W's 2 rows ≠ 3 units and releases; W, the unsettled loser, mismatches again and releases again: the real SQL answers already_released the second time, the fake counts the call
-        main: { settles: 0, releases: 2, charge: 0, rows: 0 },
-        chain: { settles: 1, releases: 0, charge: 300, rows: 3 },
+        // main's winner O assembles from storage: W's 2 rows ≠ 3 units and releases; W, the unsettled loser, mismatches again and releases again: the second call answers already_released: two calls, ONE effective release (answers [false, true]), net debit 0
+        main: { settles: 0, releases: 2, effective: 1, net: 0, answers: [false, true], charge: 0, rows: 0 },
+        chain: { settles: 1, releases: 0, effective: 0, net: 300, answers: [], charge: 300, rows: 3 },
       },
     },
   ];
