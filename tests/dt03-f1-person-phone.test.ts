@@ -77,11 +77,11 @@ describe("the person's inputs", () => {
 });
 
 describe("D-0084: the company's number is never written in a person's phone cell", () => {
-  const run = async (people: Array<Record<string, unknown>>, answers: (ep: string) => unknown) => {
+  const run = async (people: Array<Record<string, unknown>>, answers: (ep: string) => unknown, companyPhone?: string) => {
     const store = createMemoryStore();
     const items = await ItemStore.open(store, "msn_p");
     await items.commit([
-      { t: "item", stage: "companies", id: "c1", state: "accepted", by: "rule", row: { id: "c1", name: "Falcon Misr", website: "https://www.falconmisr.com/", country: "EG" } as any },
+      { t: "item", stage: "companies", id: "c1", state: "accepted", by: "rule", row: { id: "c1", name: "Falcon Misr", website: "https://www.falconmisr.com/", country: "EG", ...(companyPhone ? { phone: companyPhone } : {}) } as any },
       ...people.map((p) => ({ t: "item" as const, stage: "people", id: String(p.id), state: "accepted" as const, by: "rule" as const, row: { parent_id: "c1", phone: "", ...p } })),
     ]);
     // the person's phone step as buildContactSteps now makes it: the person's finders only, no company-number search
@@ -96,6 +96,12 @@ describe("D-0084: the company's number is never written in a person's phone cell
   };
   it("no personal phone found: the cell stays empty and no map search is paid for", async () => {
     const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], (ep) => (ep.includes("maps") ? { places: [{ title: "Falcon Misr", phone: "+20 2 2345 6789" }] } : null));
+    expect(w.cell("p1")).toEqual({ phone: "", type: "" });
+    expect(w.calls).toEqual([BLITZ.id]);
+  });
+  // BUG HUNTER Gate 1 delta P0: the company ROW's own phone was copied into the person's cell with no search at all
+  it("the company row's own phone is never copied into a person's cell", async () => {
+    const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], () => null, "+20 2 2345 6789");
     expect(w.cell("p1")).toEqual({ phone: "", type: "" });
     expect(w.calls).toEqual([BLITZ.id]);
   });
