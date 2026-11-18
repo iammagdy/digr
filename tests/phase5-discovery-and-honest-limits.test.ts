@@ -278,7 +278,7 @@ describe("limits and constants: where the per-job cap and the Facebook ceilings 
     expect(lineOf("supabase/migrations/20261017180000_create_quote_atomic.sql", "v_cap numeric := 600;")).toBe(19);
     expect(lineOf("supabase/migrations/20261017181000_settle_decision_maker_fields.sql", "COALESCE(p_points_cap,600), 600")).toBe(75);
     expect(lineOf("supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql", "LEAST(v_raw_charge, v_job.reserved_credits, p_points_cap)")).toBe(98);
-    expect(lineOf("src/functions/shared/planManager.ts", "const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);")).toBe(622);
+    expect(lineOf("src/functions/shared/planManager.ts", "const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);")).toBe(630);
     expect(lineOf("src/lib/socialSources.ts", "maxRows: FACEBOOK_JOB_CEILINGS.posts,")).toBe(612);
     expect(lineOf("src/lib/socialSources.ts", "export const MAX_TOP_PER_CHANNEL = 20;")).toBe(660);
   });
