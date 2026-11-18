@@ -1578,6 +1578,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rel.args.p_error_message).toBe(staleReleaseReasonAr(5));
     expect(rel.args.p_error_message).not.toMatch(/[0-9]/);
     expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+    expectMoney("released", { calls: 1 });
   });
 
 
@@ -1592,6 +1593,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(names.indexOf("complete_chunk")).toBeLessThan(names.indexOf("settle_job_atomic"));
     expect(r.canonicalText).toContain("W شركة");                           // the canonical file's last writer is W (the winner)
     expect(r.resultText).toContain("W شركة"); expect(r.resultText).not.toContain("O شركة");   // delivered rows = the canonical file's, NOT L's own
+    expectMoney("settled", { charge: Math.ceil(2 * db.unitPrice) });
   });
 
 
@@ -1605,7 +1607,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(rel.args.p_force).toBe(true);
     // DT-06 R01 is merged: the response error IS the stored text, releaseTextAr(<the mismatch text>, N); releaseTextAr of an already-prefixed text returns it unchanged
     expect(rel.args.p_error_message).toBe(releaseTextAr(String(r.o.body.error), db.targetVolumeMax));
-    expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBeUndefined();
+    expect(r.resultText).toBeNull(); expect(db.jobs[0].charged_credits).toBe(0);
+    expectMoney("released", { calls: 1 });
   });
 
 
@@ -1807,6 +1810,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(String(bodyA.error)).toContain("حجز مؤقت مُحرَّر كاملًا");
       expect(String(bodyA.error)).not.toMatch(/[A-Za-z0-9]/);
       expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+      expectMoney("released", { calls: 1 });
 
       // b. the settlement itself fails: the whole reserve is released, zero debit, and no completion event is written
       vi.mocked(supabase.createAdminClient).mockImplementation(origImpl!);
@@ -1831,6 +1835,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(rpcCount("record_chunk_failure")).toBe(1);
       expect(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message).toBe(bodyB.error);
       expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+      expectMoney("released", { calls: 1 });
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
