@@ -114,6 +114,7 @@ vi.mock("../src/lib/supabase/server", () => {
     createAdminClient: vi.fn(() => ({
       rpc: async () => ({ data: null, error: null }),
       from: (table: string) => {
+        if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
         if (table === "missions") return chain(() => ({ data: world.mission, error: null }));
         if (table === "jobs") return chain(() => ({ data: world.job, error: null }));
         if (table === "artifact_versions") return chain(() => ({ data: [{ id: "v1", version_number: 1, file_id_xlsx: "u1/job_x1/result.xlsx", file_id_csv: null, file_id_pdf: null }], error: null }));

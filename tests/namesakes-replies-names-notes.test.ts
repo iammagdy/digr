@@ -146,7 +146,7 @@ describe.each([["X tweets", "@fan1 رأيي في المباراة أن الفر�
 // ------------------------------------------------------------------------------------------------------------------ D. the file name
 interface FakeRow { id: string; user_id: string; files: unknown; plan: unknown; request_text: string; delivered_units: number; updated_at: string }
 const fakeClient = (row: FakeRow, signed: Array<{ path: string; download: string | undefined }>) => ({
-  from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }) }),
+  from: (table: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "job_group_parts" ? null : row, error: null }) }) }) }),
   storage: { from: () => ({ createSignedUrl: async (path: string, _ttl: number, options?: { download?: string }) => { signed.push({ path, download: options?.download }); return { data: { signedUrl: `https://signed.example/${path}` }, error: null }; } }) },
 });
 const planOf = (title: string): any => ({ stages: [{ key: "s", title_ar: title, deliver: true, relevance: { terms: ["محمد صلاح"], subject_ar: "لاعب" } }] });
