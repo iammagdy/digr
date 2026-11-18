@@ -81,6 +81,7 @@ const A = mk("A"); const B = mk("B"); const O = mk("O"); const P = mk("P");
 const shaA = sha(A); const frozenPath = `u/j/frozen-${shaA}.json`;
 const S10 = GROUP_PART_FILE_UNAVAILABLE_AR; const S9 = GROUP_PART_FILE_PENDING_AR;
 const NOT_COMPLETE_EDIT_AR = "لا يمكن تعديل النتيجة قبل اكتمال الطلب.";
+const NOT_COMPLETE_METHODOLOGY_AR = "ستتاح صياغة المنهجية بعد اكتمال تسليم نتائج الطلب.";
 
 const MUTABLE: [string, string][] = ["results", "partials"].flatMap((b) => ["u/j/data.json", "j/data.json", "results/j/data.json", "partials/j/data.json", "json_j"].map((p) => [b, p] as [string, string]));
 function reset() { S.jobs = {}; S.parts = {}; S.frozen = {}; S.avRows = []; S.ledger = new Set(); S.partError = null; S.partTimeout = false; S.frozenError = null; S.frozenTimeout = false; S.buckets = { results: {}, partials: {} }; S.storageErr = null; S.ops = []; S.inserts = []; S.tables = []; }
@@ -179,11 +180,15 @@ describe("case (2) BEFORE FREEZE: the part is still collecting (running, no froz
     expect(out.status).toBe(409); expect(out.body.error).toBe(NOT_COMPLETE_EDIT_AR);
     expect(downloads()).toEqual([]); expectNothingDone();
   });
-  it("R-4 methodology: the group gate answers S9 409 BEFORE the status check and BEFORE any purchase rpc; nothing read or written", async () => {
+  it("R-4 methodology: a non-completed part gets the STATUS 409 «ستتاح صياغة المنهجية بعد اكتمال…» FIRST (before the group gate: no group lookup), no purchase rpc, nothing read or written", async () => {
     seed({ status: "running", frozen: false, mutable: B });
     const out = await run("methodology");
-    expect(out.status).toBe(409); expect(out.body.error).toBe(S9);
-    expect(downloads()).toEqual([]); expectNothingDone();
+    expect(out.status).toBe(409); expect(out.body.success).toBe(false);
+    expect(out.body.error).toBe(NOT_COMPLETE_METHODOLOGY_AR);
+    expect(out.body.error).not.toBe(S9);
+    expect(S.tables).not.toContain("job_group_parts");            // answered before the gate
+    expect(S.tables).not.toContain("job_group_frozen");
+    expect(downloads()).toEqual([]); expectNothingDone();         // and no purchase rpc, no upload, no read
   });
   it("R-5 returns \"\" and R-6 returns null; no data.json path is downloaded", async () => {
     seed({ status: "running", frozen: false, mutable: B });
