@@ -181,3 +181,42 @@ describe("which finders the catalog offers for a person", () => {
     for (const f of [...emails, ...finderSourcesOf("phone", catalog, () => true)]) expect(f.inputs.some((i) => /linkedin|name|domain|company|profile/i.test(i.name))).toBe(true);
   });
 });
+
+// DT-20261118-03 fix round 1 (QA consolidated FAIL 1, D-0086): «2+ people of one company share it» is checked on the stage's rows AS THEY END, not only on the rows this run looked up: an address that already had its final status, and the rows a stopped run never reached, count too
+describe("DT-20261118-03 fix round 1: a shared address is cleared whatever its status and wherever the run stopped", () => {
+  const EMAIL_ONLY: ContactStep[] = [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }];
+  const SHARED = "team@orascom-em.com.eg";
+  it("two people of one company whose address already has its final status «موثّق» lose it both; a third person's own final address stays", async () => {
+    const w = await world({
+      people: [{ ...person(1, "General Manager"), email: SHARED, email_status: "موثّق" }, { ...person(2, "Chief Executive Officer"), email: SHARED, email_status: "موثّق" }, { ...person(3, "Accountant"), email: "own3@orascom-em.com.eg", email_status: "موثّق" }],
+      steps: EMAIL_ONLY,
+      answers: () => null,
+    });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "", email_status: "" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: "", email_status: "" });
+    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "own3@orascom-em.com.eg", email_status: "موثّق" });
+  });
+  it("one person's final address that a finder also returns for a second person is cleared from both, and the found count drops back", async () => {
+    const w = await world({
+      people: [{ ...person(1, "General Manager"), email: SHARED, email_status: "موثّق" }, person(2, "Chief Executive Officer")],
+      steps: EMAIL_ONLY,
+      answers: (ep) => (ep === EMAIL_A.id ? { email: SHARED } : null),
+    });
+    const out = await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "", email_status: "" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: "", email_status: "" });
+    expect(out.filled.email).toBe(0);
+  });
+  it("a run stopped on its first person still clears an address that two people it never reached share", async () => {
+    const w = await world({
+      people: [person(2, "Chief Executive Officer"), { ...person(3, "Accountant"), email: SHARED }, { ...person(5, "Technician"), email: SHARED }],
+      steps: EMAIL_ONLY,
+      answers: () => "refuse",
+    });
+    const out = await w.run();
+    expect(out.stopped).not.toBeNull();
+    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "" });
+    expect(cellsOf(w.items, "p5")).toMatchObject({ email: "" });
+  });
+});
