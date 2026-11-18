@@ -5,7 +5,7 @@ import { DEFAULT_PEOPLE_PER_PARENT, perParentQuantities, requestedStageIndexes }
 import { childStepSourcesFor, isPeopleNoun, peopleSourcesForCompanies } from "../src/lib/agentMission/childSources";
 import { validateAndPricePlan, type PlanLookup } from "../src/lib/agentMission/plan";
 import { buildTools } from "../agent/src/tools";
-import { assumptionLinesOf, planEditorView, type PricedPlan } from "../src/lib/agentMission/plan";
+import { assumptionLinesOf, customerPlanView, planEditorView, type PricedPlan } from "../src/lib/agentMission/plan";
 import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 import { editsFromState, initialState } from "../src/components/mission/PlanEditor";
 import { makeHarness } from "./helpers/agentHarness";
@@ -104,6 +104,18 @@ describe("the plan check: the decision makers are never dropped by one sentence"
     expect(stage.planned_rows).toBe(10);
     expect(readingAlone(checked.plan)).toBeGreaterThan(600);
     expect((checked.plan.assumptions_ar ?? []).join(" ")).toMatch(/لم تحدد عدد/);
+  });
+  // QA wave-1 FAIL #570: the card line is pinned word for word, as the customer sees it (customerPlanView), cheap and dear alike
+  it("the card says, word for word, the count code used for the people the customer did not count: «فاعتمدنا ٢», also when the reading is dear", () => {
+    const LINE = "لم تحدد عدد صناع القرار لكل شركة، فاعتمدنا ٢؛ تقدر تغيّره من «عدّل الطلب».";
+    for (const people_calls of [calls(0.001, 2), calls(0.024, 2)]) {
+      const checked = validateAndPricePlan({ summary_ar: "٥ شركات مصرية في قطاع الكهروميكانيكا ومعهم صناع القرار.", stages: [companies, people(1)], contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.", }, lookupOf([["aviato.companies.employees", 2]], people_calls));
+      expect(checked.ok, JSON.stringify(checked)).toBe(true);
+      if (!checked.ok) return;
+      const card = customerPlanView(checked.plan).assumptions_ar ?? [];
+      expect(card).toContain(LINE);
+      expect(card.filter((l) => l.startsWith("لم تحدد عدد"))).toEqual([LINE]);
+    }
   });
   it("a number the customer gave is never lowered by code, however dear the plan (the job cap itself is untouched)", () => {
     const dear = calls(0.024, 2);
