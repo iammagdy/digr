@@ -30,12 +30,19 @@ export async function freezeGroupPart(
     return "unfreezable";
   }
 
+  const now = args.now ?? Date.now;
+  const deadline = now() + (args.budgetMs ?? FREEZE_BUDGET_MS);
+
   const candidates = freezeCandidates(job.user_id, job.id);
   const dedupe = dedupeIdentityFor("company");
 
   let selectedCandidate: { candidate: { bucket: "partials"; path: string }; bytes: Buffer; ids: string[] } | null = null;
 
   for (let index = 0; index < candidates.length; index++) {
+    if (deadline - now() < FREEZE_IO_TIMEOUT_MS) {
+      return "retry";
+    }
+
     const candidate = candidates[index];
     let downloadResult: any;
     try {
@@ -120,6 +127,10 @@ export async function freezeGroupPart(
   const sha = createHash("sha256").update(selectedCandidate.bytes).digest("hex");
   const path = frozenPathFor(job.user_id, job.id, sha);
 
+  if (deadline - now() < FREEZE_IO_TIMEOUT_MS) {
+    return "retry";
+  }
+
   let uploadResult: any;
   try {
     uploadResult = await withTimeout(
@@ -143,6 +154,10 @@ export async function freezeGroupPart(
     const msg = String(err?.message ?? "");
     const isConflict = status === 409 || /exists|duplicate/i.test(msg);
     if (!isConflict) {
+      return "retry";
+    }
+
+    if (deadline - now() < FREEZE_IO_TIMEOUT_MS) {
       return "retry";
     }
 
@@ -177,6 +192,10 @@ export async function freezeGroupPart(
   }
 
   const sortedKeys = [...selectedCandidate.ids].sort();
+
+  if (deadline - now() < FREEZE_RPC_TIMEOUT_MS) {
+    return "retry";
+  }
 
   let rpcResult: any;
   try {

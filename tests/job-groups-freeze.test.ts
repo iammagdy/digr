@@ -387,4 +387,22 @@ describe("jobGroupFreeze", () => {
     expect(w.results.size).toBe(0);
     expect(w.f5.calls).toEqual([]);
   });
+
+  it("(f) BUDGET GUARD: budgetMs 12_000 with every op 4.9 s ⇒ after 2 reads the upload is not started ⇒ retry, no upload; the default budget freezes", async () => {
+    const mk = () => {
+      const w = makeWorld();
+      w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
+      w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
+      w.latency = { read: 4_900, upload: 4_900, download: 4_900, rpc: 3_900 };
+      return w;
+    };
+    const tight = mk();
+    expect(await runFreeze(tight, { budgetMs: 12_000 })).toBe("retry");
+    expect(tight.results.size).toBe(0);
+    expect(tight.f5.calls).toEqual([]);
+    vi.setSystemTime(0);
+    const roomy = mk();
+    expect(await runFreeze(roomy)).toBe("frozen");
+    expect(roomy.f5.committed.length).toBe(1);
+  });
 });
