@@ -258,10 +258,12 @@ describe("jobGroupFreeze", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const w = makeWorld();
     w.partials.set("u1/job_p1/data.json", bytesOf(rowsOf(9)));
-    w.partials.set("job_p1/data.json", bytesOf(rowsOf(10, "b")));
-    await runFreeze(w); // still "retry" at this task (no upload yet)
+    const b2 = bytesOf(rowsOf(10, "b"));
+    w.partials.set("job_p1/data.json", b2);
+    expect(await runFreeze(w)).toBe("frozen"); // candidate 2 is valid, so the freeze completes in this call
     expect(w.reads).toEqual(["u1/job_p1/data.json", "job_p1/data.json"]);
     expect(warn).toHaveBeenCalledWith("[job-groups:freeze-candidate-rejected]", { jobId, index: 0 });
+    expect(w.f5.committed.map((c) => c.p_sha256)).toEqual([shaOf(b2)]);
   });
 
   it.each([
