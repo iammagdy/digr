@@ -16,6 +16,8 @@ import { fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { excelFromCsv } from "@/lib/server/excelFromCsv";
+import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
+import { servedPathFor } from "@/lib/server/multiProvider/jobGroupShared";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +83,12 @@ export async function GET(
     if (!resultsReleasable(job)) {
       return NextResponse.json({ success: false, error: NO_RELEASABLE_RESULT_AR }, { status: 409 });
     }
+
+    const groupServe = await groupPartDataset(adminClient, job);
+    if (groupServe.kind === "refuse") {
+      return NextResponse.json({ success: false, error: groupServe.errorAr }, { status: groupServe.status });
+    }
+    const isFrozenGroupPart = groupServe.kind === "frozen";
 
     // File formats can be generated later from the saved dataset, even when
     // the customer did not choose them before the search.
@@ -214,7 +222,7 @@ export async function GET(
     // Prefer regenerating deliverable formats from the saved dataset. Existing
     // artifacts can predate quality/layout fixes, and format downloads must
     // never re-run the provider or return stale report layouts.
-    let jsonText = "";
+    let jsonText = groupServe.kind === "frozen" ? groupServe.text : "";
     const jsonCandidatePaths = [
       `${job.user_id}/${jobId}/data.json`,
       `${user.id}/${jobId}/data.json`,
@@ -223,7 +231,7 @@ export async function GET(
       `${jobId}/step_0.json`,
       `json_${jobId}`,
     ];
-    for (const bucketName of ["results", "partials"]) {
+    for (const bucketName of (isFrozenGroupPart ? [] : ["results", "partials"])) {
       if (jsonText) break;
       const bucket = adminClient.storage?.from?.(bucketName);
       if (!bucket || typeof bucket.download !== "function") continue;
@@ -328,7 +336,7 @@ export async function GET(
         if (fileBuf) {
           // A shaped file lives beside the standard result and never replaces it or becomes the job's linked artifact.
           const shapedKey = shapedSpec ? createHash("sha1").update(JSON.stringify(shapedSpec)).digest("hex").slice(0, 10) : "";
-          const uploadPath = shapedSpec ? `${job.user_id}/${jobId}/shaped_${shapedKey}.${format}` : `${job.user_id}/${jobId}/result.${format}`;
+          const uploadPath = shapedSpec ? `${job.user_id}/${jobId}/shaped_${shapedKey}.${format}` : isFrozenGroupPart ? servedPathFor(job.user_id, jobId, groupServe.sha256, format) : `${job.user_id}/${jobId}/result.${format}`;
           const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
             contentType: mimeType,
             upsert: true,
@@ -358,7 +366,7 @@ export async function GET(
     if (!signedUrl) {
       // Fall back to an existing artifact when the raw saved dataset is not
       // available, or generate JSON from the saved payload on first request.
-      for (const path of candidatePaths) {
+      for (const path of (isFrozenGroupPart ? [] : candidatePaths)) {
         const { data: signed, error: signErr } = await adminClient.storage
           .from("results")
           .createSignedUrl(path, 300, { download: downloadFileName });
@@ -370,7 +378,7 @@ export async function GET(
       }
 
       // AN OLDER REQUEST WITH A CSV AND NO EXCEL still gets a file: the Excel is built from its stored CSV and saved beside it
-      if (!signedUrl && format === "xlsx" && !shapedSpec) {
+      if (!signedUrl && format === "xlsx" && !shapedSpec && !isFrozenGroupPart) {
         try {
           const csvCandidates = [storedCsvPath, `${job.user_id}/${jobId}/result.csv`, `${user.id}/${jobId}/result.csv`, `${jobId}/result.csv`, `${job.user_id}/${jobId}/data.csv`, `${jobId}/data.csv`].filter((p, i, all): p is string => Boolean(p) && all.indexOf(p) === i);
           for (const csvPath of csvCandidates) {
@@ -397,7 +405,7 @@ export async function GET(
           const mimeType = "application/json";
 
           if (fileBuf) {
-            const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
+            const uploadPath = isFrozenGroupPart ? servedPathFor(job.user_id, jobId, groupServe.sha256, format) : `${job.user_id}/${jobId}/result.${format}`;
             const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
               contentType: mimeType,
               upsert: true,
