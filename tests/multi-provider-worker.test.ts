@@ -154,7 +154,15 @@ vi.mock("../src/lib/supabase/server", () => ({
         // like the SQL (20261017175500_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
         if (settledJob?.status === "completed") return { data: { success: true, already_settled: true, reserved_credits: db.reserved, charged_credits: settledJob.charged_credits ?? charged, delivered_units: db.deliveredUnits }, error: null };
         if (settledJob && settledJob.status !== "running") return { data: null, error: { message: `Cannot settle job ${args.p_job_id} with status ${settledJob.status} (must be running)` } };
-        if (settledJob) Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
+        if (settledJob) {
+          if (!db.ledger.some((r) => r.id === `rel_${args.p_job_id}`)) {
+            db.ledger.push({ id: `rel_${args.p_job_id}`, job_id: args.p_job_id, user_id: settledJob.user_id, type: "release", delta: db.reserved, by: "settle_job_atomic" });
+          }
+          if (charged > 0) {
+            db.ledger.push({ id: `chg_${args.p_job_id}`, job_id: args.p_job_id, user_id: settledJob.user_id, type: "charge", delta: -charged, by: "settle_job_atomic" });
+          }
+          Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
+        }
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "release_job_atomic") {
