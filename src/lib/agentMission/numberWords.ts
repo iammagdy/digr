@@ -34,8 +34,8 @@ function partOf(word: string): { kind: "unit" | "ten" | "teen10" | "hundred" | "
   return null;
 }
 
-/** The numbers above ten written in words in a text, as integers, in order. */
-export function wordNumbersIn(text: string): number[] {
+/** The numbers written in words in a text, as integers, in order: above ten by default (the reply guard); `min` 1 reads the small ones too (the chat checks the words a count was cited from, DT-20261118-05). */
+export function wordNumbersIn(text: string, min = 11): number[] {
   // punctuation ends a number («اثنتي عشرة، وعشرون شركة» is 12 and 20, never 32)
   const tokens = String(text ?? "").replace(/[«»"،,.:؛؟?!()]/g, " | ").split(/\s+/).filter(Boolean);
   const out: number[] = [];
@@ -69,7 +69,7 @@ export function wordNumbersIn(text: string): number[] {
       j += 1;
     }
     const value = total + current;
-    if (value > 10) out.push(value);
+    if (value >= min) out.push(value);
     i = Math.max(j, i + 1);
   }
   return out;

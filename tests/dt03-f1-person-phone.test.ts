@@ -113,6 +113,12 @@ describe("D-0084: the company's number is never written in a person's phone cell
     const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], (ep) => (ep === BLITZ.id ? { found: true, phone: "+201001234567" } : null));
     expect(w.cell("p1")).toEqual({ phone: "+201001234567", type: "شخصي" });
   });
+  // DT-20261118-05 (BUG HUNTER): every run explains an empty phone cell: what each finder answered, per outcome, in the mission's own file (also with the stage-3 attempt log off)
+  it("the mission's file says what the finder answered for each person: the finder was called and found nothing", async () => {
+    const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }, { id: "p2", full_name: "Sara Adel", linkedin: "linkedin.com/in/sara-adel" }], () => null);
+    expect(w.calls).toEqual([BLITZ.id, BLITZ.id]);
+    expect(JSON.parse((await w.store.getFile("msn_p", "contacts/attempts_people_phone.json"))!)).toEqual({ outcomes: { [`${BLITZ.id}|empty`]: 2 }, people: 2, stopped: null });
+  });
   it("a person the finder cannot be given is recorded in the mission's file with the missing input, never skipped in silence", async () => {
     const w = await run([{ id: "p1", full_name: "Mina Naguib" }, { id: "p2", full_name: "Sara Adel" }], () => null);
     expect(w.calls).toEqual([]);

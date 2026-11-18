@@ -1,5 +1,5 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
+import { FINDERS_PER_STEP, companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, profileUrlIn, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact, type PersonFacts } from "../../../src/lib/agentMission/contactFinders";
 import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
 import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
@@ -80,6 +80,27 @@ export const contactSrcKey = (column: string): string => `_src_${column}`;
 export const contactCallKey = (column: string): string => `_call_${column}`;
 const provenanceOf = (column: string, endpointId: string, callId: string): Record<string, string> => ({ [contactSrcKey(column)]: endpointId, [contactCallKey(column)]: callId });
 
+/** An internal file of the mission (the admin and the team read it): a write that fails is LOGGED, never swallowed (QA #575 FAIL 3), and never ends the step. */
+async function putInternalFile(deps: Pick<ContactDeps, "store" | "missionId" | "log">, relPath: string, body: unknown): Promise<void> {
+  try { await deps.store.putFile(deps.missionId, relPath, JSON.stringify(body), "application/json"); }
+  catch (e) { (deps.log ?? console.warn)(`contact_file_write_failed ${deps.missionId} ${relPath} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
+}
+
+/**
+ * THE ATTEMPTS FILE OF A STEP, contacts/attempts_<stage>_<kind>.json (DT-20261118-05 item 3): what every finder answered, the people, why the run stopped and, when it stopped, how many people it never reached. A RESUMED run ADDS its outcomes to
+ * the file a run before it wrote: its people already have their final cells, so it asks nobody and must not erase why they are empty (Gate 2 P2).
+ */
+async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_key" | "kind">, now: { outcomes: ReadonlyMap<string, number>; people: number; reached: number; stopped: string | null }): Promise<void> {
+  const relPath = `contacts/attempts_${step.stage_key}_${step.kind}.json`;
+  let before: unknown = null;
+  try { before = JSON.parse((await deps.store.getFile(deps.missionId, relPath)) ?? "null"); } catch (e) { (deps.log ?? console.warn)(`contact_file_read_failed ${deps.missionId} ${relPath} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
+  const outcomes: Record<string, number> = {};
+  const prior = (before as { outcomes?: unknown } | null)?.outcomes;
+  if (prior !== null && typeof prior === "object") for (const [k, n] of Object.entries(prior as Record<string, unknown>)) if (typeof n === "number" && Number.isFinite(n)) outcomes[k] = n;
+  for (const [k, n] of now.outcomes) outcomes[k] = (outcomes[k] ?? 0) + n;
+  await putInternalFile(deps, relPath, { outcomes, people: now.people, stopped: now.stopped, ...(now.stopped !== null ? { not_reached: Math.max(0, now.people - now.reached) } : {}) });
+}
+
 /**
  * ONE PASS PER PEOPLE STAGE, DECISION MAKERS FIRST: the people are taken in the order of their titles (roles.ts) and EACH person gets every step of the plan (the e-mail with its verifier, then the phone with its validator) before the next person is looked at. When the money or the
  * time ends, the chief executive and the general manager have all their cells and the ones left without are the people of the lowest titles. Each step keeps its own spend against its own priced cap; the job budget is shared and ends everything at once.
@@ -100,32 +121,41 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
   const steps = [...(plan.contact_steps ?? [])].filter((x) => x.level === undefined).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
   // THE COMPANY'S OWN E-MAIL AND HQ PHONE FIRST (the owner's top priority, reference A columns 5 and 6): before the people's steps spend any of the job's budget
   const companySteps = (plan.contact_steps ?? []).filter((x) => x.level === "company");
+  const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
+  // A PEOPLE STEP THE RUN NEVER REACHED still writes its attempts file, with the reason (QA #575 FAIL 3: a stop in the company stage left no file)
+  const notReached = async (keys: ReadonlyArray<string>, stop: ContactStop): Promise<void> => {
+    for (const step of steps.filter((x) => keys.includes(x.stage_key))) await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+  };
   for (const stageKey of [...new Set(companySteps.map((x) => x.stage_key))]) {
     const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out);
-    if (stopped) { out.stopped = stopped; return out; }
+    if (stopped) { out.stopped = stopped; await notReached(stageKeys, stopped); return out; }
   }
-  const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
-  for (const stageKey of stageKeys) {
+  for (const [i, stageKey] of stageKeys.entries()) {
     const stage = plan.stages.find((s) => s.key === stageKey);
     if (!stage) continue;
     const rows = items.acceptedRows(stageKey);
     const ranked = rankPeopleByRole(rows, (stage as { role_preference?: { role: Parameters<typeof rankPeopleByRole>[1] } }).role_preference?.role ?? "manager").rows;
-    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length));
+    // WHAT ONE STEP LEARNED ABOUT A PERSON FOR THE NEXT (DT-20261118-05 item 4): the work e-mail the e-mail step found, the professional page the phone step looked up
+    const learned = new Map<string, LearnedFacts>();
+    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned));
     const groupStart = deps.budget.spentUsd();
     let stopped: ContactStop | null = null;
     try {
       outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row); if (stopped) break outer; }
     } finally {
-      for (const runner of runners) await runner.finish();
+      // the group's stop is every step's stop (Gate 2 P2: only the runner that saw it said why)
+      for (const runner of runners) await runner.finish(stopped);
       out.spentUsd += deps.budget.spentUsd() - groupStart;
     }
-    if (stopped) { out.stopped = stopped; break; }
+    if (stopped) { out.stopped = stopped; await notReached(stageKeys.slice(i + 1), stopped); break; }
   }
   return out;
 }
 
 /** One call a step wants to make, and what came of it. */
 type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown; callId: string };
+/** What the steps of one person learned for the next step of the same person (DT-20261118-05 item 4). */
+type LearnedFacts = { email?: string; linkedin?: string };
 
 /** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
 async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> }, value: string, companyDomain: string | null, tally: VerifierTally = emptyTally()): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
@@ -333,9 +363,14 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
   return { attempt, down };
 }
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
+  // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
+  const outcomes = new Map<string, number>();
+  let stoppedBy: string | null = null;
+  // the people this step was run for (the rest, when the run stopped, are counted as never reached)
+  let reached = 0;
   // THE COMPANY MAILBOX, BY STRUCTURE (DT-20261118-03 PR-3, D-0086): an address that is on the person's company row, or that 2+ people of the same company share, is the company's, never one person's
   const addressOf = (v: unknown): string => String(v ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -407,6 +442,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   };
   return {
     async process(row: Row): Promise<ContactStop | null> {
+      reached += 1;
       let stopRun: ContactStop | null = null;
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
@@ -415,7 +451,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       // a value that already has its final status (an earlier run of this step) is not looked up or verified again
       if (existing !== "" && (step.kind === "email" ? existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR : existingStatus === PHONE_STATUS_VERIFIED_AR || existingStatus === PHONE_STATUS_OTHER_COUNTRY_AR)) return null;
       const parentId = String(row.parent_id ?? "");
-      const facts = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
+      const given = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
+      const known = learned.get(String(row.id));
+      let facts: PersonFacts = { ...given, linkedin: given.linkedin ?? known?.linkedin ?? null, ...(given.email || known?.email ? { email: given.email ?? known?.email ?? null } : {}) };
       let typeAr: string | null = null;
       let asked = false;
       let value = existing;
@@ -423,17 +461,48 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let hit: FoundContact | null = null;
       let origin: { endpointId: string; callId: string } | null = null;
       if (value === "") {
-        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
-        for (const finder of step.finders) {
+        // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
+        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}${outcome === "not_tried" && v ? `:${v}` : ""}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
+        // ONE PERSON NEVER COSTS MORE THAN THE CHAIN'S OWN PRICE FOR ONE PERSON (DT-20261118-05 item 4, no money change): the profile lookup and the alternates share it; a call billed on a hit counts only when it found something
+        const personCeilingUsd = step.finders.reduce((n, f) => n + f.usd, 0);
+        let personUsd = 0;
+        const affordable = (f: FinderInfo): boolean => personUsd + f.usd <= personCeilingUsd + 1e-9;
+        const spent = (f: FinderInfo, found: boolean): void => { if (f.bill === "call" || found) personUsd += f.usd; };
+        // (c) THE PERSON'S PROFESSIONAL PAGE FIRST (item 4c): a person without one is looked up by name and company, so the finders that need the page can be asked
+        if (step.kind === "phone" && facts.linkedin === null) {
+          for (const finder of step.profile_lookup ?? []) {
+            const params = finderParamsFor(finder, facts);
+            if (!params) { note(finder.id, "not_tried", `missing:${missingInputsFor(finder, facts).join("+")}`); continue; }
+            if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
+            const a = await attempt(finder, params);
+            if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
+            if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
+            asked = true;
+            if (a.t === "failed") { note(finder.id, "failed"); continue; }
+            const profile = profileUrlIn(a.page);
+            spent(finder, profile !== null);
+            note(finder.id, profile ? "value" : "empty", profile ?? undefined);
+            if (profile) { facts = { ...facts, linkedin: profile }; learned.set(String(row.id), { ...learned.get(String(row.id)), linkedin: profile }); break; }
+          }
+        }
+        // (b) THE CHAIN, THEN ITS ALTERNATES (item 4b): a finder the person cannot be asked by gives its turn to the next ranked finder of the catalog the person CAN be asked by; at most FINDERS_PER_STEP calls
+        let tried = 0;
+        const maxTries = Math.max(FINDERS_PER_STEP, step.finders.length);
+        const chain = [...step.finders, ...(step.alternates ?? []).filter((x) => !step.finders.some((f) => f.id === x.id))];
+        for (const finder of stopRun ? [] : chain) {
+          if (tried >= maxTries) break;
           const params = finderParamsFor(finder, facts);
           // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
           if (!params) { const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
+          if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
+          tried += 1;
           const a = await attempt(finder, params);
           if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
           if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
           asked = true;
           if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
           hit = foundContactIn(step.kind, a.page);
+          spent(finder, hit !== null);
           // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is never written in the work-email cell, whatever the finder said; the next finder is asked
           if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") { out.withheld.personal_email += 1; hit = null; }
           // THE COMPANY'S OWN ADDRESS IS NOT A PERSON'S E-MAIL (DT-20261118-03 PR-3, D-0086: by structure, no word list): an address on the person's company row is withheld and the next finder is asked
@@ -477,12 +546,15 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
         if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
         if (step.kind === "email" && hit) foundIds.add(String(row.id));
+        // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
+        if (step.kind === "email" && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
       }
+      if (stopRun) stoppedBy = stopRun;
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();
       return stopRun;
     },
-    async finish(): Promise<void> {
+    async finish(stop: ContactStop | null = null): Promise<void> {
       // one address held by 2+ people of the same company is the company's, nobody's own: cleared from every one of them
       // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
       await flush();
@@ -501,7 +573,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       }
       await flush();
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
-      if (notTried.size > 0) await deps.store.putFile(deps.missionId, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, JSON.stringify(Object.fromEntries(notTried)), "application/json").catch(() => undefined);
+      // EVERY RUN writes it (DT-20261118-05 item 3), also when nobody could be asked: the next live run proves why a cell is empty
+      await writeAttempts(deps, step, { outcomes, people: peopleCount, reached, stopped: stoppedBy ?? stop });
+      if (notTried.size > 0) await putInternalFile(deps, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, Object.fromEntries(notTried));
       await items.mirror(step.stage_key);
       try {
         await deps.addEvent({ kind: "progress", message_ar: `بحث ${STEP_LABEL_AR[step.kind]} لصناع القرار: وُجد لـ ${toArabicDigits(found)} من ${toArabicDigits(peopleCount)}.`, counts: { saved: found, planned: peopleCount } });

@@ -1,3 +1,4 @@
+import { finderSourcesOf } from "../src/lib/agentMission/contactFinders";
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog, isSellable } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
@@ -68,6 +69,33 @@ describe("the plan check: the decision makers are never dropped by one sentence"
   const companies = { key: "companies", title_ar: "الشركات المصرية في قطاع الكهروميكانيكا", endpoint_id: "tomba.companies.search.reveal", expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "website", title_ar: "الموقع" }, { key: "country", title_ar: "الدولة" }], sample_rows: [{ id: "kahromika-co.com", name: "KAHROMIKA", website: "https://kahromika-co.com", country: "EG" }], measured_by: ["call_0001"] };
   const people = (per: number) => ({ key: "people", title_ar: "صناع القرار في كل شركة", endpoint_id: "aviato.companies.employees", expected_rows: per * 5, parent_key: "companies", per_parent_rows: per, deliver: true, columns: [{ key: "name", title_ar: "اسم المدير" }, { key: "title", title_ar: "المسمى الوظيفي" }], sample_rows: [{ id: "person-1", name: "Example Person", title: "Director" }], measured_by: ["call_0002"] });
 
+  // DT-20261118-05 (live: «هات لي شركتين مقاولات في القاهرة ومسؤولي الإدارة فيها بأرقامهم وإيميلاتهم» got ONE stage and «the people are unavailable»): the people of the companies are a step because the PLANNER UNDERSTOOD them, whatever the wording
+  // (a count written in words, a title no list knows); the check never reads the customer's words for it
+  describe.each([
+    ["شركتين + مسؤولي الإدارة", "هات لي شركتين مقاولات في القاهرة ومسؤولي الإدارة فيها بأرقامهم وإيميلاتهم", "مسؤولي الإدارة"],
+    ["شركتين + الإدارة العليا", "هات لي شركتين مقاولات في القاهرة مع الإدارة العليا بأرقامهم وإيميلاتهم", "الإدارة العليا"],
+    ["٢ شركات + الإدارة العليا", "هات لي ٢ شركات مقاولات في القاهرة مع الإدارة العليا بأرقامهم وإيميلاتهم", "الإدارة العليا"],
+  ])("understood people step: %s", (_n, request, noun) => {
+    const structured = (): PlanLookup => ({ ...lookupOf([]), requestText: request, endpointCapability: (id: string) => catalog.byId.get(id)?.capability ?? null, understoodPeople: { noun_ar: noun, parent_ar: "الشركات", per_parent: null }, childStepSources: () => peopleSourcesForCompanies(catalog, allowed) });
+    it("a plan of the companies only, with the excuse note, is REFUSED and names the sources that can serve the step", () => {
+      const checked = validateAndPricePlan({ summary_ar: "شركتان مقاولات في القاهرة.", stages: [{ ...companies, expected_rows: 2 }], contacts_note_ar: "لم يتح لنا تجربة مصدر لصناع القرار ضمن ميزانية هذه المهمة." }, structured());
+      expect(checked.ok).toBe(false);
+      if (!checked.ok) expect(checked.issues.join(" ")).toMatch(/CAN be served|The catalog HAS sources/);
+    });
+    // DT-20261118-05 P2: the model's «unavailable» is never trusted by itself: the catalog is asked whether finders exist for what the customer asked
+    it("P2: the excuse note is refused by itself when the catalog has finders for the people's e-mails and phones", () => {
+      const checked = validateAndPricePlan({ summary_ar: "شركتان مقاولات في القاهرة.", stages: [{ ...companies, expected_rows: 2 }], contacts_note_ar: "لم يتح لنا تجربة مصدر لصناع القرار ضمن ميزانية هذه المهمة." }, { ...structured(), contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, catalog, allowed) });
+      expect(checked.ok).toBe(false);
+      if (!checked.ok) expect(checked.issues.join(" ")).toContain("the note is not a reason");
+    });
+    it("a plan with the people stage is accepted, the stage is delivered and the e-mail and phone finder steps are added by code, even when its title names no known people word", () => {
+      const checked = validateAndPricePlan({ summary_ar: "شركتان ومعهما الإدارة العليا.", stages: [{ ...companies, expected_rows: 2 }, { ...people(2), title_ar: `${noun} في كل شركة`, expected_rows: 4 }] }, { ...structured(), endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 2 }]]) });
+      expect(checked.ok, JSON.stringify(checked)).toBe(true);
+      if (!checked.ok) return;
+      expect(checked.plan.stages.find((s) => s.key === "people")!.deliver).toBe(true);
+      expect((checked.plan.contact_steps ?? []).filter((c) => c.level === undefined).map((c) => c.kind).sort()).toEqual(["email", "phone"]);
+    });
+  });
   it("the live plan (companies only, the managers dropped by contacts_note_ar) is REFUSED and the refusal names the sources that can serve the step", () => {
     const checked = validateAndPricePlan({ summary_ar: "٥ شركات مصرية في قطاع الكهروميكانيكا.", stages: [companies], contacts_note_ar: "لم يتح لنا تجربة مصدر لصناع القرار ضمن ميزانية هذه المهمة." }, lookupOf([]));
     expect(checked.ok).toBe(false);

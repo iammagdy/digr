@@ -43,6 +43,10 @@ export interface ContactStep {
   validators?: FinderInfo[];
   /** PHONE steps: the map searches that give a COMPANY's phone, cheapest first, used when no personal phone was found (one lookup per company). */
   company_phone?: FinderInfo[];
+  /** PHONE steps (DT-20261118-05 item 4b): the NEXT ranked phone finders of the catalog, after the chain. A person the chain cannot ask (no professional page) is asked by these instead, at most FINDERS_PER_STEP calls in all and never more than the chain's own price for one person; not priced. */
+  alternates?: FinderInfo[];
+  /** PHONE steps (DT-20261118-05 item 4c): the catalog's profile lookup (a person's name and company → the professional page), asked first for a person without one, inside the same price for one person; not priced. */
+  profile_lookup?: FinderInfo[];
   /** PHONE steps: the cell that says whose number it is, «شخصي» / «رقم الشركة». */
   type_key?: string;
   /** Set on a step of the COMPANY (audit 2026-11, taskContracts.ts): `stage_key` is the stage whose rows are the companies; the e-mail step looks up the company's own role mailbox (`finders` are mailbox listers), the phone step the company's HQ phone (`company_phone` are the map searches). Absent: a step of the people of a stage. */
@@ -60,13 +64,15 @@ const KIND_OF: Record<FinderKind, ContactKind> = { email: "work_email", phone: "
 const DEFAULT_COLUMN: Record<FinderKind, { key: string; title_ar: string }> = { email: { key: "email", title_ar: "الإيميل" }, phone: { key: "phone", title_ar: "رقم التليفون" } };
 
 /** The inputs a person gives a finder (a bare `url` input is NOT one: it takes an article, not a profile): the professional page, the name (whole, first, last), the company's domain and name. A finder that needs anything else (a webhook, a stored id) is not used. */
-const INPUT_KINDS: ReadonlyArray<{ kind: "linkedin" | "name" | "first" | "last" | "domain" | "company"; test: RegExp }> = [
+// DT-20261118-05 item 4: the person's WORK E-MAIL is an input too (a phone finder that looks the number up from it), and «companyOrDomain» is the company's domain (the catalog's profile lookup)
+const INPUT_KINDS: ReadonlyArray<{ kind: "linkedin" | "name" | "first" | "last" | "domain" | "company" | "email"; test: RegExp }> = [
   { kind: "linkedin", test: /^(person_)?linkedin(_?url)?$|^profile_?url$/i },
   { kind: "first", test: /^first_?name$/i },
   { kind: "last", test: /^last_?name$/i },
   { kind: "name", test: /^(full_?)?name$/i },
-  { kind: "domain", test: /^(company_?)?(domain|website)$|^company_?url$|^company_?domain$|^domain_?or_?company$/i },
+  { kind: "domain", test: /^(company_?)?(domain|website)$|^company_?url$|^company_?domain$|^domain_?or_?company$|^company_?or_?domain$/i },
   { kind: "company", test: /^company(_?name)?$/i },
+  { kind: "email", test: /^(work_?)?e-?mail$/i },
 ];
 const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null => INPUT_KINDS.find((k) => k.test.test(name))?.kind ?? null;
 
@@ -75,7 +81,7 @@ const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null 
  * under-prices a call that bills per call five-fold (quickenrich's 0.004834 became 0.00097) and the step's cap and the plan's price rested on it. Here the price is the catalog's price of one call (a routed endpoint at its dearest sibling), health and success rate come from the
  * general ranking, and the order is price over success rate, cheapest first, ties by id.
  */
-export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, options: { rank?: (id: string, usd: number) => number; maxUsd?: number } = {}): FinderInfo[] {
+export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, options: { rank?: (id: string, usd: number) => number; maxUsd?: number; offset?: number } = {}): FinderInfo[] {
   const seen = new Set<string>();
   const list: Array<{ key: number; info: FinderInfo }> = [];
   for (const e of group) {
@@ -91,7 +97,8 @@ export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: Tr
     const successRate = expectedCost(e, catalog, stats.get(e.id)).successRate;
     list.push({ key: (options.rank ? options.rank(e.id, usd) : usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, bill: e.cost?.type === "per_success" || e.cost?.type === "free" ? "success" : "call", inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
   }
-  return list.sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id)).slice(0, FINDERS_PER_STEP).map((x) => x.info);
+  const from = options.offset ?? 0;
+  return list.sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id)).slice(from, from + FINDERS_PER_STEP).map((x) => x.info);
 }
 
 /**
@@ -105,11 +112,90 @@ export const PHONE_FINDER_MAX_USD = 0.05;
 export const finderRankKey = (f: { id: string; usd: number }, kind: FinderKind): number => f.usd / finderHitRate(f.id, kind);
 
 /** The finders of a kind this account may buy, cheapest first (the helper ranking above). Only finders that answer at once and need only what a person row gives. */
-export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now(), offset = 0): FinderInfo[] {
   const caps = kind === "email" ? EMAIL_FINDER_CAPABILITIES : PHONE_CAPABILITIES;
   const usable = (e: CatalogEndpoint): boolean => !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
   const group = catalog.endpoints.filter((e) => e.capability && caps.has(e.capability) && isAllowed(e.id) && usable(e));
-  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD });
+  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD, offset });
+}
+
+/** THE NEXT RANKED FINDERS of a kind (DT-20261118-05 item 4b): the same catalog group, ranking and ceiling as finderSourcesOf, after its first FINDERS_PER_STEP. A person the chain cannot ask is asked by these instead. */
+export function alternateFinderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  return finderSourcesOf(kind, catalog, isAllowed, stats, now, FINDERS_PER_STEP);
+}
+
+/** The catalog capability of a PROFILE LOOKUP: a person's name and company in, the person's professional page out. */
+export const PROFILE_LOOKUP_CAPABILITY = "people.profile.url";
+/** THE PROFILE LOOKUPS of the catalog (DT-20261118-05 item 4c): synchronous, every required input one a person row gives, at most the phone ceiling, cheapest first. */
+export function profileLookupSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  const usable = (e: CatalogEndpoint): boolean => e.capability === PROFILE_LOOKUP_CAPABILITY && !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
+  return rankedHelpers(catalog.endpoints.filter((e) => isAllowed(e.id) && usable(e)), catalog, stats, now, { maxUsd: PHONE_FINDER_MAX_USD });
+}
+
+/**
+ * THE MOST NODES ONE WALK OF A PROVIDER'S ANSWER VISITS (QA #575 FAIL 1): the guard against a huge or self-referencing answer is a node count and a seen-set, never a depth (a page may sit under any number of unnamed objects).
+ * The walk keeps its own stack, so a deeply nested answer cannot overflow the call stack.
+ */
+export const ANSWER_WALK_MAX_NODES = 20_000;
+/** Every node under `root` in document order (depth first, each object once), at most ANSWER_WALK_MAX_NODES; `enter(node)` false keeps the walk out of that object's values. */
+function* answerNodes(root: unknown, enter: (node: object) => boolean = () => true): Generator<unknown> {
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  let budget = ANSWER_WALK_MAX_NODES;
+  while (stack.length > 0 && budget > 0) {
+    const node = stack.pop();
+    budget -= 1;
+    if (node !== null && typeof node === "object") {
+      if (seen.has(node)) continue;
+      seen.add(node);
+    }
+    yield node;
+    if (node === null || typeof node !== "object" || !enter(node)) continue;
+    const values = Array.isArray(node) ? node : Object.values(node as Record<string, unknown>);
+    for (let i = values.length - 1; i >= 0; i -= 1) stack.push(values[i]);
+  }
+}
+
+/** The professional page in a lookup's answer: the first value anywhere in it that is a person's LinkedIn page («/in/…»), given with https://. */
+export function profileUrlIn(page: unknown): string | null {
+  for (const node of answerNodes(page)) {
+    if (typeof node !== "string") continue;
+    const m = LINKEDIN_PERSON.exec(node.trim());
+    if (m) return /^https?:\/\//i.test(m[0]) ? m[0] : `https://${m[0]}`;
+  }
+  return null;
+}
+
+/** The key a stored person row keeps the professional page under when the planner's columns have no place for it (never a column of the file). */
+export const SOURCE_PROFILE_KEY = "_profile";
+/**
+ * THE PERSON'S PROFESSIONAL PAGE FROM THE SOURCE'S OWN ANSWER (DT-20261118-05 item 4a): a people source often gives the page one level down (`person.URLs.linkedin`, `linkedinURL`, `socials`) and the planner's mapping may leave it out. Every object of the raw answer that
+ * names a person is read for a LinkedIn page among its own values and its nested objects that name nobody; a mapped person without a page gets the one given for the same name. No field-name list: a value is a page by what it is.
+ */
+export function withSourceProfiles<R extends Record<string, unknown>>(page: unknown, rows: ReadonlyArray<R>, nameKeys: ReadonlyArray<string>): R[] {
+  const key = (n: string): string => n.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const nameOf = (o: Record<string, unknown>): string => text(o.full_name) || text(o.fullName) || text(o.name) || [text(o.first_name ?? o.firstName), text(o.last_name ?? o.lastName)].filter(Boolean).join(" ");
+  // the person's own page: among the person object's values at ANY depth, never inside a nested object that names somebody else (QA #575 FAIL 1: three unnamed levels down was cut off)
+  const own = (o: Record<string, unknown>): string | null => {
+    for (const v of answerNodes(o, (n) => n === o || Array.isArray(n) || !nameOf(n as Record<string, unknown>))) if (typeof v === "string" && LINKEDIN_PERSON.test(v.trim())) return profileUrlIn(v);
+    return null;
+  };
+  const byName = new Map<string, string>();
+  for (const node of answerNodes(page)) {
+    if (!isObj(node)) continue;
+    const inner = isObj(node.person) ? node.person : null;
+    const name = nameOf(node) || (inner ? nameOf(inner) : "");
+    const url = name ? own(node) ?? (inner ? own(inner) : null) : null;
+    if (name && url && !byName.has(key(name))) byName.set(key(name), url);
+  }
+  if (byName.size === 0) return [...rows];
+  return rows.map((r) => {
+    if (Object.values(r).some((v) => LINKEDIN_PERSON.test(text(v)))) return r;
+    const name = nameKeys.map((k) => text(r[k])).filter(Boolean).join(" ");
+    const url = name ? byName.get(key(name)) : undefined;
+    return url ? { ...r, [SOURCE_PROFILE_KEY]: url } : r;
+  });
 }
 
 /** The e-mail verifiers of the catalog this account may buy, cheapest first (the same ranking as every source): direct and synchronous (a routed one bills a range, an asynchronous one needs polling), taking only the address, with a known price. */
@@ -144,7 +230,7 @@ export const chainPriceUsd = (list: ReadonlyArray<FinderInfo> | undefined, depth
 export const VERIFIER_PRICE_DEPTH = 2;
 
 /** The helpers of a step besides its finders, from the catalog (empty when there are none). */
-export interface ContactAids { verifiers?: FinderInfo[]; validators?: FinderInfo[]; company_phone?: FinderInfo[] }
+export interface ContactAids { verifiers?: FinderInfo[]; validators?: FinderInfo[]; company_phone?: FinderInfo[]; alternates?: FinderInfo[]; profile_lookup?: FinderInfo[] }
 
 /** The phone validators of the catalog this account may buy, cheapest first: direct and synchronous, taking only a number (and the country hint of a national one). */
 export function validatorSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
@@ -191,7 +277,7 @@ export function buildContactSteps(
       const validatorUsd = validators ? chainPriceUsd(validators) : 0;
       const perPerson = chain.costUsd + (1 - chain.missShare) * verifierUsd + chain.missShare * companyUsd + validatorUsd;
       const maxPerson = list.reduce((n, f) => n + f.usd, 0) + verifierUsd + companyUsd + validatorUsd;
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}) });
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}), ...(kind === "phone" && help.alternates && help.alternates.length > 0 ? { alternates: help.alternates } : {}), ...(kind === "phone" && help.profile_lookup && help.profile_lookup.length > 0 ? { profile_lookup: help.profile_lookup } : {}) });
     }
   }
   return out;
@@ -232,7 +318,7 @@ export function verifierParamsFor(verifier: FinderInfo, email: string): Record<s
 }
 
 /** What one person gives a finder. */
-export interface PersonFacts { linkedin: string | null; name: string | null; first: string | null; last: string | null; domain: string | null; company: string | null }
+export interface PersonFacts { linkedin: string | null; name: string | null; first: string | null; last: string | null; domain: string | null; company: string | null; /** the person's work e-mail (DT-20261118-05 item 4: a phone finder looks the number up from it) */ email?: string | null }
 
 // DT-20261118-03: a profile written without its scheme («linkedin.com/in/…», as some people sources give it) is the same profile; it is given to a finder with https://
 const LINKEDIN_PERSON = /^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
@@ -247,13 +333,14 @@ export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArr
   const parts = name ? name.split(/\s+/) : [];
   const domainKey = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/(website|domain|site|url)/i.test(k)) { const d = bareDomain(v); if (d) return d; } return null; };
   const companyOf = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/^(company|company_name|name)$/i.test(k) && text(v)) return text(v); return null; };
-  return { linkedin, name, first: parts.length > 1 ? parts[0] : null, last: parts.length > 1 ? parts.slice(1).join(" ") : null, domain: domainKey(row) ?? domainKey(parent), company: text(row.company) || companyOf(parent) };
+  const email = columns.filter((c) => isEmailColumn(c)).map((c) => text(row[c.key]).replace(/^mailto:/i, "").toLowerCase()).find((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) ?? null;
+  return { linkedin, name, first: parts.length > 1 ? parts[0] : null, last: parts.length > 1 ? parts.slice(1).join(" ") : null, domain: domainKey(row) ?? domainKey(parent), company: text(row.company) || companyOf(parent), ...(email ? { email } : {}) };
 }
 
 /** The call parameters of a finder for a person, or null when the person lacks what the finder REQUIRES (it is then skipped for this person). At least one identifying input must be filled. */
 /** `forPerson` false: a COMPANY lookup (the company e-mail listers take only the domain), where no person identifier is required. */
 export function finderParamsFor(finder: FinderInfo, p: PersonFacts, forPerson = true): Record<string, string> | null {
-  const value: Record<ReturnType<typeof inputKindOf> & string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
+  const value: Record<ReturnType<typeof inputKindOf> & string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company, email: p.email ?? null };
   const params: Record<string, string> = {};
   for (const i of finder.inputs) {
     const k = inputKindOf(i.name);
@@ -262,14 +349,14 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts, forPerson = 
     if (v) params[i.name] = v; else if (i.required) return null;
   }
   // A PERSON FINDER NEEDS A PERSON (BUG HUNTER Gate 1 delta, PR-2c): a call with only the company's domain or name is a paid call about nobody; at least a profile or a name must go with it
-  if (forPerson && !finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last"].includes(inputKindOf(i.name) ?? ""))) return null;
+  if (forPerson && !finder.inputs.some((i) => params[i.name] !== undefined && ["linkedin", "name", "first", "last", "email"].includes(inputKindOf(i.name) ?? ""))) return null;
   return Object.keys(params).length > 0 ? params : null;
 }
 
 /** The inputs a finder REQUIRES that this person lacks (all its known inputs when none is filled): why it was not tried for this person. Empty when it can be called. */
 export function missingInputsFor(finder: FinderInfo, p: PersonFacts): string[] {
   if (finderParamsFor(finder, p) !== null) return [];
-  const value: Record<string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company };
+  const value: Record<string, string | null> = { linkedin: p.linkedin, name: p.name, first: p.first, last: p.last, domain: p.domain, company: p.company, email: p.email ?? null };
   const required = finder.inputs.filter((i) => i.required && !value[inputKindOf(i.name) ?? ""]).map((i) => i.name);
   return required.length > 0 ? required : finder.inputs.filter((i) => inputKindOf(i.name) !== null).map((i) => i.name);
 }

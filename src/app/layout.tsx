@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { AuthProvider } from "@/hooks/useUser";
 import { VisitBeacon } from "@/components/analytics/VisitBeacon";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/lib/theme";
+import { AUTH_HINT_SCRIPT } from "@/lib/authHint";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
 
@@ -74,6 +75,7 @@ export default function RootLayout({
       <head>
         <meta name="google" content="notranslate" />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: AUTH_HINT_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col bg-bg text-ink2 antialiased selection:bg-gold/30 selection:text-ink">
         <ThemeProvider>

@@ -15,6 +15,7 @@ import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
 import { companyIdentityOf, confirmPersonAtCompany, isPlaceholderCompanyUrl, peopleEvidenceOf } from "../../../src/lib/agentMission/companyIdentity";
 import { isPeopleStage, nameKeysOf } from "../../../src/lib/agentMission/people";
+import { withSourceProfiles } from "../../../src/lib/agentMission/contactFinders";
 import { NOT_AT_COMPANY_MARK, drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
@@ -593,7 +594,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // THE ROLE THE CUSTOMER NAMED among the people of a parent: the people whose job title names it come first (roles.ts), so the parent's share is taken from the top; the page's order is kept inside each group, and a page with no title field is untouched
     // THE PEOPLE OF A COMPANY MUST WORK THERE NOW: the source's own experiences for each person are read from the raw page; a person none of whose current jobs names the parent company is marked, and ingest keeps them out (not delivered, not counted, not charged)
     const confirmed = parentId !== null ? markPeopleNotAtCompany(deps, stage, parentId, page, rows.filter(isObject)) : rows.filter(isObject);
-    const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(confirmed, stage.role_preference.role).rows : confirmed;
+    // THE PERSON'S PROFESSIONAL PAGE FROM THE SOURCE'S OWN ANSWER (DT-20261118-05 item 4a): a mapped person without one gets the page the raw answer gives for the same name, kept on the row for the finders, never a column
+    const profiled = parentId !== null && isPeopleStage(stage) ? withSourceProfiles(page, confirmed, nameKeysOf(stage.columns)) : confirmed;
+    const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(profiled, stage.role_preference.role).rows : profiled;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it

@@ -8,7 +8,15 @@ import { useUser } from "@/hooks/useUser";
 export function GlassHeader({ initialSignedIn }: { initialSignedIn?: boolean } = {}) {
   const { user, loading } = useUser();
   const signedIn = loading ? Boolean(initialSignedIn) : Boolean(user);
+  // the session is not read yet and the page was not told: BOTH buttons are in the HTML and the one that matches <html data-auth> (authHint.ts, set before first paint) is shown; no wrong-button flash and no empty header
   const resolving = loading && initialSignedIn === undefined;
+  const dashboard = <Link href="/dashboard/chat" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">لوحة التحكم</Link>;
+  const guest = (
+    <>
+      <Link href="/login" className="flex h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2">دخول</Link>
+      <Link href="/register" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">حساب جديد</Link>
+    </>
+  );
 
   return (
     <header className="sticky top-0 z-30 h-0 overflow-visible">
@@ -32,14 +40,12 @@ export function GlassHeader({ initialSignedIn }: { initialSignedIn?: boolean } =
             <Link href="/services" className="hidden h-11 items-center rounded-full px-3 text-sm text-ink transition-colors hover:bg-sf2 min-[480px]:flex min-[760px]:px-3.5">خدماتنا</Link>
             <Link href="/pricing" className="hidden h-11 items-center rounded-full px-2.5 text-sm text-ink transition-colors hover:bg-sf2 min-[520px]:flex min-[760px]:px-3.5">الأسعار</Link>
             <Link href="/calculator" className="hidden h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2 min-[520px]:flex">حاسبة التكلفة</Link>
-            {resolving ? null : signedIn ? (
-              <Link href="/dashboard/chat" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">لوحة التحكم</Link>
-            ) : (
+            {resolving ? (
               <>
-                <Link href="/login" className="flex h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2">دخول</Link>
-                <Link href="/register" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">حساب جديد</Link>
+                <span className="auth-in-only contents">{dashboard}</span>
+                <span className="auth-out-only contents">{guest}</span>
               </>
-            )}
+            ) : signedIn ? dashboard : guest}
           </div>
         </div>
       </div>

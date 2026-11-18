@@ -42,7 +42,7 @@ import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
-import { asksPeopleOfCompanies } from "../../src/lib/agentMission/childSources";
+import { understoodPeopleOf } from "../../src/lib/agentMission/childSources";
 import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
@@ -534,7 +534,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // reads one real page per step and prices. It runs BEFORE every word rule below, for every platform the catalog serves; company and people research goes on to its own live-proven path. Switch `llm_planner_v1` (on unless set false).
   // (with the hard spend gate active for this mission the planner does not run: its long structured requests are not on the gate's reviewed call path; production runs with the gate unset)
   // DT-20261118-03 PR-7: the request's STRUCTURE as the planner understood it (a people step under a companies step) reaches catalog_search of the path below
-  let peopleOfCompanies = false;
+  let understoodPeople: ReturnType<typeof understoodPeopleOf> = null;
   if (deps.plannerModel && llmPlannerOn(settings) && !(deps.spendGate && deps.spendGate.active(mission.id))) {
     const words = deps.readMissionWords ? await deps.readMissionWords(mission.id, mission.user_id).catch(() => null) : null;
     const llmBefore = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
@@ -549,7 +549,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (r) {
       const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
       deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
-      if (r.understanding) peopleOfCompanies = asksPeopleOfCompanies(r.understanding.steps);
+      if (r.understanding) understoodPeople = understoodPeopleOf(r.understanding.steps);
       if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
       if (r.kind === "plan") {
         let plan = r.plan;
@@ -652,7 +652,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
   }
   const capabilityPrompt = discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "";
-  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow, ...(peopleOfCompanies ? { peopleOfCompanies: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {

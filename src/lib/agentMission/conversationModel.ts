@@ -43,7 +43,7 @@ export interface TurnContext {
   brief?: { enabled: boolean; soFar: ResearchBrief | null; numbersAr?: string[]; /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1): the kinds of public data that can be collected now, written by code from the registry (no provider name). */ capabilityLines?: string[] };
 }
 
-export interface ParsedAnswer { type: ChatType; reason: string; reply: string; count: number | null; /** the raw brief object (brief mode), checked by `parseBrief` */ brief?: unknown }
+export interface ParsedAnswer { type: ChatType; reason: string; reply: string; count: number | null; /** the customer's own words that wrote the count («شركتين», «اتنين», «عشر»): code checks they are in the message */ countText?: string | null; /** the raw brief object (brief mode), checked by `parseBrief` */ brief?: unknown }
 
 export interface Decision {
   type: ChatType;
@@ -177,6 +177,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- مثال: «الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request (آراء عامة عن موضوع). «هات أرقام تليفونات الناس اللي علقوا» = بيانات خاصة.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
+    "count_text: مع count فقط: الكلمات نفسها من رسالة العميل التي كتب بها العدد (مثل «شركتين» أو «اتنين» أو «عشر»)، كما هي في رسالته حرفيًا؛ وإلا null.",
     "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
     "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
     "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
@@ -250,6 +251,7 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
     reason: oneLine(typeof raw.reason === "string" ? raw.reason : "", 200),
     reply: typeof raw.reply === "string" ? raw.reply.replace(/\s+/g, " ").trim() : "",
     count: raw.count !== null && raw.count !== undefined && Number.isInteger(n) && n >= 1 ? n : null,
+    countText: typeof raw.count_text === "string" && raw.count_text.trim() !== "" ? raw.count_text.trim().slice(0, 40) : null,
     ...(brief !== undefined ? { brief } : {}),
   };
 }
@@ -325,9 +327,25 @@ const normalizeWords = (raw: string): string => normalizeDigits(String(raw ?? ""
 /** The numbers written in a message, as integers. */
 const writtenNumbers = (message: string): number[] => (normalizeWords(message).match(/\d+/g) ?? []).map(Number).filter((n) => Number.isSafeInteger(n));
 
+/**
+ * THE NUMBER THE CITED WORDS SAY (QA #575 FAIL 2: {count: 700, count_text: «شركتين»} passed because the words are in the message). A number in words is read by the reader the reply guard already uses (numberWords.ts: the grammar of
+ * Arabic cardinals, no list of services or providers); words that hold no number word may only be the Arabic DUAL of a noun («شركتين»، «تعليقين»: one word ending in ين or ان), which means two. Anything else says no number.
+ */
+function countOfWords(words: string): number | null {
+  const said = wordNumbersIn(words, 1);
+  if (said.length > 0) return said.length === 1 ? said[0] : null;
+  const tokens = words.split(" ");
+  return tokens.length === 1 && /^\p{L}{2,}(?:ين|ان)$/u.test(tokens[0]) ? 2 : null;
+}
+
 /** A count of items the model returned is kept only when the customer WROTE that number. */
-function supportedCount(message: string, count: number | null): number | null {
-  return count !== null && writtenNumbers(message).includes(count) ? count : null;
+function supportedCount(message: string, count: number | null, countText: string | null = null): number | null {
+  if (count === null) return null;
+  if (writtenNumbers(message).includes(count)) return count;
+  // THE COUNT WRITTEN IN WORDS («شركتين», «اتنين», «عشر»): the model says which words of the message wrote it; code checks those words are really in the message AND say the same number (a count the words do not say is dropped)
+  const words = normalizeWords(countText ?? "");
+  if (words.length < 2 || /\d/.test(words) || !normalizeWords(message).includes(words)) return null;
+  return countOfWords(words) === count ? count : null;
 }
 
 /** The words that open a short edit of a plan («خليها ٥٠٠»، «بس ١٠٠ تغريدة»، «قلّلها لـ ...»، «عدّل العدد»). */
@@ -423,12 +441,12 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller
     const brief = answer.brief === undefined ? null : parseBrief(answer.brief);
     const guard = answer.reply.trim() === "" ? null : guardReply(answer.reply, allowed);
-    const count = type === "edit_of_open_request" ? supportedCount(ctx.message, answer.count) : null;
+    const count = type === "edit_of_open_request" ? supportedCount(ctx.message, answer.count, answer.countText ?? null) : null;
     const rawStatus = answer.brief && typeof answer.brief === "object" && typeof (answer.brief as Record<string, unknown>).status === "string" ? String((answer.brief as Record<string, unknown>).status) : null;
     return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief, briefParts: rawPartsOf(answer.brief), briefRawStatus: rawStatus };
   }
   if (type === "data_request" || type === "cancel_open_request") return model_(null, false, null);
-  if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }
+  if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count, answer.countText ?? null); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }
   const guard = guardReply(answer.reply, allowed);
   if (guard.ok) return model_(guard.text, false, null);
   // the reply was long, had a Latin digit, an emoji or a number the facts do not give: ONE more try with the reasons, so the customer reads a natural answer and not the fixed text

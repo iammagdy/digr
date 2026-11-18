@@ -262,7 +262,9 @@ describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
       expect(landingPage).not.toContain("getUser");
       expect(landingPage).toContain('export const dynamic = "force-static"');
       expect(glassHeader).toContain("const resolving = loading && initialSignedIn === undefined");
-      expect(glassHeader).toContain("resolving ? null");
+      // DT-20261118-07: while resolving, BOTH buttons are in the HTML and the pre-paint hint (authHint.ts) shows the right one; no empty header, no wrong-button flash
+      expect(glassHeader).toContain("auth-in-only");
+      expect(glassHeader).toContain("auth-out-only");
       expect(sections).toContain("useUser()");
       expect(glassHeader).toContain('href="/dashboard/chat"');
       expect(glassHeader).toContain("لوحة التحكم");
