@@ -29,6 +29,10 @@ const db = vi.hoisted(() => ({
   updates: [] as Array<{ patch: any; filters: Array<[string, unknown]> }>,
   throwCompleteChunkAt: 0,
   completeCalls: 0,
+  // DT-20261117-07 QA r1: the SQL-equivalent money ledger, the answers of release_job_atomic, the in-app notices inserted
+  ledger: [] as Array<{ id: string; job_id: string; user_id: string; type: "release" | "charge"; delta: number; by: "release_job_atomic" | "record_chunk_failure" | "settle_job_atomic" }>,
+  releaseAnswers: [] as any[],
+  notices: [] as any[],
 }));
 
 function builder(rows: () => any[]) {
@@ -135,7 +139,9 @@ vi.mock("../src/lib/supabase/server", () => ({
           releasedJob.lease_until = null;
           releasedJob.status = "failed";
         }
-        return { data: { success: true, released_credits: db.reserved }, error: null };
+        const answer = { success: true, released_credits: db.reserved };
+        db.releaseAnswers.push(answer);
+        return { data: answer, error: null };
       }
       if (name === "record_chunk_failure") {
         db.failCount += 1;
@@ -186,7 +192,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       if (table === "settings_private") return builder(() => db.settings);
       if (table === "job_events" || table === "notifications" || table === "artifact_versions") {
         const base = builder(() => (table === "job_events" ? db.events : []));
-        return { ...base, insert: async (row: any) => { if (table === "job_events") db.events.push({ created_at: new Date().toISOString(), ...row }); return { data: row, error: null }; }, upsert: async (row: any) => ({ data: row, error: null }) };
+        return { ...base, insert: async (row: any) => { if (table === "job_events") db.events.push({ created_at: new Date().toISOString(), ...row }); if (table === "notifications") db.notices.push(row); return { data: row, error: null }; }, upsert: async (row: any) => ({ data: row, error: null }) };
       }
       return builder(() => []);
     },
@@ -257,6 +263,23 @@ function resetDb(over: { target?: number } = {}) {
   db.failCount = 0; db.onFifthFailure = null; db.casError = null; db.casThrows = false; db.updates = []; db.throwCompleteChunkAt = 0; db.completeCalls = 0;
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
   db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear(); db.resultExistedAtSettle = [];
+  db.ledger = []; db.releaseAnswers = []; db.notices = [];
+}
+
+const effectiveReleases = () => db.ledger.filter((r) => r.type === "release" && r.by !== "settle_job_atomic").length;
+const netDebit = () => db.reserved - db.ledger.reduce((sum, r) => sum + r.delta, 0);
+const releaseAnswers = () => db.releaseAnswers;
+const releaseEvents = () => db.events.filter((e: any) => e.event_type === "error" && String(e.message ?? "").startsWith("المسلَّم"));
+function expectMoney(kind: "released" | "settled", opts: { charge?: number; calls?: number } = {}): void {
+  const released = kind === "released";
+  const charge = opts.charge ?? 0;
+  expect(effectiveReleases()).toBe(released ? 1 : 0);
+  expect(db.ledger.map((r) => r.type)).toEqual(released ? ["release"] : ["release", "charge"]);
+  expect(netDebit()).toBe(released ? 0 : charge);
+  expect(db.jobs[0].charged_credits).toBe(released ? 0 : charge);
+  expect(db.jobs[0].status).toBe(released ? "failed" : "completed");
+  const releaseCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic").length;
+  expect(releaseCalls).toBe(released ? opts.calls ?? releaseCalls : 0);
 }
 
 describe("worker: multi-provider chain job (fake providers)", () => {
