@@ -364,6 +364,17 @@ describe("Supabase Route Handlers & Business Rules", () => {
   });
 
   it("acceptQuoteSupabase never leaks database rpc error or SQL text", async () => {
+    mockQuotes.push({
+      id: "quote-any",
+      user_id: "user-1",
+      status: "quoted",
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      items: [{ endpointId: "test-ep", unitPricePoints: 10, targetVolumeMin: 10, targetVolumeMax: 10 }],
+      output_formats: ["xlsx"],
+      quote_hash: "a".repeat(64),
+      total_reserved_credits: 50,
+    });
+
     const brokenClient = {
       ...mockAdminClient,
       rpc: vi.fn(async () => {

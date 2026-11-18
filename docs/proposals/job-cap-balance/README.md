@@ -24,7 +24,7 @@ No other money function holds the number: `reserve_credits_atomic` and `accept_q
 | What | Where |
 |---|---|
 | The one constant: `JOB_MAX_POINTS_CAP` (600 when this proposal was written; **25,000 since the owner's decision of 2026-10-23, see `docs/proposals/job-cap-25000/`**); the environment may only lower it (`effectiveJobPointsCap`) | `src/lib/jobPointsCap.ts:13`, `:19-22` |
-| The cap in force for a plan: `Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP)` | `src/functions/shared/planManager.ts:622` (cut to it at `:829-885`) |
+| The cap in force for a plan: `Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP)` | `src/functions/shared/planManager.ts:630` (cut to it at `:848-935`) |
 | `getConfiguredJobPointsCap()` returns `effectiveJobPointsCap()` | `src/functions/shared/providerSpend.ts:56-58` (`DEFAULT_JOB_POINTS_CAP` at `:9`) |
 | The worker reads `jobMaxPointsCap` from settings (NOT clamped to 600) and passes it as `p_points_cap` | `src/app/api/worker/chunk/route.ts:139-148` and `:2210`, `:2215` |
 | Other readers of the constant | `src/lib/calculatorPricing.ts:18,106,130`, `src/lib/recordPricing.ts:115,120`, `src/functions/shared/decisionMakerPricing.ts:51,63`, `src/functions/shared/platformGuide.ts:22-23`, `src/lib/multiProvider/router.ts:36`, `src/functions/shared/multiStepWorker.ts:624,688` |
@@ -65,7 +65,7 @@ Order to apply by hand, in the Supabase SQL editor: 1, 2, 3, 4, then 5. Step 3 a
 Order to roll back: 4, 3, 2, 1. A rollback never rewrites money history: ledger rows written under the new cap stay (the ledger is append-only).
 
 ### What must also change in the app for the new cap to show (companion code change, NOT in this PR)
-Applying the SQL alone changes nothing visible: the app still cuts every plan at 600 (`planManager.ts:622`) and says so. To use a higher cap the quote builder must
+Applying the SQL alone changes nothing visible: the app still cuts every plan at 600 (`planManager.ts:630`) and says so. To use a higher cap the quote builder must
 ask the same function for the customer's cap (one RPC call to `job_points_cap_for`) instead of reading the constant, the calculator and the public pages must read
 the same number, and the worker must stop reading `jobMaxPointsCap` as a cap on the charge. That change is small, but it changes what customers are sold, so it waits for the owner's decision.
 
