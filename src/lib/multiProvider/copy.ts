@@ -167,6 +167,19 @@ export function operatorReleaseReasonAr(target: number): string {
   return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
 }
 
+export type GroupCloseReason = "all_parts_done" | "deadline" | "deadline_stuck" | "empty_parts" | "part_unfrozen";
+
+export const NEUTRAL_STOP_REASON_AR = "السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد.";
+export const GROUP_UNAVAILABLE_AR = "تعذّر بدء الطلب المقسَّم الآن، ولم يُحجز أي شيء. حاول مرة أخرى بعد قليل.";
+export const GROUP_OPERATOR_CLOSE_AR = "أوقفنا الأجزاء الباقية من هذا الطلب من جانبنا.";
+export const GROUP_PART_STOPPED_AR = "أوقفنا هذا الجزء من الطلب لتجاوزه المدة المتاحة، ولم يُخصم عنه شيء، وحُرِّر حجزه.";
+export const GROUP_PART_FILE_PENDING_AR = "ملف هذا الجزء قيد التجهيز ولم يُتح للتحميل بعد. حاول مرة أخرى لاحقًا.";
+export const GROUP_PART_FILE_UNAVAILABLE_AR = "تعذّر تحميل ملف هذا الجزء الآن. حاول مرة أخرى لاحقًا.";
+export const GROUP_PARTS_TITLE_AR = "أجزاء هذا الطلب";
+export const GROUP_PARTS_UNAVAILABLE_AR = "تعذّر تحميل روابط أجزاء هذا الطلب الآن. حاول مرة أخرى لاحقًا.";
+export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وحُرِّر حجزه.";
+export const GROUP_CLOSING_NOTICE_AR = "انتهت المدة المتاحة لتنفيذ طلبك، ونعمل الآن على إيقاف الجزء الجاري وإنهاء الطلب. تبقى النقاط محجوزة حتى ذلك الحين، ولن يُخصم منها إلا ثمن ما سُلِّم فعلًا.";
+
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
   whatWeCollectAr({ count: 50, withEmail: true, withPhone: true, withDecisionMaker: true, industry: "مقاولات", country: "مصر" }),
