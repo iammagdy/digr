@@ -28,13 +28,14 @@ export const ADMIN_IC = {
   failures: "M12 3 2.5 20h19L12 3ZM12 10v4.5M12 17.5v.5",
   agent: "M12 3v3M8 21h8M5 9h14v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2zM9 13h.01M15 13h.01M3 13h2M19 13h2",
   "reverse-lookup": "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5M9 11h4",
+  messages: "M3 6h18v12H3zM3 7l9 6 9-6",
   moon: "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z",
 } as const;
 
-export type AdminPageId = "overview" | "users" | "topups" | "invoices" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "calls-log" | "audit" | "settings" | "requests" | "conference" | "export" | "visitors" | "reverse-lookup" | "planner-selftest" | "failures" | "agent";
+export type AdminPageId = "overview" | "users" | "messages" | "topups" | "invoices" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "calls-log" | "audit" | "settings" | "requests" | "conference" | "export" | "visitors" | "reverse-lookup" | "planner-selftest" | "failures" | "agent";
 
 export const ADMIN_PAGES: Array<[AdminPageId, string]> = [
-  ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["topups", "طلبات الشحن"], ["invoices", "الفواتير"], ["jobs", "عمليات البحث"], ["visitors", "الزوّار"], ["operations", "التشغيل"],
+  ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["messages", "الرسائل والحملات"], ["topups", "طلبات الشحن"], ["invoices", "الفواتير"], ["jobs", "عمليات البحث"], ["visitors", "الزوّار"], ["operations", "التشغيل"],
   ["finance", "الإيرادات والأرباح"], ["promo-codes", "الأكواد الترويجية"], ["support", "رسائل الدعم"], ["providers", "مزودو الخدمة"], ["calls-log", "سجل الاستدعاءات"], ["audit", "سجل العمليات"], ["requests", "طلبات غير مدعومة"], ["conference", "لوحة المؤتمر"], ["reverse-lookup", "بحث عكسي"], ["planner-selftest", "فحص المخطط"], ["failures", "لوحة الأعطال"], ["agent", "الوكيل"], ["settings", "الإعدادات"], ["export", "نسخة احتياطية"],
 ];
 
