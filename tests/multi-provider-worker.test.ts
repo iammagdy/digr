@@ -65,6 +65,31 @@ function casChain(patch: any) {
   return api;
 }
 
+function fakeRelease(jobId: string, errorMessage: string | null | undefined, by: "release_job_atomic" | "record_chunk_failure"): { data: any; error: any } {
+  const job = db.jobs.find((j) => j.id === jobId);
+  const R = db.reserved;
+  if (!job) {
+    return { data: { success: true, released_credits: R }, error: null };
+  }
+  if (job.status === "completed") {
+    return { data: null, error: { message: `Cannot release already completed job ${jobId}` } };
+  }
+  const relExists = db.ledger.some((r) => r.id === `rel_${jobId}` && r.type === "release");
+  if (relExists && job.status === "failed") {
+    return { data: { success: true, already_released: true, job_id: jobId, released_credits: R }, error: null };
+  }
+  if (!relExists) {
+    db.ledger.push({ id: `rel_${jobId}`, job_id: jobId, user_id: job.user_id, type: "release", delta: R, by });
+  }
+  Object.assign(job, {
+    status: "failed",
+    charged_credits: 0,
+    error_message: errorMessage ?? job.error_message ?? "فشلت المهمة",
+    lease_until: null,
+  });
+  return { data: { success: true, already_released: false, job_id: jobId, user_id: job.user_id, released_credits: R }, error: null };
+}
+
 vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({ auth: { getUser: vi.fn(async () => ({ data: { user: null }, error: null })) } })),
   createAdminClient: vi.fn(() => ({
@@ -132,16 +157,10 @@ vi.mock("../src/lib/supabase/server", () => ({
         if (settledJob) Object.assign(settledJob, { status: "completed", charged_credits: charged, delivered_units: db.deliveredUnits });
         return { data: { success: true, already_settled: false, reserved_credits: db.reserved, charged_credits: charged, delivered_units: db.deliveredUnits }, error: null };
       }
-      // DT-20261117-04 CI r1: record_chunk_failure and release_job_atomic clear the job's lease, as the real SQL functions do; otherwise the fake's own «lease not expired» rule refuses the next claim of the same test.
       if (name === "release_job_atomic") {
-        const releasedJob = db.jobs.find((j) => j.id === args.p_job_id);
-        if (releasedJob) {
-          releasedJob.lease_until = null;
-          releasedJob.status = "failed";
-        }
-        const answer = { success: true, released_credits: db.reserved };
-        db.releaseAnswers.push(answer);
-        return { data: answer, error: null };
+        const out = fakeRelease(args.p_job_id, args.p_error_message, "release_job_atomic");
+        if (out.data) db.releaseAnswers.push(out.data);
+        return out;
       }
       if (name === "record_chunk_failure") {
         db.failCount += 1;
