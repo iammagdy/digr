@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { dedupeIdentityFor } from "../rowDedupe";
-import { TIMED_OUT, withTimeout } from "./jobGroupShared";
+import { TIMED_OUT, withTimeout, frozenPathFor } from "./jobGroupShared";
 
 export const FREEZE_BUDGET_MS = 30_000;
 export const FREEZE_IO_TIMEOUT_MS = 5_000;
@@ -114,6 +115,65 @@ export async function freezeGroupPart(
 
   if (!selectedCandidate) {
     return "unfreezable";
+  }
+
+  const sha = createHash("sha256").update(selectedCandidate.bytes).digest("hex");
+  const path = frozenPathFor(job.user_id, job.id, sha);
+
+  let uploadResult: any;
+  try {
+    uploadResult = await withTimeout(
+      admin.storage.from("results").upload(path, selectedCandidate.bytes, {
+        contentType: "application/json",
+        upsert: false,
+      }),
+      FREEZE_IO_TIMEOUT_MS
+    );
+  } catch {
+    return "retry";
+  }
+
+  if (uploadResult === TIMED_OUT) {
+    return "retry";
+  }
+
+  if (uploadResult.error) {
+    const err = uploadResult.error;
+    const status = Number(err?.statusCode ?? err?.status ?? 0);
+    const msg = String(err?.message ?? "");
+    const isConflict = status === 409 || /exists|duplicate/i.test(msg);
+    if (!isConflict) {
+      return "retry";
+    }
+
+    let dlExisting: any;
+    try {
+      dlExisting = await withTimeout(
+        admin.storage.from("results").download(path),
+        FREEZE_IO_TIMEOUT_MS
+      );
+    } catch {
+      return "retry";
+    }
+
+    if (dlExisting === TIMED_OUT || dlExisting.error || !dlExisting.data) {
+      return "retry";
+    }
+
+    let existingBytes: Buffer;
+    try {
+      existingBytes = Buffer.isBuffer(dlExisting.data)
+        ? dlExisting.data
+        : Buffer.from(await dlExisting.data.arrayBuffer());
+    } catch {
+      return "retry";
+    }
+
+    const existingSha = createHash("sha256").update(existingBytes).digest("hex");
+    if (existingSha !== sha) {
+      console.error("[job-groups:frozen-object-mismatch]", { jobId: job.id });
+      return "retry";
+    }
   }
 
   return "retry";

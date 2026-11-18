@@ -260,4 +260,39 @@ describe("jobGroupFreeze", () => {
     expect(await runFreeze(w, { job: { id: jobId, user_id: uid, delivered_units: 0 } })).toBe("unfreezable");
     expect(w.reads).toEqual([]);
   });
+
+  it("the frozen object is uploaded write-once to the results bucket with the plan's path and options", async () => {
+    const w = makeWorld();
+    const b = bytesOf(rowsOf(10));
+    w.partials.set("u1/job_p1/data.json", b);
+    const up = vi.spyOn(w.admin.storage.from("results"), "upload");
+    await runFreeze(w);
+    expect(up).toHaveBeenCalledWith(frozenPathFor(uid, jobId, shaOf(b)), b, {
+      contentType: "application/json",
+      upsert: false,
+    });
+    expect([...w.results.keys()]).toEqual([frozenPathFor(uid, jobId, shaOf(b))]);
+  });
+  it("(b) RESUME — LANDED UPLOAD: call 1 upload times out but lands ⇒ retry, no F5; call 2 finds it (409), downloads the same sha", async () => {
+    const w = makeWorld();
+    const b = bytesOf(rowsOf(10));
+    w.partials.set("u1/job_p1/data.json", b);
+    w.latency.upload = 5_100;
+    expect(await runFreeze(w)).toBe("retry");
+    expect(w.f5.calls).toEqual([]);
+    expect(w.results.size).toBe(1); // it landed
+    w.latency = { read: 4_900, upload: 4_900, download: 4_900, rpc: 3_900 };
+    expect(await runFreeze(w)).toBe("retry");
+    expect(w.results.size).toBe(1); // (the F5 call comes in T05; here the second call reaches the download and stops)
+  });
+  it("(h) different bytes at the existing frozen name ⇒ retry + the mismatch log, no F5", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const w = makeWorld();
+    const b = bytesOf(rowsOf(10));
+    w.partials.set("u1/job_p1/data.json", b);
+    w.results.set(frozenPathFor(uid, jobId, shaOf(b)), Buffer.from("other bytes"));
+    expect(await runFreeze(w)).toBe("retry");
+    expect(err).toHaveBeenCalledWith("[job-groups:frozen-object-mismatch]", { jobId });
+    expect(w.f5.calls).toEqual([]);
+  });
 });
