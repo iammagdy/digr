@@ -39,6 +39,8 @@ import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
 import { isChainSlug } from "../../../../lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainZeroDeliveryReasonAr } from "../../../../lib/multiProvider/copy";
 import { isGroupPartSpec, loadGroupKeys } from "../../../../lib/server/multiProvider/jobGroupWorker";
+import { withTimeout } from "../../../../lib/server/multiProvider/jobGroupShared";
+import { NEUTRAL_STOP_REASON_AR } from "../../../../lib/multiProvider/copy";
 import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
 import { MAX_STARTS_PER_STEP } from "../../../../lib/server/multiProvider/chainRunner";
 import { createAdminClient } from "../../../../lib/supabase/server";
@@ -2503,6 +2505,16 @@ export async function POST(req: NextRequest) {
             ? spec.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
             : ["work_email", "phone"])
         : null;
+      let chainFinalLineAr = "";
+      if (isChainJob && !isGroupPart) {
+        const countLineAr = `المسلَّم ${toArabicDigits(finalRows.length)} من ${toArabicDigits(targetMax)} مطلوب.`;
+        chainFinalLineAr = finalRows.length < targetMax ? `${countLineAr} ${NEUTRAL_STOP_REASON_AR}` : countLineAr;
+        try {
+          const reason = await withTimeout(Promise.resolve(chainShortfallReasonAr({ stop: ((lastChainStop ?? (rawAdapterResult as any).chainStop ?? null) as any), callCap: callCapReason, excluded: relevanceExcludedCount + baselineExcludedCount, skippedOrigins: lastChainSkipped })), 3_000);
+          if (typeof reason === "string" && reason.trim()) chainFinalLineAr = `${countLineAr} ${reason}`;
+          await withTimeout(adminClient.storage.from("partials").upload(`final_line/${jobId}.json`, Buffer.from(JSON.stringify({ v: 1, deliveredUnits: finalRows.length, targetMax, messageAr: chainFinalLineAr })), { upsert: true, contentType: "application/json" }), 3_000);
+        } catch { /* bounded best effort; settlement continues */ }
+      }
       const { data: settleData, error: settleErr } = isPeopleJob
         ? await adminClient.rpc("settle_people_job_atomic", {
             p_job_id: jobId,
@@ -2555,9 +2567,9 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: isPeopleJob
+            message: chainFinalLineAr || (isPeopleJob
             ? `${peopleDeliverySentenceAr(peopleContactCounts(finalRows, (row, field) => contactValueDelivered(row, field)), targetMax)}، وحُفظت ملفات النتائج.`
-            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
+            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`),
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,
