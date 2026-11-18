@@ -1,6 +1,6 @@
 import { pointsAr } from "../pointsFormat";
 import { isGroupQuoteItems, hasJobGroupRpc } from "../server/multiProvider/jobGroupPlan";
-import { GROUP_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
+import { GROUP_UNAVAILABLE_AR, QUOTE_START_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
 import { getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "../../functions/shared/providerSpend";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
@@ -67,7 +67,7 @@ export async function acceptQuoteSupabase(
         return {
           success: false,
           statusCode: 503,
-          errorAr: GROUP_UNAVAILABLE_AR,
+          errorAr: QUOTE_START_UNAVAILABLE_AR,
         };
       }
       return {
@@ -140,7 +140,7 @@ export async function acceptQuoteSupabase(
       return {
         success: false,
         statusCode: 503,
-        errorAr: GROUP_UNAVAILABLE_AR,
+        errorAr: QUOTE_START_UNAVAILABLE_AR,
       };
     }
     return {

@@ -150,6 +150,8 @@ describe("DT-05 PR-10 job groups card", () => {
 
     // 1. Quoted points equals hold (3 * 4048 = 12144)
     expect(quoteResult.quotedPoints).toBe(12_144);
+    // 1b. Expected points equals sum of charges (3 * chargeForUnits(40, 88) = 3 * 3520 = 10560)
+    expect(quoteResult.expectedPoints).toBe(10_560);
     // 2. targetVolumeMax equals Y = 120
     expect(quoteResult.targetVolumeMax).toBe(120);
     // 3. splitGroup metadata is present
@@ -296,6 +298,77 @@ describe("DT-05 PR-10 job groups card", () => {
     expect(copy).not.toBeNull();
     expect(copy!.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR[1]);
     expect(copy!.summaryAr).toMatch(/٤٠/);
+  });
+
+  it("(AC9 low balance) probe false with low balance ⇒ ordinary card with downscaledOffer and base numbers", async () => {
+    const r1 = reserveForUnits(40, CHAIN_UNIT, DEFAULT_PRICING_SETTINGS.safetyBuffer); // 4048
+    process.env.JOB_MAX_POINTS_CAP = String(r1);
+
+    const tablesProbeFalse = createMockTables({
+      probeAnswer: null, // rpc fails/returns null for probe
+    });
+
+    const quoteResult = await createAndSaveManagedQuote(tablesProbeFalse, {
+      conversationId: "c_probe_false_low",
+      userId: "u1",
+      userBalance: 1_000,
+      capabilities: withMultiProviderCapabilities(APPROVED_CAPABILITY_CATALOG, { MULTI_PROVIDER_ENABLED: "true" }),
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+      plan: {
+        summaryAr: "خطة 120 شركة",
+        items: [chainItem(120)],
+        outputFormats: ["xlsx"],
+      },
+    });
+
+    expect(quoteResult.isAffordable).toBe(false);
+    expect(quoteResult.quotedPoints).toBe(4048);
+    expect(quoteResult.expectedPoints).toBe(3520);
+    expect(quoteResult.targetVolumeMax).toBe(40);
+    expect(quoteResult.requestedVolumeMax).toBe(120);
+    expect(quoteResult.splitGroup).toBeUndefined();
+    expect(quoteResult.items[0].params?.split).toBeUndefined();
+    expect(quoteResult.downscaledOffer).toEqual({
+      maxAffordableUnits: 9,
+      affordableQuotedPoints: 911,
+      rawCostPoints: 792,
+    });
+
+    const copy = chainQuoteCopyFor({
+      item: quoteResult.items[0],
+      askedCount: 120,
+    });
+    expect(copy).not.toBeNull();
+    expect(copy!.summaryAr).toBe("نجمع حتى ٤٠ شركة من مصادر متاحة، ومع كل شركة: اسم الشركة، الموقع الإلكتروني، البريد الإلكتروني المهني.");
+    expect(copy!.methodologyNotes).toContain("العدد المستهدف تسليمه: ٤٠ شركة من أصل ١٢٠ شركة مطلوبة، لأن الحد الأقصى لحجز المهمة الواحدة لا يتسع لأكثر من ذلك.");
+  });
+
+  it("X = V non-split: when requested count fits single-job cap, ordinary card with no split", async () => {
+    const r1 = reserveForUnits(40, CHAIN_UNIT, DEFAULT_PRICING_SETTINGS.safetyBuffer);
+    process.env.JOB_MAX_POINTS_CAP = String(r1);
+
+    const tables = createMockTables({
+      probeAnswer: { success: false, error: "quote_not_found" },
+    });
+
+    const quoteResult = await createAndSaveManagedQuote(tables, {
+      conversationId: "c_xv",
+      userId: "u1",
+      userBalance: 50_000,
+      capabilities: withMultiProviderCapabilities(APPROVED_CAPABILITY_CATALOG, { MULTI_PROVIDER_ENABLED: "true" }),
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+      plan: {
+        summaryAr: "خطة 40 شركة",
+        items: [chainItem(40)],
+        outputFormats: ["xlsx"],
+      },
+    });
+
+    expect(quoteResult.targetVolumeMax).toBe(40);
+    expect(quoteResult.quotedPoints).toBe(4048);
+    expect(quoteResult.expectedPoints).toBe(3520);
+    expect(quoteResult.splitGroup).toBeUndefined();
+    expect(quoteResult.items[0].params?.split).toBeUndefined();
   });
 
   it("non-chain items: even if constrained by points cap, never split", async () => {
