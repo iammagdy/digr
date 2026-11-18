@@ -9,6 +9,7 @@ import { readWorkbookMethodology } from "@/lib/agentMission/methodology/readWork
 import { buildMethodologyDocument, METHODOLOGY_DOC_TITLE_AR } from "@/lib/agentMission/methodology/document";
 import { renderMethodologyPdf } from "@/lib/agentMission/methodology/pdf";
 import { fileResponseFromUrl } from "@/lib/server/fileResponse";
+import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
 export const dynamic = "force-dynamic";
 
@@ -142,6 +143,7 @@ export async function POST(
     let rawParsed: any = null;
     let methodologyStatement = "";
     let methodologyPdf: Buffer;
+    let groupDataset: Awaited<ReturnType<typeof groupPartDataset>> = { kind: "not_group" };
     const methodologyPath = `${verifiedUserId}/${jobId}/methodology-addon.pdf`;
     const methodologyBucket = adminClient.storage.from("results");
 
@@ -151,6 +153,11 @@ export async function POST(
       methodologyPdf = built.pdf;
       methodologyStatement = built.statement;
     } else {
+      groupDataset = await groupPartDataset(adminClient, jobDoc);
+      if (groupDataset.kind === "refuse") return NextResponse.json({ success: false, error: groupDataset.errorAr }, { status: groupDataset.status });
+      if (groupDataset.kind === "frozen") {
+        try { rawParsed = JSON.parse(groupDataset.text); } catch { return NextResponse.json({ success: false, error: "تعذر العثور على بيانات الطلب المكتملة؛ لم يتم خصم أي نقاط." }, { status: 409 }); }
+      }
       try {
         const candidatePaths = [
           `${verifiedUserId}/${jobId}/data.json`,
@@ -159,7 +166,7 @@ export async function POST(
           `json_${jobId}`,
         ];
 
-        for (const bucketName of ["results", "partials"]) {
+        for (const bucketName of groupDataset.kind === "frozen" ? [] : ["results", "partials"]) {
           if (rawParsed) break;
           const bucket = adminClient.storage?.from?.(bucketName);
           if (!bucket || typeof bucket.download !== "function") continue;

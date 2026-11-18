@@ -2,6 +2,7 @@ import { latestDeliveredJob } from "./conversationJobs";
 import { normalizeDataset } from "./normalizationPipeline";
 import { inferSocialRowKind } from "./socialRows";
 import type { DatasetColumn } from "../fileSpec";
+import { groupPartDataset } from "./multiProvider/groupPartDataset";
 
 /**
  * The columns of the customer's latest delivered result, read from the saved data (never from the provider).
@@ -15,6 +16,9 @@ export interface SavedResultColumns {
 
 
 export async function readJobDatasetText(admin: any, job: { id: string; user_id: string }): Promise<string> {
+  const group = await groupPartDataset(admin, job);
+  if (group.kind === "frozen") return group.text;
+  if (group.kind === "refuse") return "";
   const candidatePaths = [`${job.user_id}/${job.id}/data.json`, `${job.id}/data.json`, `json_${job.id}`];
   for (const bucketName of ["results", "partials"]) {
     const bucket = admin?.storage?.from?.(bucketName);
