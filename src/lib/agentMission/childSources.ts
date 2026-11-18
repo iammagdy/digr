@@ -74,6 +74,45 @@ export function peopleSourcesForCompanies(catalog: TregCatalog, isAllowed: (id: 
   return rankedOf(group, catalog, now).map((r) => ({ id: r.id, accepts: acceptedLinks(catalog.byId.get(r.id)!), usdPerItem: r.usdPerItem, effectiveUsd: r.effectiveUsd }));
 }
 
+/** The catalog's platform keys of a companies step and of a people step (catalog metadata, the planner's understanding uses them). */
+export const COMPANIES_PLATFORM = "companies";
+export const PEOPLE_PLATFORM = "people";
+/** THE REQUEST'S STRUCTURE (DT-20261118-03 PR-7, Megz D-0086: never its words): a people step whose parent is a companies step, as the planner understood the request. */
+export function asksPeopleOfCompanies(steps: ReadonlyArray<{ key: string; parent: string | null; platform: string }>): boolean {
+  return steps.some((s) => s.parent !== null && s.platform === PEOPLE_PLATFORM && steps.find((p) => p.key === s.parent)?.platform === COMPANIES_PLATFORM);
+}
+
+/** What a person row of a source gives the e-mail and phone finders: a professional page (a LinkedIn profile), a name, a domain. Read from the catalog's own field names and example answer (values like «linkedin.com/in/…»), never from the request. */
+export type PersonIdentifier = "linkedin" | "name" | "domain";
+const PROFILE_KEY = /^(person_)?linkedin(_?url)?$|^linkedinurl$|^profile_?url$/i;
+const PERSON_NAME_KEY = /^(full_?name|first_?name|last_?name|name)$/i;
+const NOT_THE_PERSON = /company|organi[sz]ation|employer|org$/i;
+export function personIdentifiersOf(endpoint: CatalogEndpoint): PersonIdentifier[] {
+  const out = new Set<PersonIdentifier>();
+  const look = (key: string, value: unknown, underCompany: boolean): void => {
+    if (typeof value === "string" && /linkedin\.[a-z.]+\/in\//i.test(value)) out.add("linkedin");
+    if (underCompany || NOT_THE_PERSON.test(key)) return;
+    if (PROFILE_KEY.test(key)) out.add("linkedin");
+    else if (PERSON_NAME_KEY.test(key)) out.add("name");
+    else if (/^(domain|website)$/i.test(key)) out.add("domain");
+  };
+  const walk = (node: unknown, depth: number, underCompany: boolean): void => {
+    if (depth > 6 || node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const x of node.slice(0, 3)) walk(x, depth + 1, underCompany); return; }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) { look(k, v, underCompany); walk(v, depth + 1, underCompany || NOT_THE_PERSON.test(k)); }
+  };
+  for (const [k, v] of Object.entries(endpoint.item_fields ?? {})) look(k, (v as { example?: unknown } | undefined)?.example, false);
+  walk((endpoint as unknown as { example_response_trimmed?: unknown }).example_response_trimmed, 0, false);
+  return (["linkedin", "name", "domain"] as const).filter((x) => out.has(x));
+}
+/** A people source's rank by what it gives the finders: a profile 0, a name or a domain 1, nothing 2. */
+export const identifierTier = (gives: ReadonlyArray<PersonIdentifier>): number => (gives.includes("linkedin") ? 0 : gives.length > 0 ? 1 : 2);
+/** The people sources of a company, ranked by catalog metadata only: what their rows give the finders, then the price over the expected rate. */
+export function rankedPeopleSources(catalog: TregCatalog, isAllowed: (id: string) => boolean, now = Date.now()): Array<PeopleSource & { gives: PersonIdentifier[] }> {
+  const list = peopleSourcesForCompanies(catalog, isAllowed, now).map((p) => ({ ...p, gives: personIdentifiersOf(catalog.byId.get(p.id)!) }));
+  return list.map((p, i) => ({ p, i })).sort((a, b) => identifierTier(a.p.gives) - identifierTier(b.p.gives) || a.i - b.i).map((x) => x.p);
+}
+
 /** The company sources (company search) that give a field some people source accepts, cheapest first: each with the people sources it feeds. */
 export function linkableCompanySources(catalog: TregCatalog, isAllowed: (id: string) => boolean, now = Date.now()): Array<{ id: string; usdPerItem: number; feeds: Array<{ people: string; via: LinkField }> }> {
   const people = peopleSourcesForCompanies(catalog, isAllowed, now).map((p) => catalog.byId.get(p.id)!);
