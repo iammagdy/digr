@@ -2502,4 +2502,20 @@ describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", (
     expect(db.ledger[0].delta).toBe(1000);
     expect(netDebit()).toBe(0);
   });
+
+  it("F2e settle releases first, then charges", async () => {
+    resetDb({ target: 5 }); db.deliveredUnits = 2;                                  // unit price 100, reserve 575
+    const settled = await rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(settled.data).toMatchObject({ success: true, already_settled: false, charged_credits: 200 });
+    expect(db.ledger.map((r) => r.type)).toEqual(["release", "charge"]);            // the settlement releases FIRST (agentMoney.ts settle_job_atomic)
+    expect(db.ledger.map((r) => r.delta)).toEqual([575, -200]);
+    expect(db.ledger.map((r) => r.by)).toEqual(["settle_job_atomic", "settle_job_atomic"]);
+    expect(netDebit()).toBe(200);
+    expect(effectiveReleases()).toBe(0);                                             // a settlement is not an effective RELEASE
+    const again = await rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(again.data).toMatchObject({ already_settled: true });
+    expect(db.ledger).toHaveLength(2);
+    const late = await rpc("release_job_atomic", { p_job_id: JOB, p_error_message: "late", p_force: true });
+    expect(String(late.error?.message)).toContain("already completed");
+  });
 });
