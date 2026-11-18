@@ -30,17 +30,17 @@ WHERE n.nspname = 'public'
   AND pg_get_function_identity_arguments(p.oid) LIKE '%boolean%';
 
 -- V3: None of the new tables or functions exist yet (all must be NULL / 0)
-SELECT 'job_groups' AS name, to_regclass('public.job_groups') AS exists
-UNION ALL SELECT 'job_group_parts', to_regclass('public.job_group_parts')
-UNION ALL SELECT 'job_group_keys', to_regclass('public.job_group_keys')
-UNION ALL SELECT 'job_group_frozen', to_regclass('public.job_group_frozen')
-UNION ALL SELECT 'accept_group_quote_atomic', to_regproc('public.accept_group_quote_atomic')
-UNION ALL SELECT 'draw_next_group_part_atomic', to_regproc('public.draw_next_group_part_atomic')
-UNION ALL SELECT 'close_job_group_atomic', to_regproc('public.close_job_group_atomic')
-UNION ALL SELECT 'claim_next_job_group', to_regproc('public.claim_next_job_group')
-UNION ALL SELECT 'freeze_and_settle_group_part_atomic', to_regproc('public.freeze_and_settle_group_part_atomic')
-UNION ALL SELECT 'release_unfrozen_group_part_atomic', to_regproc('public.release_unfrozen_group_part_atomic')
-UNION ALL SELECT 'job_group_points_ar', to_regproc('public.job_group_points_ar');
+SELECT 'job_groups' AS name, to_regclass('public.job_groups')::text AS exists
+UNION ALL SELECT 'job_group_parts', to_regclass('public.job_group_parts')::text
+UNION ALL SELECT 'job_group_keys', to_regclass('public.job_group_keys')::text
+UNION ALL SELECT 'job_group_frozen', to_regclass('public.job_group_frozen')::text
+UNION ALL SELECT 'accept_group_quote_atomic', to_regproc('public.accept_group_quote_atomic')::text
+UNION ALL SELECT 'draw_next_group_part_atomic', to_regproc('public.draw_next_group_part_atomic')::text
+UNION ALL SELECT 'close_job_group_atomic', to_regproc('public.close_job_group_atomic')::text
+UNION ALL SELECT 'claim_next_job_group', to_regproc('public.claim_next_job_group')::text
+UNION ALL SELECT 'freeze_and_settle_group_part_atomic', to_regproc('public.freeze_and_settle_group_part_atomic')::text
+UNION ALL SELECT 'release_unfrozen_group_part_atomic', to_regproc('public.release_unfrozen_group_part_atomic')::text
+UNION ALL SELECT 'job_group_points_ar', to_regproc('public.job_group_points_ar')::text;
 
 -- V4: Credit ledger constraints and unique indexes
 SELECT conname, pg_get_constraintdef(oid) AS constraint_def

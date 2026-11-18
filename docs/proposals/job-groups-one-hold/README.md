@@ -19,7 +19,8 @@ This proposal is applied at **GATE S** (after PR-9 is merged & deployed, and bef
    ```
 2. **Execute `00_verify_before_apply.sql`**:
    - Paste into Supabase SQL Editor.
-   - Compare V1 output with `/tmp/job-groups-expected-md5.txt`.
+   - قارن ناتج V1 في 00 بناتج V1 في 02: لازم يكونوا متطابقين حرفيًا
+   - Compare the V1 output of 00 with the V1 output of 02: they must be identical.
    - Ensure all V3 objects are absent (NULL / 0).
 3. **Execute `01_job_groups_one_hold.sql`**:
    - Creates the tables, triggers, and functions F1–F6 wrapped in `BEGIN; ... COMMIT;`.

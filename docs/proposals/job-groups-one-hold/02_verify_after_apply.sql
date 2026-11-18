@@ -39,16 +39,6 @@ WHERE n.nspname = 'public'
   )
 ORDER BY p.proname, identity_arguments;
 
--- V3: Readiness probe: close_job_group_atomic with a non-existent group id returns group_not_found
-SELECT public.close_job_group_atomic(
-  '__probe__',
-  'all_parts_done',
-  'probe_final_line',
-  0,
-  0,
-  NULL
-) AS probe_result;
-
 -- V4: Verify the 4 new tables exist, have RLS enabled, and service_role has SELECT
 SELECT c.relname AS table_name,
        c.relrowsecurity AS rls_enabled,
@@ -62,3 +52,13 @@ WHERE n.nspname = 'public'
 ORDER BY c.relname;
 
 ROLLBACK;
+
+-- V5: Readiness probe, OUTSIDE the read-only transaction (the function takes a row lock): close_job_group_atomic with a non-existent group id returns group_not_found and writes nothing
+SELECT public.close_job_group_atomic(
+  '__probe__',
+  'all_parts_done',
+  'probe_final_line',
+  0,
+  0,
+  NULL
+) AS probe_result;

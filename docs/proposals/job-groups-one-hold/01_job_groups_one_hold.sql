@@ -86,20 +86,29 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_block_job_group_parts_mutation ON public.job_group_parts;
-CREATE TRIGGER trg_block_job_group_parts_mutation
-  BEFORE UPDATE OR DELETE ON public.job_group_parts
-  FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_block_job_group_parts_mutation' AND tgrelid = 'public.job_group_parts'::regclass) THEN
+    CREATE TRIGGER trg_block_job_group_parts_mutation
+      BEFORE UPDATE OR DELETE ON public.job_group_parts
+      FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+  END IF;
+END $$;
 
-DROP TRIGGER IF EXISTS trg_block_job_group_keys_mutation ON public.job_group_keys;
-CREATE TRIGGER trg_block_job_group_keys_mutation
-  BEFORE UPDATE OR DELETE ON public.job_group_keys
-  FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_block_job_group_keys_mutation' AND tgrelid = 'public.job_group_keys'::regclass) THEN
+    CREATE TRIGGER trg_block_job_group_keys_mutation
+      BEFORE UPDATE OR DELETE ON public.job_group_keys
+      FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+  END IF;
+END $$;
 
-DROP TRIGGER IF EXISTS trg_block_job_group_frozen_mutation ON public.job_group_frozen;
-CREATE TRIGGER trg_block_job_group_frozen_mutation
-  BEFORE UPDATE OR DELETE ON public.job_group_frozen
-  FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_block_job_group_frozen_mutation' AND tgrelid = 'public.job_group_frozen'::regclass) THEN
+    CREATE TRIGGER trg_block_job_group_frozen_mutation
+      BEFORE UPDATE OR DELETE ON public.job_group_frozen
+      FOR EACH ROW EXECUTE FUNCTION public.block_job_group_mutation();
+  END IF;
+END $$;
 
 ALTER TABLE public.job_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.job_group_parts ENABLE ROW LEVEL SECURITY;
@@ -483,7 +492,7 @@ DECLARE
   v_item_min INT;
   v_qid TEXT;
   v_job TEXT;
-  v_output_formats TEXT[];
+  v_output_formats JSONB;
   v_frozen_count INT;
   v_keys_count INT;
   v_now TIMESTAMPTZ := timezone('utc'::text, now());

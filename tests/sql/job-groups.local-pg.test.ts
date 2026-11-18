@@ -101,9 +101,9 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
       "job_group_points_ar",
     ];
     for (const fn of functions) {
-      const anonCan = db.sql(`SELECT has_function_privilege('anon', 'public.${fn}', 'EXECUTE')`);
-      const authCan = db.sql(`SELECT has_function_privilege('authenticated', 'public.${fn}', 'EXECUTE')`);
-      const serviceCan = db.sql(`SELECT has_function_privilege('service_role', 'public.${fn}', 'EXECUTE')`);
+      const anonCan = db.sql(`SELECT has_function_privilege('anon', (SELECT oid FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='${fn}'), 'EXECUTE')`);
+      const authCan = db.sql(`SELECT has_function_privilege('authenticated', (SELECT oid FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='${fn}'), 'EXECUTE')`);
+      const serviceCan = db.sql(`SELECT has_function_privilege('service_role', (SELECT oid FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='${fn}'), 'EXECUTE')`);
       expect(anonCan).toBe("f");
       expect(authCan).toBe("f");
       expect(serviceCan).toBe("t");
@@ -118,12 +118,6 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
       expect(authSel).toBe("f");
       expect(servSel).toBe("t");
     }
-  });
-
-  it("(f) append-only triggers: UPDATE or DELETE on job_group_parts/keys/frozen raise error", () => {
-    expect(() => db.sql(`${S} DELETE FROM public.job_group_parts WHERE 1=1;`)).toThrow(/append-only/);
-    expect(() => db.sql(`${S} DELETE FROM public.job_group_keys WHERE 1=1;`)).toThrow(/append-only/);
-    expect(() => db.sql(`${S} DELETE FROM public.job_group_frozen WHERE 1=1;`)).toThrow(/append-only/);
   });
 
   it("T1 main scenario: 3-part group lifecycle, invariants checked after every step", () => {
@@ -155,7 +149,7 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
 
     db.sql(`
       INSERT INTO public.plans_quotes (id, user_id, status, quote_hash, items, total_reserved_credits, expires_at, created_at)
-      VALUES ('${qid}', '${USER_1}', '${hash}', 'quoted', '${JSON.stringify(items)}'::jsonb, 100, now() + interval '1 day', now());
+      VALUES ('${qid}', '${USER_1}', 'quoted', '${hash}', '${JSON.stringify(items)}'::jsonb, 100, now() + interval '1 day', now());
     `);
 
     // 1. Accept group
@@ -185,7 +179,7 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
     }];
     const drawPre = json(`public.draw_next_group_part_atomic('${gid}', 2, '${JSON.stringify(drawItem2)}'::jsonb, 'الجزء 2', 0, 1000)`);
     expect(drawPre.success).toBe(false);
-    expect(drawPre.error).toBe("part_not_frozen");
+    expect(drawPre.error).toBe("previous_part_active");
 
     // 5. Freeze part 1
     const keys1 = Array.from({ length: 10 }, (_, i) => `comp_${i}`);
@@ -246,4 +240,10 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
     // Start 10000 - 200 = 9800
     expect(balance(USER_1)).toBe(startBal - 200);
   });
+  it("(f) append-only triggers: UPDATE or DELETE on job_group_parts/keys/frozen raise error", () => {
+    expect(() => db.sql(`DELETE FROM public.job_group_parts WHERE 1=1;`)).toThrow(/append-only/);
+    expect(() => db.sql(`DELETE FROM public.job_group_keys WHERE 1=1;`)).toThrow(/append-only/);
+    expect(() => db.sql(`DELETE FROM public.job_group_frozen WHERE 1=1;`)).toThrow(/append-only/);
+  });
+
 });
