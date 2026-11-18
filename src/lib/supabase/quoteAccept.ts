@@ -1,4 +1,7 @@
 import { pointsAr } from "../pointsFormat";
+import { isGroupQuoteItems, hasJobGroupRpc } from "../server/multiProvider/jobGroupPlan";
+import { GROUP_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
+import { getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "../../functions/shared/providerSpend";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 
@@ -49,6 +52,7 @@ export async function acceptQuoteSupabase(
   }
 
   let hashToVerify = expectedPlanHash;
+  let groupSplit: any = null;
 
   // Fetch quote document including items and quote_hash
   try {
@@ -78,6 +82,7 @@ export async function acceptQuoteSupabase(
         };
       }
 
+      groupSplit = isGroupQuoteItems(items) ? (items[0] as any).params.split : null;
       if (items.length > 0) {
         const isVerifiedExecutable = (slugOrId: string) => {
           if (!slugOrId || typeof slugOrId !== "string" || slugOrId.startsWith("internal-")) return false;
@@ -131,8 +136,9 @@ export async function acceptQuoteSupabase(
     }
   }
 
+  if (groupSplit) { if (!(await hasJobGroupRpc(adminClient))) return { success: false, statusCode: 503, errorAr: GROUP_UNAVAILABLE_AR }; }
   // Execute approved accept_quote_atomic RPC (security definer, profile lock, release-first sequence)
-  const { data: rpcRes, error: rpcErr } = await adminClient.rpc("accept_quote_atomic", {
+  const { data: rpcRes, error: rpcErr } = groupSplit ? await adminClient.rpc("accept_group_quote_atomic", { p_quote_id: quoteId, p_user_id: userId, p_expected_quote_hash: hashToVerify, p_points_cap: Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP), p_start_event_ar: groupStartLineAr({ hold: groupSplit.hold, parts: groupSplit.parts }) }) : await adminClient.rpc("accept_quote_atomic", {
     p_quote_id: quoteId,
     p_user_id: userId,
     p_expected_quote_hash: hashToVerify,
@@ -150,6 +156,7 @@ export async function acceptQuoteSupabase(
 
   if (!rpcRes?.success) {
     const errCode = rpcRes?.error;
+    if (groupSplit && (errCode === "invalid_group_plan" || errCode === "accepted_without_group")) { return { success: false, statusCode: 409, errorAr: "حالة العرض غير صالحة للبدء." }; }
 
     // 402 Insufficient Balance with current balance rendered in Arabic-Indic numerals
     if (errCode === "insufficient_balance") {
