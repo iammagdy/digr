@@ -1,7 +1,7 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
 import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
-import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
+import { isGenericRoleMailbox, isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
@@ -424,6 +424,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           hit = foundContactIn(step.kind, a.page);
           // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is never written in the work-email cell, whatever the finder said; the next finder is asked
           if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") { out.withheld.personal_email += 1; hit = null; }
+          // A ROLE MAILBOX IS NOT A PERSON'S E-MAIL (DT-20261118-03 PR-3): withhold generic mailboxes (info@, sales@, etc.) on the company's domain; executive addresses (ceo@, gm@) remain
+          if (hit && step.kind === "email" && isGenericRoleMailbox(hit.value) && !emailOnOtherDomain(hit.value, facts.domain)) hit = null;
           note(finder.id, hit ? "value" : "empty", hit ? hit.value : undefined);
           if (!hit) continue;
           origin = { endpointId: finder.id, callId: a.callId };

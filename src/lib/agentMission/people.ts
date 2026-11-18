@@ -17,6 +17,9 @@ const ROLE_WORDS: ReadonlySet<string> = new Set([
   "donotreply", "billing", "accounts", "accounting", "finance", "procurement", "purchasing", "purchase", "orders", "order", "reception", "general", "team", "feedback", "tender", "tenders", "export", "exports", "commercial", "complaints", "secretary",
   "ceo", "md", "gm", "chairman", "director", "manager", "management", "booking", "reservations", "security", "legal", "compliance", "newsletter", "abuse", "privacy", "ops", "operations", "logistics", "dispatch", "projects", "shop", "store",
 ]);
+/** Executive role mailbox tokens: for a CEO or GM row these can be their real address, so they are not withheld as generic. */
+const EXECUTIVE_MAILBOX_TOKENS: ReadonlySet<string> = new Set(["ceo", "md", "gm", "chairman", "director", "manager"]);
+
 /** Words that may stand beside a role word in a mailbox («sales.egypt») without making it a person's. */
 const PLACE_WORDS: ReadonlySet<string> = new Set(["egypt", "eg", "cairo", "alex", "alexandria", "giza", "ksa", "uae", "gulf", "global", "main", "head", "local", "group", "int", "international", "new", "the"]);
 /** Words that, anywhere in a mailbox, name an ORGANISATION and not a person («petro.consultants»). */
@@ -37,6 +40,18 @@ export function isRoleMailbox(email: unknown): boolean {
   if (ROLE_WORDS.has(tokens.join(""))) return true;
   if (tokens.some((t) => ORGANISATION_TOKENS.has(t))) return true;
   return tokens.every((t) => ROLE_WORDS.has(t) || PLACE_WORDS.has(t)) && tokens.some((t) => ROLE_WORDS.has(t));
+}
+
+/**
+ * True when the address names a generic mailbox or department (info@, sales@, contact@, support@, hello@, office@, enquiries@ …).
+ * Executive role addresses (ceo@, gm@, manager@, director@, md@, chairman@) are NOT considered generic because for a CEO or GM row these can be their real address.
+ */
+export function isGenericRoleMailbox(email: unknown): boolean {
+  if (!isRoleMailbox(email)) return false;
+  const text = String(email ?? "").trim();
+  const tokens = localTokensOf(text);
+  if (tokens.some((t) => EXECUTIVE_MAILBOX_TOKENS.has(t))) return false;
+  return true;
 }
 
 /** Words that name a department or an organisation when they appear in what is written in a NAME cell («Sales Team», «Customer Care», «قسم المبيعات»), compared after normalisation. */
