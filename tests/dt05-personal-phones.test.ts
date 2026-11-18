@@ -77,6 +77,20 @@ describe("DT-20261118-05 item 4a: the professional page the people source gave o
     const out = withSourceProfiles(page, rows, ["full_name"]);
     expect(out.map((r) => (r as Record<string, unknown>)[SOURCE_PROFILE_KEY] ?? null)).toEqual(["https://linkedin.com/in/mina-naguib", "https://www.linkedin.com/in/sara-adel", "https://linkedin.com/in/omar-hany", null, null]);
   });
+  // QA #575 FAIL 1: the walk stopped two unnamed levels under the person and seven levels under the answer
+  it("a page under three or more unnamed levels reaches the person, a person nested deep in the answer is read, and a self-referencing answer ends", () => {
+    const page = {
+      result: { data: [{ full_name: "Mona Adel", meta: { profiles: { social: { links: [{ kind: "work", url: "linkedin.com/in/mona-adel" }] } } } }] },
+      a: [..."abcdefghij"].reduceRight<unknown>((inner, k) => ({ [k]: inner }), { people: [{ name: "Karim Fouad", contact: { web: { pages: { main: "https://www.linkedin.com/in/karim-fouad" } } } }] }),
+    };
+    const loop: Record<string, unknown> = { name: "Laila Hassan" };
+    loop.self = loop;
+    loop.extra = { more: { deeper: { url: "https://eg.linkedin.com/in/laila-hassan" } } };
+    const rows = [{ id: "1", full_name: "Mona Adel" }, { id: "2", full_name: "Karim Fouad" }, { id: "3", full_name: "Laila Hassan" }];
+    expect(withSourceProfiles(page, rows.slice(0, 2), ["full_name"]).map((r) => (r as Record<string, unknown>)[SOURCE_PROFILE_KEY] ?? null)).toEqual(["https://linkedin.com/in/mona-adel", "https://www.linkedin.com/in/karim-fouad"]);
+    expect((withSourceProfiles([loop], rows.slice(2), ["full_name"])[0] as Record<string, unknown>)[SOURCE_PROFILE_KEY]).toBe("https://eg.linkedin.com/in/laila-hassan");
+    expect(profileUrlIn([..."abcdefgh"].reduceRight<unknown>((inner, k) => ({ [k]: inner }), "linkedin.com/in/deep-one"))).toBe("https://linkedin.com/in/deep-one");
+  });
   it("every people source of the catalog whose example answer carries a person's page gives it to a person of that answer", () => {
     const nameOf = (o: Record<string, unknown>): string => String(o.full_name ?? o.fullName ?? o.name ?? [o.first_name ?? o.firstName, o.last_name ?? o.lastName].filter(Boolean).join(" ") ?? "").trim();
     const namesIn = (node: unknown, out: string[] = []): string[] => {
