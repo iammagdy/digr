@@ -12,22 +12,25 @@ For large requests where target volume exceeds what a single provider execution 
 - **Zero Alterations to Existing Functions**: `accept_quote_atomic`, `settle_job_atomic`, `release_job_atomic`, etc., remain 100% byte-identical.
 
 ## 2. Apply Order (GATE S)
-This proposal is applied at **GATE S** (after PR-9 is merged & deployed, and before PR-4; PR-4, PR-5, PR-12, and then PR-10 follow it):
+This proposal is applied at **GATE S** (after PR-9 is merged & deployed, and before PR-4; PR-4, PR-5, PR-12, and then PR-10 follow it).
+Megz executes each script in the Supabase SQL Editor and sends the screenshot of each result back to COMMANDER:
+
 1. **Run Proof on Scratch Postgres**:
    ```bash
-   DIGER_PROOF=1 DIGER_TEST_PG=<host>:<port> npx vitest run tests/sql/job-groups.local-pg.test.ts tests/sql/job-groups-ops.local-pg.test.ts --reporter=verbose
+   DIGER_PROOF=1 DIGER_TEST_PG=<host>:<port> npx vitest run tests/sql/job-groups.local-pg.test.ts tests/sql/job-groups-money.local-pg.test.ts tests/sql/job-groups-ops.local-pg.test.ts --reporter=verbose
    ```
 2. **Execute `00_verify_before_apply.sql`**:
    - Paste into Supabase SQL Editor.
-   - قارن ناتج V1 في 00 بناتج V1 في 02: لازم يكونوا متطابقين حرفيًا
-   - Compare the V1 output of 00 with the V1 output of 02: they must be identical.
-   - Ensure all V3 objects are absent (NULL / 0).
+   - Result must show: every row shows `✓` and the final `ALL` row shows `✓`.
+   - Take a screenshot of the result and send back to COMMANDER. Note the V1 money functions fingerprint row.
 3. **Execute `01_job_groups_one_hold.sql`**:
    - Creates the tables, triggers, and functions F1–F6 wrapped in `BEGIN; ... COMMIT;`.
+   - Result must show: `job-groups installed`.
+   - Take a screenshot of the result and send back to COMMANDER.
 4. **Execute `02_verify_after_apply.sql`**:
-   - Confirms V1 functions remain unchanged.
-   - Confirms only `service_role` has execute grants on the new functions and select grants on the new tables.
-   - Confirms the probe test returns `group_not_found`.
+   - Result must show: every row shows `✓` and the final `ALL` row shows `✓`.
+   - The V1 money functions fingerprint must match the fingerprint from 00 verbatim.
+   - Take a screenshot of the result and send back to COMMANDER.
 
 ## 3. Rollback & Stop Procedures
 - **Stopping New Groups**: The only approved rollback is reverting the PR-10 merge commit (`git revert <PR-10_merge_commit>`). This turns off new group card offerings immediately. Any group quote already issued remains approvable for its remaining 30-minute validity and runs to normal completion.

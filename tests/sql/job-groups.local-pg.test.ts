@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createScratchDb, scratchPgTarget, type ScratchDb } from "./localPg";
@@ -28,6 +28,15 @@ const S = "SET ROLE service_role;";
 
 describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
   let db: ScratchDb;
+  let beforeMd5 = "";
+
+  const MD5_QUERY = `
+    SELECT p.proname || ' ' || pg_get_function_identity_arguments(p.oid) || ' ' || md5(pg_get_functiondef(p.oid))
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname IN ('accept_quote_atomic', 'create_quote_atomic', 'reserve_credits_atomic', 'settle_job_atomic', 'release_job_atomic')
+    ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
+  `;
 
   const json = (call: string) => JSON.parse(db.sql(`${S} SELECT ${call}`));
   const balance = (userId: string) =>
@@ -45,34 +54,18 @@ describe.skipIf(!PROOF)("job-groups proposal on a real Postgres (T1)", () => {
     // Initial balance topups
     db.sql(`INSERT INTO public.credit_ledger (id, user_id, delta, type, note) VALUES ('tp_u1', '${USER_1}', 10000, 'topup', 'seed');`);
     db.sql(`INSERT INTO public.credit_ledger (id, user_id, delta, type, note) VALUES ('tp_u2', '${USER_2}', 500, 'topup', 'seed');`);
+
+    // Capture before md5 and apply 01 proposal
+    beforeMd5 = db.sql(MD5_QUERY);
+    db.sql(sql01);
   }, 180000);
 
   afterAll(() => {
     db?.drop();
   });
 
-  it("(e) md5 parity check before and after applying 01 and write /tmp/job-groups-expected-md5.txt", () => {
-    const fns = [
-      "accept_quote_atomic",
-      "create_quote_atomic",
-      "reserve_credits_atomic",
-      "settle_job_atomic",
-      "release_job_atomic",
-    ];
-    const query = `
-      SELECT p.proname || ' ' || pg_get_function_identity_arguments(p.oid) || ' ' || md5(pg_get_functiondef(p.oid))
-      FROM pg_proc p
-      JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND p.proname IN ('accept_quote_atomic', 'create_quote_atomic', 'reserve_credits_atomic', 'settle_job_atomic', 'release_job_atomic')
-      ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
-    `;
-    const beforeMd5 = db.sql(query);
-    writeFileSync("/tmp/job-groups-expected-md5.txt", beforeMd5 + "\n", "utf8");
-
-    // Apply 01 proposal
-    db.sql(sql01);
-
-    const afterMd5 = db.sql(query);
+  it("(e) md5 parity check before and after applying 01", () => {
+    const afterMd5 = db.sql(MD5_QUERY);
     expect(afterMd5).toBe(beforeMd5);
   });
 

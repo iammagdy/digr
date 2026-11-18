@@ -1291,3 +1291,5 @@ REVOKE ALL ON FUNCTION public.release_unfrozen_group_part_atomic(TEXT, INT, TEXT
 GRANT EXECUTE ON FUNCTION public.release_unfrozen_group_part_atomic(TEXT, INT, TEXT, TEXT) TO service_role;
 
 COMMIT;
+
+SELECT 'job-groups installed' AS status, now() AS installed_at;
