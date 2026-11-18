@@ -411,3 +411,8 @@ input::placeholder, textarea::placeholder { color: var(--fnt); }
 @media (prefers-reduced-motion: reduce) {
   .ls-row-in, .ls-cell-hi, .ls-phone-in, .ls-breathe, .ls-chip, .ls-panel, .ls-sheet-up, .ls-fade, .ls-grid .skeleton { animation: none !important; }
 }
+
+/* The header's first paint (src/lib/authHint.ts): until the session is read, show the button of the state the browser's cookie hints at; with no script, none. */
+html:not([data-auth]) .auth-in-only, html:not([data-auth]) .auth-out-only { display: none; }
+html[data-auth="in"] .auth-out-only { display: none; }
+html[data-auth="out"] .auth-in-only { display: none; }

@@ -19,8 +19,9 @@ describe("the header's first paint (the session is not read yet)", () => {
     const html = await render();
     expect(html).toContain("لوحة التحكم");
     expect(html).toContain("دخول");
-    expect(html).toMatch(/auth-in-only[^>]*>(?:(?!<\/span>).)*لوحة التحكم/s);
-    expect(html).toMatch(/auth-out-only[^>]*>(?:(?!<\/span>).)*دخول/s);
+    // [\s\S] instead of the «s» flag: the root tsconfig targets below ES2018 (tsc TS1501); the match is the same
+    expect(html).toMatch(/auth-in-only[^>]*>(?:(?!<\/span>)[\s\S])*لوحة التحكم/);
+    expect(html).toMatch(/auth-out-only[^>]*>(?:(?!<\/span>)[\s\S])*دخول/);
   });
   it("once the session is read, only the true button remains", async () => {
     state.loading = false; state.user = null;
