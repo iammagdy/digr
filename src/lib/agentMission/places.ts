@@ -173,6 +173,8 @@ export const isPlaceEvidenceKey = (k: string): boolean => PLACE_TEXT_KEY.test(k)
 
 /** A COUNTRY FIELD often holds the ISO code and nothing else («EG», «EGY»): a company source that was asked for Egypt answers `country: "EG"`. The code names the country; it is read only in a field that is a country field (a «state» of «CA» is not Canada). */
 const ISO3: Record<string, string> = { EG: "EGY", SA: "SAU", AE: "ARE", KW: "KWT", QA: "QAT", BH: "BHR", OM: "OMN", JO: "JOR", LB: "LBN", SY: "SYR", IQ: "IRQ", PS: "PSE", LY: "LBY", TN: "TUN", DZ: "DZA", MA: "MAR", SD: "SDN", YE: "YEM", TR: "TUR", US: "USA", GB: "GBR", DE: "DEU", FR: "FRA", LU: "LUX", IT: "ITA", ES: "ESP", NL: "NLD", CH: "CHE", CY: "CYP", IN: "IND", CN: "CHN", CA: "CAN" };
+/** The field of an item that holds its address (street, district, city), the one a city request is checked on. */
+const ADDRESS_FIELD_KEY = /(^|_)(address|street_address|formatted_address|full_address|location)$/i;
 const COUNTRY_FIELD_KEY = /(^|_)(country|country_code|country_name|nation|countrycode)$/i;
 const isoCountryOf = (value: string): string | null => {
   const t = value.trim().toUpperCase();
@@ -194,7 +196,6 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
   // a website's country suffix and a phone's prefix say the COUNTRY: they are evidence of a country the customer named, never of a city
   const wantedWholeCountries = wanted.filter((e) => e.kind === "country");
   const wantedCities = wanted.filter((e) => e.kind === "city");
-  const wantedKeys = new Set(wanted.map((e) => e.key));
   let otherCity = false;
   let textPositive = false;
   let textNegative = false;
@@ -218,7 +219,8 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
     const iso = COUNTRY_FIELD_KEY.test(field) ? isoCountryOf(raw) : null;
     if (iso) { if (wantedWholeCountries.some((e) => e.country === iso)) textPositive = true; else if (!wantedCountries.has(iso)) textNegative = true; continue; }
     const text = normalizeText(raw);
-    if (wantedCities.length > 0 && !wanted.some((e) => textHas(e, text)) && ENTRIES.some((e) => e.kind === "city" && !wantedKeys.has(e.key) && wantedCities.some((w) => w.country === e.country) && textHas(e, text))) otherCity = true;
+    // A CITY WAS ASKED (DT-20261118-03 PR-5, D-0086: no list of OTHER cities): an address that names places (two parts or more) and never the asked city is another place, whatever town it names; a one-part street address is not judged
+    if (wantedCities.length > 0 && ADDRESS_FIELD_KEY.test(field) && !wanted.some((e) => textHas(e, text)) && raw.split(/[,،;؛]/).filter((part) => part.trim() !== "").length >= 2) otherCity = true;
     // a CITY of a wanted country is evidence of the country («Cairo», «Giza», «Sheikh Zayed» for «في مصر»); a wanted city is evidence of itself
     if (wanted.some((e) => textHas(e, text)) || ENTRIES.some((e) => e.kind === "city" && wantedWholeCountries.some((w) => w.country === e.country) && textHas(e, text))) { textPositive = true; continue; }
     // another country (not one of the wanted ones) named in the text
