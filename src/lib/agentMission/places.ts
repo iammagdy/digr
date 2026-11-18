@@ -193,6 +193,9 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
   const wantedCountries = new Set(wanted.map((e) => e.country));
   // a website's country suffix and a phone's prefix say the COUNTRY: they are evidence of a country the customer named, never of a city
   const wantedWholeCountries = wanted.filter((e) => e.kind === "country");
+  const wantedCities = wanted.filter((e) => e.kind === "city");
+  const wantedKeys = new Set(wanted.map((e) => e.key));
+  let otherCity = false;
   let textPositive = false;
   let textNegative = false;
   let weakPositive = false;
@@ -215,11 +218,13 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
     const iso = COUNTRY_FIELD_KEY.test(field) ? isoCountryOf(raw) : null;
     if (iso) { if (wantedWholeCountries.some((e) => e.country === iso)) textPositive = true; else if (!wantedCountries.has(iso)) textNegative = true; continue; }
     const text = normalizeText(raw);
+    if (wantedCities.length > 0 && !wanted.some((e) => textHas(e, text)) && ENTRIES.some((e) => e.kind === "city" && !wantedKeys.has(e.key) && wantedCities.some((w) => w.country === e.country) && textHas(e, text))) otherCity = true;
     // a CITY of a wanted country is evidence of the country («Cairo», «Giza», «Sheikh Zayed» for «في مصر»); a wanted city is evidence of itself
     if (wanted.some((e) => textHas(e, text)) || ENTRIES.some((e) => e.kind === "city" && wantedWholeCountries.some((w) => w.country === e.country) && textHas(e, text))) { textPositive = true; continue; }
     // another country (not one of the wanted ones) named in the text
     if (COUNTRIES.some((c) => !wantedCountries.has(c.code) && [byKey.get(c.code)!, ...ENTRIES.filter((e) => e.kind === "city" && e.country === c.code)].some((e) => textHas(e, text)))) textNegative = true;
   }
+  if (otherCity) return "other_place";
   if (textPositive) return "pass";
   if (textNegative) return "other_place";
   if (weakPositive) return "pass";
