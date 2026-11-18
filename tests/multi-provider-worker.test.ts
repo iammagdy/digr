@@ -2243,6 +2243,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expireLease();
     }
     expect(rpcCount("complete_chunk")).toBe(0); expect(rpcCount("settle_job_atomic")).toBe(0);
+    expect(rpcCount("release_job_atomic")).toBe(0); expect(db.ledger).toEqual([]);
 
     // 2. The 9th start: all 0..7 already exist => startIndex = 8 => terminal work_limit, ZERO calls, delivered-only charge
     let providerCallsMade = 0;
@@ -2277,6 +2278,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     // plan v9 :196/:310 (P86): the release text of a chain job; it carries the work_limit sentence
     expect(relWorkLimit!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop: "work_limit" }));
     expect(String(relWorkLimit!.args.p_error_message)).toContain("بلغنا الحد الأقصى المسموح لحجم العمل");
+    expectMoney("released", { calls: 1 });
 
     // 3. Storage error that is NOT "already exists" => throw (a caught failure), never a loop
     resetDb({ target: 5 });
@@ -2322,6 +2324,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const startRelease = db.rpcCalls.find((c) => c.name === "release_job_atomic");
       expect(startRelease).toBeDefined();
       expect(startRelease!.args.p_error_message).toBe(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax));
+      expectMoney("released", { calls: 1 });
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -2337,6 +2340,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(db.partials.has(`${JOB}/start_${step}_2.json`)).toBe(false);
     const attempts = db.uploadHistory.filter((u) => u.path.startsWith(`${JOB}/start_${step}_`)).map((u) => `${u.path.slice(JOB.length + 1)}:${u.existed}`);
     expect(attempts).toEqual([`start_${step}_0.json:false`, `start_${step}_0.json:true`, `start_${step}_1.json:false`]);   // the second start is refused at k=0, then takes k=1
+    expect(rpcCount("release_job_atomic")).toBe(0); expect(db.ledger).toEqual([]);
   });
 
   it("T-N route outputs: provider errors never reach the customer", async () => {
