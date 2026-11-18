@@ -1,6 +1,6 @@
 import { pointsAr } from "../pointsFormat";
 import { isGroupQuoteItems, hasJobGroupRpc } from "../server/multiProvider/jobGroupPlan";
-import { GROUP_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
+import { GROUP_UNAVAILABLE_AR, QUOTE_START_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
 import { getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "../../functions/shared/providerSpend";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
@@ -62,6 +62,21 @@ export async function acceptQuoteSupabase(
       .eq("id", quoteId)
       .single();
 
+    if (qErr || !quoteDoc) {
+      if (expectedPlanHash) {
+        return {
+          success: false,
+          statusCode: 503,
+          errorAr: QUOTE_START_UNAVAILABLE_AR,
+        };
+      }
+      return {
+        success: false,
+        statusCode: 404,
+        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+      };
+    }
+
     if (quoteDoc) {
       if (!hashToVerify) {
         hashToVerify = quoteDoc.quote_hash;
@@ -119,21 +134,20 @@ export async function acceptQuoteSupabase(
           };
         }
       }
-    } else if (!hashToVerify) {
-      return {
-        success: false,
-        statusCode: 404,
-        errorAr: "عرض السعر غير موجود أو تم حذفه.",
-      };
     }
   } catch {
-    if (!hashToVerify) {
+    if (expectedPlanHash) {
       return {
         success: false,
-        statusCode: 404,
-        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+        statusCode: 503,
+        errorAr: QUOTE_START_UNAVAILABLE_AR,
       };
     }
+    return {
+      success: false,
+      statusCode: 404,
+      errorAr: "عرض السعر غير موجود أو تم حذفه.",
+    };
   }
 
   if (groupSplit) { if (!(await hasJobGroupRpc(adminClient))) return { success: false, statusCode: 503, errorAr: GROUP_UNAVAILABLE_AR }; }

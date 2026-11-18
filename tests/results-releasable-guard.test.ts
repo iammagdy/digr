@@ -32,6 +32,7 @@ vi.mock("../src/lib/supabase/server", () => ({
   createAdminClient: vi.fn(() => ({
     rpc: async (name: string) => { state.calls.push(`rpc:${name}`); return { data: null, error: null }; },
     from: (table: string) => {
+      if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
       state.calls.push(`from:${table}`);
       if (table === "jobs") return chain(() => ({ data: state.job, error: state.job ? null : new Error("nf") }));
       if (table === "artifact_versions") return chain(() => ({ data: state.versions, error: null }));

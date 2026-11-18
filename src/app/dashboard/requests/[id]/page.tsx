@@ -17,6 +17,8 @@ import ReviewQuote from "@/components/mission/ReviewQuote";
 import ReviewReport from "@/components/mission/ReviewReport";
 import EditRequestCard from "@/components/mission/EditRequestCard";
 import FileWorkflow, { FILE_DELIVERED_EVENT } from "@/components/mission/FileWorkflow";
+import GroupPartsList from "@/components/mission/GroupPartsList";
+import { GROUP_PARTS_UNAVAILABLE_AR } from "@/lib/multiProvider/copy";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -46,6 +48,7 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
   const [missionId, setMissionId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [groupParts, setGroupParts] = useState<{ parts: any[]; total: number } | "failed" | null>(null);
   const [read, setRead] = useState<"loading" | "done" | "missing" | "failed">("loading");
   // a review or an edit of this file finished (the status panel saw it): the versions, report and forms are mounted again so they read the new state without a manual reload
   const [deliveredEpoch, setDeliveredEpoch] = useState(0);
@@ -100,6 +103,28 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
     return () => { alive = false; };
   }, [read, jobId]);
 
+  // the group parts list is resolved when the request is done reading
+  useEffect(() => {
+    if (read !== "done" || !jobId) return;
+    let alive = true;
+    fetch(`/api/jobs/${encodeURIComponent(jobId)}/group-parts`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return;
+        if (j?.success && Array.isArray(j.parts) && typeof j.total === "number") {
+          setGroupParts({ parts: j.parts, total: j.total });
+        } else {
+          setGroupParts("failed");
+        }
+      })
+      .catch(() => {
+        if (alive) setGroupParts("failed");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [read, jobId]);
+
   const known = facts !== null;
   return (
     <div data-screen-label="RequestDetails" className="flex-1">
@@ -115,6 +140,15 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
             {facts?.pointsAr ? <span data-testid="details-points">{facts.pointsAr}</span> : known ? null : <Skeleton className="h-5 w-16" />}
           </div>
         </header>
+
+        {groupParts && groupParts !== "failed" && jobId ? (
+          <GroupPartsList parts={groupParts.parts} total={groupParts.total} currentJobId={jobId} />
+        ) : null}
+        {groupParts === "failed" ? (
+          <p role="alert" className="m-0 rounded-[18px] border border-ln bg-sf p-4 text-sm text-ink">
+            {GROUP_PARTS_UNAVAILABLE_AR}
+          </p>
+        ) : null}
 
         {read === "missing" ? <p role="alert" data-testid="details-missing" className="m-0 rounded-[18px] border border-ln bg-sf p-4 text-sm text-ink">لم نجد هذا الطلب في حسابك. ارجع إلى «طلباتي» وافتحه من هناك.</p> : null}
         {read === "failed" ? <p role="alert" className="m-0 rounded-[18px] border border-ln bg-sf p-4 text-sm text-ink">تعذّر تحميل تفاصيل الطلب الآن. تحقق من الاتصال ثم حاول مرة أخرى.</p> : null}

@@ -7,6 +7,7 @@ import { producedFormats, resultsReleasable } from "@/lib/producedFormats";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { customerFileIds } from "@/lib/customerFiles";
+import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
 export const dynamic = "force-dynamic";
 
@@ -260,9 +261,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
+    const groupDataset = await groupPartDataset(adminClient, job);
+    if (groupDataset.kind === "refuse") return NextResponse.json({ success: false, error: groupDataset.errorAr }, { status: groupDataset.status });
     let currentPayload: ArtifactResultPayload;
     try {
-      currentPayload = await readJsonFile(`${jobId}/data.json`, jobId, adminClient, job.user_id);
+      currentPayload = groupDataset.kind === "frozen" ? JSON.parse(groupDataset.text) : await readJsonFile(`${jobId}/data.json`, jobId, adminClient, job.user_id);
     } catch {
       return NextResponse.json({ success: false, error: "بيانات النتيجة الأصلية غير متاحة للتحرير." }, { status: 409 });
     }

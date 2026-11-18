@@ -34,6 +34,7 @@ import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } fro
 import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanIncompleteError, PlanRefusalError } from "../../lib/capacityRefusal"; import { isStepReference } from "../../lib/paramProvenance"; import { DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD } from "../../lib/server/decisionMakerSpend";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
+import { hasJobGroupRpc, planSplit } from "../../lib/server/multiProvider/jobGroupPlan";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
 import type { RoutingDecision } from "../../lib/multiProvider/trace";
 import { writeRoutingDecision } from "../../lib/server/multiProvider/traceStore";
@@ -572,6 +573,13 @@ export interface ManagedQuoteResult {
   pointsCapConstrained?: boolean;
   requestedVolumeMax?: number;
   pointsCap?: number; fit?: { reason: FitReason; asked: number[]; perPost: number; noticeAr: string }; // a posts + comments plan reduced to fit: what each service asked for, why, and the one sentence that says so
+  splitGroup?: {
+    parts: number;
+    perPart: number;
+    reachable: number;
+    askedOriginal: number;
+    hold: number;
+  };
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -935,11 +943,59 @@ export async function createAndSaveManagedQuote(
     }
   }
 
+  let splitHold: number | undefined = undefined;
+  let splitGroupMeta: ManagedQuoteResult["splitGroup"] = undefined;
+  let splitPartVolumes: number[] | undefined = undefined;
+  if (
+    plan.items.length === 1 &&
+    isChainSlug(plan.items[0].capabilitySlug) &&
+    pointsCapConstrained
+  ) {
+    const item = plan.items[0];
+    const X = askedVolumes[0];
+    const V = item.targetVolumeMax;
+    if (V >= 1 && X > V) {
+      if (await hasJobGroupRpc(tables)) {
+        const split = planSplit({
+          X,
+          V,
+          unit: item.unitPricePoints || 1,
+          safetyBuffer: effectivePricing.safetyBuffer,
+        });
+        if (split.partReserves[0] === item.itemReservation) {
+          item.params = {
+            ...item.params,
+            split: {
+              v: 3,
+              part: 1,
+              parts: split.K,
+              perPart: V,
+              partVolumes: split.partVolumes,
+              partReserves: split.partReserves,
+              hold: split.hold,
+              reachable: split.Y,
+              askedOriginal: X,
+            },
+          };
+          splitHold = split.hold;
+          splitGroupMeta = {
+            parts: split.K,
+            perPart: V,
+            reachable: split.Y,
+            askedOriginal: X,
+            hold: split.hold,
+          };
+          splitPartVolumes = split.partVolumes;
+        }
+      }
+    }
+  }
+
   // 1c. Affordability and downscale offer
-  const isAffordable = userBalance >= totalQuotedPoints;
+  const isAffordable = userBalance >= (splitHold ?? totalQuotedPoints);
   let downscaledOffer: ManagedQuoteResult["downscaledOffer"] = undefined;
 
-  if (!isAffordable && userBalance >= effectivePricing.minPoints) {
+  if (!isAffordable && userBalance >= effectivePricing.minPoints && splitHold === undefined) {
     if (plan.items.length === 1) {
       // Single-item exact formula preserving existing behavior
       const singleItem = plan.items[0];
@@ -1107,10 +1163,12 @@ export async function createAndSaveManagedQuote(
     summaryAr: stripMissingValueWords(plan.summaryAr),
     items: plan.items,
     outputFormats: plan.outputFormats || ["xlsx", "pdf", "csv"],
-    targetVolumeMax: totalVolumeMax,
+    targetVolumeMax: splitGroupMeta ? splitGroupMeta.reachable : totalVolumeMax,
     unitPricePoints: quoteUnitPricePoints,
-    expectedPoints: Math.max(effectivePricing.minPoints, plan.items.reduce((sum, item) => sum + chargeForUnits(item.targetVolumeMax, item.unitPricePoints || 1), 0)),
-    quotedPoints: totalQuotedPoints,
+    expectedPoints: splitPartVolumes && splitHold !== undefined
+      ? Math.max(effectivePricing.minPoints, splitPartVolumes.reduce((sum, v) => sum + chargeForUnits(v, plan.items[0].unitPricePoints || 1), 0))
+      : Math.max(effectivePricing.minPoints, plan.items.reduce((sum, item) => sum + chargeForUnits(item.targetVolumeMax, item.unitPricePoints || 1), 0)),
+    quotedPoints: splitHold ?? totalQuotedPoints,
     isAffordable,
     downscaledOffer,
     capacityConstrained,
@@ -1119,6 +1177,7 @@ export async function createAndSaveManagedQuote(
     requestedVolumeMax,
     pointsCap,
     ...(fit ? { fit } : {}),
+    ...(splitGroupMeta ? { splitGroup: splitGroupMeta } : {}),
     userBalance,
     expiresAt,
     createdAt: nowIso,

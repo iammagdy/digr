@@ -38,6 +38,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
 import { isChainSlug } from "../../../../lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainZeroDeliveryReasonAr } from "../../../../lib/multiProvider/copy";
+import { isGroupPartSpec, loadGroupKeys } from "../../../../lib/server/multiProvider/jobGroupWorker";
+import { withTimeout } from "../../../../lib/server/multiProvider/jobGroupShared";
+import { NEUTRAL_STOP_REASON_AR } from "../../../../lib/multiProvider/copy";
 import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
 import { MAX_STARTS_PER_STEP } from "../../../../lib/server/multiProvider/chainRunner";
 import { createAdminClient } from "../../../../lib/supabase/server";
@@ -475,6 +478,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: switchedOffAr, release: rel.data }, { status: 503 });
     }
     const isChainJob = isChainSlug(spec.capabilitySlug) && multiProviderEnabled();
+    const isGroupPart = isGroupPartSpec(spec, isChainJob);
+    if (isGroupPart && Number(spec.params?.split?.part) >= 2) {
+      spec.params = { ...spec.params, excludeRowKeys: await loadGroupKeys(adminClient, spec.params?.split?.groupId) };
+    }
 
     // The provider is called and billed after this point. Refuse a people job
     // until field-level settlement exists, and release its reserve through the
@@ -2481,6 +2488,16 @@ export async function POST(req: NextRequest) {
         throw new CustomerReasonError("collection_unverified");
       }
 
+      if (isGroupPart) {
+        return NextResponse.json({
+          success: true,
+          done: true,
+          awaitingGroupFreeze: true,
+          jobId,
+          deliveredUnits: recordedDeliveredUnits,
+        });
+      }
+
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
       const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
       const peopleUnits = isPeopleJob
@@ -2488,6 +2505,16 @@ export async function POST(req: NextRequest) {
             ? spec.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
             : ["work_email", "phone"])
         : null;
+      let chainFinalLineAr = "";
+      if (isChainJob && !isGroupPart) {
+        const countLineAr = `المسلَّم ${toArabicDigits(finalRows.length)} من ${toArabicDigits(targetMax)} مطلوب.`;
+        chainFinalLineAr = finalRows.length < targetMax ? `${countLineAr} ${NEUTRAL_STOP_REASON_AR}` : countLineAr;
+        try {
+          const reason = await withTimeout(Promise.resolve(chainShortfallReasonAr({ stop: ((lastChainStop ?? (rawAdapterResult as any).chainStop ?? null) as any), callCap: callCapReason, excluded: relevanceExcludedCount + baselineExcludedCount, skippedOrigins: lastChainSkipped })), 3_000);
+          if (typeof reason === "string" && reason.trim()) chainFinalLineAr = `${countLineAr} ${reason}`;
+          await withTimeout(adminClient.storage.from("partials").upload(`final_line/${jobId}.json`, Buffer.from(JSON.stringify({ v: 1, deliveredUnits: finalRows.length, targetMax, messageAr: chainFinalLineAr })), { upsert: true, contentType: "application/json" }), 3_000);
+        } catch { /* bounded best effort; settlement continues */ }
+      }
       const { data: settleData, error: settleErr } = isPeopleJob
         ? await adminClient.rpc("settle_people_job_atomic", {
             p_job_id: jobId,
@@ -2540,9 +2567,9 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: isPeopleJob
+            message: chainFinalLineAr || (isPeopleJob
             ? `${peopleDeliverySentenceAr(peopleContactCounts(finalRows, (row, field) => contactValueDelivered(row, field)), targetMax)}، وحُفظت ملفات النتائج.`
-            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
+            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`),
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,

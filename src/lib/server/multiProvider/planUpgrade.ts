@@ -1,5 +1,5 @@
 import { multiProviderEnabled } from "../../multiProvider/flag";
-import { CHAIN_CARD_LIMITS_V2_AR, PLAN_LIMITS_AR, chainGoalLineAr, expectedTargetLineAr, whatWeCollectAr } from "../../multiProvider/copy";
+import { CHAIN_CARD_LIMITS_AR, CHAIN_CARD_LIMITS_V2_AR, PLAN_LIMITS_AR, chainGoalLineAr, expectedTargetLineAr, splitCardLineAr, whatWeCollectAr } from "../../multiProvider/copy";
 import { CHAIN_CAPABILITY_SLUG, isChainSlug } from "../../multiProvider/routes";
 import { buildAllowedRoutes } from "../../multiProvider/router";
 import type { RequiredField } from "../../multiProvider/types";
@@ -154,7 +154,9 @@ export async function maybeUpgradeToChainPlan<T extends UpgradeablePlanItem>(arg
 
 export function chainQuoteCopyFor(args: { item: { capabilitySlug?: string; params?: Record<string, any>; targetVolumeMax?: number }; askedCount: number }): { summaryAr: string; methodologyNotes: string } | null {
   if (!isChainSlug(args.item.capabilitySlug)) return null;
-  const fitted = Math.max(1, Math.floor(Number(args.item.targetVolumeMax) || 1));
+  const isSplit = args.item.params?.split?.v === 3;
+  const split = isSplit ? args.item.params?.split : null;
+  const fitted = isSplit ? split.reachable : Math.max(1, Math.floor(Number(args.item.targetVolumeMax) || 1));
   const asked = Math.max(fitted, Math.floor(Number(args.askedCount) || fitted));
   const fields = normalizeRequiredFields(args.item.params?.requiredFields);
   const summaryAr = chainGoalLineAr({
@@ -165,6 +167,8 @@ export function chainQuoteCopyFor(args: { item: { capabilitySlug?: string; param
     industry: args.item.params?.industryAr,
     country: args.item.params?.countryAr,
   });
-  const methodologyNotes = [expectedTargetLineAr({ asked, fitted }), ...CHAIN_CARD_LIMITS_V2_AR].join(" ");
+  const methodologyNotes = isSplit
+    ? [splitCardLineAr(split), ...CHAIN_CARD_LIMITS_AR].join(" ")
+    : [expectedTargetLineAr({ asked, fitted }), ...CHAIN_CARD_LIMITS_V2_AR].join(" ");
   return { summaryAr, methodologyNotes };
 }

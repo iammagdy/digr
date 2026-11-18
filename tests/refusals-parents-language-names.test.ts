@@ -334,6 +334,7 @@ vi.mock("../src/lib/supabase/server", () => {
     createAdminClient: vi.fn(() => ({
       rpc: async () => ({ data: null, error: null }),
       from: (table: string) => {
+        if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
         if (table === "jobs") return chain(() => ({ data: { id: "job_quote_e3a", user_id: "owner-1", status: "completed", delivered_units: 50, charged_credits: 200, reserved_credits: 200, target_volume_max: 50, params: {}, endpoint_id: "agent-mission" }, error: null }));
         if (table === "artifact_versions") return chain(() => ({ data: [{ id: "v1", version_number: 1, file_id_xlsx: "owner-1/job_quote_e3a/result.xlsx", file_id_csv: "owner-1/job_quote_e3a/result.csv", file_id_pdf: null, created_at: "2026-10-29T07:56:29Z", job_id: "job_quote_e3a", user_id: "owner-1" }], error: null }));
         if (table === "missions") return chain(() => ({ data: state.mission, error: null }));

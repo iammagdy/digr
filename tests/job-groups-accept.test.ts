@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { isGroupQuoteItems, planSplit, hasJobGroupRpc } from "../src/lib/server/multiProvider/jobGroupPlan";
 import { reserveForUnits, DEFAULT_PRICING_BASIS } from "../src/lib/recordPricing";
 import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
-import { GROUP_UNAVAILABLE_AR, groupStartLineAr } from "../src/lib/multiProvider/copy";
+import { GROUP_UNAVAILABLE_AR, QUOTE_START_UNAVAILABLE_AR, groupStartLineAr } from "../src/lib/multiProvider/copy";
 import { getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "../src/functions/shared/providerSpend";
 
 describe("DT-05 PR-9 group approval", () => {
@@ -273,5 +273,35 @@ describe("DT-05 PR-9 group approval", () => {
       ["accept_quote_atomic", { p_quote_id: "q1", p_user_id: "u1", p_expected_quote_hash: "h1" }],
     ]);
     expect(r).toMatchObject({ success: true, jobId: "job_old" });
+  });
+
+  // D-0060 N2 + D-0069: fail-closed when expectedPlanHash is supplied and quote read fails
+  it.each([
+    ["read returns error", async () => ({ data: null, error: { message: "db error" } })],
+    ["read throws", async () => { throw new Error("network timeout"); }],
+    ["read returns null data with no error", async () => ({ data: null, error: null })],
+  ])("(N2) when expectedPlanHash is supplied and quote %s ⇒ 503 QUOTE_START_UNAVAILABLE_AR, calling NO accept rpc and NO group rpc", async (_desc, readFn) => {
+    const rpc = vi.fn();
+    const admin = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: readFn,
+          }),
+        }),
+      }),
+      rpc,
+    } as any;
+    const res = await acceptQuoteSupabase(admin, {
+      userId: "u1",
+      quoteId: "q1",
+      expectedPlanHash: "some_hash",
+    });
+    expect(res).toEqual({
+      success: false,
+      statusCode: 503,
+      errorAr: QUOTE_START_UNAVAILABLE_AR,
+    });
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

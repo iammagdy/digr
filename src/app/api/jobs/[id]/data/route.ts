@@ -4,6 +4,7 @@ import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { deliveredNothing, NO_RELEASABLE_RESULT_AR, producedFormats, resultsReleasable } from "@/lib/producedFormats";
 import { customerFileIds, customerResultFormats } from "@/lib/customerFiles";
+import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
 export const dynamic = "force-dynamic";
 
@@ -59,9 +60,15 @@ export async function GET(
       return NextResponse.json({ success: false, error: NO_RELEASABLE_RESULT_AR }, { status: 409 });
     }
 
+    const groupServe = await groupPartDataset(adminClient, jobDoc);
+    if (groupServe.kind === "refuse") {
+      return NextResponse.json({ success: false, error: groupServe.errorAr }, { status: groupServe.status });
+    }
+    const isFrozenGroupPart = groupServe.kind === "frozen";
+
     // 3. Read JSON result from private storage bucket (results or partials)
     try {
-      let jsonText = "";
+      let jsonText = groupServe.kind === "frozen" ? groupServe.text : "";
       const candidatePaths = [
         `${jobDoc.user_id}/${jobId}/data.json`,
         `${verifiedUserId}/${jobId}/data.json`,
@@ -69,7 +76,7 @@ export async function GET(
         `json_${jobId}`,
       ];
 
-      for (const bucketName of ["results", "partials"]) {
+      for (const bucketName of (isFrozenGroupPart ? [] : ["results", "partials"])) {
         if (jsonText) break;
         const bucket = adminClient.storage?.from?.(bucketName);
         if (!bucket || typeof bucket.download !== "function") continue;

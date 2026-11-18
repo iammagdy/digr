@@ -10,6 +10,7 @@ import { recordDriverTick } from "../../../../lib/server/driverHeartbeat";
 import { driverModeFromTick } from "../../../../lib/driverMode";
 import { defaultModelPlannerConfig } from "../../../../lib/modelPlanner/chatTurn";
 import { resumeStalePlanningSessions } from "../../../../lib/modelPlanner/planningSession";
+import { backfillChainFinalLines } from "../../../../lib/server/multiProvider/finalLineBackfill";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
   }
 
   // In parallel: each chunk can run for most of a minute, and the worker claims a job with a lease, so two ticks never double-run one.
-  const [results, stalledNotices, groupsRaw] = await Promise.all([
+  const [results, stalledNotices, groupsRaw, _finalLines] = await Promise.all([
     Promise.all(due.map(async (job) => {
       try {
         const outcome = await dispatchWorkerChunk(baseUrl, job.id, job.step ?? 0, createInternalWorkerAuthHeaders(job.id), DRIVER_DISPATCH_TIMEOUT_MS);
@@ -74,6 +75,7 @@ export async function GET(req: NextRequest) {
     })),
     notifyStalledJobs(admin, now),
     withTimeout(reconcileJobGroups(admin, { nowMs: now, source: "drive", budgetMs: TICK_BUDGET_MS }), TICK_BUDGET_MS).catch(() => null),
+    withTimeout(backfillChainFinalLines(admin, { nowMs: now }), 15_000).catch(() => null),
   ]);
   await recordDriverTick(admin, results.filter((result) => result.started).length, now);
   const groups = groupsRaw === TIMED_OUT ? null : groupsRaw;

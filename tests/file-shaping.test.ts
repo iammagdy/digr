@@ -24,6 +24,7 @@ vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({ auth: { getUser: vi.fn(async () => ({ data: { user: state.user }, error: null })) } })),
   createAdminClient: vi.fn(() => ({
     from: (table: string) => {
+      if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
       if (table === "jobs") return chain(() => ({ data: state.job, error: state.job ? null : new Error("nf") }));
       if (table === "artifact_versions") {
         const c = chain(() => ({ data: [], error: null }));

@@ -33,15 +33,41 @@ const db = vi.hoisted(() => ({
   ledger: [] as Array<{ id: string; job_id: string; user_id: string; type: "release" | "charge"; delta: number; by: "release_job_atomic" | "record_chunk_failure" | "settle_job_atomic" }>,
   releaseAnswers: [] as any[],
   notices: [] as any[],
+  job_group_keys: [] as Array<{ group_id: string; key: string; from_part?: number }>,
+  tablesQueried: [] as string[],
+  groupKeysQueryError: null as any,
+  groupKeysDelayMs: 0,
 }));
 
 function builder(rows: () => any[]) {
   const filters: Array<[string, unknown]> = [];
-  const apply = () => rows().filter((row) => filters.every(([col, val]) => row[col] === val));
+  let sortCol: string | null = null;
+  let sortAsc = true;
+  let sliceRange: [number, number] | null = null;
+  const apply = () => {
+    let res = rows().filter((row) => filters.every(([col, val]) => row[col] === val));
+    if (sortCol) {
+      res = [...res].sort((a, b) => {
+        const va = a[sortCol!];
+        const vb = b[sortCol!];
+        if (va < vb) return sortAsc ? -1 : 1;
+        if (va > vb) return sortAsc ? 1 : -1;
+        return 0;
+      });
+    }
+    if (sliceRange) {
+      res = res.slice(sliceRange[0], sliceRange[1] + 1);
+    }
+    return res;
+  };
   const api: any = {
     select: () => api,
     eq: (col: string, val: unknown) => { filters.push([col, val]); return api; },
-    in: () => api, or: () => api, not: () => api, order: () => api, limit: () => api, gte: () => api, range: () => api,
+    in: () => api, or: () => api, not: () => api,
+    order: (col: string, opts?: any) => { sortCol = col; sortAsc = opts?.ascending !== false; return api; },
+    limit: (n: number) => { sliceRange = [0, n - 1]; return api; },
+    gte: () => api,
+    range: (from: number, to: number) => { sliceRange = [from, to]; return api; },
     maybeSingle: async () => ({ data: apply()[0] ?? null, error: null }),
     then: (resolve: any, reject: any) => Promise.resolve({ data: apply(), error: null }).then(resolve, reject),
   };
@@ -215,6 +241,38 @@ vi.mock("../src/lib/supabase/server", () => ({
       },
     },
     from: (table: string) => {
+      db.tablesQueried.push(table);
+      if (table === "job_group_keys") {
+        if (db.groupKeysQueryError) {
+          const errApi: any = {
+            select: () => errApi,
+            eq: () => errApi,
+            order: () => errApi,
+            range: () => errApi,
+            maybeSingle: async () => ({ data: null, error: db.groupKeysQueryError }),
+            then: (resolve: any) => Promise.resolve({ data: null, error: db.groupKeysQueryError }).then(resolve),
+          };
+          return errApi;
+        }
+        if (db.groupKeysDelayMs > 0) {
+          const delay = db.groupKeysDelayMs;
+          const baseApi = builder(() => db.job_group_keys);
+          const delayApi: any = {
+            select: () => delayApi,
+            eq: (col: string, val: unknown) => { baseApi.eq(col, val); return delayApi; },
+            order: (col: string, opts?: any) => { baseApi.order(col, opts); return delayApi; },
+            range: (from: number, to: number) => { baseApi.range(from, to); return delayApi; },
+            maybeSingle: async () => {
+              await new Promise((r) => setTimeout(r, delay));
+              return baseApi.maybeSingle();
+            },
+            then: (resolve: any, reject: any) =>
+              new Promise((r) => setTimeout(r, delay)).then(() => baseApi.then(resolve, reject)),
+          };
+          return delayApi;
+        }
+        return builder(() => db.job_group_keys);
+      }
       if (table === "jobs") return { ...builder(() => db.jobs), update: (patch: any) => casChain(patch) };
       if (table === "plans_quotes") return builder(() => db.quotes);
       if (table === "provider_costs") return builder(() => db.costs);
@@ -251,6 +309,7 @@ import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeComp
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
 import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr, staleReleaseReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
+import { isGroupPartSpec, loadGroupKeys } from "../src/lib/server/multiProvider/jobGroupWorker";
 import { customerTexts, expectNoBareFailed, expectReleasedZeroOf } from "./helpers/noBareFailed";
 import { RELEASE_NEUTRAL_REASON_AR, RETRY_CAUSE_AR, releaseTextAr } from "../src/lib/releaseText";
 import { sendPlatformEmail, getRecipient } from "../src/lib/server/sendPlatformEmail";
@@ -295,6 +354,7 @@ function resetDb(over: { target?: number } = {}) {
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
   db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear(); db.resultExistedAtSettle = [];
   db.ledger = []; db.releaseAnswers = []; db.notices = [];
+  db.job_group_keys = []; db.tablesQueried = []; db.groupKeysQueryError = null; db.groupKeysDelayMs = 0;
 }
 
 const effectiveReleases = () => db.ledger.filter((r) => r.type === "release" && r.by !== "settle_job_atomic").length;
@@ -2453,7 +2513,333 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
-});
+  describe("T4 worker: group keys and stop before settle (PR-6)", () => {
+    const GID = "grp_0123456789abcdef0123456789abcdef";
+
+    it("isGroupPartSpec helper respects isChainJob and split.v === 3", () => {
+      expect(isGroupPartSpec(null, false)).toBe(false);
+      expect(isGroupPartSpec(null, true)).toBe(false);
+      expect(isGroupPartSpec({}, true)).toBe(false);
+      expect(isGroupPartSpec({ params: {} }, true)).toBe(false);
+      expect(isGroupPartSpec({ params: { split: { v: 2 } } }, true)).toBe(false);
+      expect(isGroupPartSpec({ params: { split: { v: 3 } } }, false)).toBe(false);
+      expect(isGroupPartSpec({ params: { split: { v: 3 } } }, true)).toBe(true);
+    });
+
+    it("loadGroupKeys validates group ID format and rejects invalid IDs", async () => {
+      await expect(loadGroupKeys(null, "invalid")).rejects.toThrow("group_keys_unavailable");
+      await expect(loadGroupKeys(null, "grp_123")).rejects.toThrow("group_keys_unavailable");
+      await expect(loadGroupKeys(null, null)).rejects.toThrow("group_keys_unavailable");
+      await expect(loadGroupKeys(null, 12345)).rejects.toThrow("group_keys_unavailable");
+      await expect(loadGroupKeys(null, "job_quote_0123456789abcdef0123456789abcdef")).rejects.toThrow("group_keys_unavailable");
+    });
+
+    it("loadGroupKeys pages through > 1000 keys across ranges", async () => {
+      const allKeys = Array.from({ length: 1500 }, (_, i) => `domain:company${String(i).padStart(4, "0")}.com`);
+      const fakeAdmin = {
+        from: (table: string) => {
+          expect(table).toBe("job_group_keys");
+          let rangeFrom = 0;
+          let rangeTo = 999;
+          const api: any = {
+            select: () => api,
+            eq: () => api,
+            order: () => api,
+            range: (from: number, to: number) => {
+              rangeFrom = from;
+              rangeTo = to;
+              return api;
+            },
+            then: (resolve: any) => {
+              const sliced = allKeys.slice(rangeFrom, rangeTo + 1).map((key) => ({ key }));
+              resolve({ data: sliced, error: null });
+            },
+          };
+          return api;
+        },
+      };
+
+      const loaded = await loadGroupKeys(fakeAdmin, GID);
+      expect(loaded).toHaveLength(1500);
+      expect(loaded[0]).toBe("domain:company0000.com");
+      expect(loaded[1499]).toBe("domain:company1499.com");
+    });
+
+    it("loadGroupKeys throws group_keys_unavailable on database query error", async () => {
+      const fakeAdmin = {
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                range: () => Promise.resolve({ data: null, error: { message: "db down", code: "57P01" } }),
+              }),
+            }),
+          }),
+        }),
+      };
+      await expect(loadGroupKeys(fakeAdmin, GID)).rejects.toThrow("group_keys_unavailable");
+    });
+
+    it("T4 (a) CROSS-PART NO RE-CHARGE: part-2 job, job_group_keys fake holds part 1's 10 domains, the world returns those 10 first then 10 new => delivered rows contain none of the 10, delivered_units counts only the new rows", async () => {
+      resetDb({ target: 10 });
+      roomyBudget(10);
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 2,
+        parts: 3,
+        groupId: GID,
+        perPart: 10,
+        reachable: 30,
+        askedOriginal: 30,
+      };
+
+      const world = defaultFakeWorld(20).map((c) => ({
+        ...c,
+        email: `info@${c.domain}`,
+      }));
+      const companyIdentity = dedupeIdentityFor("company");
+      db.job_group_keys = world.slice(0, 10).map((c) => ({
+        group_id: GID,
+        key: companyIdentity({ website: `https://${c.domain}` })!,
+        from_part: 1,
+      }));
+
+      const { last } = await runMany(world);
+      expect(last.status).toBe(200);
+      expect(last.json).toMatchObject({
+        success: true,
+        done: true,
+        awaitingGroupFreeze: true,
+        jobId: JOB,
+        deliveredUnits: 10,
+      });
+
+      const partialDataBuf = db.partials.get(`user_1/${JOB}/data.json`) || db.partials.get(`${JOB}/data.json`);
+      expect(partialDataBuf).toBeDefined();
+      const parsed = JSON.parse(partialDataBuf!.toString("utf-8"));
+      const rows = Array.isArray(parsed) ? parsed : (parsed.rows ?? []);
+      expect(Array.isArray(rows)).toBe(true);
+      expect(rows.length).toBe(10);
+
+      const part1Domains = new Set(world.slice(0, 10).map((c) => c.domain));
+      for (const row of rows) {
+        const rowDomain = String(row.website || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+        expect(part1Domains.has(rowDomain)).toBe(false);
+      }
+
+      const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic" || c.name === "settle_people_job_atomic");
+      expect(settleCalls).toHaveLength(0);
+      expect(db.jobs[0].status).toBe("running");
+      expect(db.jobs[0].current_cursor).toBe("completed");
+    });
+
+    it("T4 (b1) bad gid: fails before any provider call, nothing settled", async () => {
+      resetDb({ target: 5 });
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 2,
+        parts: 3,
+        groupId: "invalid_gid",
+        perPart: 5,
+      };
+      const world = defaultFakeWorld(5);
+      const route = await import("../src/app/api/worker/chunk/route");
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: 0, disableSelfChain: true }),
+      }));
+      const json = await res.json();
+      expect(res.status).toBe(500);
+      expect(json.success).toBe(false);
+
+      const reserves = db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic");
+      expect(reserves).toHaveLength(0);
+      expect(fetchSpy.log).toHaveLength(0);
+
+      const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+      expect(settleCalls).toHaveLength(0);
+      expect(db.jobs[0].status).not.toBe("completed");
+    });
+
+    it("T4 (b2) keys load error: database error causes chunk failure with zero provider calls, nothing settled", async () => {
+      resetDb({ target: 5 });
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 2,
+        parts: 3,
+        groupId: GID,
+        perPart: 5,
+      };
+      db.groupKeysQueryError = { message: "connection refused", code: "57P03" };
+
+      const world = defaultFakeWorld(5);
+      const route = await import("../src/app/api/worker/chunk/route");
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: 0, disableSelfChain: true }),
+      }));
+      const json = await res.json();
+      expect(res.status).toBe(500);
+      expect(json.success).toBe(false);
+
+      const reserves = db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic");
+      expect(reserves).toHaveLength(0);
+      expect(fetchSpy.log).toHaveLength(0);
+
+      const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+      expect(settleCalls).toHaveLength(0);
+      expect(db.jobs[0].status).not.toBe("completed");
+    });
+
+    it("T4 (b3) keys load timeout: query timeout causes chunk failure with zero provider calls, nothing settled", async () => {
+      resetDb({ target: 5 });
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 2,
+        parts: 3,
+        groupId: GID,
+        perPart: 5,
+      };
+      db.groupKeysDelayMs = 4500;
+
+      const world = defaultFakeWorld(5);
+      const route = await import("../src/app/api/worker/chunk/route");
+      fetchSpy = createFakeFetch(world);
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
+      setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: 0, disableSelfChain: true }),
+      }));
+      const json = await res.json();
+      expect(res.status).toBe(500);
+      expect(json.success).toBe(false);
+
+      const reserves = db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic");
+      expect(reserves).toHaveLength(0);
+      expect(fetchSpy.log).toHaveLength(0);
+
+      const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+      expect(settleCalls).toHaveLength(0);
+      expect(db.jobs[0].status).not.toBe("completed");
+    });
+
+    it("T4 (c0) W5: a group part (part 1 and part 2) reaching the end => data.json written, NO settle, no events/notices, awaitingGroupFreeze: true, stays running", async () => {
+      // Part 1 reaching the end
+      resetDb({ target: 3 });
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 1,
+        parts: 3,
+        groupId: GID,
+        perPart: 3,
+        reachable: 9,
+        askedOriginal: 9,
+      };
+
+      const world = defaultFakeWorld(5);
+      const { last: part1Last } = await run(world);
+      expect(part1Last.status).toBe(200);
+      expect(part1Last.json).toMatchObject({
+        success: true,
+        done: true,
+        awaitingGroupFreeze: true,
+        jobId: JOB,
+        deliveredUnits: 3,
+      });
+
+      const part1Data = db.partials.get(`user_1/${JOB}/data.json`) || db.partials.get(`${JOB}/data.json`);
+      expect(part1Data).toBeDefined();
+
+      const part1Settle = db.rpcCalls.filter((c) => c.name === "settle_job_atomic" || c.name === "settle_people_job_atomic");
+      expect(part1Settle).toHaveLength(0);
+      expect(db.events.some((e) => e.message?.includes("المسلَّم") || e.message?.includes("تم إكمال"))).toBe(false);
+      expect(db.notices).toHaveLength(0);
+      expect(db.jobs[0].status).toBe("running");
+      expect(db.jobs[0].current_cursor).toBe("completed");
+
+      // Part 2 reaching the end
+      resetDb({ target: 3 });
+      db.quotes[0].items[0].params.split = {
+        v: 3,
+        part: 2,
+        parts: 3,
+        groupId: GID,
+        perPart: 3,
+        reachable: 9,
+        askedOriginal: 9,
+      };
+
+      const { last: part2Last } = await run(world);
+      expect(part2Last.status).toBe(200);
+      expect(part2Last.json).toMatchObject({
+        success: true,
+        done: true,
+        awaitingGroupFreeze: true,
+        jobId: JOB,
+        deliveredUnits: 3,
+      });
+
+      const part2Settle = db.rpcCalls.filter((c) => c.name === "settle_job_atomic" || c.name === "settle_people_job_atomic");
+      expect(part2Settle).toHaveLength(0);
+      expect(db.events.some((e) => e.message?.includes("المسلَّم") || e.message?.includes("تم إكمال"))).toBe(false);
+      expect(db.notices).toHaveLength(0);
+      expect(db.jobs[0].status).toBe("running");
+      expect(db.jobs[0].current_cursor).toBe("completed");
+
+      // Already completed loser path
+      const route = await import("../src/app/api/worker/chunk/route");
+      const loserRes = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: { authorization: "Bearer chain-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: 0, disableSelfChain: true }),
+      }));
+      const loserJson = await loserRes.json();
+      expect(loserRes.status).toBe(200);
+      expect(loserJson).toMatchObject({
+        success: true,
+        done: true,
+        awaitingGroupFreeze: true,
+        jobId: JOB,
+        deliveredUnits: 3,
+      });
+      const loserSettle = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+      expect(loserSettle).toHaveLength(0);
+      expect(db.jobs[0].status).toBe("running");
+    });
+
+    it("T4 (d) INERT FOR ORDINARY JOBS: an ordinary chain job (no params.split) => no job_group_keys query recorded, no awaitingGroupFreeze, settle called exactly as today", async () => {
+      resetDb({ target: 3 });
+      expect(db.quotes[0].items[0].params.split).toBeUndefined();
+
+      const world = defaultFakeWorld(5);
+      const { last } = await run(world);
+      expect(last.status).toBe(200);
+      expect(last.json.done).toBe(true);
+      expect(last.json.awaitingGroupFreeze).toBeUndefined();
+
+      expect(db.tablesQueried).not.toContain("job_group_keys");
+
+      const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+      expect(settleCalls).toHaveLength(1);
+      expect(settleCalls[0].args).toMatchObject({ p_job_id: JOB, p_points_cap: 25_000, p_result_file_id: `user_1/${JOB}/result.xlsx` });
+      expect(db.ledger.filter((row) => row.type === "charge")).toEqual([{ id: `chg_${JOB}`, job_id: JOB, user_id: "user_1", type: "charge", delta: -Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved), by: "settle_job_atomic" }]);
+      expect(db.jobs[0].status).toBe("completed");
+    });
+  });
+  });
 
 /** DT-20261117-06 T-M (chain rows, [DEPENDS DT-04]): company contacts and company e-mails through the REAL worker route with this file's fake providers. Its own environment hooks (a top-level sibling of the chain describe). */
 describe("T-M chain (DT-06)", () => {
@@ -2644,4 +3030,5 @@ describe("the fake release_job_atomic follows the SQL (DT-20261117-07 QA r1)", (
     }
     expect(db.failCount).toBe(4);
   });
+
 });

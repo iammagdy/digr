@@ -26,6 +26,7 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: async (name: string) => { state.calls.push(`rpc:${name}`); return { data: null, error: null }; },
     from: (table: string) => {
       state.calls.push(`from:${table}`);
+      if (table === "job_group_parts") return chain(() => ({ data: null, error: null }));
       if (table === "jobs") return chain(() => ({ data: state.job, error: state.job ? null : new Error("nf") }));
       return chain(() => ({ data: [], error: null }));
     },
