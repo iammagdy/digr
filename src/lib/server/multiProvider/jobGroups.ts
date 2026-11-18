@@ -1,4 +1,5 @@
 import { withTimeout, TIMED_OUT, isMissingSchema } from "./jobGroupShared";
+import { GROUP_CLOSING_NOTICE_AR } from "../../multiProvider/copy";
 
 export const TICK_BUDGET_MS = 45_000;
 export const MIN_LEFT_FOR_CLAIM_MS = 35_000;
@@ -88,13 +89,77 @@ export async function reconcileJobGroups(
       }
     }
 
+    let claims = 0;
+    let frozen = 0;
+    let released = 0;
+    let drawn = 0;
+    let closed = 0;
+
+    while (claims < MAX_CLAIMS_PER_TICK && tickDeadline - now() >= MIN_LEFT_FOR_CLAIM_MS) {
+      let claimRes: any;
+      try {
+        claimRes = await withTimeout(
+          admin.rpc("claim_next_job_group", {
+            p_quiet_seconds: QUIET_SECONDS,
+            p_closing_notice_ar: GROUP_CLOSING_NOTICE_AR,
+          }),
+          4_000
+        );
+      } catch (err) {
+        if (isMissingSchema(err)) {
+          return { installed: false, claims, frozen, released, drawn, closed };
+        }
+        if (!logged) {
+          console.error("[job-groups:claim-failed]", { source: opts.source });
+          logged = true;
+        }
+        break;
+      }
+
+      if (claimRes === TIMED_OUT) {
+        break;
+      }
+
+      if (claimRes?.error) {
+        if (isMissingSchema(claimRes.error)) {
+          return { installed: false, claims, frozen, released, drawn, closed };
+        }
+        if (!logged) {
+          console.error("[job-groups:claim-failed]", { source: opts.source });
+          logged = true;
+        }
+        break;
+      }
+
+      const claimData = claimRes?.data;
+      if (
+        claimData?.success !== true ||
+        !claimData.group ||
+        typeof claimData.group !== "object"
+      ) {
+        break;
+      }
+
+      claims += 1;
+      const group = claimData.group;
+
+      try {
+        // Processing of group will be implemented in T04+
+      } catch (groupErr) {
+        if (!logged) {
+          console.error("[job-groups:group-failed]", { source: opts.source });
+          logged = true;
+        }
+      }
+    }
+
     return {
       installed: true,
-      claims: 0,
-      frozen: 0,
-      released: 0,
-      drawn: 0,
-      closed: 0,
+      claims,
+      frozen,
+      released,
+      drawn,
+      closed,
     };
   } catch (err) {
     if (isMissingSchema(err)) {

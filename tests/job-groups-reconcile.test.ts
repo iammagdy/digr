@@ -80,6 +80,9 @@ function makeWorld() {
     rpc: (name: string, args: any) => {
       w_all_rpc_names_seen_in_this_file.add(name);
       rpcCalls.push({ name, args });
+      if (latency.claim) {
+        vi.advanceTimersByTime(latency.claim);
+      }
       if (name === "claim_next_job_group") {
         if (fail.claim) {
           return Promise.resolve({ data: null, error: fail.claim });
@@ -88,6 +91,9 @@ function makeWorld() {
           return Promise.resolve(answer.claim);
         }
         const nextGroup = queue.shift() ?? null;
+        if (nextGroup && latency.process) {
+          vi.advanceTimersByTime(latency.process);
+        }
         return Promise.resolve({
           data: {
             success: true,
@@ -221,5 +227,76 @@ describe("T02: reconcileJobGroups skeleton and R00", () => {
     const w = makeWorld();
     await run(w, { budgetMs: 3_000 });
     expect(w.tables).toEqual([]);
+  });
+});
+
+describe("T03: claim loop R0", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("the claim carries p_quiet_seconds 180 and the S12 text exactly", async () => {
+    const w = makeWorld();
+    await run(w);
+    expect(w.rpcCalls[0]).toEqual({
+      name: "claim_next_job_group",
+      args: {
+        p_quiet_seconds: 180,
+        p_closing_notice_ar: GROUP_CLOSING_NOTICE_AR,
+      },
+    });
+  });
+
+  it("(p) CLAIM BUDGET: budget 45 s, first claim's processing takes 12 s ⇒ a second claim; budget 45 s with R00 3 s and processing 12 s ⇒ no second claim after 45 − 3 − 12 < 35", async () => {
+    const a = makeWorld();
+    a.queue.push({ id: "g1" }, { id: "g2" });
+    a.latency.process = 1_000;
+    expect((await run(a)).claims).toBe(2);
+
+    const b = makeWorld();
+    b.queue.push({ id: "g1" }, { id: "g2" });
+    b.latency.r00 = 3_000;
+    b.latency.process = 12_000;
+    expect((await run(b)).claims).toBe(1);
+  });
+
+  it("a watchdog pass with budgetMs 20 s runs R00 only: no claim rpc", async () => {
+    const w = makeWorld();
+    w.queue.push({ id: "g1" });
+    await run(w, { source: "watchdog", budgetMs: 20_000 });
+    expect(w.rpcCalls).toEqual([]);
+    expect(w.tables).toEqual(["job_groups"]);
+  });
+
+  it.each([
+    [{ code: "PGRST202", message: "x" }],
+    [{ code: "42883", message: "x" }],
+  ])("(q) NOT INSTALLED: the claim answers %j ⇒ installed:false, no console line", async (err) => {
+    const w = makeWorld();
+    w.fail.claim = err;
+    expect((await run(w)).installed).toBe(false);
+    expect(w.errors).toEqual([]);
+  });
+
+  it.each([
+    [{ success: true }],
+    [{ success: true, group: null }],
+    [{ success: false, group: { id: "g" } }],
+  ])("the loop ends unless success === true and the group is an object: %j ⇒ 0 claims", async (data) => {
+    const w = makeWorld();
+    w.answer.claim = { data, error: null };
+    expect((await run(w)).claims).toBe(0);
+  });
+
+  it("never more than 10 claims in a tick", async () => {
+    const w = makeWorld();
+    for (let i = 0; i < 15; i++) w.queue.push({ id: `g${i}` });
+    expect((await run(w, { budgetMs: 10_000_000 })).claims).toBe(10);
   });
 });
