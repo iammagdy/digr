@@ -472,6 +472,17 @@ export function closePageLine(status: string, queue: QueueInfo | null | undefine
   return emailWillBeSent === false ? AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR : AGENT_CLOSE_PAGE_LINE_AR;
 }
 
+/**
+ * «المطلوب»: what the customer asked for in all. The planned rows of the delivered stages, plus what a lower target (proposed with a reason) left out of the request.
+ * One definition, read by the customer's card (customerMissionView) and the admin overview (adminOverview.ts).
+ */
+export function requestedRowsOf(planPublic: unknown): number {
+  const plan: any = planPublic && typeof planPublic === "object" ? planPublic : null;
+  const planned = stagesView(plan).stages.filter((s) => s.deliver).reduce((n, s) => n + s.rows, 0);
+  const quantity = plan?.quantity && typeof plan.quantity === "object" ? plan.quantity : null;
+  return planned + (quantity ? Math.max(0, Math.floor(Number(quantity.requested) || 0) - Math.floor(Number(quantity.target) || 0)) : 0);
+}
+
 export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean; /** STAGE 3 S5: the new queue line, with the stored approval time (null: not measured). Absent: today's line. */ stage3Queue?: { approvedAtMs: number | null } }): CustomerMissionView {
   const { mission } = input;
   const now = input.now ?? Date.now();
@@ -482,8 +493,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const { stages, total } = stagesView(plan);
   const planned = stages.filter((s) => s.deliver).reduce((n, s) => n + s.rows, 0);
   // the request: the target the plan was approved at, plus what a lower target (proposed with a reason) left out of it
-  const quantity = plan?.quantity && typeof plan.quantity === "object" ? plan.quantity : null;
-  const requestedRows = planned + (quantity ? Math.max(0, Math.floor(Number(quantity.requested) || 0) - Math.floor(Number(quantity.target) || 0)) : 0);
+  const requestedRows = requestedRowsOf(plan);
   const delivered = mission.delivered_units;
   const phase: CustomerPhase = basePhase === "done" && delivered !== null && requestedRows > 0 && delivered < requestedRows ? "partial" : basePhase;
   // STAGE 3 S5: with `stage3Queue` (DIGER_STAGE3_QUEUE on, passed by the loader) the queue line is the new one; without it, exactly today's
