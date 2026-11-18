@@ -4,7 +4,7 @@ import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
 import { isLanguageColumn } from "./languageLabel";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
-import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
+import { buildCompanySteps, buildContactSteps, isEmailColumn, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
@@ -861,7 +861,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
   // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
   // THE COMPANY STEPS (the company's own e-mail and HQ phone, reference A): beside the people's, for a delivered company stage with delivered people under it
-  const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {}, { email: wants.email, hasEmailColumn: (key) => (priced.find((s) => s.key === key)?.columns ?? []).some((c) => c.kind === "work_email" || /mail/i.test(c.key) || /(إيميل|ايميل|بريد)/.test(c.title_ar)) })];
+  const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {}, { email: wants.email, hasEmailColumn: (key) => (priced.find((s) => s.key === key)?.columns ?? []).some(isEmailColumn) })];
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote

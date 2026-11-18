@@ -197,13 +197,15 @@ export function buildContactSteps(
   return out;
 }
 
+/** A stage's e-mail column, known by STRUCTURE (D-0086: never by the words of its title): marked kind «work_email», or keyed as an e-mail. */
+export const isEmailColumn = (c: { key: string; kind?: string }): boolean => c.kind === "work_email" || /mail/i.test(c.key);
 /** The stage columns with the step's contact column (added when the planner left it out) and, right after it, the Arabic status column. A plan without steps is returned as it is. Idempotent. */
 export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string; type_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
   // (a step of the COMPANY has its own columns, taskContracts.ts: it never adds a person's e-mail or phone column to the company's stage)
   const mine = (steps ?? []).filter((s) => s.stage_key === stageKey && s.level === undefined);
   // THE COMPANY'S OWN E-MAIL OF A COMPANIES-ONLY REQUEST: its two columns are added here when the stage holds no e-mail column (a companies and people delivery gets them from taskContracts.ts)
   const companyEmail = (steps ?? []).find((s) => s.stage_key === stageKey && s.level === "company" && s.kind === "email" && s.own_columns === true);
-  if (companyEmail && !columns.some((c) => /mail/i.test(c.key) || /(إيميل|ايميل|بريد)/.test(c.title_ar))) return [...withContactColumns(stageKey, columns, mine), { key: companyEmail.column_key, title_ar: COMPANY_EMAIL_TITLE_AR } as C, { key: companyEmail.status_key, title_ar: COMPANY_EMAIL_STATUS_TITLE_AR, status_of: companyEmail.column_key } as C];
+  if (companyEmail && !columns.some(isEmailColumn)) return [...withContactColumns(stageKey, columns, mine), { key: companyEmail.column_key, title_ar: COMPANY_EMAIL_TITLE_AR } as C, { key: companyEmail.status_key, title_ar: COMPANY_EMAIL_STATUS_TITLE_AR, status_of: companyEmail.column_key } as C];
   if (mine.length === 0) return [...columns];
   let out: C[] = [...columns];
   for (const s of mine) {
@@ -232,7 +234,7 @@ export function verifierParamsFor(verifier: FinderInfo, email: string): Record<s
 /** What one person gives a finder. */
 export interface PersonFacts { linkedin: string | null; name: string | null; first: string | null; last: string | null; domain: string | null; company: string | null }
 
-// DT-20261118-03: a profile written without its scheme (aviato URLs.linkedin «linkedin.com/in/…») is the same profile; it is given to a finder with https://
+// DT-20261118-03: a profile written without its scheme («linkedin.com/in/…», as some people sources give it) is the same profile; it is given to a finder with https://
 const LINKEDIN_PERSON = /^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
 const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
 const bareDomain = (v: unknown): string | null => { const t = text(v); if (!t || /linkedin\./i.test(t)) return null; const d = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]; return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d) ? d.toLowerCase() : null; };
@@ -274,14 +276,14 @@ export function missingInputsFor(finder: FinderInfo, p: PersonFacts): string[] {
 
 export interface FoundContact { value: string; status: "verified" | "unverified" }
 const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
-// DT-20261118-03 (D-0084): every phone answer shape of the catalog's person-phone finders (quickenrich employee_phone, dropleads/leadmagic mobile_number, limadata phone_numbers[].number, tomba intl/e164_format, aviato phones[].phoneNumber)
+// DT-20261118-03 (D-0084): every phone answer shape found in the example answers of the catalog's person-phone finders (employee_phone, mobile_number, phone_numbers[].number, intl/e164_format, phones[].phoneNumber); the catalog gives no typed output field for most of them
 const PHONE_KEYS = /^((mobile|direct|work|employee|personal)_?)?(phone|tel|mobile)(_?numbers?)?$|^phones$|^(intl|e164)_?format$/i;
-/** A number inside a phone container (limadata phone_numbers[].number, aviato phones[].phoneNumber): «number» alone is never a phone key. */
+/** A number inside a phone container (phone_numbers[].number, phones[].phoneNumber): «number» alone is never a phone key. */
 const PHONE_ITEM_KEYS = /^(number|phone_?number|value)$/i;
 /** Whose number it is NOT (BUG HUNTER Gate 1 delta P1, D-0084): a fax, an office or switchboard line, the company's or employer's, by the key it sits under or the type the finder gives it. */
 const NOT_PERSONAL_KEY = /fax|company|office|employer|organi[sz]ation|head_?quarter|\bhq\b|^hq|switchboard|reception|main_?(line|phone|number)/i;
 const NOT_PERSONAL_TYPE = /^(fax|office|switchboard|reception|company|main|hq)$/i;
-/** A phone written as a bare string inside a list (contactout phone: ["+1…"], aiark data: [["+1…"]]): international form only (a leading +), never a date, a postal code or an id. */
+/** A phone written as a bare string inside a list (phone: ["+1…"], data: [["+1…"]]): international form only (a leading +), never a date, a postal code or an id. */
 const PHONE_LIKE = /^\+\d[\d\s().-]{6,19}$/;
 /** A value that is nothing but an address (optionally a mailto: link). */
 const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
