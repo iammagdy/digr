@@ -25,9 +25,9 @@ const OLD_ROUTES = [
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ];
 /** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
-const NEW_ROUTES = ["/admin/invoices"];
-// CHANGED (DT-20261118-06, «الرسائل والحملات» is in the menu before its page folder lands; the commit that adds src/app/admin/messages moves this entry into NEW_ROUTES)
-const MENU_ONLY_ROUTES = ["/admin/messages"];
+// CHANGED (DT-20261118-06 phase 2A, the page folder src/app/admin/messages lands: «الرسائل والحملات» moves from MENU_ONLY_ROUTES into NEW_ROUTES)
+const NEW_ROUTES = ["/admin/invoices", "/admin/messages"];
+const MENU_ONLY_ROUTES: string[] = [];
 
 describe("every old admin address still opens its page", () => {
   it("each old address has its page file with a default export, at the same path as before", () => {
