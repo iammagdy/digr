@@ -50,7 +50,13 @@ export function resetExplorationMemoryForTesting(): void { MEMORY.day.clear(); M
 
 const utcDay = (now: Date): string => now.toISOString().slice(0, 10);
 
-/** What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. */
+/** Rows read per request of the shared ledger: the database caps one answer, so the day's rows are read page by page until a short page ends them (F1: the sum counts only when EVERY page was read). */
+export const EXPLORATION_READ_PAGE = 1000;
+
+/**
+ * What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. `source: "database"` means the sum is the COMPLETE shared sum: every page was read (an answer that cannot be
+ * continued, a failed page or an error is not complete and falls back to memory, which never counts as the shared ledger).
+ */
 export async function readExplorationSpend(deps: ExplorationDeps): Promise<{ request: number; day: number; source: "database" | "memory" }> {
   const now = deps.now ?? new Date();
   const mem = deps.memory ?? MEMORY;
@@ -59,10 +65,20 @@ export async function readExplorationSpend(deps: ExplorationDeps): Promise<{ req
     try {
       const dayStart = `${utcDay(now)}T00:00:00.000Z`;
       const nextDay = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
-      const { data, error } = await client.from(EXPLORATION_TABLE).select("request_id,cost_usd,created_at").gte("created_at", dayStart).lt("created_at", nextDay);
-      if (!error && Array.isArray(data)) {
-        const day = data.reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
-        const request = data.filter((r: any) => r.request_id === deps.requestId).reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
+      const rows: any[] = [];
+      let complete = false;
+      for (let from = 0; from < 2_000_000; from += EXPLORATION_READ_PAGE) {
+        const base = client.from(EXPLORATION_TABLE).select("id,request_id,cost_usd,created_at").gte("created_at", dayStart).lt("created_at", nextDay);
+        const canPage = base && typeof base.order === "function" && typeof base.range === "function";
+        const { data, error } = await (canPage ? base.order("id").range(from, from + EXPLORATION_READ_PAGE - 1) : base);
+        if (error || !Array.isArray(data)) break;
+        rows.push(...data);
+        if (data.length < EXPLORATION_READ_PAGE) { complete = true; break; }
+        if (!canPage) break; // a full page that cannot be continued may be cut: not a complete sum
+      }
+      if (complete) {
+        const day = rows.reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
+        const request = rows.filter((r: any) => r.request_id === deps.requestId).reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
         return { request, day, source: "database" };
       }
     } catch { /* fall through to memory */ }
@@ -100,20 +116,26 @@ async function holdExploration(deps: ExplorationDeps, holdUsd: number, row: { en
   };
   const client = deps.client;
   if (client && typeof client.from === "function") {
+    // A SHARED CLIENT (F1, Gate 2): nothing is sent until the COMPLETE shared sum has been read AFTER this reservation's row was written and it fits both caps. A failed insert, a failed or incomplete read (a fallback to this process's memory is NOT the shared
+    // ledger) or a failed reconciliation is "unavailable": no call. The row is zeroed on a denial and the update is checked; a row whose cleanup is not confirmed STAYS at its reserved amount (counted conservatively), memory included.
     try {
       const { error } = await client.from(EXPLORATION_TABLE).insert({
         request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId, params_digest: { names: row.params.map((p) => p.name), limit: row.limit }, cost_usd: Number(holdUsd.toFixed(6)), http_status: null, rows_returned: 0, duration_ms: 0,
         budget_usd: capUsd, refused_reason: tag, created_at: now.toISOString(),
       });
-      if (error) { release(); return null; }
-      // the totals now INCLUDE this reservation (the database rows are the shared ledger; the memory counters only back them when the table cannot be read)
+      if (error) { release(); return null; } // the row was not written: nothing to clean
+      // the totals now INCLUDE this reservation (the database rows are the shared ledger; the memory counters only back the no-client mode)
       const spent = await readExplorationSpend(deps);
-      if (spent.source === "database" && (spent.request > capUsd + 1e-9 || spent.day > EXPLORATION_DAY_CAP_USD + 1e-9)) {
-        await client.from(EXPLORATION_TABLE).update({ cost_usd: 0, refused_reason: `released:${tag}`.slice(0, 300) }).eq("request_id", deps.requestId).eq("refused_reason", tag);
-        release();
-        return null;
-      }
-    } catch { release(); return null; }
+      const fits = spent.source === "database" && spent.request <= capUsd + 1e-9 && spent.day <= EXPLORATION_DAY_CAP_USD + 1e-9;
+      if (fits) return { tag };
+    } catch { /* the insert or the read threw: the reservation row may exist; treated as a denial whose cleanup must be confirmed below */ }
+    let cleaned = false;
+    try {
+      const { error } = await client.from(EXPLORATION_TABLE).update({ cost_usd: 0, refused_reason: `released:${tag}`.slice(0, 300) }).eq("request_id", deps.requestId).eq("refused_reason", tag);
+      cleaned = !error;
+    } catch { cleaned = false; }
+    if (cleaned) release(); // an unconfirmed cleanup keeps the row (and this process's hold) at the reserved amount
+    return null;
   } else if ((mem.request.get(deps.requestId) ?? 0) > capUsd + 1e-9 || (mem.day.get(utcDay(now)) ?? 0) > EXPLORATION_DAY_CAP_USD + 1e-9) { release(); return null; }
   return { tag };
 }
