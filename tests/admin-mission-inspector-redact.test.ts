@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED, assertNoSecrets, noCardReasonOf, paramKeysOf, redactError, redactFailure, redactText } from "../src/lib/server/adminMissionInspector";
+import { REDACTED, assertNoSecrets, buildInspection, noCardReasonOf, paramKeysOf, redactError, redactFailure, redactText } from "../src/lib/server/adminMissionInspector";
 
 /**
  * DT-20261118-06 PR 2: the redaction of the admin mission inspector. Table-driven: what must be masked, what must stay byte for byte (a count of tweets is not a phone number, a date is not a phone number), and the stricter rule for the free text of a failure
@@ -57,6 +57,50 @@ describe("redactError keeps the structure of an admin error and cleans its detai
     expect(noCardReasonOf(r)).toEqual({ cls: "internal", reason: "people_sources_failed" });
     expect(noCardReasonOf("something else")).toBeNull();
     expect(redactError("plain error 500")).toBe("plain error 500");
+  });
+});
+
+describe("planning failure reason projection", () => {
+  const prefix = "admin: planning_failed class=internal reason=";
+
+  it.each([3, 10, 99])("exposes the complete rejection count %i without a secret-shaped string", (count) => {
+    const data = buildInspection({
+      now: new Date("2026-11-19T10:00:00Z"), calls: [], events: [], callTotal: 0,
+      mission: { id: "msn_fixture01", status: "failed", error: prefix + `plan_invalid_after_${count}_rejections` },
+    });
+    expect(data.planner.noCardReason).toEqual({ cls: "internal", reason: "plan_invalid", rejectionCount: count });
+    expect(data.mission.error).toBe(prefix + `plan_invalid rejections=${count}`);
+    expect(() => assertNoSecrets(data)).not.toThrow();
+  });
+
+  it.each([
+    prefix + "plan_invalid_after_0_rejections",
+    prefix + "plan_invalid_after_100_rejections",
+    prefix + "plan_invalid_after_10_rejections_suffix",
+    prefix + "unexpected_reason",
+    "free text preceding " + prefix + "people_sources_failed",
+  ])("ignores malformed or untrusted reason envelopes", (error) => {
+    expect(noCardReasonOf(error)).toBeNull();
+  });
+
+  it("keeps a fixed reason and redacts its token, query string, private contacts and free-text values", () => {
+    const error = prefix + "plan_invalid_after_10_rejections detail=" +
+      "Invalid API key 'fixtureSecret123' for test.person@example.test at https://api.example.test/search?key=querySecret246 and +20 100 123 4567";
+    const data = buildInspection({
+      now: new Date("2026-11-19T10:00:00Z"), calls: [], events: [], callTotal: 0,
+      mission: { id: "msn_fixture01", status: "failed", error },
+    });
+    expect(data.planner.noCardReason).toEqual({ cls: "internal", reason: "plan_invalid", rejectionCount: 10 });
+    expect(data.mission.error).toContain("detail=Invalid API key");
+    expect(JSON.stringify(data)).not.toMatch(/fixtureSecret123|querySecret246|test\.person|123 4567/);
+    expect(() => assertNoSecrets(data)).not.toThrow();
+  });
+
+  it("uses only the fixed stop category and never echoes free text from no_plan or an unknown reason", () => {
+    const error = prefix + "no_plan(error: fixture operator detail)";
+    expect(noCardReasonOf(error)).toEqual({ cls: "internal", reason: "no_plan" });
+    expect(redactError(error)).toBe(prefix + "no_plan");
+    expect(redactError(prefix + "untrusted provider text")).toBe(prefix + REDACTED);
   });
 });
 

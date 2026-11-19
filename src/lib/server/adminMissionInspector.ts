@@ -58,18 +58,38 @@ export function redactFailure(text: unknown, max = 200): string {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
-/** `admin: planning_failed class=internal reason=sample_empty detail=<what the model or the provider said>`: the structured part is kept, the detail is cleaned like a failure. */
-export function redactError(text: unknown, max = 300): string {
-  const t = typeof text === "string" ? text : "";
-  const at = t.indexOf(" detail=");
-  if (at < 0) return redactText(t, max);
-  return `${redactText(t.slice(0, at), 200)} detail=${redactFailure(t.slice(at + 8), 160)}`.slice(0, max);
+const PLANNING_FAILURE_PREFIX = "admin: planning_failed class=internal reason=";
+const ERROR_DETAIL_SEPARATOR = " detail=";
+const PLANNING_FAILURE_REASONS = new Set([
+  "people_sources_failed", "people_sources_not_tried", "sources_failed",
+  "planning_over_budget", "planning_daily_cap", "planning_recording_unavailable",
+  "planning_missing_params", "lease_lost_past_timeout",
+]);
+
+/** The internal reason envelope carries code-owned facts before the generic text redactor runs. */
+export function noCardReasonOf(error: unknown): { cls: "internal"; reason: string; rejectionCount?: number } | null {
+  if (typeof error !== "string" || !error.startsWith(PLANNING_FAILURE_PREFIX)) return null;
+  const reason = error.slice(PLANNING_FAILURE_PREFIX.length).split(ERROR_DETAIL_SEPARATOR, 1)[0];
+  const rejections = /^plan_invalid_after_([1-9]\d?)_rejections$/.exec(reason);
+  if (rejections?.[0] === reason) return { cls: "internal", reason: "plan_invalid", rejectionCount: Number(rejections[1]) };
+  if (reason.startsWith("no_plan(")) return { cls: "internal", reason: "no_plan" };
+  return PLANNING_FAILURE_REASONS.has(reason) ? { cls: "internal", reason } : null;
 }
 
-/** The reason of a no-card end, parsed from the mission's error (written by the worker: `admin: planning_failed class=… reason=…`). */
-export function noCardReasonOf(error: unknown): { cls: string; reason: string } | null {
-  const m = /planning_failed class=([a-z_]+) reason=([a-z_]+)/.exec(typeof error === "string" ? error : "");
-  return m ? { cls: m[1], reason: m[2] } : null;
+/** Only code-owned reason facts are shown. Provider and model details use the strict failure redactor. */
+export function redactError(text: unknown, max = 300): string {
+  const t = typeof text === "string" ? text : "";
+  const at = t.indexOf(ERROR_DETAIL_SEPARATOR);
+  if (t.startsWith(PLANNING_FAILURE_PREFIX)) {
+    const reason = noCardReasonOf(t);
+    const head = PLANNING_FAILURE_PREFIX + (reason?.reason ?? REDACTED);
+    if (reason?.reason === "no_plan") return head.slice(0, max);
+    const count = reason?.rejectionCount;
+    const details = at < 0 ? "" : ERROR_DETAIL_SEPARATOR + redactFailure(t.slice(at + ERROR_DETAIL_SEPARATOR.length), 160);
+    return (head + (count === undefined ? "" : ` rejections=${count}`) + details).slice(0, max);
+  }
+  if (at < 0) return redactText(t, max);
+  return `${redactText(t.slice(0, at), 200)}${ERROR_DETAIL_SEPARATOR}${redactFailure(t.slice(at + ERROR_DETAIL_SEPARATOR.length), 160)}`.slice(0, max);
 }
 
 const PARAM_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
