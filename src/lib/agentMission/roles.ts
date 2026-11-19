@@ -90,11 +90,26 @@ export function titleTierOf(title: unknown, role: RoleKey): TitleTier {
 }
 
 /** The rows of one page of a company's people, best match first (stable inside each tier: the source's order is kept). Rows are returned untouched; a page with no title field comes back as it is. */
+/** A key that says the position ENDED («end_date», «ended_at», «until», «to_date», «endDate»). Field-name structure, like titleFieldOf; no value list. */
+const END_KEY = /^(?:end(?:ed)?|until|to)(?:_?(?:date|at|on))?$|(?:^|_)end(?:ed)?_?(?:date|at|on)$/i;
+/**
+ * DT-20261119-03 R3: does this person row carry the END of its position? A key that says «end» holding a DATE (a parsable date or timestamp, or a year) means the role is past; «Present», an empty value or no such field means current.
+ * The source's past positions are still delivered (with their date in a column), only after the current ones of the same title tier.
+ */
+export function roleEnded(row: Record<string, unknown>): boolean {
+  for (const [k, v] of Object.entries(row)) {
+    if (!(END_KEY.test(k) || END_KEY.test(k.replace(/([a-z])([A-Z])/g, "$1_$2")))) continue;
+    if (typeof v === "number") { if (Number.isFinite(v) && v >= 1900 && v <= 2200) return true; continue; }
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Date.parse(v.trim()))) return true;
+  }
+  return false;
+}
+
 export function rankPeopleByRole<T extends Record<string, unknown>>(rows: ReadonlyArray<T>, role: RoleKey): { rows: T[]; matching: number } {
   const field = rows.map(titleFieldOf).find((f) => f !== null) ?? null;
   if (field === null) return { rows: [...rows], matching: 0 };
-  const scored = rows.map((row, i) => ({ row, i, t: titleTierOf(row[field], role) }));
-  scored.sort((a, b) => a.t - b.t || a.i - b.i);
+  const scored = rows.map((row, i) => ({ row, i, t: titleTierOf(row[field], role), e: roleEnded(row) ? 1 : 0 }));
+  scored.sort((a, b) => a.t - b.t || a.e - b.e || a.i - b.i);
   return { rows: scored.map((s) => s.row), matching: scored.filter((s) => s.t === 0).length };
 }
 
@@ -158,6 +173,33 @@ export function summaryWithoutRoleClaimAr(summary: string, role: RoleKey, parent
   const parent = parentTitleAr.replace(/[.،\s]+$/u, "");
   const kept = sentences.filter((x) => !claims(x));
   // a kept sentence that already names the companies is not repeated: the code's sentence then says only who is delivered
+  const named = kept.some((x) => normalizeText(x).includes(normalizeText(parent)));
+  const own = `${named ? "" : `${parent}، `}مع ${amount} في كل ${parentNounSingularAr || "عنصر"}.`;
+  const out: string[] = [];
+  let placed = false;
+  for (const x of sentences) {
+    if (!claims(x)) { out.push(x); continue; }
+    if (!placed) { out.push(own); placed = true; }
+  }
+  return out.join(" ");
+}
+
+/** The roles (of the code's own table) a text names, ignoring the stem of «الإدارة». */
+const ALL_ROLE_KEYS: ReadonlyArray<RoleKey> = ["manager", "engineer", "sales", "hr", "accountant"];
+/**
+ * DT-20261119-03 R4: the headline of a people stage the code does NOT filter by role names no role (live run 2: «موظفيها القياديين، وإيميل المدير التنفيذي» over the rule line «تُجمع الموظفون … دون تصفية»). A sentence that names a role
+ * of the table is replaced, once, by the code's own sentence; a role the PARENT's own title already names (a company trade: «شركات مبيعات», «شركات المهندسين») is the companies' trade, not a claim about the people.
+ */
+export function summaryWithoutAnyRoleClaimAr(summary: string, parentTitleAr: string, perParent: number | null, parentNounSingularAr: string): string {
+  const tradeRoles = new Set(ALL_ROLE_KEYS.filter((r) => namesRoleAr(parentTitleAr, r, false)));
+  const claimed = ALL_ROLE_KEYS.filter((r) => !tradeRoles.has(r));
+  const claims = (x: string): boolean => claimed.some((r) => namesRoleAr(x, r, false));
+  const sentences = summary.split(/(?<=[.؟!])\s+/u).map((x) => x.trim()).filter(Boolean);
+  if (!sentences.some(claims)) return summary;
+  const person = knownItemNoun("شخص");
+  const amount = perParent !== null && perParent > 0 && person ? `${countAr(perParent, person)} من العاملين` : "عدد من العاملين";
+  const parent = parentTitleAr.replace(/[.،\s]+$/u, "");
+  const kept = sentences.filter((x) => !claims(x));
   const named = kept.some((x) => normalizeText(x).includes(normalizeText(parent)));
   const own = `${named ? "" : `${parent}، `}مع ${amount} في كل ${parentNounSingularAr || "عنصر"}.`;
   const out: string[] = [];

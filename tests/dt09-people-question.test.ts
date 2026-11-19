@@ -65,22 +65,18 @@ describe("item 3: the refusal tells the planner what to do next, from the catalo
     expect(issue).toMatch(/Deliver every person/);
     expect(issue).not.toMatch(/no people source has given a person yet/);
   });
-  it("through ask_question: the ids in the refusal are the catalog's people-of-company sources, and a sample of one of them that gave rows switches the sentence", async () => {
+  it("through ask_question (DT-20261119-03 R2 supersedes the id-naming refusal): with the planner's understanding the tool refuses whatever the people samples say; the pure guard above still names the sources", async () => {
     expect(PEOPLE_IDS.length).toBeGreaterThan(0);
     const h = makeHarness({ phase: "planning", mission: { request_text: REQUEST } });
     (h.ctx as { understoodPeople?: typeof UNDERSTOOD }).understoodPeople = UNDERSTOOD;
     const ask = buildTools(h.ctx).find((t) => t.name === "ask_question")!;
-    const before: any = await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS });
-    expect(before.ok).toBe(false);
-    expect(before.error).toContain(PEOPLE_IDS[0]);
-    expect(before.error).toMatch(/no people source has given a person yet/);
-    h.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 2, key: "k" }]);
-    const after: any = await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS });
-    expect(after.ok).toBe(false);
-    expect(after.error).toMatch(/Deliver every person/);
-    h.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 0, key: "k" }]);
-    // (a people source that ANSWERED with nobody lets the honest question through: FIX1 P1-3, tested below)
-    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(true);
+    for (const rows of [null, 2, 0]) {
+      if (rows !== null) h.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows, key: "k" }]);
+      const r: any = await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS });
+      expect(r.ok, String(rows)).toBe(false);
+      expect(r.error).toMatch(/already understood/);
+    }
+    expect(h.ctx.state.question).toBeNull();
   });
 });
 
@@ -173,18 +169,13 @@ describe("FIX1 P1-3: once a people source was tried and ANSWERED with nobody, th
     expect(contactVerificationQuestionIssue(REQUEST, QUESTION, OPTIONS, { gaveRows: true, answeredEmpty: true, sourceIds: ["people.source.a"] })).toMatch(/Deliver every person/);
     expect(contactVerificationQuestionIssue(REQUEST, QUESTION, OPTIONS, { gaveRows: false, answeredEmpty: false, sourceIds: ["people.source.a"] })).toMatch(/no people source has given a person yet/);
   });
-  it("through ask_question: not tried → refused; tried and failed (no sample recorded) → refused; answered empty → the question is stored for the customer; a person given → refused again", async () => {
+  it("through ask_question (superseded by DT-20261119-03 R2): with the planner's understanding no question is stored in ANY state of the people samples, an empty answer included; the interim end is the honest «unsupported» until the estimated card exists", async () => {
     const x = h();
     const ask = buildTools(x.ctx).find((t) => t.name === "ask_question")!;
-    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
-    x.ctx.state.tried.add(PEOPLE_IDS[0]);
-    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
-    x.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 0, key: "k" }]);
-    const empty = (await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean };
-    expect(empty.ok).toBe(true);
-    expect(x.ctx.state.question).toBe(QUESTION);
-    const y = h();
-    y.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 3, key: "k" }]);
-    expect(((await buildTools(y.ctx).find((t) => t.name === "ask_question")!.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
+    for (const setup of [() => undefined, () => x.ctx.state.tried.add(PEOPLE_IDS[0]), () => x.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 0, key: "k" }]), () => x.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 3, key: "k" }])]) {
+      setup();
+      expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
+    }
+    expect(x.ctx.state.question).toBeNull();
   });
 });
