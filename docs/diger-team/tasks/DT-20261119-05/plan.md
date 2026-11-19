@@ -97,3 +97,6 @@ M1 skip `countWrittenIn`/use the model's total → d, e, f, i. M2 drop the noun-
 Live model behaviour (does it fill `companies_text` for a dual); the stored plan of chat 62df…; rendered pages.
 ## Rollback
 Revert the PR (no switch, no SQL).
+
+## FIX1 (Gate 2 + QA)
+The cited noun must match the COMPANIES' own noun (a word of the companies step's title, or the fixed label «الشركات» when the step has no usable title; ownTitleWords + sameNounStem, structural); the per-company guard was removed: after the noun check it was redundant, and in the only inputs where it fired (a per-company 2 the customer never wrote, with a correct «شركتين») it blocked a correct bind (proved on a grid of 3,959 combinations: every blocked case was a correct bind); two pins: understoodPeopleOf carries companies on the steps path; one answered-with-no-row + one failed people source and no estimate → the honest unserved card (through tools.ts endpointsCalled).
