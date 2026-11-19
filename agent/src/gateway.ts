@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { executeTregCall, type TregCallOptions, type TregCallResult } from "../../src/functions/shared/tregClient";
+import { executeTregCall, type TregCallOptions, type TregCallResult, maxTregAttempts } from "../../src/functions/shared/tregClient";
 import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
 import { commitTregSpend, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
 import type { JobCallBudget } from "../../src/lib/server/callBudget";
@@ -19,7 +19,8 @@ import { oneCallUsd } from "../../src/lib/agentMission/planningBudget";
 import { rankEndpoints, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
 import type { AgentStore, CallPhase, CallRow } from "./types";
 import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../src/lib/server/spendGate/gate";
-import { providerCallBound, tregRouteCapUsd } from "../../src/lib/server/spendGate/bounds";
+import { MAX_SINGLE_OPERATION_USD, providerCallBound, tregCallBoundUsd } from "../../src/lib/server/spendGate/bounds";
+import { callMoney, floorMicroUsd } from "../../src/lib/server/callBudget";
 import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
 
 /**
@@ -54,6 +55,8 @@ export function paramsSignature(params: Record<string, unknown>): string {
 export const GATEWAY_CALL_TIMEOUT_MS = 90_000;
 export const GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD = 0.01;
 export const GATEWAY_DEFAULT_PAGE_ROWS = 10;
+/** The amount one request may take when no budget anywhere limits it (the client's old default header): reserved like any other amount (DT-20261119-11). */
+export const GATEWAY_NO_CEILING_REQUEST_USD = 0.05;
 /** The most real sample calls the PLANNING may make to one source once it has given rows: the rest of the planning budget is for the other stages (a post search and its comments, a company search and its employees). */
 export const GATEWAY_MAX_SAMPLES_PER_SOURCE = 2;
 /** A source that lists the items of ONE named source (a channel's videos, an account's posts) is sampled once per named source: each new source value is a sample of its own (the live YouTube request named three channels and the third search of one source was refused), up to this many samples of the endpoint, and at most twice per source value. */
@@ -65,9 +68,9 @@ export type RefusalCode =
   | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample" | "spend_gate";
 
 export type GatewayCallResult =
-  | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string }
+  | { ok: true; call_id: string; charge_usd?: number | null; reserved_usd?: number; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string }
   | { ok: false; call_id: string; refused: RefusalCode; message: string }
-  | { ok: false; call_id: string; failed: true; http_status: number; message: string };
+  | { ok: false; call_id: string; failed: true; http_status: number; message: string; /** THIS call's own charge (USD) when it is known, null when it is not; and what was reserved for it (DT-20261119-11 D3) */ charge_usd?: number | null; reserved_usd?: number };
 
 export interface GatewayDeps {
   /** Planning only: the most samples of one source that gave rows (default GATEWAY_MAX_SAMPLES_PER_SOURCE). The LLM planner reads more pages while it measures what a source holds, and plans again after the customer answers; the planning budget still bounds the spend. */
@@ -133,15 +136,15 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
 }
 
 /**
- * PHASE 5 SAFETY GATE: THE MOST ONE TREG CALL OF THIS GATEWAY CAN COST, the route cap `tregCall` sends as `X-Treg-Route-Max-Cost` (TREG refuses, 402 `route_max_cost`, a route that would cost more). The same arithmetic as the
- * call itself: the parameters the catalog does not know are dropped, then the estimate, floored at 0.001 and rounded UP to the micro-dollar (a test pins this to the value the gateway really sends). Null: not a catalog id (no bound is known, none is assumed).
+ * THE ESTIMATED BOUND OF ONE TREG CALL (DT-20261119-11): the catalog estimate for the call the gateway will really send (the parameters the catalog does not know are dropped, the size clamped to the input's maximum), rounded UP to the micro-dollar and floored at 0.001.
+ * It is the SMALLEST amount a call is admitted with, and what a capped stage checks a call against. It is NOT what is sent to the provider: the header is the money that is really left (the amount reserved on every ledger, `tregCall` step 6). Null: not a catalog id.
  */
-export function tregRouteMaxUsd(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
+export function tregCallBoundOf(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
   const endpoint = catalog.byId.get(endpointId);
   if (!endpoint) return null;
   const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
   const kept = Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => known.has(k)));
-  return tregRouteCapUsd(estimateCallUsd(endpoint, kept, catalog));
+  return tregCallBoundUsd(estimateCallUsd(endpoint, kept, catalog));
 }
 
 const callIdOf = (n: number) => `call_${String(n).padStart(4, "0")}`;
@@ -229,7 +232,7 @@ export function createGateway(deps: GatewayDeps) {
       return toolDescribeEndpoint(input, deps.access, deps.catalog, null);
     },
 
-    async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown; why?: unknown }): Promise<GatewayCallResult> {
+    async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown; why?: unknown; /** A capped stage's money left for THIS call (USD): the header can never be above it (engine/sourceGateway.ts). */ spend_limit_usd?: unknown }): Promise<GatewayCallResult> {
       deps.counter.seq += 1;
       const id = callIdOf(deps.counter.seq);
       const endpointId = String(input.endpoint_id ?? "").trim();
@@ -274,12 +277,16 @@ export function createGateway(deps: GatewayDeps) {
         }
       }
       if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
+      // what this call holds on the job's money: its estimate now, the money it may take once step 6 has reserved it (DT-20261119-11 D1)
+      let held = estimate;
+      let planCapUsd: number | null = null;
       // 5a: THE PLANNING BUDGET IS SHARED BY EVERY STAGE: a call may not spend what the first sample of a stage that is still unsampled needs (a new job counts as the stage it samples)
       if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
         const job = endpoint.capability ?? endpointId;
         const unsampledOthers = Math.max(0, deps.stageBudget.stages - sampledJobs.size - (sampledJobs.has(job) ? 0 : 1));
         const reserves = [...(deps.stageBudget.reservesUsd ?? [])].sort((a, b) => b - a);
         const kept = reserves.length > 0 ? reserves.slice(0, unsampledOthers).reduce((n, r) => n + r, 0) : unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
+        planCapUsd = deps.stageBudget.budgetUsd - kept;
         if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
       }
 
@@ -290,35 +297,70 @@ export function createGateway(deps: GatewayDeps) {
       const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= perSource || sampled >= Math.max(GATEWAY_MAX_NAMED_SOURCE_SAMPLES, perSource) : sampled >= perSource;
       if (deps.phase === "planning" && repeated) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
-      // 6: the provider's daily cap, recorded BEFORE the call
+      // 6: THE MONEY THIS CALL MAY TAKE (DT-20261119-11, D1/D2/D5). The header sent to TREG IS the amount reserved here, on EVERY ledger, BEFORE anything is sent: the job's money (the estimate held until now is REPLACED in one step, so two calls in flight can
+      // never hold the same money), the planning stages' kept share, a capped stage's money, the provider's daily cap and the owner's grant. TREG refuses a route above the header before billing, so a stale catalog price can never make a call that
+      // fits the approved money fail, and a call can never cost more than what was reserved. Whole micro-dollars, rounded DOWN; no positive amount, no request. Each request the client can make (the call and every key-pool hop) is reserved.
       const capabilityId = tregCapabilityIdOf({ endpointId });
-      const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: estimate, jobId: deps.jobId });
-      if (!reservation.allowed) {
-        deps.budget.settle(estimate, 0);
-        return refuse(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
-      }
-
-      // 6b: ROUND 62, THE HARD SPEND GATE. The bound reserved is the route cap that is SENT (tregRouteCapUsd = the value always sent here): TREG refuses before
-      // billing a call it cannot run under it. Each call (a new call id) is a new paid attempt with its own reservation key.
-      const routeCapUsd = tregRouteCapUsd(estimate);
-      // CAMPAIGN SCOPE: with the worker's own token passed EXPLICITLY the TREG client makes one attempt and never moves to another key of the pool (tregClient.ts executeWithKeyPool),
-      // so a call is ONE billable attempt by construction. Without a token to pass, the pool may hop up to 3 times and the reservation covers every attempt.
+      // CAMPAIGN SCOPE: with the worker's own token passed EXPLICITLY the TREG client makes one attempt and never moves to another key of the pool (tregClient.ts executeWithKeyPool), so a call is ONE billable attempt by construction.
       const noKeyPool = deps.spendGate?.noKeyPool === true && Boolean(deps.token);
-      const attempts = noKeyPool ? 1 : deps.spendGate?.tregAttempts ?? 1;
-      let gated: GateBefore | null = null;
-      if (deps.spendGate && deps.spendGate.mode !== "off") {
-        const op = `treg:${endpointId}`.slice(0, 200);
-        const bound = providerCallBound({ provider: "treg", op: "call", routeCapUsd, ...(attempts > 1 ? { attempts } : {}) });
-        gated = await gateBefore(deps.spendGate, bound.ok
-          ? { key: spendReservationKey("treg", deps.missionId, id), kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
-          : { refuse: "no_safe_bound", detail: bound.detail, op });
-        if (!gated.proceed) {
-          // nothing was sent: the mission's budget and the provider's daily-cap reservation are given back exactly as for any other refusal after step 6
-          deps.budget.settle(estimate, 0);
-          await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
-          return refuse(id, endpointId, trace, "spend_gate", gated.reason);
+      const maxAttempts = noKeyPool ? 1 : maxTregAttempts({});
+      const gateOn = Boolean(deps.spendGate && deps.spendGate.mode !== "off");
+      const stageLimitUsd = Number.isFinite(Number(input.spend_limit_usd)) ? Number(input.spend_limit_usd) : null;
+      const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd].filter((v): v is number => v !== null);
+      // no ceiling anywhere: the one default the client always had (0.05 per request), reserved like any other amount
+      let poolUsd = left.length ? Math.min(...left) : GATEWAY_NO_CEILING_REQUEST_USD * maxAttempts;
+      // the owner gate's existing aggregate limit (bounds.ts MAX_SINGLE_OPERATION_USD) applies to what it reserves: all the attempts together
+      if (gateOn) poolUsd = Math.min(poolUsd, MAX_SINGLE_OPERATION_USD);
+      const minBound = tregCallBoundUsd(estimate);
+      // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
+      const money = callMoney(poolUsd, estimate, maxAttempts);
+      if (!money) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
+      const attempts = money.attempts;
+      // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount; a ledger that has no room for one amount is asked for the next
+      const candidates: number[] = [];
+      for (let h = money.perRequestUsd; h > 0; h = floorMicroUsd(h / 4)) { candidates.push(h); if (h <= minBound || candidates.length >= 6) break; }
+      let chosen: { perRequest: number; aggregate: number; reservation: Awaited<ReturnType<typeof deps.recorder.reserve>>; gated: GateBefore | null } | null = null;
+      let lastRefusal: { code: RefusalCode; detail: string } = { code: "over_budget", detail: `${deps.phase}` };
+      for (const perRequest of candidates) {
+        const aggregate = Number((perRequest * attempts).toFixed(6));
+        // the job's money (and the planning stages' kept share): replace this call's hold in ONE step
+        if (!deps.budget.rehold(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
+        const was = held;
+        held = aggregate;
+        // the provider's daily cap, recorded BEFORE the call
+        const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: aggregate, jobId: deps.jobId });
+        if (!reservation.allowed) {
+          deps.budget.rehold(held, was); held = was;
+          if (reservation.reason === "cap") { lastRefusal = { code: "daily_cap", detail: reservation.reason ?? "" }; continue; }
+          deps.budget.settle(held, 0);
+          return refuse(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
         }
+        // 6b: THE HARD SPEND GATE: what is reserved against the owner's grant is the amount the header allows, per attempt. Each call (a new call id) is a new paid attempt with its own reservation key.
+        let gated: GateBefore | null = null;
+        if (gateOn) {
+          const op = `treg:${endpointId}`.slice(0, 200);
+          const bound = providerCallBound({ provider: "treg", op: "call", boundUsd: perRequest, ...(attempts > 1 ? { attempts } : {}) });
+          gated = await gateBefore(deps.spendGate, bound.ok
+            ? { key: spendReservationKey("treg", deps.missionId, id), kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
+            : { refuse: "no_safe_bound", detail: bound.detail, op });
+          if (!gated.proceed) {
+            // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
+            await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
+            deps.budget.rehold(held, was); held = was;
+            // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
+            if (gated.reason === "over_ceiling" || gated.reason === "over_op_max" || gated.reason === "over_mission_ceiling" || gated.reason === "no_safe_bound") { lastRefusal = { code: "spend_gate", detail: gated.reason }; continue; }
+            deps.budget.settle(held, 0);
+            return refuse(id, endpointId, trace, "spend_gate", gated.reason);
+          }
+        }
+        chosen = { perRequest, aggregate, reservation, gated };
+        break;
       }
+      if (!chosen) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
+      const { reservation, gated } = chosen;
+      const headerUsd = chosen.perRequest;
+      // what the call may be billed, all attempts together: reserved on every ledger, and kept for a call whose charge is unknown (timeout, no charge reported)
+      const reservedUsd = chosen.aggregate;
 
       // the call itself, through the audited path for a sensitive endpoint
       const started = Date.now();
@@ -326,37 +368,40 @@ export function createGateway(deps: GatewayDeps) {
       let thrown = false;
       let performed = false;
       let actualUsd = 0;
+      // THIS call's own charge: a number when TREG reported one (zero stays zero), null when it is not known (never a reported zero)
+      const knownChargeUsd = (): number | null => {
+        const r = res as TregCallResult | null;
+        if (thrown || !r || r.timedOut === true || r.error === "network_failure") return null;
+        if (r.blocked) return 0;
+        // a refusal the provider ANSWERED (4xx/5xx, a price-cap 402 included) costs nothing (TREG's integrate.md): known zero, never an unknown charge
+        if (!r.ok && r.httpStatus >= 400 && r.httpStatus < 600) return 0;
+        if (r.costIsEstimate === true) return null;
+        // TREG's answer carried no charge at all (tregClient puts a placeholder 0 in costMicro): an answered call may still have billed, so it is UNKNOWN, never a reported zero
+        if (r.costUnreported === true) return null;
+        // a charge that is not a number is UNKNOWN, never zero
+        if (typeof r.costMicro !== "number" || !Number.isFinite(r.costMicro)) return null;
+        return Math.max(0, r.costMicro) / 1_000_000;
+      };
       const perform = async () => {
         performed = true;
         try {
           res = await call({
             endpointId, method: endpoint.method === "GET" ? "GET" : "POST", params, allowedParamKeys: [...known], userId: deps.userId, jobId: deps.jobId ?? `agent_${deps.missionId}`,
-            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: routeCapUsd, timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
+            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: headerUsd, ...(attempts === 1 && maxAttempts > 1 ? { singleAttempt: true } : {}), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
             endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? (noKeyPool ? { token: deps.token } : { legacyToken: deps.token }) : {}),
           });
         } catch {
           thrown = true;
         }
         const r = res as TregCallResult | null;
-        // a call that was cut or never answered may still have been billed: its estimate stays counted (as the website's worker does)
-        const unknown = thrown || !r || r.timedOut === true || r.error === "network_failure";
-        actualUsd = unknown ? estimate : Math.max(0, r?.costMicro ?? 0) / 1_000_000;
+        // a call whose charge is UNKNOWN (cut, never answered, no charge reported) may have been billed up to what was reserved for it: that amount stays counted on every ledger (as the owner gate always did)
+        const charge = knownChargeUsd();
+        actualUsd = charge === null ? reservedUsd : charge;
         return { result: null, costUsd: actualUsd, ok: Boolean(r?.ok) };
       };
       const purpose = clip(input.purpose, 300) || clip(deps.defaultPurpose, 300);
       // the gate's settlement: what TREG reported, 0 when nothing was sent, and UNKNOWN (the whole bound stays spent) for a cut call or a charge TREG did not report
-      const gateActualUsd = (): number | null => {
-        const r = res as TregCallResult | null;
-        if (!performed) return 0;
-        if (thrown || !r || r.timedOut === true || r.error === "network_failure") return null;
-        if (r.blocked) return 0;
-        if (r.costIsEstimate === true) return null;
-        // TREG's answer carried no charge at all (tregClient puts a placeholder 0 in costMicro): an answered call may still have billed, so it is UNKNOWN, never a reported zero
-        if (r.costUnreported === true) return null;
-        // a charge that is not a number is UNKNOWN (the whole bound stays spent), never zero
-        if (typeof r.costMicro !== "number" || !Number.isFinite(r.costMicro)) return null;
-        return Math.max(0, r.costMicro) / 1_000_000;
-      };
+      const gateActualUsd = (): number | null => (performed ? knownChargeUsd() : 0);
       let outcome: Awaited<ReturnType<typeof runSensitiveCall>>;
       try {
         outcome = await runSensitiveCall({ client: deps.client, account: { userId: deps.userId, access: deps.access }, endpointId, params, purpose, jobId: deps.jobId, call: perform });
@@ -366,8 +411,8 @@ export function createGateway(deps: GatewayDeps) {
       }
       if (gated) await gateAfter(deps.spendGate, gated, gateActualUsd());
       if (!outcome.ok) {
-        // the reserved estimate must not stay open: commit it at zero as a failed call
-        deps.budget.settle(estimate, 0);
+        // what this call reserved must not stay open: it was never sent, so it is given back (zero) and committed at zero as a failed call
+        deps.budget.settle(held, 0);
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
         void sensitiveRefusalAr; // the Arabic sentence is for the customer's screen, not for the model
         return refuse(id, endpointId, trace, outcome.refused as SensitiveRefusal, "sensitive");
@@ -375,7 +420,9 @@ export function createGateway(deps: GatewayDeps) {
 
       const durationMs = Date.now() - started;
       const result = res as TregCallResult | null;
-      deps.budget.settle(estimate, thrown || !result || result.timedOut || result.error === "network_failure" ? null : actualUsd);
+      // THIS call's reservation is settled once: its known charge (zero stays zero, never clipped), or the whole reserved amount when the charge is unknown
+      deps.budget.settle(held, knownChargeUsd());
+      const chargeFacts = { charge_usd: knownChargeUsd(), reserved_usd: reservedUsd };
       // a finder that was called is a sample of its kind, whatever it gave (a call that was cut may have been billed: its estimate counts)
       if (finderKind) { contactKinds.add(finderKind); contactSpentUsd += actualUsd; }
       await deps.store.updateMission(deps.missionId, { [spendField]: Number(deps.budget.spentUsd().toFixed(6)) });
@@ -383,7 +430,7 @@ export function createGateway(deps: GatewayDeps) {
       if (!result) {
         await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
         await logCall({ id, endpoint_id: endpointId, params: { ...trace, _failure: "the call did not complete (no answer)" }, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
-        return { ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more" };
+        return { ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more", ...chargeFacts };
       }
       if (result.blocked) {
         // executeTregCall's own gate refused (it runs the same lists): nothing was sent
@@ -407,11 +454,11 @@ export function createGateway(deps: GatewayDeps) {
       await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure, ...(result.isRouteMaxCost ? { _failure_kind: "price_cap" } : result.paymentScope === "endpoint" ? { _failure_kind: "endpoint_payment" } : {}) } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {
-        return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) };
+        return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240), ...chargeFacts };
       }
       const rowsIn = storagePath && rows > 0 ? rowsExpressionOf(id, digest?.listPath, digest?.listStrategy) : null;
       return {
-        ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows,
+        ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows, ...chargeFacts,
         has_more: reading?.hasMore ?? null, next_cursor: reading?.nextCursor ?? null,
         shape: digest ? { rows_in_page: digest.rowsInSample, list_path: digest.listPath, fields: digest.fields, next_cursor_path: digest.nextCursorPath, cursor_kind: digest.cursorKind } : null,
         first_rows: (reading?.rows ?? []).slice(0, AGENT_FIRST_ROWS).map((r) => digestValue(r)),

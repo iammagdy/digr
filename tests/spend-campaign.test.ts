@@ -284,10 +284,10 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
   });
 
   it("K: an operation with no maximum is refused before it is sent: a TREG call with no route cap, a Context.dev pre-built parser, and a model request with a server tool", async () => {
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: null })).toMatchObject({ ok: false, reason: "no_safe_bound" });
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: null })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     expect(providerCallBound({ provider: "contextdev", op: "parser", parser: "google-maps" })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     expect(providerCallBound({ provider: "firecrawl", op: "search", limit: 10, scrapesResults: true })).toMatchObject({ ok: false, reason: "no_safe_bound" });
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: 0.001, attempts: 0 })).toMatchObject({ ok: false, reason: "no_safe_bound" });
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: 0.001, attempts: 0 })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     const x = world();
     await admit(x);
     const inner = vi.fn(async () => new Response("{}"));

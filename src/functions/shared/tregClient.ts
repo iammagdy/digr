@@ -2,7 +2,7 @@ import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from ".
 import { POOL_MAX_HOPS, getTregKeyPool, type KeyChoice } from "../../lib/server/tregKeyPool";
 import { blockedEndpointReason } from "../../lib/treg/blockList";
 import { categoryOf } from "../../lib/treg/dataPolicy";
-import { JOB_BUDGET_ERROR_CODE, type JobCallBudget } from "../../lib/server/callBudget";
+import { JOB_BUDGET_ERROR_CODE, callMoney, type JobCallBudget } from "../../lib/server/callBudget";
 import type { RawCapture } from "../../lib/server/rawCapture";
 export interface TregCallOptions {
   baseUrl?: string;
@@ -22,6 +22,10 @@ export interface TregCallOptions {
   stepId?: string;
   page?: number;
   routeMaxCostUsd?: string | number;
+  /** DT-20261119-11: make ONE request only, never a key-pool hop (the money of the call was reserved for one). */
+  singleAttempt?: boolean;
+  /** DT-20261119-11 D1: the header is the money the `callBudget` has left, held in one step before the request (per request, over the requests the call can make); the call is refused (budgetStopped) when no amount that covers `callEstimateUsd` is left. */
+  headerFromBudget?: boolean;
   idempotencyKey?: string;
   testScenario?: string;
   /** Give up on this one call after this long, so a slow source cannot outlast the worker's own time limit. */
@@ -236,21 +240,35 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   }
   const budget = options.callBudget;
   const cap = Number(options.routeMaxCostUsd);
-  const estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
-  if (budget && !budget.reserve(estimate)) {
+  let estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
+  // DT-20261119-11 D1/D2: the header IS the money the budget has left (whole micro-dollars, rounded down), held in ONE step before the request and kept for a call whose charge is unknown; no positive amount that covers the estimate, no request
+  let wire: TregCallOptions = options;
+  const left = budget && options.headerFromBudget === true ? budget.leftUsd(0) : null;
+  if (budget && left !== null) {
+    const money = callMoney(left, estimate, maxTregAttempts(options));
+    if (money && budget.reserve(money.holdUsd)) {
+      estimate = money.holdUsd;
+      wire = { ...options, routeMaxCostUsd: money.perRequestUsd, ...(money.attempts === 1 ? { singleAttempt: true } : {}) };
+    } else {
+      budget.reserve(Number.MAX_SAFE_INTEGER); // the refusal is counted like any other budget stop
+      console.warn(JSON.stringify({ tag: "treg_call_budget_stop", endpointId: options.endpointId, spentUsd: Number(budget.spentUsd().toFixed(6)), ceilingUsd: budget.ceilingUsd, estimateUsd: estimate }));
+      return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
+    }
+  } else if (budget && !budget.reserve(estimate)) {
     console.warn(JSON.stringify({ tag: "treg_call_budget_stop", endpointId: options.endpointId, spentUsd: Number(budget.spentUsd().toFixed(6)), ceilingUsd: budget.ceilingUsd, estimateUsd: estimate }));
     return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
   }
   let result: TregCallResult;
   try {
-    result = await executeWithKeyPool(options);
+    result = await executeWithKeyPool(wire);
   } catch (err) {
     budget?.settle(estimate, null);
     throw err;
   }
   if (budget) {
     // A cut or unreachable call may have been billed after we stopped waiting: its estimate stays counted. Any answer carries its own cost (0 for a refusal).
-    const unknown = result.timedOut === true || result.error === "network_failure";
+    // (DT-20261119-11) a refusal the provider ANSWERED (4xx/5xx) costs nothing: only an answered success with no charge in it is unknown
+    const unknown = result.timedOut === true || result.error === "network_failure" || (result.ok && (result.costIsEstimate === true || result.costUnreported === true));
     budget.settle(estimate, unknown ? null : Math.max(0, result.costMicro || 0) / 1_000_000);
   }
   return result;
@@ -269,7 +287,7 @@ async function executeWithKeyPool(options: TregCallOptions): Promise<TregCallRes
   let choice: KeyChoice = await pool.choose(options.legacyToken);
   const attempt = (c: KeyChoice) => single(c.key ?? options.legacyToken);
   let result = await attempt(choice);
-  for (let hop = 0; hop < POOL_MAX_HOPS; hop++) {
+  for (let hop = 0; hop < (options.singleAttempt ? 0 : POOL_MAX_HOPS); hop++) {
     const next = await pool.afterCall(choice, result, { forceMain: hop === POOL_MAX_HOPS - 1, endpointId: options.endpointId });
     if (!next) break;
     choice = next;
@@ -280,6 +298,11 @@ async function executeWithKeyPool(options: TregCallOptions): Promise<TregCallRes
     pool.noteUse(options.jobId, choice.ref);
   }
   return result;
+}
+
+/** The most requests ONE call of this client can send: one, or the call and every hop of the key pool (DT-20261119-11 D1: the money a call may take is reserved for each of them). */
+export function maxTregAttempts(options: { token?: string; singleAttempt?: boolean }): number {
+  return options.token || options.singleAttempt ? 1 : getTregKeyPool() ? 1 + POOL_MAX_HOPS : 1;
 }
 
 function refusedCall(input: { error: string; httpStatus: number; blocked?: string; budgetStopped?: boolean }): TregCallResult {

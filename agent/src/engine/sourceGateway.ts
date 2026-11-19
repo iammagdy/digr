@@ -1,6 +1,7 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { PARSER_IDS, WEB_SOURCES, WEB_SOURCE_IDS } from "../../../src/lib/agentMission/sources";
-import { tregRouteMaxUsd, type Gateway } from "../gateway";
+import { tregCallBoundOf, type Gateway } from "../gateway";
+import { floorMicroUsd } from "../../../src/lib/server/callBudget";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { WebGateway } from "../webGateway";
 
@@ -41,13 +42,13 @@ export interface SourceGateway {
 }
 
 /**
- * PHASE 5 SAFETY GATE: THE VERIFIED MAXIMUM OF ONE CALL, for a stage that has a cap. Only a maximum the PROVIDER ENFORCES counts:
- *   - a TREG catalog id: the route cap the gateway sends with the call (`tregRouteMaxUsd`, TREG refuses a route above it);
+ * PHASE 5 SAFETY GATE: THE ADMISSION BOUND OF ONE CALL, for a stage that has a cap (DT-20261119-11): the call is admitted only when this bound fits what the stage has left. Only a bound that has a provider-enforced ceiling counts:
+ *   - a TREG catalog id: the estimated bound (`tregCallBoundOf`). What is SENT is all the money the stage has left (reserved before dispatch and enforced by TREG through the header), so a stale price can neither refuse a call that fits nor overrun the cap;
  *   - a direct web id (Firecrawl, Context.dev): null. These providers bill the credits they report AFTER the call (a failed call too; people search per returned match), with no cap the call can set, so no maximum is verified.
  * Null means «unknown», never «free»: a capped stage refuses such a call before any request.
  */
 export function verifiedCallMaxUsdOf(catalog: TregCatalog): (endpointId: string, params: Record<string, unknown>) => number | null {
-  return (endpointId, params) => (isDirectWebSource(endpointId) ? null : tregRouteMaxUsd(endpointId, params, catalog));
+  return (endpointId, params) => (isDirectWebSource(endpointId) ? null : tregCallBoundOf(endpointId, params, catalog));
 }
 
 /** The provider of an endpoint id (its prefix: «firecrawl», «contextdev», «tikhub», …). */
@@ -119,18 +120,26 @@ export function createSourceGateway(deps: {
         const max = deps.maxCallUsd ? deps.maxCallUsd(input.endpoint_id, input.params) : null;
         if (max === null || !Number.isFinite(max) || max <= 0) return refuse(input, "stage_cap_unbounded", "this stage has a spending cap and this source has no verified maximum cost per call; the call was NOT made");
         if ((capUsed.get(input.stageKey) ?? 0) + (inFlight.get(input.stageKey) ?? 0) + max > scope.capUsd + 1e-12) return refuse(input, "stage_cap", "this call could take the stage past what its plan allows; the call was NOT made");
-        bound = max;
+        // DT-20261119-11 D1/D3: the stage reserves ALL the money it has left for this call (the gateway sends it as the most the provider may bill, and reserves it on the job, daily and grant ledgers too), so calls racing on one stage cannot pass the cap
+        // together. The estimate above only admits the call (it must fit); it is no longer the amount booked.
+        bound = floorMicroUsd(scope.capUsd - (capUsed.get(input.stageKey) ?? 0) - (inFlight.get(input.stageKey) ?? 0));
+        if (!(bound > 0)) return refuse(input, "stage_cap", "this stage has no money left for this call; the call was NOT made");
         inFlight.set(input.stageKey, (inFlight.get(input.stageKey) ?? 0) + bound);
       }
       const release = () => { if (bound > 0) inFlight.set(input.stageKey, Math.max(0, (inFlight.get(input.stageKey) ?? 0) - bound)); };
       const before = deps.budget.spentUsd();
       const provider = providerOf(input.endpoint_id);
-      const note = (r: SourceCallResult, via: "treg" | "web") => {
+      const note = (r: SourceCallResult, via: "treg" | "web", charge?: { usd: number | null | undefined; reserved: number | undefined }) => {
         const delta = Math.max(0, deps.budget.spentUsd() - before);
         spent.set(input.stageKey, (spent.get(input.stageKey) ?? 0) + delta);
-        // against the cap: a FAILED call may have been billed with no cost known, so it counts its full maximum; an answered or refused call counts what the budget moved, never more than its maximum (the provider refuses a call
-        // above it; the budget's movement over the call can also hold other calls' spend when calls overlap, so it is an upper bound of this call's own cost, and the smaller of the two still never undercounts it)
-        if (scope.capUsd !== null) { release(); capUsed.set(input.stageKey, (capUsed.get(input.stageKey) ?? 0) + (!r.ok && "failed" in r ? bound : Math.min(delta, bound))); }
+        // against the cap (D3): the gateway reports THIS call's own charge, so a known charge is booked as it is (zero stays zero, an overrun is never clipped: the job's spend delta can hold another stage's charge); a charge that is NOT known
+        // (a cut call, none reported) keeps the amount that was reserved for the call; a refused call was never sent (zero)
+        if (scope.capUsd !== null) {
+          release();
+          const refused = !r.ok && "refused" in r;
+          const booked = refused ? 0 : charge ? (typeof charge.usd === "number" ? charge.usd : Math.min(typeof charge.reserved === "number" ? charge.reserved : bound, bound)) : (!r.ok && "failed" in r ? bound : Math.min(delta, bound));
+          capUsed.set(input.stageKey, (capUsed.get(input.stageKey) ?? 0) + booked);
+        }
         log.push({ stageKey: input.stageKey, endpoint_id: input.endpoint_id, provider, via, call_id: r.call_id, outcome: r.ok ? "ok" : "refused" in r ? "refused" : "failed", ...(!r.ok && "refused" in r ? { refused: r.refused } : {}), spentUsd: delta });
         return r;
       };
@@ -144,10 +153,11 @@ export function createSourceGateway(deps: {
           if ("refused" in w) return note({ ok: false, call_id: w.call_id, endpoint_id: input.endpoint_id, refused: w.refused, message: w.message }, "web");
           return note({ ok: false, call_id: w.call_id, endpoint_id: input.endpoint_id, failed: true, http_status: 0, message: w.message }, "web");
         }
-        const t = await deps.gateway.tregCall({ endpoint_id: input.endpoint_id, params: input.params });
-        if (t.ok) return note({ ok: true, call_id: t.call_id, endpoint_id: input.endpoint_id, provider, via: "treg", http_status: t.http_status, rows_in_page: t.rows_in_page, has_more: t.has_more, next_cursor: t.next_cursor }, "treg");
-        if ("refused" in t) return note({ ok: false, call_id: t.call_id, endpoint_id: input.endpoint_id, refused: t.refused, message: t.message }, "treg");
-        return note({ ok: false, call_id: t.call_id, endpoint_id: input.endpoint_id, failed: true, http_status: t.http_status, message: t.message }, "treg");
+        const t = await deps.gateway.tregCall({ endpoint_id: input.endpoint_id, params: input.params, ...(scope.capUsd !== null ? { spend_limit_usd: bound } : {}) });
+        const charge = "charge_usd" in t || "reserved_usd" in t ? { usd: (t as { charge_usd?: number | null }).charge_usd, reserved: (t as { reserved_usd?: number }).reserved_usd } : undefined;
+        if (t.ok) return note({ ok: true, call_id: t.call_id, endpoint_id: input.endpoint_id, provider, via: "treg", http_status: t.http_status, rows_in_page: t.rows_in_page, has_more: t.has_more, next_cursor: t.next_cursor }, "treg", charge);
+        if ("refused" in t) return note({ ok: false, call_id: t.call_id, endpoint_id: input.endpoint_id, refused: t.refused, message: t.message }, "treg", charge);
+        return note({ ok: false, call_id: t.call_id, endpoint_id: input.endpoint_id, failed: true, http_status: t.http_status, message: t.message }, "treg", charge);
       };
       if (scope.capUsd === null) return dispatch();
       try {

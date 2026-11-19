@@ -57,8 +57,9 @@ export async function oneCall(plan: StoredModelPlan, step: PlanStep & { facts: S
   const call = deps.call ?? executeTregCall;
   const options: TregCallOptions = {
     endpointId: step.endpointId, method: step.facts.method, params, userId: input.userId, jobId: input.jobId, stepId: `step_${input.step}${tag}`, page: input.step + 1,
-    routeMaxCostUsd: Number(Math.max(step.facts.callEstimateUsd, 0.001).toFixed(6)), timeoutMs: 12_000, endpointScope: step.facts.scope,
-    ...(input.callBudget ? { callBudget: input.callBudget, callEstimateUsd: step.facts.callEstimateUsd } : {}),
+    timeoutMs: 12_000, endpointScope: step.facts.scope,
+    // DT-20261119-11 D1: the header is the money the job's budget has left, held before the request (never the catalog estimate); without a budget the client's own default stays
+    ...(input.callBudget ? { callBudget: input.callBudget, callEstimateUsd: step.facts.callEstimateUsd, headerFromBudget: true } : {}),
     ...(input.rawCapture ? { rawCapture: input.rawCapture } : {}),
   };
   if (categoryOf(step.endpointId) === "sensitive") {

@@ -13,7 +13,7 @@ import { spendGateOf, spendReservationKey, withMissionSpendGate } from "../agent
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { createMemorySpendGate, gateAfter, gateBefore, type SpendGate } from "../src/lib/server/spendGate/gate";
 import { createSupabaseSpendGate } from "../src/lib/server/spendGate/supabaseGate";
-import { tregRouteCapUsd } from "../src/lib/server/spendGate/bounds";
+import { tregCallBoundUsd } from "../src/lib/server/spendGate/bounds";
 import { MODEL_HAIKU } from "../src/lib/agentMission/constants";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import type { TregCallOptions, TregCallResult } from "../src/functions/shared/tregClient";
@@ -288,8 +288,8 @@ describe("R62 ENFORCE, TREG: no reservation, no call", () => {
     expect(t.call).not.toHaveBeenCalled();
   });
 
-  it("the TREG route cap sent is unchanged by the wiring (tregRouteCapUsd is the value the gateway always sent)", () => {
-    for (const e of [0.000001, 0.0004, 0.001, 0.0123456789, 0.05]) expect(tregRouteCapUsd(e)).toBe(Number(Math.max(e, 0.001).toFixed(6)));
+  it("the TREG route cap sent is unchanged by the wiring (tregCallBoundUsd is the value the gateway always sent)", () => {
+    for (const e of [0.000001, 0.0004, 0.001, 0.0123456789, 0.05]) expect(tregCallBoundUsd(e)).toBe(Number(Math.max(e, 0.001).toFixed(6)));
   });
 });
 

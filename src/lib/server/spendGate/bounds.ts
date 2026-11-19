@@ -35,7 +35,7 @@ export type ProviderOp =
   | { provider: "contextdev"; op: "parser"; parser: string }
   | { provider: "firecrawl"; op: "scrape"; proxy?: string; json?: boolean }
   | { provider: "firecrawl"; op: "search"; limit: number; scrapesResults?: boolean }
-  | { provider: "treg"; op: "call"; routeCapUsd: number | null; attempts?: number }
+  | { provider: "treg"; op: "call"; boundUsd: number | null; attempts?: number }
   | { provider: string; op: string };
 
 const blocksOfTen = (limit: number) => Math.max(1, Math.ceil(Math.max(1, Math.floor(Number(limit) || 0)) / 10));
@@ -82,23 +82,22 @@ function boundOf(input: ProviderOp): Bound {
     return no(`unknown Firecrawl operation ${String(i.op)}`);
   }
   if (input.provider === "treg") {
-    // TREG documents X-Treg-Route-Max-Cost as a USD ceiling for the whole routed call, refused with HTTP 402 before billing when it cannot run under it
-    // (docs/PEOPLE_PRICING_FACTS.md). The bound IS the cap that is sent, so the reservation and the header must be the same number.
-    const cap = (input as { routeCapUsd: number | null }).routeCapUsd;
-    if (cap === null || !Number.isFinite(cap) || cap <= 0) return no("a TREG call without a route cost cap has no ceiling");
-    // CAMPAIGN SCOPE: every attempt (the call and each key-pool hop) may be billed up to the cap, so the bound is the cap times the attempts the call can make
+    // The bound IS the amount the call may cost: it is sent to TREG as `X-Treg-Route-Max-Cost` (TREG refuses above it before billing) and reserved on every ledger (DT-20261119-11): the header and the reservation are the same number.
+    const cap = (input as { boundUsd: number | null }).boundUsd;
+    if (cap === null || !Number.isFinite(cap) || cap <= 0) return no("a TREG call without a positive amount it may cost has no ceiling");
+    // CAMPAIGN SCOPE: every attempt (the call and each key-pool hop) may be billed up to the bound, so the reservation is the bound times the attempts the call can make
     const attempts = (input as { attempts?: number }).attempts;
     if (attempts !== undefined && !(Number.isInteger(attempts) && attempts >= 1 && attempts <= 8)) return no("a TREG call's attempt count is not a whole number from 1 to 8");
-    return ok(cap * (attempts ?? 1), attempts && attempts > 1 ? `treg route max cost header x ${attempts} attempts` : "treg route max cost header");
+    return ok(cap * (attempts ?? 1), attempts && attempts > 1 ? `treg call bound (the header sent) x ${attempts} attempts` : "treg call bound (the header sent)");
   }
   return no(`unknown provider ${String(input.provider)}`);
 }
 
 /**
- * The TREG route cap the gateway must SEND when the gate is on: the same number it reserves. Today the gateway sends max(estimate, 0.001) and reserves the
- * estimate; under the gate both become this value.
+ * The ESTIMATED bound of one TREG call: the catalog estimate rounded UP to the micro-dollar, floored at 0.001. It is the smallest amount a call is admitted with (DT-20261119-11 D5: it is no longer what is sent; the header is the money
+ * that is really left). Kept as a pure function so the quote and the tests can name it.
  */
-export function tregRouteCapUsd(estimateUsd: number): number {
+export function tregCallBoundUsd(estimateUsd: number): number {
   return ceilToMicroUsd(Math.max(Number(estimateUsd) || 0, 0.001));
 }
 

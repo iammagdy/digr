@@ -80,7 +80,7 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
     reader: { kind: "list", fields: { id: ["personID"], person_name: ["person", "fullName"], title: ["positionList", "0", "title"], company: ["companyName"] } },
     verifiedOn: [{ mission: M_A, calls: calls(3) }, { mission: M_B, calls: calls(3, 7, 8, 9, 10) }],
     note: `${BY_SHAPE} Verified on 6 real pages (5 to 10 people each): the paths person.fullName and positionList[0].title were right.` }),
-  V({ endpointId: "blitzapi.people.employee-finder", role: "company.people", carries: ["country", "title"], needs: ["company_linkedin"], page: { list: ["results"], cursor: null }, costUsd: 0.000495, costUnit: "record",
+  V({ endpointId: "blitzapi.people.employee-finder", role: "company.people", carries: ["country", "title"], needs: ["company_linkedin"], page: { list: ["results"], cursor: null }, costUsd: 0.001, costUnit: "record",
     // the eight stored pages echo `company_linkedin_url` (the company's profile link) and `max_results` 10; no job level or country input was ever seen, so code sends neither (the titles are ranked by code, roles.ts)
     request: { parent: { param: "company_linkedin_url", from: "linkedin" }, fixed: { max_results: 10 } },
     reader: { kind: "list", fields: { id: ["linkedin_url"], person_name: ["full_name"], title: ["headline"], linkedin: ["linkedin_url"] } },

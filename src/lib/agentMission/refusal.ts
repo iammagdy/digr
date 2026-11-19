@@ -67,5 +67,7 @@ export const refusalSentenceAr = (cls: Exclude<RefusalClass, "needs_detail">): s
 
 /** DT-20261118-09 F2: what the customer reads when the people sources could not be reached: ours, said as it is (passes checkCustomerText; nothing is held in a planning that ended without a card). */
 export const PEOPLE_UNAVAILABLE_AR = "تعذّر الوصول إلى مصدر بيانات مسؤولي الشركات الآن، وليس لأنهم غير موجودين. أبلغنا فريقنا ليراجعه، ولم يُخصم منك شيء. جرّب الطلب مرة أخرى بعد قليل.";
-/** The sentence of a no-card end: the people sentence when the reason is about the people sources, else the class's own. */
-export const noCardSentenceAr = (v: { cls: RefusalClass; reason: string }): string => (v.cls === "internal" && /^people_sources_/.test(v.reason) ? PEOPLE_UNAVAILABLE_AR : refusalSentenceAr(v.cls as Exclude<RefusalClass, "needs_detail">));
+/** DT-20261119-11 D6: every source the planning tried failed (a provider that answered an error, a price the approved planning money did not cover): a plain source failure, never «a limit on our side» and never a name, a number or a cause. The typed reason (`sources_failed`) stays for the admin only. */
+export const SOURCES_FAILED_AR = "تعذّر الوصول إلى المصادر المناسبة لطلبك الآن، وليس لأن النتائج غير موجودة. لم نجهّز خطة ولم يُخصم منك شيء. جرّب الطلب مرة أخرى بعد قليل.";
+/** The sentence of a no-card end: the people sentence when the reason is about the people sources, the source-failure sentence when every source failed, else the class's own. */
+export const noCardSentenceAr = (v: { cls: RefusalClass; reason: string }): string => (v.cls === "internal" && /^people_sources_/.test(v.reason) ? PEOPLE_UNAVAILABLE_AR : v.cls === "internal" && v.reason === "sources_failed" ? SOURCES_FAILED_AR : refusalSentenceAr(v.cls as Exclude<RefusalClass, "needs_detail">));

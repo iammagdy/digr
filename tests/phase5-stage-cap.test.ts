@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { createGateway, estimateCallUsd, tregRouteMaxUsd, type Gateway } from "../agent/src/gateway";
+import { createGateway, estimateCallUsd, tregCallBoundOf, type Gateway } from "../agent/src/gateway";
 import { createSourceGateway, stageScopeOf, verifiedCallMaxUsdOf, type StageScope } from "../agent/src/engine/sourceGateway";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
@@ -220,7 +220,7 @@ describe("the verified maximum of a TREG call is the route cap the gateway reall
         const r = await gatewayWith(call).tregCall({ endpoint_id: id, params });
         expect(r.ok, `${id} ${JSON.stringify(extra)}`).toBe(true);
         const sent = Number((call.mock.calls[0] as any[])[0].routeMaxCostUsd);
-        expect(tregRouteMaxUsd(id, params, catalog), `${id} ${JSON.stringify(extra)}`).toBe(sent);
+        expect(tregCallBoundOf(id, params, catalog), `${id} ${JSON.stringify(extra)}`).toBe(sent);
         expect(verifiedCallMaxUsdOf(catalog)(id, params)).toBe(sent);
         expect(sent).toBeGreaterThanOrEqual(0.001);
       }
@@ -245,7 +245,7 @@ describe("the floor of the route cap: a call estimated under 0.001 is still boun
       const r = await g.tregCall({ endpoint_id: id, params: req(id) });
       if (!r.ok || call.mock.calls.length === 0) continue;
       const sent = Number((call.mock.calls[0] as any[])[0].routeMaxCostUsd);
-      expect(tregRouteMaxUsd(id, req(id), catalog), id).toBe(sent);
+      expect(tregCallBoundOf(id, req(id), catalog), id).toBe(sent);
       expect(sent, id).toBe(0.001);
       checked += 1;
     }

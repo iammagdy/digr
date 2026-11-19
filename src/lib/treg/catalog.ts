@@ -161,6 +161,52 @@ function declareExtraInputs(catalog: TregCatalog): void {
   }
 }
 
+/**
+ * STORED PRICES AND LIMITS THAT THE PINNED SNAPSHOT HAS WRONG (DT-20261119-11, D-0135/D-0137; DT-20261119-12 reuses this layer for the other stale prices). The snapshot is pinned byte for byte and never edited, so a corrected
+ * value is declared here and applied when the catalog is loaded, to ONE endpoint object that every reader shares (the gateway's estimate, the price of a plan, the planner's ranking and what the model is told).
+ * Each entry names the WHOLE tuple it expects (`was`: unit, price and the size input's default / minimum / maximum) and the tuple it sets (`now`). A snapshot that already holds `now` is left alone; one that holds anything else, or lacks the endpoint, THROWS
+ * (a refreshed snapshot with a surprise must never leave a stale rate silently in force: a human decides, and the test of this layer fails first).
+ */
+export interface PriceTuple {
+  unit: string | null;
+  usd: number | null;
+  /** The size input of the endpoint (by name): its default, minimum and maximum. */
+  input?: { name: string; default: unknown; minimum: unknown; maximum: unknown };
+}
+export interface PriceCorrection { id: string; why: string; was: PriceTuple; now: PriceTuple }
+export { CATALOG_PRICE_REV } from "./priceRev";
+export const DECLARED_PRICE_CORRECTIONS: ReadonlyArray<PriceCorrection> = [
+  { id: "findymail.search.employees", why: "TREG's live page: billed PER PERSON (1 credit per contact), `count` default 1, maximum 3; the snapshot says a per-call unit and no limits (D-0135)",
+    was: { unit: "call", usd: 0.0198, input: { name: "count", default: null, minimum: null, maximum: null } }, now: { unit: "result", usd: 0.0198, input: { name: "count", default: 1, minimum: 1, maximum: 3 } } },
+  ...["blitzapi.people.employee-finder", "blitzapi.people.search", "blitzapi.people.waterfall-icp"].map((id): PriceCorrection => ({ id, why: "TREG's live page and the 2026-11-14 provider sync: 0.001 USD per record (D-0135)", was: { unit: "record", usd: 0.000495 }, now: { unit: "record", usd: 0.001 } })),
+];
+
+const sameValue = (a: unknown, b: unknown): boolean => (a ?? null) === (b ?? null);
+function tupleOf(e: CatalogEndpoint, input: PriceTuple["input"]): PriceTuple {
+  const i = input ? e.inputs.find((x) => x.name === input.name) : undefined;
+  return { unit: e.cost?.unit ?? null, usd: e.cost?.usd ?? null, ...(input ? { input: { name: input.name, default: i?.default ?? null, minimum: i?.minimum ?? null, maximum: i?.maximum ?? null } } : {}) };
+}
+const tuplesEqual = (a: PriceTuple, b: PriceTuple): boolean => sameValue(a.unit, b.unit) && sameValue(a.usd, b.usd) && (!b.input || (!!a.input && sameValue(a.input.default, b.input.default) && sameValue(a.input.minimum, b.input.minimum) && sameValue(a.input.maximum, b.input.maximum)));
+
+/** Applies the corrections to a catalog object. Returns what happened per entry; throws on a missing endpoint or an unexpected tuple. Pure apart from the catalog it is given (tests pass a fresh parse). */
+export function applyPriceCorrections(catalog: TregCatalog, corrections: ReadonlyArray<PriceCorrection> = DECLARED_PRICE_CORRECTIONS): Array<{ id: string; state: "applied" | "already_correct" }> {
+  const out: Array<{ id: string; state: "applied" | "already_correct" }> = [];
+  for (const c of corrections) {
+    const e = catalog.byId.get(c.id);
+    if (!e) throw new Error(`catalog price correction for ${c.id}: the endpoint is not in the snapshot`);
+    const have = tupleOf(e, c.was.input);
+    if (tuplesEqual(have, c.now) && !tuplesEqual(have, c.was)) { out.push({ id: c.id, state: "already_correct" }); continue; }
+    if (!tuplesEqual(have, c.was)) throw new Error(`catalog price correction for ${c.id}: the snapshot holds ${JSON.stringify(have)}, expected ${JSON.stringify(c.was)} (or the corrected ${JSON.stringify(c.now)}): decide before the next load`);
+    if (e.cost) e.cost = { ...e.cost, unit: c.now.unit, usd: c.now.usd };
+    if (c.now.input) {
+      const name = c.now.input.name;
+      e.inputs = e.inputs.map((i) => (i.name === name ? { ...i, default: c.now.input!.default, minimum: c.now.input!.minimum as number | null, maximum: c.now.input!.maximum as number | null } : i));
+    }
+    out.push({ id: c.id, state: "applied" });
+  }
+  return out;
+}
+
 const cache = new Map<string, TregCatalog>();
 
 /** Reads data/treg/ once per process (and per directory). No network. */
@@ -172,6 +218,7 @@ export function loadTregCatalog(options: { dir?: string } = {}): TregCatalog {
   const writes = JSON.parse(readFileSync(path.join(dir, "treg_write_actions.json"), "utf-8"));
   const catalog = parseCatalog(snapshot, writes);
   declareExtraInputs(catalog);
+  applyPriceCorrections(catalog);
   cache.set(dir, catalog);
   return catalog;
 }

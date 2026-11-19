@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { refundedPointsFromSettle } from "../server/settleRefund";
 import { AGENT_CAPABILITY_SLUG, AGENT_JOB_LEASE_SECONDS, AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS } from "./constants";
+import { planNeedsRequote } from "./catalogPriceGuard";
 import { executionBudgetUsd, legacyPriceMissionByCode, priceMissionByCode, settlementCharge } from "./price";
 import { firstSentenceAr, stagePriceInputs, type PricedPlan } from "./plan";
 import { estimatedGroupKeys, settlementChargeByStage, stageUnitsOf, type StageCounts, type StageUnits } from "./stageUnits";
@@ -55,6 +56,8 @@ export async function perStageSettlementReady(client: any): Promise<boolean> {
 }
 
 export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number } = {}): Promise<ApproveResult> {
+  // a card quoted before a catalog price correction (DT-20261119-11 D7): refused before any price is recomputed, any quote made or any point reserved
+  if (planNeedsRequote(mission.plan)) return fail("plan_changed");
   const price = repriceStoredPlan(mission.plan);
   const stored = mission.plan.price;
   if (price.unitPricePoints !== stored.unitPricePoints || price.reservePoints !== stored.reservePoints || price.deliveredRows !== stored.deliveredRows) return fail("plan_changed");

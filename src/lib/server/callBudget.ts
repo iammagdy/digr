@@ -23,6 +23,38 @@ export const HOLD_SPEND_SHARE = 0.4;
  */
 export const CALL_CEILING_FLOOR_USD = 0.005;
 
+/**
+ * WHOLE MICRO-DOLLARS, ROUNDED DOWN (DT-20261119-11, D2). The money a call may be given is never more than what is left: 200 points hold 0.145454545… USD of provider money, which is 145,454 micro-dollars, never 145,455. A value that
+ * is not a positive amount gives 0 (no request is made with it).
+ */
+export const floorMicroUsd = (usd: number): number => {
+  const micro = Math.floor(Number(usd) * 1_000_000 + 1e-7);
+  return Number.isFinite(micro) && micro > 0 ? micro / 1_000_000 : 0;
+};
+
+export interface CallMoney {
+  /** What ONE request of the call may bill: the header sent to the provider (whole micro-dollars). */
+  perRequestUsd: number;
+  /** How many requests the call may make (the call and every key-pool hop), or 1 when the money does not stretch to more. */
+  attempts: number;
+  /** The most the call may bill, all its requests together: what is reserved on every ledger. */
+  holdUsd: number;
+}
+
+/**
+ * THE MONEY OF ONE CALL (DT-20261119-11 D1/D2): all the money that is left, split over the requests the call can make. When the money does not stretch to the call's own estimate for each request, the call makes ONE request with all of it (an explicit
+ * one-attempt path). Null when no positive amount that covers the estimate is left: no request is made.
+ */
+export function callMoney(leftUsd: number, estimateUsd: number, maxAttempts: number): CallMoney | null {
+  const left = floorMicroUsd(leftUsd);
+  const need = floorMicroUsd(estimateUsd);
+  let attempts = Math.max(1, Math.floor(maxAttempts) || 1);
+  let per = floorMicroUsd(left / attempts);
+  if (per < need && attempts > 1) { attempts = 1; per = left; }
+  if (!(per > 0) || per < need) return null;
+  return { perRequestUsd: per, attempts, holdUsd: Number((per * attempts).toFixed(6)) };
+}
+
 export interface JobCallBudget {
   /** Asks to spend up to `estimateUsd` on the next call. False when that would pass the ceiling: the call must not be made. */
   reserve(estimateUsd: number): boolean;
@@ -32,6 +64,13 @@ export interface JobCallBudget {
   readonly ceilingUsd: number | null;
   /** Spend counted so far (recorded spend before this chunk plus this chunk's calls). */
   spentUsd(): number;
+  /**
+   * The money this call may still take, in whole micro-dollars rounded DOWN: the ceiling less what was spent and what OTHER calls hold (`heldUsd` is what this call itself already holds, so it is not counted against itself). `capUsd` lowers the
+   * ceiling for this question (the planning stages' kept share). Null when there is no ceiling and no cap.
+   */
+  leftUsd(heldUsd?: number, capUsd?: number | null): number | null;
+  /** Replaces what this call holds (`fromUsd`) by `toUsd` in ONE step, so two calls in flight can never both hold the same money. False (nothing changed) when the larger hold does not fit the ceiling. */
+  rehold(fromUsd: number, toUsd: number, capUsd?: number | null): boolean;
   /** True once a call was refused: nothing more is asked of the provider in this chunk. */
   stopped(): boolean;
   refusals(): number;
@@ -51,6 +90,20 @@ export function createJobCallBudget(input: { ceilingUsd: number | null; spentUsd
       if (ceiling === null) return true;
       if (spent + inFlight + est > ceiling + EPS) { refused += 1; return false; }
       inFlight += est;
+      return true;
+    },
+    leftUsd(heldUsd = 0, capUsd: number | null = null): number | null {
+      const top = ceiling === null ? (capUsd === null ? null : capUsd) : capUsd === null ? ceiling : Math.min(ceiling, capUsd);
+      if (top === null) return null;
+      const others = Math.max(0, inFlight - Math.max(0, Number(heldUsd) || 0));
+      return floorMicroUsd(top - spent - others);
+    },
+    rehold(fromUsd: number, toUsd: number, capUsd: number | null = null): boolean {
+      const from = Math.max(0, Number(fromUsd) || 0);
+      const to = Math.max(0, Number(toUsd) || 0);
+      const top = ceiling === null ? (capUsd === null ? null : capUsd) : capUsd === null ? ceiling : Math.min(ceiling, capUsd);
+      if (to > from && top !== null && spent + (inFlight - from) + to > top + EPS) return false;
+      inFlight = Math.max(0, inFlight - from) + to;
       return true;
     },
     settle(estimateUsd: number, actualUsd: number | null): void {

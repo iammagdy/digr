@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { executeTregCall, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
-import { createJobCallBudget } from "./callBudget";
+import { executeTregCall, maxTregAttempts, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
+import { callMoney, createJobCallBudget } from "./callBudget";
 import { runSensitiveCall } from "./sensitiveAccess";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyRuleOf } from "../treg/dataPolicy";
@@ -218,7 +218,7 @@ export async function readAdminLookupSpendToday(client: any, now: Date = new Dat
  */
 export function resetAdminLookupMemoryForTesting(): void { /* no process-local spend state */ }
 
-/** The most one attempt can be charged: the route cap sent to TREG (`X-Treg-Route-Max-Cost`), which is also the amount the attempt RESERVES in the audit log before the call. */
+/** A floor for the audit reservation of an attempt whose money is not yet known (kept for callers that name the amount); the attempt itself reserves `callMoney`'s hold (DT-20261119-11 D4). */
 export const lookupReserveUsd = (entryUsd: number): number => Number(Math.max(entryUsd, 0.001).toFixed(6));
 
 type CallFn = (o: TregCallOptions) => Promise<TregCallResult>;
@@ -250,9 +250,12 @@ export async function runLookupAttempt(input: {
   const skippedAttempt = (outcome: LookupAttempt["outcome"], note: string): LookupAttempt => ({ endpointId: entry.id, outcome, costUsd: 0, note });
   if (entry.state === "skipped") return { ok: false, reason: "skipped", attempt: skippedAttempt(/US|limited/.test(entry.skipReasonAr ?? "") ? "skipped_country" : "skipped", entry.skipReasonAr ?? "skipped"), spentTodayUsd: spent, capUsd };
   if (entry.state === "confirm" && !(Number(input.confirmedUsd) >= entry.usd - 1e-9)) return { ok: false, reason: "needs_confirmation", attempt: skippedAttempt("needs_confirmation", "a paid phone endpoint runs only after the admin confirmed its price"), priceUsd: entry.usd, ...(entry.warningAr ? { warningAr: entry.warningAr } : {}), spentTodayUsd: spent, capUsd };
-  // the cap is checked against what the call can cost AT MOST (its route cap), not its estimate
-  const reserveUsd = lookupReserveUsd(entry.usd);
-  if (spent + reserveUsd > capUsd + 1e-9) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
+  // THE MONEY OF THIS ATTEMPT (DT-20261119-11 D4): the day's money that is left, never above the amount the admin CONFIRMED for a paid phone endpoint (a higher amount needs a new confirmation), split over the requests the call can make. It is the header
+  // AND the amount the audit row reserves before the call, so the day's cap holds across concurrent requests; no positive amount that covers the endpoint's price, no request.
+  const dayLeft = capUsd - spent;
+  const money = callMoney(entry.state === "confirm" ? Math.min(Math.max(0, Number(input.confirmedUsd) || 0), dayLeft) : dayLeft, entry.usd, maxTregAttempts({}));
+  if (!money) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
+  const reserveUsd = money.holdUsd;
 
   const call = input.call ?? executeTregCall;
   const jobId = `${ADMIN_LOOKUP_JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
@@ -274,10 +277,10 @@ export async function runLookupAttempt(input: {
     reserveUsd, requireAudit: true, afterAudit,
     call: async () => {
       const r = await call({ endpointId: entry.id, method: endpoint.method === "GET" ? "GET" : "POST", params: { [entry.paramName]: value }, userId: input.adminId, jobId, stepId: "lookup", page: 1,
-        routeMaxCostUsd: reserveUsd, timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: entry.usd, sensitiveAccess: { allowed: true },
+        routeMaxCostUsd: money.perRequestUsd, ...(money.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: money.holdUsd, sensitiveAccess: { allowed: true },
         ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) ? { routeWaterfall: false } : {}) });
       // A CUT OR UNREACHABLE CALL may have been billed after we stopped waiting: its charge is unknown and counts at the reservation, never 0
-      unknownCharge = r.timedOut === true || r.error === "network_failure";
+      unknownCharge = r.timedOut === true || r.error === "network_failure" || (r.ok && (r.costIsEstimate === true || r.costUnreported === true));
       return { result: r, costUsd: unknownCharge ? null : Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
     },
   });

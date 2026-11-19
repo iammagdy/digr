@@ -1,6 +1,7 @@
 import { unitPricePointsFromCost, UNIT_SCALE, type PricingBasis } from "../recordPricing";
 import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, type MissionPricingSettings } from "../missionPricing";
 import { holdValueUsd } from "../server/callBudget";
+import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import {
   AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
   AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
@@ -53,6 +54,8 @@ export interface MissionPriceOptions {
 }
 
 export interface MissionPriceResult {
+  /** The catalog price revision this price was made under (catalog.ts CATALOG_PRICE_REV); absent on a plan priced before the revision existed (DT-20261119-11 D7). */
+  pricedUnder?: number;
   /** 2: the one rule of missionPricing.ts. Plans stored before it have no `rule` and are priced by the old formula (legacyPriceMissionByCode). */
   rule?: 2;
   /** Provider cost of the whole mission at the planned rows, USD (the rows to collect included). */
@@ -139,7 +142,7 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
   if (!(costPerFinal > 0)) throw new Error("the measured cost per final row is not positive");
   const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints: options.capPoints ?? AGENT_JOB_POINTS_CAP });
   return {
-    rule: 2, totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
+    rule: 2, pricedUnder: CATALOG_PRICE_REV, totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
     ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints: rule.reservePoints, maxChargePoints: rule.chargeAtFullPoints,
     minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap,
     reviewBudgetUsd: reviewBudgetUsdFor(rule.chargeAtFullPoints),
