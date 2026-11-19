@@ -131,10 +131,40 @@ export const roleLineAr = (role: RoleKey, parentNounSingularAr: string): string 
  * plain one, «موظفو كل شركة»; the card's own line says the matching titles come first. A title that names no role is kept as it is.
  */
 const ADMIN_STEM = ["ادار", "اداري"];
-export function neutralPeopleTitleAr(title: string, role: RoleKey, parentNounSingularAr: string): string {
+/** Does this text name the role the customer asked for («مديريها», «موظفو الإدارة»)? Read from the role's own noun stems (the table above), after normalisation. */
+export function namesRoleAr(text: string, role: RoleKey, withAdminStem = true): boolean {
   const def = roleDefOf(role);
-  const n = normalizeText(title);
-  const claims = [...(def?.nounStems ?? []).filter((x) => /[\u0600-\u06ff]/.test(x)), ...(role === "manager" ? ADMIN_STEM : [])].map((x) => normalizeText(x));
-  if (!claims.some((c) => n.includes(c))) return title;
+  const n = normalizeText(text);
+  const claims = [...(def?.nounStems ?? []).filter((x) => /[\u0600-\u06ff]/.test(x)), ...(role === "manager" && withAdminStem ? ADMIN_STEM : [])].map((x) => normalizeText(x));
+  return claims.some((c) => n.includes(c));
+}
+export function neutralPeopleTitleAr(title: string, role: RoleKey, parentNounSingularAr: string): string {
+  if (!namesRoleAr(title, role)) return title;
   return `موظفو كل ${parentNounSingularAr || "عنصر"}`;
+}
+
+/**
+ * THE HEADLINE DOES NOT PROMISE A ROLE THE STAGE ONLY RANKS BY (DT-20261118-09 item 7; live run 3: the headline read «ثلاثة من مديريها» while the card's own line says that when the source gives too few managers the count is completed from the
+ * company's other people). A sentence of the summary that names the role is replaced, once, by the code's own sentence about WHO is delivered: the people of each company, as many as asked, the matching titles first (that line is the card's role line).
+ * Sentences that name no role are kept as the model wrote them. Pure.
+ */
+export function summaryWithoutRoleClaimAr(summary: string, role: RoleKey, parentTitleAr: string, perParent: number | null, parentNounSingularAr: string): string {
+  const sentences = summary.split(/(?<=[.؟!])\s+/u).map((x) => x.trim()).filter(Boolean);
+  // FIX1 (Gate 2 P2): «إدارة» in a sentence about the companies' own trade («شركات إدارة العقارات») is not a role claim: only the role's own nouns are read here, not the stem of «الإدارة»
+  const claims = (x: string): boolean => namesRoleAr(x, role, false);
+  if (!sentences.some(claims)) return summary;
+  const person = knownItemNoun("شخص");
+  const amount = perParent !== null && perParent > 0 && person ? `${countAr(perParent, person)} من العاملين` : "عدد من العاملين";
+  const parent = parentTitleAr.replace(/[.،\s]+$/u, "");
+  const kept = sentences.filter((x) => !claims(x));
+  // a kept sentence that already names the companies is not repeated: the code's sentence then says only who is delivered
+  const named = kept.some((x) => normalizeText(x).includes(normalizeText(parent)));
+  const own = `${named ? "" : `${parent}، `}مع ${amount} في كل ${parentNounSingularAr || "عنصر"}.`;
+  const out: string[] = [];
+  let placed = false;
+  for (const x of sentences) {
+    if (!claims(x)) { out.push(x); continue; }
+    if (!placed) { out.push(own); placed = true; }
+  }
+  return out.join(" ");
 }

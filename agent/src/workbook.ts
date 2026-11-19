@@ -345,7 +345,7 @@ function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByS
  * RUNS THE DELIVERY CONTRACT on the layouts about to be written (round 14). Builds the contract's input from the REAL layouts, the real methodology lines and the production functions of every surface that states the promised number (the summary line's formula, the chat's result line,
  * the orders page's promised number), checks the four rules, and, when `complete`, applies the completions that only complete the description. Rows and values are never touched.
  */
-function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; layouts: SheetLayout[]; methodology: ReturnType<typeof buildMethodology>; repliesJudged: boolean; approvedPlan?: PricedPlan; now: number; complete: boolean; /** The alternative routes that answered, per stage and parent, from the item store (round 16). */ routes?: Readonly<Record<string, Readonly<Record<string, number>>>> }): { violations: ContractViolation[]; completed: Completion[] } {
+function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: Record<string, Row[]>; layouts: SheetLayout[]; methodology: ReturnType<typeof buildMethodology>; repliesJudged: boolean; approvedPlan?: PricedPlan; now: number; complete: boolean; /** The alternative routes that answered, per stage and parent, from the item store (round 16). */ routes?: Readonly<Record<string, Readonly<Record<string, number>>>> }): { violations: ContractViolation[]; completed: Completion[] } {
   const { plan, rowsByStage, layouts, methodology } = a;
   const limitsItem = methodology.items.find((i) => i.label === "حدود هذا التسليم");
   const limitLines = (limitsItem?.values ?? []).filter((l) => l !== NO_LIMITS_AR);
@@ -362,7 +362,7 @@ function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; 
   const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, a.repliesJudged);
   const publicPlan = customerPlanView(plan);
   const compiled = plan.compiled?.by === "compiler";
-  const chatLine = customerMissionView({ mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
+  const chatLine = customerMissionView({ requestText: a.requestText ?? "", mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
   const chat = parseDeliveredLine(chatLine);
   // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
   const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true && !st.per_parent_asked).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
@@ -442,7 +442,7 @@ export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]
   }
   // the contract never blocks or delays a delivery: if it cannot run (a plan shape it does not know), the file is written as it would have been
   let contract: { violations: ContractViolation[]; completed: Completion[]; error?: string } = { violations: [], completed: [] };
-  try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler", routes: routesOfFacts(facts) }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
+  try { contract = runContract({ requestText: String(facts?.requestText ?? ""), plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler", routes: routesOfFacts(facts) }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
   return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports };
 }
 

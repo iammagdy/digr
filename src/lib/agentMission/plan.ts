@@ -12,7 +12,7 @@ import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { CONTRACT_ONLY_CLASSES, REPLY_TO_KEY, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
-import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
+import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, summaryWithoutRoleClaimAr, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { isPeopleNoun } from "./childSources";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -878,8 +878,16 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
+  // THE HEADLINE too: a sentence of the summary that names the role the people are only ranked by is replaced by the code's own (roles.ts, DT-20261118-09 item 7)
+  let summaryText = summary.text;
+  for (const st of priced) {
+    if (!st.role_preference || st.parent_key === null || !st.deliver) continue;
+    const parent = priced.find((p) => p.key === st.parent_key);
+    if (!parent) continue;
+    summaryText = summaryWithoutRoleClaimAr(summaryText, st.role_preference.role, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
+  }
   notes.push(...languageOffNotes);
-  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
+  return { ok: true, plan: { summary_ar: summaryText, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */

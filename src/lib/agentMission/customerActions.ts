@@ -111,7 +111,7 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   if (mission.status === "approved" || mission.status === "executing") {
     try { emailWillBeSent = userWillBeEmailed((await client.auth?.admin?.getUserById?.(input.userId))?.data?.user); } catch { emailWillBeSent = false; }
   }
-  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) }) };
+  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, requestText: String(mission.request_text ?? ""), events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) }) };
 }
 
 const APPROVE_MESSAGES: Record<string, string> = {

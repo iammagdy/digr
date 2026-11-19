@@ -290,3 +290,31 @@ describe("FIX4: with no company count, a number counting ANOTHER noun is dropped
     expect(isCountOfOtherNoun("اتنين من كل شركة", "٣ من كل شركة", 3, "المديرين")).toBe(false);
   });
 });
+
+// DT-20261118-09 item 6 (BUG HUNTER FIX4 check: P1-1 and the two surviving mutants M8, M10)
+describe("DT-09 item 6: the people title's HEAD noun is the people's own noun; the stem endings and the dual reading are pinned", () => {
+  it("P1-1 at card level: a title that carries the company word («مسؤولو الشركات», «المديرين في الشركات», «مدراء الشركات») does not make the companies' own count the people count", async () => {
+    const cases: Array<[string, string, number, string, string]> = [
+      ["عايز شركتين مقاولات والإدارة العليا", "مسؤولو الشركات", 2, "شركتين", "شركتين"],
+      ["عايز 5 شركات والإدارة العليا", "المديرين في الشركات", 5, "5 شركات", "5 شركات"],
+      ["عايز 5 شركات والإدارة العليا", "مدراء الشركات", 5, "5", "5"],
+    ];
+    for (const [words, title, per, cited] of cases) {
+      const got = await cardOf({ words: [words] }, answerOf({ title_ar: title, per_company: per, per_company_text: cited }, [], "cannot"));
+      expect(got.people?.per_parent, `${title} / ${cited}`).toBeNull();
+      expect(got.card, `${title} / ${cited}`).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+    }
+  });
+  it("the head noun is the people's own noun: «٣ مديرين» under the title «المديرين في الشركات» is the people's amount and is kept", () => {
+    expect(isCountOfOtherNoun("عايز ٣ مديرين", "٣ مديرين", 3, "المديرين في الشركات")).toBe(false);
+    expect(isCountOfOtherNoun("عايز شركتين", "شركتين", 2, "المديرين في الشركات")).toBe(true);
+  });
+  it("M8: a noun that differs from the people's noun only by its ending is the same noun («مسؤولي» for the title «مسؤولو الإدارة»)", () => {
+    expect(isCountOfOtherNoun("عايز ٣ مسؤولي", "٣ مسؤولي", 3, "مسؤولو الإدارة")).toBe(false);
+    expect(isCountOfOtherNoun("عايز ٣ مسؤولين", "٣ مسؤولين", 3, "مسؤولو الإدارة")).toBe(false);
+  });
+  it("M10: a bare number is another noun's count when the message writes it only as a dual of another noun; a dual of the people's own noun is not", () => {
+    expect(isCountOfOtherNoun("عايز شركتين مقاولات وأصحاب القرار فيهم", "اتنين", 2, "أصحاب القرار")).toBe(true);
+    expect(isCountOfOtherNoun("عايز شركات مقاولات ومديرين", "اتنين", 2, "المديرين")).toBe(false);
+  });
+});

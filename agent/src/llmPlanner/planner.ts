@@ -7,6 +7,9 @@ import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
+import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, withoutUnwrittenLabels, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
+import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
+export { PLATFORM_AR };
 import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
@@ -117,23 +120,34 @@ const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link"
 /** The card describes what is collected, never the person (live, 16 Nov 2026: «الطالب يريد قائمة بأربعين مطعمًا…»): a leading «الطالب/العميل يريد» becomes «المطلوب». */
 export const impersonalAr = (t: string): string => t.replace(/^\s*(?:ال)?(?:طالب|عميل|باحث)(?:ة)?\s+(?:ي|ت)(?:ريد|طلب|حتاج)\s+(?:أن\s+)?/u, "المطلوب: ");
 
-/** The platforms' Arabic names for the code-written sentences (a platform not listed is «المنصة»). */
-export const PLATFORM_AR: Record<string, string> = {
-  x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب", reddit: "ريديت", linkedin: "لينكدإن", threads: "ثريدز", telegram: "تليجرام", google: "خرائط جوجل", pinterest: "بنترست",
-  tripadvisor: "تريب أدفايزر", trustpilot: "ترست بايلوت", yelp: "يلب", "app-store": "متجر آبل", "google-play": "متجر جوجل بلاي", amazon: "أمازون", web: "الويب", bing: "الويب", rumble: "رمبل", spotify: "سبوتيفاي", github: "جيت هب", imdb: "آي إم دي بي",
-};
-/** With the step's capability: Google is Maps only for places and their reviews (live, 16 Nov 2026: a news request's card read «خرائط جوجل»), news read from the web are «مواقع الأخبار». */
-export const platformAr = (p: string, capability?: string): string => {
+/** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */
+export const PLATFORM_LABEL_FALLBACK_AR = SOURCE_LABEL_FALLBACK_AR;
+/** The table's label for a platform, with the step's capability: Google is Maps only for places and their reviews (live, 16 Nov 2026: a news request's card read «خرائط جوجل»), news read from the web are «مواقع الأخبار». */
+const tableLabelOf = (p: string, capability?: string): string | null => {
   const cap = String(capability ?? "");
   if (/(^|\.)news(\.|$)/.test(cap)) return p === "google" ? "أخبار جوجل" : "مواقع الأخبار";
   if (p === "google" && cap !== "") return /maps|place|reviews/.test(cap) ? "خرائط جوجل" : "بحث جوجل";
-  return PLATFORM_AR[p] ?? "المنصة";
+  return PLATFORM_AR[p] ?? null;
+};
+/** The label of a platform, only when the customer wrote it in their own words (`said`); else «المصدر». A platform the table does not know stays «المنصة». */
+export const platformAr = (p: string, capability: string | undefined, said: ReadonlyArray<string>): string => {
+  const label = tableLabelOf(p, capability);
+  if (label === null) return "المنصة";
+  return labelWrittenBy(label, said) ? label : PLATFORM_LABEL_FALLBACK_AR;
 };
 
-/** A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null. */
-export function customerSafe(text: string | null | undefined, maxChars = 400): string | null {
-  const t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
+/**
+ * A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null. With `said` (the customer's words), a sentence that names a label of
+ * the code's own platform table the customer did not write is refused as well (DT-20261118-09 S2), and a Latin word the customer wrote is not a reason to refuse it (S1: their own word).
+ */
+export function customerSafe(text: string | null | undefined, maxChars = 400, said?: ReadonlyArray<string>): string | null {
+  let t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
   if (!t) return null;
+  // a label of the code's own table the customer did not write becomes «المصدر» inside the model's sentence (the rest of the sentence is still the model's)
+  if (said !== undefined) t = withoutUnwrittenLabels(t, said);
+  if (said !== undefined && foreignLatinIn(t, writtenLatinWords(said)).length === 0 && /[A-Za-z]{2,}/.test(t)) {
+    return checkCustomerText(t.replace(/[A-Za-z]{2,}/g, "ـ"), { maxChars }).issues.length === 0 ? t : null;
+  }
   return checkCustomerText(t, { maxChars }).issues.length === 0 ? t : null;
 }
 
@@ -506,13 +520,16 @@ function dayAr(day: string | null | undefined): { text: string; year: number } |
  * THE REQUEST LINE OF THE CARD (card redesign, 16 Nov 2026): the parts of what the customer asked for, read from the understanding (the platform, the topic, the period), so the card can say
  * «٣٠ تغريدة · إكس · لقاح الإنفلونزا · ١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦» in every state. Display only; the count is the card's own.
  */
-export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>): string[] {
+export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>, said: ReadonlyArray<string>): string[] {
   const top = steps.filter((s) => !s.parent);
   const first = top[0] ?? steps[0];
   if (!first) return [];
-  const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform, s.capability)))].join(" و")];
+  const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform, s.capability, said)))].join(" و")];
   const topic = String(first.topic ?? "").trim();
-  if (topic && topic.length <= 60) parts.push(topic);
+  // the topic is shown as the customer-text check returns it: no Latin word the customer did not write, and a source they did not name replaced by «المصدر» (DT-20261118-09 S1, S2; FIX1: never the model's own text);
+  // a topic that is only that neutral word says nothing the first part has not said
+  const shown = topic && topic.length <= 60 ? customerSafe(topic, 60, said) : null;
+  if (shown !== null && shown !== PLATFORM_LABEL_FALLBACK_AR) parts.push(shown);
   const from = dayAr(first.period?.from), to = dayAr(first.period?.to);
   if (from && to) parts.push(`${from.text} – ${to.text} ${toArabicDigits(to.year)}`);
   return parts.filter(Boolean);
@@ -525,12 +542,13 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   let costUsd = cost.usd;
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
-  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80)).filter((o): o is string => o !== null), understanding: u, costUsd };
+  const said = customerSaidOf(input);
+  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said)).filter((o): o is string => o !== null), understanding: u, costUsd };
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
-  if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
+  if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
-  await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");
+  await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400, said) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");
 
   // 2-4. EVERY STEP, parents first (the model's order already is: a parent must be an earlier step)
   const built = new Map<string, BuiltStep>();
@@ -539,7 +557,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   for (const step of u.steps) {
     const parent = step.parent ? built.get(step.parent) ?? null : null;
     if (step.parent && !parent) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة الخطوة التي تسبقها، فلن تُضاف هذه الخطوة ولن تُحسب في السعر." }); continue; }
-    await say(customerSafe(`نختار المصدر المناسب لجمع ${step.title_ar} من ${platformAr(step.platform, step.capability)} ونجرب عينة حقيقية منه.`, 200));
+    await say(customerSafe(`نختار المصدر المناسب لجمع ${step.title_ar} من ${platformAr(step.platform, step.capability, said)} ونجرب عينة حقيقية منه.`, 200, said));
     const { candidates, options } = await chooseTools(step, parent ? parent.sampleRows : null, deps, cost);
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
@@ -560,7 +578,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const sampleRows = runMap(mapCode, got.page);
     if (sampleRows.length === 0) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const columns: PlanColumn[] = [...COLUMN_ORDER.filter((k) => map.fields[k] || (k === "link" && map.linkTemplate)).map((k) => ({ key: k, title_ar: COLUMN_TITLES[k] })), ...map.extra.map((e) => ({ key: e.key, title_ar: e.title_ar }))];
-    step.title_ar = customerSafe(step.title_ar, 60) ?? "العناصر";
+    step.title_ar = customerSafe(step.title_ar, 60, said) ?? "العناصر";
     // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
     let second: BuiltStep["second"];
     const secondRows: Array<Record<string, unknown>> = [];
@@ -632,7 +650,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (isLookupStep(step, u.steps)) {
       const at = await pickNamedItem(step, sampleRows, ask, (input.exchanges ?? []).map((e) => e.answer));
       deps.log?.(`llm_planner_lookup ${step.key} picked=${at}`);
-      if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [ANY_RESULT_OPTION_AR], understanding: u, costUsd: cost.usd };
+      if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability, said)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [ANY_RESULT_OPTION_AR], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
     built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
@@ -673,7 +691,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   }
   // 5. PRICE
   await say("بنجهز العدد والسعر من العينة الحقيقية.");
-  const plan = assemblePlan(u, bindLookups([...built.values()]), unserved, deps.pricingSettings);
+  const plan = assemblePlan(u, bindLookups([...built.values()]), unserved, deps.pricingSettings, said);
   return { kind: "plan", plan, understanding: u, costUsd };
 }
 
@@ -822,10 +840,10 @@ export function numbersWritten(text: string): Set<string> {
 }
 
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
-export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>): { question_ar: string; options_ar: string[] } {
+export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
   const lines = weak.map((f) => (f.found === 0
-    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability)} بالشروط التي كتبتها ولم نجد نتائج.`
-    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
+    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها ولم نجد نتائج.`
+    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
   return { question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`, options_ar: ["سلّمني الموجود فقط", "وسّع البحث (اكتب كيف تحب نوسّعه)"] };
 }
 
@@ -834,17 +852,17 @@ export async function scoutQuestion(u: Understanding, weak: ReadonlyArray<ScoutF
   const facts = {
     customer_words: input.words.slice(-4),
     understanding: u.understanding_ar,
-    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform, f.step.capability), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
+    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
   };
-  const fallback = scoutFallbackAr(weak);
+  const fallback = scoutFallbackAr(weak, customerSaidOf(input));
   const answer = await asker(deps, cost)(SCOUT_SYSTEM, JSON.stringify(facts), { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA }, 900);
   if (!isObj(answer)) return fallback;
-  const message = customerSafe(str(answer.message_ar), 700);
+  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
   if (!message) return fallback;
   const allowed = new Set<string>([...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]), ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`)]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
   if (foreign.length > 0) { deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`); return fallback; }
-  const options = (Array.isArray(answer.options_ar) ? answer.options_ar : []).map((o) => customerSafe(str(o), 80)).filter((o): o is string => o !== null && [...numbersWritten(o)].every((n) => allowed.has(n))).slice(0, 4);
+  const options = (Array.isArray(answer.options_ar) ? answer.options_ar : []).map((o) => customerSafe(str(o), 80, customerSaidOf(input))).filter((o): o is string => o !== null && [...numbersWritten(o)].every((n) => allowed.has(n))).slice(0, 4);
   return { question_ar: message, options_ar: options.length >= 2 ? options : fallback.options_ar };
 }
 
@@ -895,10 +913,10 @@ export function bindLookups(steps: ReadonlyArray<BuiltStep>): BuiltStep[] {
 }
 
 /** The plan in the shape every later part already reads (the card, the price, approval, the engine, the file, settlement). */
-export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown): PricedPlan {
+export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown, said: ReadonlyArray<string> = []): PricedPlan {
   const stages: PricedStage[] = [];
   const notes: string[] = [];
-  const assumptions = (u.assumptions_ar ?? []).map((a) => customerSafe(a, 300)).filter((a): a is string => a !== null);
+  const assumptions = (u.assumptions_ar ?? []).map((a) => customerSafe(a, 300, said)).filter((a): a is string => a !== null);
   const plannedOf = new Map<string, number>();
   for (const b of steps) {
     const s = b.step;
@@ -950,8 +968,8 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   for (const st of stages) if (st.carry_keys && st.carry_keys.length === 0) delete st.carry_keys;
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: pricingSettings as never });
   const counts = stages.filter((s) => s.deliver).map((s) => `${s.title_ar}: ${toArabicDigits(s.planned_rows)}`).join("، ");
-  const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability)))].join(" و");
-  const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
+  const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability, said)))].join(" و");
+  const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300, said) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
   const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined || (b.webFallbacks?.length ?? 0) > 0);
   notes.push(widened
@@ -969,7 +987,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       platform: steps[0]?.step.platform ?? "",
       promises: Object.fromEntries(stages.map((s) => [s.key, { type: s.parent_key && u.steps.find((x) => x.key === s.key)?.count.all ? "open" : "exact", n: s.planned_rows }])),
       conditions: { named: false, period: false, language: false, country: false, topic: false },
-      llm: { understanding_ar: u.understanding_ar, request_parts_ar: requestPartsAr(u.steps), steps: u.steps.map((s) => ({ key: s.key, platform: s.platform, capability: s.capability, source: s.source, topic: s.topic, period: s.period, terms: s.search_terms })) },
+      llm: { understanding_ar: u.understanding_ar, request_parts_ar: requestPartsAr(u.steps, said), steps: u.steps.map((s) => ({ key: s.key, platform: s.platform, capability: s.capability, source: s.source, topic: s.topic, period: s.period, terms: s.search_terms })) },
     } as PricedPlan["compiled"],
   } as PricedPlan;
 }

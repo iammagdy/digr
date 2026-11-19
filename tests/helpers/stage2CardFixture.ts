@@ -9,6 +9,8 @@ import { customerPlanView } from "../../src/lib/agentMission/plan";
 import { pollResponse, type LivePollResponse } from "../../src/lib/agentMission/stage2/liveSheet";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { replayGateway } from "./replayGateway";
+/** The customer's own words of the recorded mission: the view is called with them, as customerActions does (DT-20261118-09 FIX1: a label the customer wrote is theirs to see). */
+const M12_REQUEST = "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، أكتر فيديوهات عليها تعليقات، و٢٠ تعليق من كل فيديو مع ردودهم";
 
 /**
  * STAGE 2 F-2 tests: the REAL plan of the stored M12 mission (TikTok: 2 videos, 20 comments each, with replies), its stored real rows and the customer view the site builds from them, so that the card's own numbers and the live
@@ -28,7 +30,7 @@ export interface M12Fixture {
 export async function m12Fixture(): Promise<M12Fixture> {
   const store = createMemoryStore();
   const { gateway } = replayGateway(M12, catalog, store, ID);
-  const planned = await planByCompiler({ mission: { id: ID, request_text: "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، أكتر فيديوهات عليها تعليقات، و٢٠ تعليق من كل فيديو مع ردودهم", answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z") });
+  const planned = await planByCompiler({ mission: { id: ID, request_text: M12_REQUEST, answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z") });
   if (planned.kind !== "plan") throw new Error(planned.kind);
   const plan = planned.plan;
   const rows = { videos: read("rows/videos"), comments: read("rows/comments"), comments_replies: read("rows/comments_replies") };
@@ -41,7 +43,7 @@ export async function m12Fixture(): Promise<M12Fixture> {
       ];
       const done = status === "completed";
       const row = { id: ID, status, question_ar: null, plan_public: customerPlanView(plan), reserved_points: 450, unit_price_points: 1, delivered_units: done ? deliveredUnits ?? a.v + a.c + a.r : null, charged_points: done ? deliveredUnits ?? a.v + a.c + a.r : null, summary_ar: done ? "تم تسليم طلبك." : null, files: done ? [{ name: "result.xlsx", kind: "xlsx" }] : null, created_at: "2026-11-05T08:00:00Z" };
-      return customerMissionView({ mission: row as never, events: events as never, queue: { ahead: 0, running: 0, workerAlive: true }, now: Date.parse("2026-11-05T08:32:00Z") });
+      return customerMissionView({ requestText: M12_REQUEST, mission: row as never, events: events as never, queue: { ahead: 0, running: 0, workerAlive: true }, now: Date.parse("2026-11-05T08:32:00Z") });
     },
     live: async (a, status) => {
       const items = await ItemStore.open(createMemoryStore(), ID);
