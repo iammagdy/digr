@@ -231,6 +231,11 @@ export interface PricedStage extends ProposedStage {
   max_pages?: number;
   sample_examined?: number;
   sample_matching?: number;
+  /**
+   * DT-20261119-01 (D-0103, D-0107): a people stage whose price is a CATALOG ESTIMATE because the small sample before the card found no person (peopleEstimate.ts). Set by code only. Such a plan is settled per stage
+   * (stageUnits.ts): the companies at the companies' own unit, the people at the rest of today's full charge, so that a mission that delivers nobody never charges the companies the blended price.
+   */
+  estimated?: true;
 }
 
 export interface PricedPlan {

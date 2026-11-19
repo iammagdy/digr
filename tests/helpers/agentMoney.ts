@@ -16,7 +16,7 @@ export interface FakeQuote { id: string; user_id: string; hash: string; items: a
 
 export const quoteJobId = (quoteId: string): string => `job_quote_${createHash("md5").update(quoteId).digest("hex")}`;
 
-export function fakeMoneyClient(options: { balance?: number; cap?: number } = {}) {
+export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a database where the per-stage settlement was not applied yet: PostgREST answers PGRST202 */ withoutPerStageSettlement?: boolean } = {}) {
   const quotes = new Map<string, FakeQuote>();
   const jobs = new Map<string, FakeJob>();
   const ledger: LedgerRow[] = [{ id: "top_1", delta: options.balance ?? 100_000, type: "topup" }];
@@ -118,6 +118,42 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number } = {}
       j.status = "completed"; j.charged_credits = charge; j.result_file_id = a.p_result_file_id ?? j.result_file_id; j.lease_until = null;
       return ok({ success: true, already_settled: false, job_id: j.id, user_id: j.user_id, reserved_credits: j.reserved_credits, charged_credits: charge, delivered_units: j.delivered_units });
     },
+    // DT-20261119-01: the per-stage settlement (supabase/migrations/20261119020000_settle_job_by_stage_atomic.sql), the same rules as the SQL (the replica test runs the SAME scenarios on a real PostgreSQL). A database error is code P0001 like every RAISE EXCEPTION.
+    settle_job_by_stage_atomic: (a) => {
+      const x = (message: string) => ({ error: { code: "P0001", message } });
+      const j = jobs.get(a.p_job_id);
+      if (!j) return x(`Job ${a.p_job_id} not found`);
+      if (j.status === "completed") return ok({ success: true, already_settled: true, job_id: j.id, charged_credits: j.charged_credits, delivered_units: j.delivered_units });
+      if (j.status !== "running") return x(`Cannot settle job ${j.id} with status ${j.status} (must be running)`);
+      if (j.lease_until && j.lease_until > Date.now()) {
+        if (j.current_cursor === "completed" || j.delivered_units >= j.target_volume_max) j.lease_until = null;
+        else return x(`Cannot settle job ${j.id} while active chunk lease is held`);
+      }
+      if (!(j.unit_price > 0)) return x(`Job ${j.id} has invalid unit_price`);
+      if (!(j.reserved_credits > 0)) return x(`Job ${j.id} has invalid reserved_credits`);
+      if (!ledger.some((r) => r.id === `res_${j.id}`)) return x(`Reserve record res_${j.id} does not exist`);
+      const q = [...quotes.values()].find((z) => quoteJobId(z.id) === j.id && z.user_id === j.user_id);
+      if (!q) return x(`Accepted quote for job ${j.id} not found`);
+      if (q.status !== "accepted") return x(`Quote for job ${j.id} is not accepted`);
+      const item = q.items[0];
+      const dec6 = /^[0-9]+(\.[0-9]{1,6})?$/, whole = /^[0-9]+$/;
+      const P = item?.stageUnitsPoints, R = item?.stageRowsPlanned;
+      const obj = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
+      if (!(obj(P) && obj(R) && dec6.test(String(P.base)) && dec6.test(String(P.estimated)) && whole.test(String(R.base)) && whole.test(String(R.estimated)) && Number(P.base) > 0)) return x(`Quote for job ${j.id} has no per-stage unit prices`);
+      const U = a.p_units;
+      if (!(obj(U) && typeof U.base !== "undefined" && typeof U.estimated !== "undefined" && whole.test(String(U.base)) && whole.test(String(U.estimated)))) return x(`Invalid delivered units per stage for job ${j.id}`);
+      const dc = Number(U.base), dp = Number(U.estimated);
+      if (dc > Number(R.base) || dp > Number(R.estimated) || dc + dp !== j.delivered_units) return x(`Delivered units per stage do not match job ${j.id}`);
+      if (!ledger.some((r) => r.id === `rel_${j.id}`)) insert({ id: `rel_${j.id}`, delta: j.reserved_credits, type: "release", job_id: j.id, user_id: j.user_id });
+      const m = (v: number): bigint => BigInt(Math.round(v * 1_000_000)), S = BigInt(1_000_000);
+      const ceilMicro = (v: bigint): bigint => (v + S - BigInt(1)) / S;
+      const byStage = ceilMicro(BigInt(dc) * m(Number(P.base)) + BigInt(dp) * m(Number(P.estimated)));
+      const blended = ceilMicro(BigInt(j.delivered_units) * m(j.unit_price));
+      const charge = Number([byStage, blended, BigInt(j.reserved_credits), BigInt(a.p_points_cap ?? 25_000)].reduce((u, v) => (v < u ? v : u)));
+      if (!ledger.some((r) => r.id === `chg_${j.id}`) && charge > 0) insert({ id: `chg_${j.id}`, delta: -charge, type: "charge", job_id: j.id, user_id: j.user_id });
+      j.status = "completed"; j.charged_credits = charge; j.result_file_id = a.p_result_file_id ?? j.result_file_id; j.lease_until = null;
+      return ok({ success: true, already_settled: false, job_id: j.id, user_id: j.user_id, reserved_credits: j.reserved_credits, charged_credits: charge, delivered_units: j.delivered_units, base_units: dc, estimated_units: dp });
+    },
     release_job_atomic: (a) => {
       const j = jobs.get(a.p_job_id);
       if (!j) return raise(`Job ${a.p_job_id} not found`);
@@ -138,6 +174,7 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number } = {}
     rpc: async (name: string, args: any) => {
       calls.push({ name, args });
       const h = handlers[name];
+      if (options.withoutPerStageSettlement === true && name === "settle_job_by_stage_atomic") return { error: { code: "PGRST202", message: "Could not find the function public.settle_job_by_stage_atomic in the schema cache" } };
       if (!h) return { error: { message: `unknown function ${name}` } };
       const fault = injected.get(name)?.shift();
       if (fault === "before") throw new Error(`injected: ${name} failed before it ran`);

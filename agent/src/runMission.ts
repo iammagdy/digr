@@ -19,7 +19,8 @@ import { sourceHealth, statsFromCalls } from "../../src/lib/agentMission/sourceR
 import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib/agentMission/capabilities/routingFacts";
 import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
-import { settleMission } from "../../src/lib/agentMission/lifecycle";
+import { settleMission, type SettleResult } from "../../src/lib/agentMission/lifecycle";
+import { estimatedGroupKeys, stageCountsOf, stageUnitsOf } from "../../src/lib/agentMission/stageUnits";
 import { planningJudge, topicVariants } from "./researchJudge";
 import { executionSpecFor, readJudged, researchSpecFor, type ResearchSpec } from "./researchSpec";
 import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
@@ -1186,7 +1187,13 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
   await ensureOwned(deps, mission.id);
-  const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
+  // A mission whose people stage was priced by an ESTIMATE is settled per stage, from the plan the customer APPROVED (stageUnits.ts); one that has such a stage but no units is never settled by the one-unit function
+  const hasEstimate = estimatedGroupKeys(approvedPlan.stages).size > 0;
+  const stageUnits = hasEstimate ? stageUnitsOf(approvedPlan) : null;
+  const stageCounts = stageUnits ? stageCountsOf(approvedPlan.stages, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])), stageUnits, delivered) : null;
+  const settled: SettleResult = hasEstimate && !stageUnits
+    ? { ok: false, code: "stage_units_unavailable", detail: "the approved plan has an estimated people stage but no per-stage units" }
+    : await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا.", ...(stageUnits && stageCounts ? { stage: { units: stageUnits, counts: { base: stageCounts.base, estimated: stageCounts.estimated } } } : {}) });
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
   await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   if (!settled.ok) {

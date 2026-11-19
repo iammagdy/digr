@@ -3,13 +3,14 @@ import { refundedPointsFromSettle } from "../server/settleRefund";
 import { AGENT_CAPABILITY_SLUG, AGENT_JOB_LEASE_SECONDS, AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS } from "./constants";
 import { executionBudgetUsd, legacyPriceMissionByCode, priceMissionByCode, settlementCharge } from "./price";
 import { firstSentenceAr, stagePriceInputs, type PricedPlan } from "./plan";
+import { estimatedGroupKeys, settlementChargeByStage, stageUnitsOf, type StageCounts, type StageUnits } from "./stageUnits";
 
 /**
  * The two money moments of a mission. BOTH go through the functions the website already uses; no money table is written by hand:
  *
  *   approve  create_quote_atomic -> accept_quote_atomic (reserves res_<job> in the ledger and creates the job) -> claim_job_chunk (a long lease on the job so the website's
  *            old driver never runs a chunk of it; complete_chunk or release_job_atomic ends it)
- *   settle   complete_chunk (records the delivered unique rows and clears the lease) -> settle_job_atomic (charge = ceil(delivered x the job's unit price), never above the reserve; the minimum charge is inside that unit, see missionPricing.ts; the rest
+ *   settle   (a plan with an ESTIMATED people stage: settle_job_by_stage_atomic instead, stageUnits.ts; never a fallback to the next line) complete_chunk (records the delivered unique rows and clears the lease) -> settle_job_atomic (charge = ceil(delivered x the job's unit price), never above the reserve; the minimum charge is inside that unit, see missionPricing.ts; the rest
  *            of the hold is released). Nothing delivered: complete_chunk at zero rows (clears the lease) then release_job_atomic (the whole hold comes back, nothing is charged).
  *
  * Every function takes the Supabase client so the tests can hand it a fake that records the calls.
@@ -27,6 +28,8 @@ const APPROVE_FAILURES: Record<string, string> = {
   quote_failed: "تعذّر إنشاء عرض السعر (قد يكون الحد الأقصى للحجز في قاعدة البيانات أقل من هذه المهمة).",
   accept_failed: "تعذّر اعتماد العرض وحجز الرصيد.",
   claim_failed: "تعذّر إغلاق المهمة أمام المنفّذ القديم؛ حجز مؤقت مُحرَّر ولم يُخصم أي رصيد.",
+  // a plan with an ESTIMATED people stage is settled per stage (stageUnits.ts): when the database cannot do that yet, nothing is held and nothing is charged
+  settle_unavailable: "تعذّر التأكد من جاهزية التسوية لهذه المهمة، ولم يُحجز أي رصيد. حاول بعد قليل.",
 };
 const fail = (code: string): ApproveResult => ({ ok: false, code, messageAr: APPROVE_FAILURES[code] ?? "تعذّر اعتماد المهمة." });
 
@@ -37,11 +40,30 @@ export function repriceStoredPlan(plan: PricedPlan) {
   return priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: plan.price.settings });
 }
 
+/**
+ * IS THE PER-STAGE SETTLEMENT IN THE DATABASE? A probe call with a job id that cannot exist. Only the POSITIVE answer counts: the function ran and said «Job probe not found» (code P0001). Anything else (the function missing: 42883 or PGRST202, a network error,
+ * a timeout, a permission error, an answer that is not an error) is «not ready», so an outage can never let a customer pay through a settlement that is not there. No row is read or written by the probe: the function stops at its first lookup.
+ */
+export async function perStageSettlementReady(client: any): Promise<boolean> {
+  try {
+    const probe = await client.rpc("settle_job_by_stage_atomic", { p_job_id: "probe", p_units: { base: 0, estimated: 0 } });
+    const e = probe?.error;
+    return !!e && e.code === "P0001" && typeof e.message === "string" && e.message.includes("Job probe not found");
+  } catch {
+    return false;
+  }
+}
+
 export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number } = {}): Promise<ApproveResult> {
   const price = repriceStoredPlan(mission.plan);
   const stored = mission.plan.price;
   if (price.unitPricePoints !== stored.unitPricePoints || price.reservePoints !== stored.reservePoints || price.deliveredRows !== stored.deliveredRows) return fail("plan_changed");
   if (price.overCap || price.deliveredRows > AGENT_MAX_DELIVERED_ROWS) return fail("quote_failed");
+  // A PLAN WITH AN ESTIMATED PEOPLE STAGE (DT-20261119-01): its two unit prices travel in the accepted quote, and the settlement that reads them must exist BEFORE anything is held (nothing moves when it does not)
+  const hasEstimate = estimatedGroupKeys(mission.plan.stages).size > 0;
+  const units = hasEstimate ? stageUnitsOf(mission.plan) : null;
+  if (hasEstimate && units === null) return fail("settle_unavailable");
+  if (units !== null && !(await perStageSettlementReady(client))) return fail("settle_unavailable");
 
   const now = options.now ?? new Date();
   const quoteId = `quote_${randomBytes(12).toString("hex")}`;
@@ -50,6 +72,7 @@ export async function approveMission(client: any, mission: { id: string; user_id
     unitPricePoints: price.unitPricePoints, targetVolumeMin: 1, targetVolumeMax: price.deliveredRows, unitCostUsd: price.costPerFinalRowUsd,
     // what «طلباتي» says about the request: the one sentence the customer approved
     summaryAr: firstSentenceAr(mission.plan.summary_ar),
+    ...(units !== null ? { stageUnitsPoints: { base: units.base, estimated: units.estimated }, stageRowsPlanned: { base: units.rows.base, estimated: units.rows.estimated } } : {}),
   }];
   const formats = ["xlsx", "csv"];
   const quoteHash = createHash("sha256").update(JSON.stringify({ items, formats })).digest("hex");
@@ -86,6 +109,11 @@ export interface SettleInput {
   resultPath: string | null;
   /** Reason recorded when nothing is delivered and the hold is released. */
   releaseReason?: string;
+  /**
+   * A mission whose people stage was priced by an ESTIMATE (stageUnitsOf of the APPROVED plan): its units and the rows delivered per group. When present, ONLY the per-stage function is used: if it fails the settlement is refused and
+   * stays retryable (the hold stays), it never falls back to the one-unit function, which would charge the companies the blended price.
+   */
+  stage?: { units: StageUnits; counts: StageCounts };
 }
 
 export type SettleResult =
@@ -103,11 +131,18 @@ export async function settleMission(client: any, input: SettleInput): Promise<Se
     if (released?.error) return { ok: false, code: "release_failed", detail: String(released.error.message ?? released.error.code ?? "").slice(0, 200) };
     return { ok: true, kind: "released", chargedPoints: 0, releasedPoints: input.reservedPoints };
   }
+  // a per-stage settlement whose counts do not add up to the rows delivered is refused BEFORE anything is recorded (the database refuses it too)
+  if (input.stage && (input.stage.counts.base < 0 || input.stage.counts.estimated < 0 || input.stage.counts.base + input.stage.counts.estimated !== delivered)) return { ok: false, code: "stage_counts_mismatch", detail: "the delivered rows per stage do not add up to the rows delivered" };
   const chunk = await client.rpc("complete_chunk", { p_job_id: input.jobId, p_expected_step: 0, p_new_cursor: "completed", p_new_delivered_units: delivered, p_cost_usd: Math.max(0, Number(input.costUsd.toFixed(6))) });
   if (chunk?.error) return { ok: false, code: "complete_chunk_failed", detail: String(chunk.error.message ?? chunk.error.code ?? "").slice(0, 200) };
-  const settled = await client.rpc("settle_job_atomic", { p_job_id: input.jobId, p_points_cap: AGENT_JOB_POINTS_CAP, p_result_file_id: input.resultPath });
+  const stage = input.stage;
+  const settled = stage
+    ? await client.rpc("settle_job_by_stage_atomic", { p_job_id: input.jobId, p_units: { base: stage.counts.base, estimated: stage.counts.estimated }, p_points_cap: AGENT_JOB_POINTS_CAP, p_result_file_id: input.resultPath })
+    : await client.rpc("settle_job_atomic", { p_job_id: input.jobId, p_points_cap: AGENT_JOB_POINTS_CAP, p_result_file_id: input.resultPath });
   if (settled?.error) return { ok: false, code: "settle_failed", detail: String(settled.error.message ?? settled.error.code ?? "").slice(0, 200) };
-  const expected = settlementCharge({ deliveredUnits: delivered, unitPricePoints: input.unitPricePoints, reservedPoints: input.reservedPoints });
+  const expected = stage
+    ? { chargedPoints: settlementChargeByStage(stage.counts, stage.units, input.unitPricePoints, input.reservedPoints) }
+    : settlementCharge({ deliveredUnits: delivered, unitPricePoints: input.unitPricePoints, reservedPoints: input.reservedPoints });
   const charged = Number(settled.data?.charged_credits ?? 0);
   const released = refundedPointsFromSettle(settled.data);
   return { ok: true, kind: "settled", chargedPoints: charged, releasedPoints: released, expectedChargedPoints: expected.chargedPoints, matchesExpectation: charged === expected.chargedPoints };
