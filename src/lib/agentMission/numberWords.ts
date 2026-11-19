@@ -123,16 +123,57 @@ export function writtenElsewhere(message: string, cited: string, n: number): boo
   return said(rest) >= 1 || (n === 2 && rest.split(" ").some((t) => t !== "" && !/^و?ال/.test(t) && countOfWords(t) === 2));
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// WORDS AS THE ARABIC WRITES THEM (DT-20261118-08 FIX4): a digit glued to its noun («٥شركات»), a noun with the one-letter words that join it to the word before («لشركتين»، «بشركتين»، «وشركتين»)
+// or the article («الشركتين»، «للشركتين»). Grammar of the language; no word of any service, provider or company is named here.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/** The words of a text as tokens: normalised, a digit run split from the letters glued to it. */
+export const tokensOf = (text: string): string[] => normalizeWords(text).replace(/(\d)(?=\p{L})/gu, "$1 ").replace(/(\p{L})(?=\d)/gu, "$1 ").split(" ").filter((t) => t !== "");
+/** The ways an Arabic word can start with what is joined to it: [و|ف] then [ل|ب|ك|ال|لل|بال|كال]. */
+const PROCLITICS: string[] = (() => { const out: string[] = []; for (const a of ["", "و", "ف"]) for (const b of ["", "ل", "ب", "ك", "ال", "لل", "بال", "كال"]) out.push(a + b); return out.sort((x, y) => y.length - x.length); })();
+/** The word without what is joined to its front (kept when too little would be left). */
+const bareOf = (t: string): string => { for (const p of PROCLITICS) if (p !== "" && t.startsWith(p) && t.length - p.length >= 3) return t.slice(p.length); return t; };
+/** The root of a noun for comparing it with another form of the same noun («مديرين»، «المديرين»، «لمديرين» → «مدير»): no clitic, no plural or dual or feminine ending. */
+const stemOf = (t: string): string => { const b = bareOf(t); for (const e of ["ون", "ين", "ان", "ات", "ه", "ي", "و"]) if (b.endsWith(e) && b.length - e.length >= 3) return b.slice(0, -e.length); return b; };
+const sameStem = (a: string, b: string): boolean => { const x = stemOf(a), y = stemOf(b); return x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)); };
+
 /**
  * The number that words the model cited say, when they are really in the message (DT-20261118-08 FIX2: the count of the COMPANIES the customer wrote, cited by the model when it wrote no company step, e.g. «cannot»).
- * Digits in the words, one number word, or the Arabic dual (grammar, no word list); two numbers or none: null.
+ * Digits in the words, one number word, or the Arabic dual (grammar, no word list); two numbers or none: null. The cited words must stand in the message as WHOLE words (FIX3: «5» is not inside «50», «خمس» is not
+ * inside «خمسين»); the first of them may carry what is joined to the front of an Arabic word («وخمس شركات»، «لشركتين») and a digit may be glued to its noun («٥شركات») (FIX4).
  */
 export function countWrittenIn(message: string, cited: string | null): number | null {
-  const words = normalizeWords(cited ?? "");
-  // the cited words must stand in the message as WHOLE words (FIX3, Gate 2 r3 P2): «5» is not inside «50», «خمس» is not inside «خمسين»; the Arabic «و» that joins a word to the one before it is allowed
-  const padded = ` ${normalizeWords(message)} `;
-  if (words === "" || !(padded.includes(` ${words} `) || padded.includes(` و${words} `))) return null;
+  const w = tokensOf(cited ?? "");
+  const m = tokensOf(message);
+  if (w.length === 0 || !m.some((_, i) => w.every((t, k) => (k === 0 ? PROCLITICS.some((p) => m[i] === p + t) : m[i + k] === t)))) return null;
+  const words = w.join(" ");
   const digits = writtenNumbers(words);
   if (digits.length > 0) return digits.length === 1 ? digits[0] : null;
   return countOfWords(words);
+}
+
+/**
+ * IS THIS NUMBER THE COUNT OF SOME OTHER NOUN, NOT OF THE PEOPLE? (DT-20261118-08 FIX4.) Asked only when the count of the companies could not be established: the number the model cites for each company may then be the
+ * companies' own, copied. By the grammar of Arabic counting, a number is a count of a noun when the noun follows it («٥٠ شركة»، «٥شركات»), or when it is the dual form alone («شركتين»، «لشركتين»). Such a span counts
+ * ANOTHER noun unless the noun is the people's own (same root as the people's title the planner wrote: «٣ مديرين» under «المديرين»). A bare number («اتنين»، «٣») or a span that is a phrase («٣ من كل شركة») is a per-company amount;
+ * for a bare number the message is read: it is another noun's count when EVERY place the message writes that number is such a span (the word after it is a noun of 4 letters or more, which no preposition is, and not the people's).
+ */
+export function isCountOfOtherNoun(message: string, cited: string, n: number, peopleTitle: string): boolean {
+  const people = tokensOf(peopleTitle);
+  const isPeople = (t: string): boolean => people.some((p) => sameStem(t, p));
+  const isNumber = (t: string): boolean => /^\d+$/.test(t) || wordNumbersIn(t, 1).length > 0;
+  const numberOf = (t: string): number | null => (/^\d+$/.test(t) ? Number(t) : (wordNumbersIn(t, 1)[0] ?? null));
+  const isDual = (t: string): boolean => !isNumber(t) && countOfWords(bareOf(t)) === 2;
+  const nouns = tokensOf(cited).filter((t) => !isNumber(t));
+  if (nouns.length === 1) return !isPeople(nouns[0]);
+  if (nouns.length >= 2) return false;
+  const m = tokensOf(message);
+  let seen = 0;
+  let counting = 0;
+  m.forEach((t, i) => {
+    const next = m[i + 1];
+    if (isNumber(t) && numberOf(t) === n) { seen += 1; if (next !== undefined && !isNumber(next) && bareOf(next).length >= 4 && !isPeople(next)) counting += 1; }
+    else if (n === 2 && isDual(t)) { seen += 1; if (!isPeople(t)) counting += 1; }
+  });
+  return seen > 0 && counting === seen;
 }

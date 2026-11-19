@@ -3,7 +3,7 @@ import { loadTregCatalog, isSellable } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { PEOPLE_OF_COMPANY_CAPABILITIES, peopleSourcesForCompanies, understoodPeopleOf } from "../src/lib/agentMission/childSources";
 import { DEFAULT_PEOPLE_PER_PARENT } from "../src/lib/agentMission/quantity";
-import { countWrittenIn } from "../src/lib/agentMission/numberWords";
+import { countWrittenIn, isCountOfOtherNoun } from "../src/lib/agentMission/numberWords";
 import { customerPlanView, validateAndPricePlan, type PlanLookup } from "../src/lib/agentMission/plan";
 import { customerSaidOf, planWithLlm, withCheckedPerCompany, type LlmPlannerDeps, type LlmPlannerInput, type PlannerModel } from "../agent/src/llmPlanner/planner";
 import { UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "../agent/src/llmPlanner/prompts";
@@ -172,14 +172,15 @@ describe("FIX3: when the company count cannot be established, the per-company co
     expect(got.card).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
     expect(got.rows).toBe(DEFAULT_PEOPLE_PER_PARENT);
   });
-  it("the same rule on the STEP path: a parent step with no total (all the companies) and a people step's per_parent 2: dropped; with the company count known the step keeps what the customer wrote", () => {
-    const allCompanies = { ...companiesStep, count: { total: null, all: true } };
-    const noTotal = withCheckedPerCompany({ ...(answerOf({ per_company: 2, per_company_text: "اتنين" }, []) as object), steps: [{ ...allCompanies, parent: null }, { ...peopleStep(2), parent: "companies" }] } as never, ["عايز كل الشركات ومن كل شركة اتنين من الإدارة العليا"]);
-    expect(noTotal.steps[1].count.per_parent).toBeNull();
-    expect(noTotal.people_of_companies!.per_company).toBeNull();
-    const known = withCheckedPerCompany({ ...(answerOf({ per_company: 2, per_company_text: "اتنين" }, []) as object), steps: [{ ...companiesStep, parent: null, count: { total: 5, all: false } }, { ...peopleStep(2), parent: "companies" }] } as never, ["عايز ٥ شركات ومن كل شركة اتنين من الإدارة العليا"]);
-    expect(known.steps[1].count.per_parent).toBe(2);
-    expect(known.people_of_companies!.per_company).toBe(2);
+  it("the same rule on the STEP path (FIX4 narrows it): a parent step with no total — what the customer wrote as the amount per company is kept (step and answer); a dual copied from the companies is dropped", () => {
+    const parent = { ...companiesStep, parent: null, count: { total: null, all: true } };
+    const run = (words: string, per: number, text: string) => withCheckedPerCompany({ ...(answerOf({ per_company: per, per_company_text: text }, []) as object), steps: [parent, { ...peopleStep(per), parent: "companies" }] } as never, [words]);
+    const kept = run("عايز كل الشركات ومن كل شركة اتنين من الإدارة العليا", 2, "اتنين");
+    expect(kept.steps[1].count.per_parent).toBe(2);
+    expect(kept.people_of_companies!.per_company).toBe(2);
+    const copied = run("عايز شركتين مقاولات ومعاهم الإدارة العليا", 2, "شركتين");
+    expect(copied.steps[1].count.per_parent).toBeNull();
+    expect(copied.people_of_companies!.per_company).toBeNull();
   });
   it("the control: companies_text filled and in the message — a legit «٣ شركات … ٣ مديرين» is kept (written twice), and so is a different per-company count; the card has no «لم تحدد» line", async () => {
     const same = await cardOf({ words: ["عايز ٣ شركات مقاولات ومن كل شركة ٣ من الإدارة العليا"] }, answerOf({ per_company: 3, per_company_text: "٣", companies_text: "٣ شركات" }, [], "cannot"));
@@ -202,8 +203,90 @@ describe("FIX3 (Gate 2 r3 P2-1): the words cited for the companies must stand in
     expect(countWrittenIn("عايز ٥ شركات", "٥ شركات")).toBe(5);
     expect(countWrittenIn("عايز شركتين مقاولات", "شركتين")).toBe(2);
   });
-  it("a company count the model cites for a number that is only PART of a bigger number is not a known count: the per-company count is then «not given»", () => {
-    const per = withCheckedPerCompany({ ...(answerOf({ per_company: 3, per_company_text: "٣", companies_text: "٥" }, [], "cannot") as object), steps: [] } as never, ["عايز ٥٠ شركة ومن كل شركة ٣ من الإدارة العليا"]).people_of_companies!.per_company;
-    expect(per).toBeNull();
+  it("a company count the model cites for a number that is only PART of a bigger number is not a known count (FIX4: the amount per company is then judged by its own words: «٣ من كل شركة» is kept, «٥» counted next to «شركة» is not)", () => {
+    const run = (per: number, text: string) => withCheckedPerCompany({ ...(answerOf({ per_company: per, per_company_text: text, companies_text: "٥" }, [], "cannot") as object), steps: [] } as never, ["عايز ٥٠ شركة ومن كل شركة ٣ من الإدارة العليا"]).people_of_companies!.per_company;
+    expect(run(3, "٣")).toBe(3);
+    expect(run(50, "٥٠ شركة")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// FIX4 (QA on FIX3, Gate 2 r3): the fail-safe is NARROW — only a count that is itself the count of another noun (the companies) is distrusted when the company count is unknown
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+describe("FIX4: with no company count, a number counting ANOTHER noun is dropped; the amount per company the customer wrote is kept", () => {
+  const stripped = (card: string[]) => card.filter((l) => l.startsWith("لم تحدد عدد"));
+  it("(a) the QA FIX2 case: «شركتين» cited, cannot, no steps, companies_text empty → default + «فاعتمدنا»", async () => {
+    const got = await cardOf({ words: [REQUEST] }, answerOf({ per_company: 2, per_company_text: "شركتين" }, [], "cannot"));
+    expect(got.people?.per_parent).toBeNull();
+    expect(got.card).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+  });
+  it("(b) the QA FIX3 case: «عايز كل الشركات والمديرين فيهم» + the answer «اتنين من كل شركة», parent total null, per_company 2 «اتنين», a people step per_parent 2, companies_text empty → kept 2 (step and answer), no «لم تحدد» line", async () => {
+    const parent = { ...companiesStep, count: { total: null, all: true } };
+    const r = withCheckedPerCompany({ ...(answerOf({ title_ar: "المديرين", per_company: 2, per_company_text: "اتنين" }, [parent, { ...peopleStep(2), parent: "companies" }]) as object), steps: [{ ...parent, parent: null }, { ...peopleStep(2), parent: "companies" }] } as never, ["عايز كل الشركات والمديرين فيهم", "اتنين من كل شركة"]);
+    expect(r.steps[1].count.per_parent).toBe(2);
+    expect(r.people_of_companies!.per_company).toBe(2);
+    // at card level, with the company count written in words that the model left out of the step and of companies_text
+    const got = await cardOf({ words: [REQUEST], question: "كام شخص من كل شركة؟", answer: "اتنين من كل شركة" }, answerOf({ per_company: 2, per_company_text: "اتنين" }, [{ ...companiesStep, count: { total: null, all: true } }, peopleStep(2)]));
+    expect(got.people).toMatchObject({ per_parent: 2 });
+    expect(stripped(got.card)).toEqual([]);
+    expect(got.rows).toBe(2);
+  });
+  it("(c) «٥٠ شركة» cited (and the bare «٥٠» that the message writes only next to «شركة») → default + «فاعتمدنا»", async () => {
+    for (const cited of ["٥٠ شركة", "٥٠"]) {
+      const got = await cardOf({ words: ["عايز ٥٠ شركة مقاولات ومعاهم الإدارة العليا"] }, answerOf({ per_company: 50, per_company_text: cited }, [], "cannot"));
+      expect(got.people?.per_parent, cited).toBeNull();
+      expect(got.card, cited).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+    }
+  });
+  it("(d) «عايز مديرين ٣ من كل شركة مقاولات», no company count: 3 is kept, whether the model cites «٣», «٣ من كل شركة» or «مديرين ٣»", () => {
+    for (const cited of ["٣", "٣ من كل شركة", "مديرين ٣"]) {
+      const per = withCheckedPerCompany({ ...(answerOf({ title_ar: "المديرين", per_company: 3, per_company_text: cited }, [], "cannot") as object), steps: [] } as never, ["عايز مديرين ٣ من كل شركة مقاولات"]).people_of_companies!.per_company;
+      expect(per, cited).toBe(3);
+    }
+  });
+  it("(d) a cited PHRASE («٣ مديرين من كل شركة») is the amount per company even when the people's title shares no root with its noun", () => {
+    const per = withCheckedPerCompany({ ...(answerOf({ title_ar: "الإدارة العليا", per_company: 3, per_company_text: "٣ مديرين من كل شركة" }, [], "cannot") as object), steps: [] } as never, ["عايز ٣ مديرين من كل شركة مقاولات"]).people_of_companies!.per_company;
+    expect(per).toBe(3);
+  });
+  it("(d) at card level: «عايز الإدارة العليا ٣ من كل شركة مقاولات» → 3 people each, no «لم تحدد» line", async () => {
+    const got = await cardOf({ words: ["عايز الإدارة العليا ٣ من كل شركة مقاولات"] }, answerOf({ per_company: 3, per_company_text: "٣" }, [], "cannot"));
+    expect(got.people).toMatchObject({ per_parent: 3 });
+    expect(stripped(got.card)).toEqual([]);
+    expect(got.rows).toBe(3);
+  });
+  it("BUG HUNTER R1/R3: «عايز شركات مقاولات في الرياض ومن كل شركة ٣ مديرين» (cited «٣ مديرين» under «المديرين»), and the 3 given in an answer → kept 3", () => {
+    const run = (said: string[], cited: string) => withCheckedPerCompany({ ...(answerOf({ title_ar: "المديرين", per_company: 3, per_company_text: cited }, [], "cannot") as object), steps: [] } as never, said).people_of_companies!.per_company;
+    expect(run(["عايز شركات مقاولات في الرياض ومن كل شركة ٣ مديرين"], "٣ مديرين")).toBe(3);
+    expect(run(["عايز شركات مقاولات في الرياض ومعاهم المديرين", "٣"], "٣")).toBe(3);
+    expect(run(["عايز شركات مقاولات في الرياض ومن كل شركة لمديرين ٣"], "لمديرين ٣")).toBe(3);
+  });
+  it("BUG HUNTER P2: the dual with a joined letter or the article, and a digit glued to its noun, are still counts of the companies → dropped, default + «فاعتمدنا»", async () => {
+    const cases: Array<[string, number, string]> = [
+      ["عايز مقاولات لشركتين ومعاهم الإدارة العليا", 2, "لشركتين"],
+      ["عايز مقاولات بشركتين ومعاهم الإدارة العليا", 2, "بشركتين"],
+      ["عايز مقاولات للشركتين ومعاهم الإدارة العليا", 2, "للشركتين"],
+      ["عايز ٥شركات مقاولات ومعاهم الإدارة العليا", 5, "٥شركات"],
+    ];
+    for (const [words, per, cited] of cases) {
+      const got = await cardOf({ words: [words] }, answerOf({ per_company: per, per_company_text: cited }, [], "cannot"));
+      expect(got.people?.per_parent, cited).toBeNull();
+      expect(got.card, cited).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+    }
+  });
+  it("(e) the controls: «٣ شركات … ٣ مديرين» kept with the companies' words, «5» is not inside «50», and the glued/joined forms are found for the companies' own count", () => {
+    expect(withCheckedPerCompany({ ...(answerOf({ per_company: 3, per_company_text: "٣", companies_text: "٣ شركات" }, [], "cannot") as object), steps: [] } as never, ["عايز ٣ شركات مقاولات ومن كل شركة ٣ من الإدارة العليا"]).people_of_companies!.per_company).toBe(3);
+    expect(countWrittenIn("عايز 50 شركة", "5")).toBeNull();
+    expect(countWrittenIn("عايز ٥شركات مقاولات", "٥ شركات")).toBe(5);
+    expect(countWrittenIn("عايز مقاولات لشركتين", "شركتين")).toBe(2);
+    expect(countWrittenIn("عايز مقاولات للشركتين", "الشركتين")).toBeNull();
+    expect(countWrittenIn("عايز مقاولات بشركتين", "بشركتين")).toBe(2);
+  });
+  it("isCountOfOtherNoun reads grammar, not words: a lone noun after a number or the dual alone is another noun's count unless it is the people's own noun; a bare number or a phrase is an amount", () => {
+    expect(isCountOfOtherNoun("عايز شركتين", "شركتين", 2, "المديرين")).toBe(true);
+    expect(isCountOfOtherNoun("عايز ٥٠ شركة", "٥٠ شركة", 50, "المديرين")).toBe(true);
+    expect(isCountOfOtherNoun("عايز ٣ مديرين", "٣ مديرين", 3, "المديرين")).toBe(false);
+    expect(isCountOfOtherNoun("عايز ٣ مديرين", "٣ مديرين", 3, "")).toBe(true);
+    expect(isCountOfOtherNoun("من كل شركة اتنين", "اتنين", 2, "المديرين")).toBe(false);
+    expect(isCountOfOtherNoun("اتنين من كل شركة", "٣ من كل شركة", 3, "المديرين")).toBe(false);
   });
 });
