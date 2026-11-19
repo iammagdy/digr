@@ -569,6 +569,10 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
  * phrase, in any state of the mission. Data cells (the samples) and file names are the customer's data, not messages, and are left as they are.
  */
 /** The headline when the model's own summary may not be shown (a Latin word the customer did not write): never an empty headline. */
+/** The header of a column whose own title may not be shown: a neutral Arabic label numbered by its place (never the column's internal key; FIX2). */
+export const columnLabelAr = (index: number): string => `عمود ${toArabicDigits(index + 1)}`;
+/** What a filter of the plan editor says when its own wording may not be shown (a Latin word the customer did not write; FIX2). */
+const FILTER_FALLBACK_AR = "تصفية محددة في طلبك.";
 export const NEUTRAL_HEADLINE_AR = "نجهّز لك البيانات التي طلبتها كما وصفتها.";
 
 export function guardViewText(v: CustomerMissionView, requestText = ""): CustomerMissionView {
@@ -593,7 +597,7 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     ...v,
     summaryAr: v.summaryAr !== null && v.summaryAr.trim() !== "" ? m(v.summaryAr) || NEUTRAL_HEADLINE_AR : nm(v.summaryAr), notesAr: list(v.notesAr), requestPartsAr: list(v.requestPartsAr), assumptionsAr: list(v.assumptionsAr), unservedAr: list(v.unservedAr), questionOptionsAr: answers(v.questionOptionsAr),
     stages: v.stages.map((s) => ({ ...s, titleAr: m(s.titleAr) || "مرحلة", noteAr: nm(s.noteAr) })),
-    samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr), columns: v.samples.columns.map((c) => ({ ...c, titleAr: m(c.titleAr) || c.key })) } : null,
+    samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr) || "مرحلة", columns: v.samples.columns.map((c, i) => ({ ...c, titleAr: m(c.titleAr) || columnLabelAr(i) })) } : null,
     fileContentsAr: nm(v.fileContentsAr), priceLineAr: nm(v.priceLineAr), priceFacts: (v.priceFacts ?? []).map((f) => ({ labelAr: m(f.labelAr), valueAr: m(f.valueAr) })), priceNoteAr: nm(v.priceNoteAr), priceExplainAr: list(v.priceExplainAr), countLinesAr: list(v.countLinesAr), headlineCountAr: nm(v.headlineCountAr ?? null),
     totalRowsAr: m(v.totalRowsAr), ...(v.fileRowsAr !== undefined ? { fileRowsAr: nm(v.fileRowsAr) } : {}), periodAr: nm(v.periodAr), expectedAr: nm(v.expectedAr), progressLineAr: nm(v.progressLineAr), collectLineAr: nm(v.collectLineAr),
     questionAr: nm(v.questionAr), queueLineAr: nm(v.queueLineAr),
@@ -601,12 +605,12 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     currentLineAr: m(v.currentLineAr), delayAr: nm(v.delayAr), remainingAr: nm(v.remainingAr), closePageAr: nm(v.closePageAr),
     resultLinesAr: list(v.resultLinesAr), resultSummaryAr: nm(v.resultSummaryAr), endLineAr: nm(v.endLineAr),
     ...(v.limit ? { limit: { ...v.limit, sentenceAr: nm(v.limit.sentenceAr), rowsAr: nm(v.limit.rowsAr) } } : {}),
-    // the plan editor: the stage and column titles and the labels are the model's words; the filter lines are code's, built from what the customer gave (their account, their words), so only the source-label rule applies to them
+    // the plan editor: titles, labels and the filter lines all go through m (a filter line is built from what the customer gave, so a word they wrote stays; any other Latin word or source label does not)
     edit: v.edit ? { ...v.edit, stages: v.edit.stages.map((s) => ({
       ...s, title_ar: m(s.title_ar) || "مرحلة", ...(s.per_parent_label_ar !== undefined ? { per_parent_label_ar: m(s.per_parent_label_ar) } : {}), ...(s.pages_label_ar !== undefined ? { pages_label_ar: m(s.pages_label_ar) } : {}),
       ...(s.replies ? { replies: { ...s.replies, label_ar: m(s.replies.label_ar) } } : {}),
-      columns: s.columns.map((c) => ({ ...c, title_ar: m(c.title_ar) || c.key })),
-      filters: s.filters.map((f) => ({ ...f, label_ar: withoutUnwrittenLabels(f.label_ar, [requestText]), line_ar: withoutUnwrittenLabels(f.line_ar, [requestText]) })),
+      columns: s.columns.map((c, i) => ({ ...c, title_ar: m(c.title_ar) || columnLabelAr(i) })),
+      filters: s.filters.map((f) => ({ ...f, label_ar: m(f.label_ar) || FILTER_FALLBACK_AR, line_ar: m(f.line_ar) || FILTER_FALLBACK_AR })),
     })) } : null,
   };
 }

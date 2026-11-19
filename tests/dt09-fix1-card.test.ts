@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
-import { NEUTRAL_HEADLINE_AR, customerMissionView, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
+import { NEUTRAL_HEADLINE_AR, customerMissionView, guardViewText, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { checkCustomerText } from "../src/lib/agentMission/text";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 import { customerPlanView } from "../src/lib/agentMission/plan";
 import { planWithLlm, type LlmPlannerDeps, type PlannerModel } from "../agent/src/llmPlanner/planner";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
@@ -72,6 +73,57 @@ describe("FIX1 item 2: no model-written string of the plan view reaches the cust
   it("a source label inside a stored sentence becomes «المصدر», the rest of the sentence stays", () => {
     const view = viewOf(row({ status: "completed", plan_public: poisonedPlan(), summary_ar: `اكتمل جمع الشركات من ${POISON_LABEL} كما طلبت`, delivered_units: 20, charged_points: 80 }));
     expect(view.resultSummaryAr).toBe("اكتمل جمع الشركات من المصدر كما طلبت");
+  });
+});
+
+// DT-20261118-09 FIX2 (QA FAIL on #578 head 4c08d6a6): a column title the guard drops fell back to the column's INTERNAL KEY («job_title») and the card drew it as a header
+describe("FIX2: a column title that may not be shown is replaced by a neutral Arabic label, never by the column's key", () => {
+  const withKeyedColumn = () => {
+    const p = poisonedPlan();
+    const last = p.stages[p.stages.length - 1];
+    last.columns = [...last.columns, { key: "job_title", title_ar: `مسمى ${POISON_LATIN}` }];
+    last.sample_rows = last.sample_rows.map((r: any) => ({ ...r, job_title: "مدير" }));
+    return p;
+  };
+  const headers = (v: ReturnType<typeof viewOf>): string[] => [...(v.samples?.columns ?? []).map((c) => c.titleAr), ...(v.edit?.stages ?? []).flatMap((s) => s.columns.map((c) => c.title_ar))];
+  it("the samples header and the plan editor's column: Arabic, no key, no «ceo»; the neutral label is numbered by the column's place so two dropped titles differ", () => {
+    const v = viewOf(row({ plan_public: withKeyedColumn() }));
+    expect(v.samples).not.toBeNull();
+    expect(v.edit).not.toBeNull();
+    const all = headers(v);
+    expect(all.length).toBeGreaterThan(2);
+    for (const h of all) { expect(h).toMatch(/[؀-ۿ]/); expect(h).not.toMatch(/[A-Za-z_]/); }
+    const jobAt = (v.samples!.columns as Array<{ key: string; titleAr: string }>).findIndex((c) => c.key === "job_title");
+    expect(jobAt).toBeGreaterThanOrEqual(0);
+    expect(v.samples!.columns[jobAt].titleAr).toBe(`عمود ${toArabicDigits(jobAt + 1)}`);
+    expect(new Set(v.samples!.columns.map((c) => c.titleAr)).size).toBe(v.samples!.columns.length);
+    expect(v.samples!.rows[0]).toHaveLength(v.samples!.columns.length);
+  });
+  it("no string of the whole view is snake_case or holds a Latin word (the internal keys are data fields, not messages)", () => {
+    for (const status of ["plan_ready", "completed", "needs_input"]) {
+      const v = viewOf(row({ status, question_ar: status === "needs_input" ? `هل ${POISON_LATIN}؟` : null, summary_ar: status === "completed" ? `اكتمل ${POISON_LATIN}` : null, delivered_units: status === "completed" ? 20 : null, charged_points: status === "completed" ? 80 : null, plan_public: withKeyedColumn() }));
+      const bad = stringsOf(v).filter(([path, text]) => !/(\.key|_key)$/.test(path) && !/\.kind$/.test(path) && !/\.(phase|status|state|lang|noun)$/.test(path) && /[A-Za-z]{2,}|[A-Za-z0-9]+_[A-Za-z0-9_]+/.test(text));
+      expect(bad.filter(([path]) => !/^view\.(files|samples\.rows)/.test(path)), status).toEqual([]);
+    }
+  });
+  it("a title the customer may see is kept as written: the same column with the request that wrote «ceo»", () => {
+    const v = viewOf(row({ plan_public: withKeyedColumn() }), [], `شركات مقاولات ${POISON_LATIN}`);
+    expect(v.samples!.columns.some((c) => c.titleAr === `مسمى ${POISON_LATIN}`)).toBe(true);
+  });
+});
+
+describe("FIX2 (Gate 2 r2 P2): the price facts and the filter lines of the editor go through the same check", () => {
+  it("a price fact and a filter wording that carry «ceo» or a source label the customer did not write are cleaned; the customer's own word stays", () => {
+    const base = viewOf(row({ plan_public: poisonedPlan() }));
+    const dirty = { ...base, priceFacts: [{ labelAr: `سعر ${POISON_LATIN}`, valueAr: `٣٠٠ نقطة من ${POISON_LABEL}` }, { labelAr: "حجز مؤقت", valueAr: "٣٧٤ نقطة" }], edit: base.edit ? { ...base.edit, stages: base.edit.stages.map((s) => ({ ...s, filters: [{ kind: "period" as const, label_ar: `فترة ${POISON_LATIN}`, enabled: true, line_ar: `من ${POISON_LABEL} فقط` }] })) } : null };
+    const g = guardViewText(dirty, REQUEST);
+    expect(g.priceFacts).toEqual([{ labelAr: "", valueAr: "٣٠٠ نقطة من المصدر" }, { labelAr: "حجز مؤقت", valueAr: "٣٧٤ نقطة" }]);
+    const filters = g.edit!.stages.flatMap((s) => s.filters);
+    expect(filters.length).toBeGreaterThan(0);
+    for (const f of filters) expect(`${f.label_ar} ${f.line_ar}`).not.toMatch(/ceo|جوجل/);
+    expect(filters[0].line_ar).toBe("من المصدر فقط");
+    const own = guardViewText(dirty, `${REQUEST} ${POISON_LATIN}`);
+    expect(own.priceFacts[0].labelAr).toBe(`سعر ${POISON_LATIN}`);
   });
 });
 

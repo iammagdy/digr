@@ -10,6 +10,7 @@ import { g1 } from "./helpers/g1World";
  * rows and points of the mission and of the plan's price; every number, by its path. The text of a summary and the ids and hashes derived from it are strings and are not compared (DT-09 changed a headline, and the quote id and
  * hash hash that headline). The «before» numbers (tests/fixtures/dt09-money-before.json) were written by this very file on `origin/main` cb11ecb1: DT09_WRITE_MONEY_BEFORE=1 npx vitest run tests/dt09-money-unchanged.test.ts
  * A change of any amount, in any of the worlds, fails the test with the paths that moved.
+ * LIMITS (Gate 2 r2 P2): the real settlement SQL (settle_job_atomic) is NOT exercised here (the worlds run on the money fake), and a pricing branch these worlds never reach (the legacy price function's reserve margin, the settlement's min()) is not covered by this proof.
  */
 const FIXTURE = new URL("./fixtures/dt09-money-before.json", import.meta.url);
 const LIVE_7539 = "عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار";
