@@ -374,8 +374,11 @@ export function createGateway(deps: GatewayDeps) {
           const observedNoRoom = gated.proceed && gated.reservationId === null && roomReason(gated.observedRefusal) && candidates.some((c) => c.attempts * c.perRequest < perRequest * attempts);
           if (!gated.proceed || observedNoRoom) {
             // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
-            await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
+            // F5 (Gate 2): the daily reservation is released AND the release is acknowledged (one more try when it is not) before a smaller amount is tried; an unconfirmed release stops the ladder, so no stale pending row is ever followed by another
+            const releaseArgs = { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed" as const, durationMs: 0, jobId: deps.jobId };
+            const released = (await commit(deps.client, releaseArgs)) !== false || (await commit(deps.client, releaseArgs)) !== false;
             reholdAll(held, was); held = was;
+            if (!released) { settleHeld(held, 0); return refuse(id, endpointId, trace, "spend_gate", "release_unconfirmed"); }
             const reason = gated.proceed ? gated.observedRefusal : gated.reason;
             // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
             if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }

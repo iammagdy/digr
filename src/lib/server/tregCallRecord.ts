@@ -24,8 +24,9 @@ export function tregCallStatusOf(result: { ok: boolean; rows?: unknown[] | null 
 export async function commitTregSpend(
   client: any,
   args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: CallStatus; durationMs: number; jobId: string | null; keyRef?: CallRecord["keyRef"] },
-): Promise<void> {
-  if (args.costId === null || args.costId === undefined) return;
+): Promise<boolean> {
+  // DT-20261119-11 F5: returns true only when the cost row was really committed (by the v2 function or by the old one); a caller that must know the release was acknowledged reads it. Every existing caller may ignore it.
+  if (args.costId === null || args.costId === undefined) return true;
   const units = Math.max(0, Math.floor(Number(args.units) || 0));
   const costUsd = Math.max(0, Number(args.costUsd) || 0);
   try {
@@ -39,15 +40,17 @@ export async function commitTregSpend(
       jobId: args.jobId,
       ...(args.keyRef ? { keyRef: args.keyRef } : {}),
     });
-    return;
+    return true;
   } catch (e: any) {
     console.warn("[worker:provider_commit_v2_failed]", e?.code || "", String(e?.message || "").slice(0, 120));
   }
   // The same amount through the existing function; its own error is logged and never changes the job's outcome (as before).
   try {
     const { error } = await client.rpc("commit_provider_spend", { p_cost_id: args.costId, p_actual_cost_usd: costUsd, p_units: units });
-    if (error) console.warn("[worker:provider_commit_failed]", error?.code || "", String(error?.message || "").slice(0, 120));
+    if (error) { console.warn("[worker:provider_commit_failed]", error?.code || "", String(error?.message || "").slice(0, 120)); return false; }
+    return true;
   } catch (e: any) {
     console.warn("[worker:provider_commit_failed]", String(e?.message || "").slice(0, 120));
+    return false;
   }
 }
