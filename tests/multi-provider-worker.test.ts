@@ -177,7 +177,7 @@ vi.mock("../src/lib/supabase/server", () => ({
         const settledJob = db.jobs.find((j) => j.id === args.p_job_id);
         db.resultExistedAtSettle.push(db.results.has(`user_1/${args.p_job_id}/result.xlsx`));
         const charged = Math.min(Math.ceil(db.deliveredUnits * db.unitPrice), db.reserved);
-        // like the SQL (20261017175500_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
+        // like the SQL (20261017181338_settle_completed_jobs_with_stale_lease.sql :27-30 and :128): a job that is already completed answers already_settled and charges nothing again; the first settlement marks the job completed
         if (settledJob?.status === "completed") return { data: { success: true, already_settled: true, reserved_credits: db.reserved, charged_credits: settledJob.charged_credits ?? charged, delivered_units: db.deliveredUnits }, error: null };
         if (settledJob && settledJob.status !== "running") return { data: null, error: { message: `Cannot settle job ${args.p_job_id} with status ${settledJob.status} (must be running)` } };
         if (settledJob) {

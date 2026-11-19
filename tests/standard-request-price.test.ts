@@ -57,7 +57,7 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(p.price.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
   });
   // CHANGED (DT-20261118-03 fix round 1, BUG HUNTER Gate 2 P0; Megz D-0085 and its addendum): the daily cap is ONE number for all of TREG, every vendor together (agent/src/gateway.ts:295 reserves under provider «treg»;
-  // supabase/migrations/20261016205259_fix_provider_spend_scope.sql:19-26 sums every TREG cost against it). With the 0.05 USD phone chain a standard request expects about 56% of the 0.80 USD cap and may plan up to about 145% of it:
+  // supabase/migrations/20261016205309_fix_provider_spend_scope.sql:19-26 sums every TREG cost against it). With the 0.05 USD phone chain a standard request expects about 56% of the 0.80 USD cap and may plan up to about 145% of it:
   // two such requests a day use up the default cap (accepted in the D-0085 addendum; the cap is raised in admin). Before: expected < 1/3 and worst < 2/3 of the cap.
   it("the EXPECTED TREG cost is under 60% of the TREG-wide daily cap (0.80 USD), and even the WORST case (every person goes through every finder, every page is read) is under 150% of it and inside the job's own call budget", () => {
     const p = priced();

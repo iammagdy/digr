@@ -255,9 +255,9 @@ describe("limits and constants: where the per-job cap and the Facebook ceilings 
   const read = (file: string) => readFileSync(file, "utf8");
   it("the points cap is 25,000 in the one TypeScript constant; the repository migrations still say 600 (what is live) and the proposal says 25000 in the three SQL functions that hold it", () => {
     expect(JOB_MAX_POINTS_CAP).toBe(25000);
-    expect(read("supabase/migrations/20261017180000_create_quote_atomic.sql")).toMatch(/v_cap numeric := 600;/);
-    expect(read("supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql")).toMatch(/p_points_cap numeric DEFAULT 600/);
-    expect(read("supabase/migrations/20261017181000_settle_decision_maker_fields.sql")).toMatch(/COALESCE\(p_points_cap,600\), 600/);
+    expect(read("supabase/migrations/20261017181346_create_quote_atomic.sql")).toMatch(/v_cap numeric := 600;/);
+    expect(read("supabase/migrations/20261017181338_settle_completed_jobs_with_stale_lease.sql")).toMatch(/p_points_cap numeric DEFAULT 600/);
+    expect(read("supabase/migrations/20261017184147_settle_decision_maker_fields.sql")).toMatch(/COALESCE\(p_points_cap,600\), 600/);
     expect(read("docs/proposals/job-cap-25000/04_create_quote_atomic_cap_25000.sql")).toMatch(/v_cap numeric := 25000;/);
     expect(read("docs/proposals/job-cap-25000/01_settle_job_atomic_cap_25000.sql")).toMatch(/p_points_cap numeric DEFAULT 25000/);
     expect(read("docs/proposals/job-cap-25000/02_settle_people_job_atomic_cap_25000.sql")).toMatch(/COALESCE\(p_points_cap,25000\), 25000/);
@@ -275,9 +275,9 @@ describe("limits and constants: where the per-job cap and the Facebook ceilings 
   it("the proposal's file:line references still point at the constants they name", () => {
     const lineOf = (file: string, needle: string) => read(file).split("\n").findIndex((line) => line.includes(needle)) + 1;
     expect(lineOf("src/lib/jobPointsCap.ts", "export const JOB_MAX_POINTS_CAP = 25_000;")).toBe(13);
-    expect(lineOf("supabase/migrations/20261017180000_create_quote_atomic.sql", "v_cap numeric := 600;")).toBe(19);
-    expect(lineOf("supabase/migrations/20261017181000_settle_decision_maker_fields.sql", "COALESCE(p_points_cap,600), 600")).toBe(75);
-    expect(lineOf("supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql", "LEAST(v_raw_charge, v_job.reserved_credits, p_points_cap)")).toBe(98);
+    expect(lineOf("supabase/migrations/20261017181346_create_quote_atomic.sql", "v_cap numeric := 600;")).toBe(19);
+    expect(lineOf("supabase/migrations/20261017184147_settle_decision_maker_fields.sql", "COALESCE(p_points_cap,600), 600")).toBe(75);
+    expect(lineOf("supabase/migrations/20261017181338_settle_completed_jobs_with_stale_lease.sql", "LEAST(v_raw_charge, v_job.reserved_credits, p_points_cap)")).toBe(98);
     expect(lineOf("src/functions/shared/planManager.ts", "const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);")).toBe(630);
     expect(lineOf("src/lib/socialSources.ts", "maxRows: FACEBOOK_JOB_CEILINGS.posts,")).toBe(612);
     expect(lineOf("src/lib/socialSources.ts", "export const MAX_TOP_PER_CHANNEL = 20;")).toBe(660);

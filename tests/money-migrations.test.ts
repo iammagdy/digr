@@ -5,7 +5,7 @@ const migration = (name: string) => readFileSync(`supabase/migrations/${name}`, 
 
 describe("review-only money migrations", () => {
   it("removes stale registry endpoints and registers the six code-served social capabilities", () => {
-    const sql = migration("20261017175000_cleanup_capability_registry_social.sql");
+    const sql = migration("20261017181323_cleanup_capability_registry_social.sql");
     for (const slug of [
       "social-tiktok-comments", "social-youtube-comments", "social-facebook-comments",
       "social-tiktok-videos", "social-youtube-videos", "social-facebook-posts",
@@ -17,7 +17,7 @@ describe("review-only money migrations", () => {
   });
 
   it("defines quote creation as a service-role-only atomic function with cap and input checks", () => {
-    const sql = migration("20261017180000_create_quote_atomic.sql");
+    const sql = migration("20261017181346_create_quote_atomic.sql");
     expect(sql).toContain("CREATE OR REPLACE FUNCTION public.create_quote_atomic(");
     expect(sql).toContain("SECURITY DEFINER");
     expect(sql).toContain("SET search_path = public");
@@ -29,7 +29,7 @@ describe("review-only money migrations", () => {
   });
 
   it("keeps top-up approval and ledger credit in one transaction with the required function grants", () => {
-    const sql = migration("20261017180500_approve_topup_atomic_privileges.sql");
+    const sql = migration("20261017181352_approve_topup_atomic_privileges.sql");
     expect(sql).toContain("CREATE OR REPLACE FUNCTION public.approve_topup_atomic(");
     expect(sql).toContain("FOR UPDATE");
     expect(sql).toContain("INSERT INTO public.credit_ledger");
@@ -39,7 +39,7 @@ describe("review-only money migrations", () => {
   });
 
   it("only retires an active lease after collection has reached a persisted terminal cursor or target", () => {
-    const sql = migration("20261017175500_settle_completed_jobs_with_stale_lease.sql");
+    const sql = migration("20261017181338_settle_completed_jobs_with_stale_lease.sql");
     expect(sql).toContain("v_job.current_cursor = 'completed'");
     expect(sql).toContain("v_job.delivered_units, 0) >= v_job.target_volume_max");
     expect(sql).toContain("Cannot settle job % while active chunk lease is held until %");
