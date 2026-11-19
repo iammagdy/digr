@@ -17,6 +17,8 @@ import {
   EMAIL_LABEL_COMPANY_AR,
   EMAIL_LABEL_SHARED_AR,
   EMAIL_LABEL_DOMAIN_AR,
+  PHONE_TYPE_FAX_AR,
+  type OfficeLine,
   type ContactStep,
   type FinderInfo,
   type FoundContact,
@@ -407,6 +409,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const notTried = new Map<string, number>();
   // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
   const outcomes = new Map<string, number>();
+  // Old approved plans may contain a separate, already validated company lookup.
+  const legacyCompanyLookup = step.kind === "phone" && !!step.type_key && (step.company_phone ?? []).length > 0;
+  const rejected = new Map<string, { rejected: number; number_typed: number; scan_truncated: number }>();
   let stoppedBy: string | null = null;
   // the people this step was run for (the rest, when the run stopped, are counted as never reached)
   let reached = 0;
@@ -415,7 +420,6 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const companyAddresses = (parentId: string): Set<string> => new Set(Object.values(items.acceptedRows(stage.parent_key ?? "").find((r) => String(r.id) === parentId) ?? {}).map(addressOf).filter(isAddress));
   const isCompanyAddress = (parentId: string, v: unknown): boolean => step.kind === "email" && stage.parent_key !== null && companyAddresses(parentId).has(addressOf(v));
-  /** The company addresses of this stage. */
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
@@ -484,6 +488,13 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let stopRun: ContactStop | null = null;
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
+      const priorType = step.type_key ? String(row[step.type_key] ?? "").trim() :
+        existingStatus.split(" — ").find((part) => part === PHONE_TYPE_COMPANY_AR || part === PHONE_TYPE_FAX_AR) ?? "";
+      const priorOffice: OfficeLine | null = step.kind === "phone" && existing !== "" &&
+        (priorType === PHONE_TYPE_COMPANY_AR || priorType === PHONE_TYPE_FAX_AR) &&
+        !(legacyCompanyLookup && priorType === PHONE_TYPE_COMPANY_AR && statusHead(existingStatus) === PHONE_STATUS_VERIFIED_AR)
+        ? { value: existing, type: priorType === PHONE_TYPE_FAX_AR ? "fax" : "company" } : null;
+      if (priorOffice) { existing = ""; existingStatus = ""; }
       let givenCompany: string | null = null;
       // an address the people source already gave that is the company's own is kept as company address before anything else (D-0118)
       if (existing !== "" && isCompanyAddress(String(row.parent_id ?? ""), existing)) {
@@ -508,14 +519,17 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let keptPersonal: { value: string; finderId: string; callId: string } | null = null;
       let keptCompany: { value: string; finderId?: string; callId?: string } | null = givenCompany ? { value: givenCompany } : null;
       let origin: { endpointId: string; callId: string } | null = null;
+      let keptOffice: (OfficeLine & { endpointId?: string; callId?: string }) | null = priorOffice;
+      let useOffice = false;
+      // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
+      const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}${outcome === "not_tried" && v ? `:${v}` : ""}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
+      // ONE PERSON NEVER COSTS MORE THAN THE CHAIN'S OWN PRICE FOR ONE PERSON (DT-20261118-05 item 4, no money change): the profile lookup and the alternates share it; a call billed on a hit counts only when it found something
+      const personCeilingUsd = step.finders.reduce((n, f) => n + f.usd, 0);
+      let personUsd = 0;
+      const affordable = (f: FinderInfo): boolean => personUsd + f.usd <= personCeilingUsd + 1e-9;
+      const spent = (f: FinderInfo, found: boolean): void => { if (f.bill === "call" || found) personUsd += f.usd; };
+      const officeTypeOf = (line: OfficeLine): string => line.type === "fax" ? PHONE_TYPE_FAX_AR : PHONE_TYPE_COMPANY_AR;
       if (value === "") {
-        // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
-        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}${outcome === "not_tried" && v ? `:${v}` : ""}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
-        // ONE PERSON NEVER COSTS MORE THAN THE CHAIN'S OWN PRICE FOR ONE PERSON (DT-20261118-05 item 4, no money change): the profile lookup and the alternates share it; a call billed on a hit counts only when it found something
-        const personCeilingUsd = step.finders.reduce((n, f) => n + f.usd, 0);
-        let personUsd = 0;
-        const affordable = (f: FinderInfo): boolean => personUsd + f.usd <= personCeilingUsd + 1e-9;
-        const spent = (f: FinderInfo, found: boolean): void => { if (f.bill === "call" || found) personUsd += f.usd; };
         // (c) THE PERSON'S PROFESSIONAL PAGE FIRST (item 4c): a person without one is looked up by name and company, so the finders that need the page can be asked
         if (step.kind === "phone" && facts.linkedin === null) {
           for (const finder of step.profile_lookup ?? []) {
@@ -533,74 +547,91 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             if (profile) { facts = { ...facts, linkedin: profile }; learned.set(String(row.id), { ...learned.get(String(row.id)), linkedin: profile }); break; }
           }
         }
-        // (b) THE CHAIN, THEN ITS ALTERNATES (item 4b): a finder the person cannot be asked by gives its turn to the next ranked finder of the catalog the person CAN be asked by; at most FINDERS_PER_STEP calls
-        let tried = 0;
-        const maxTries = Math.max(FINDERS_PER_STEP, step.finders.length);
-        const chain = [...step.finders, ...(step.alternates ?? []).filter((x) => !step.finders.some((f) => f.id === x.id))];
-        for (const finder of stopRun ? [] : chain) {
-          if (tried >= maxTries) break;
-          const params = finderParamsFor(finder, facts);
-          // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
-          if (!params) { const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
-          if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
-          tried += 1;
-          const a = await attempt(finder, params);
-          if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
-          if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
-          asked = true;
-          if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
-          const detail = foundContactDetailIn(step.kind, a.page);
-          hit = detail.found;
-          spent(finder, hit !== null);
-          let keptNow = false;
-          // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is kept as personal mailbox (D-0118)
-          if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") {
-            out.withheld.personal_email += 1;
-            if (!keptPersonal) keptPersonal = { value: hit.value, finderId: finder.id, callId: a.callId };
-            keptNow = true;
-            hit = null;
-          } else if (hit && step.kind === "email" && isCompanyAddress(parentId, hit.value)) {
-            if (!keptCompany) keptCompany = { value: hit.value, finderId: finder.id, callId: a.callId };
-            keptNow = true;
-            hit = null;
-          }
-          if (step.kind === "email" && detail.personalAlso) {
-            out.withheld.personal_email += 1;
-            if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
-          }
-          note(finder.id, (hit || keptNow) ? "value" : "empty", hit ? hit.value : undefined);
-          if (!hit) continue;
-          origin = { endpointId: finder.id, callId: a.callId };
-          value = hit.value;
-          if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;
-          break;
+      }
+      let tried = 0;
+      const maxTries = Math.max(FINDERS_PER_STEP, step.finders.length);
+      const chain = [...step.finders, ...(step.alternates ?? []).filter((x) => !step.finders.some((f) => f.id === x.id))];
+      for (const finder of chain) {
+        if (stopRun || value !== "" || tried >= maxTries) break;
+        const params = finderParamsFor(finder, facts);
+        // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
+        if (!params) { const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
+        if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
+        tried += 1;
+        const a = await attempt(finder, params);
+        if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
+        if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
+        asked = true;
+        if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
+        const detail = foundContactDetailIn(step.kind, a.page);
+        hit = detail.found;
+        spent(finder, hit !== null || detail.officeLine !== null);
+        if (detail.rejected || detail.numberTyped || detail.scanTruncated) {
+          rejected.set(`${finder.id}|${a.callId}`, { rejected: detail.rejected, number_typed: detail.numberTyped, scan_truncated: Number(detail.scanTruncated) });
         }
-        if (value === "") {
-          if (keptPersonal) {
-            value = keptPersonal.value;
+        let keptNow = false;
+        // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is kept as personal mailbox (D-0118)
+        if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") {
+          out.withheld.personal_email += 1;
+          if (!keptPersonal) keptPersonal = { value: hit.value, finderId: finder.id, callId: a.callId };
+          keptNow = true;
+          hit = null;
+        } else if (hit && step.kind === "email" && isCompanyAddress(parentId, hit.value)) {
+          if (!keptCompany) keptCompany = { value: hit.value, finderId: finder.id, callId: a.callId };
+          keptNow = true;
+          hit = null;
+        }
+        if (step.kind === "email" && detail.personalAlso) {
+          out.withheld.personal_email += 1;
+          if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
+        }
+        const office = !hit ? detail.officeLine : null;
+        if (office && !keptOffice) keptOffice = { ...office, endpointId: finder.id, callId: a.callId };
+        const hasAnswer = !!(hit || keptNow || office);
+        note(finder.id, hasAnswer ? "value" : "empty", hit?.value ?? office?.value);
+        if (!hit) continue;
+        origin = { endpointId: finder.id, callId: a.callId };
+        value = hit.value;
+        if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;
+        break;
+      }
+      if (value === "") {
+        if (keptPersonal) {
+          value = keptPersonal.value;
+          hit = { value, status: "unverified" };
+          origin = { endpointId: keptPersonal.finderId, callId: keptPersonal.callId };
+          labelAr = EMAIL_LABEL_PERSONAL_AR;
+        } else if (keptCompany) {
+          value = keptCompany.value;
+          hit = { value, status: "unverified" };
+          if (keptCompany.finderId && keptCompany.callId) origin = { endpointId: keptCompany.finderId, callId: keptCompany.callId };
+          labelAr = EMAIL_LABEL_COMPANY_AR;
+        }
+        if (value === "" && keptOffice) {
+          useOffice = true;
+          value = keptOffice.value;
+          typeAr = officeTypeOf(keptOffice);
+          if (keptOffice.endpointId && keptOffice.callId) {
             hit = { value, status: "unverified" };
-            origin = { endpointId: keptPersonal.finderId, callId: keptPersonal.callId };
-            labelAr = EMAIL_LABEL_PERSONAL_AR;
-          } else if (keptCompany) {
-            value = keptCompany.value;
-            hit = { value, status: "unverified" };
-            if (keptCompany.finderId && keptCompany.callId) origin = { endpointId: keptCompany.finderId, callId: keptCompany.callId };
-            labelAr = EMAIL_LABEL_COMPANY_AR;
+            origin = { endpointId: keptOffice.endpointId, callId: keptOffice.callId };
           }
         }
         // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
         // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
-        if (value === "" && step.kind === "phone" && step.type_key && (step.company_phone ?? []).length > 0) {
+        if (value === "" && legacyCompanyLookup) {
           const cp = await companyPhoneFor(parentId);
           if (cp.stop) { stopRun = cp.stop; }
           if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; if (cp.origin) origin = cp.origin; }
         }
-      } else if (step.kind === "phone" && step.type_key && String(row[step.type_key] ?? "").trim() === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
+      } else if (step.kind === "phone" && !hit && step.type_key && priorType === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
       if (value !== "") {
         if (step.kind === "email") {
           // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier (rate limit, failure, a thrown error, the budget) the verdict is «غير موثّق» and the cells below are still written (a verifier only ever improves the status)
           let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
-          try { verdict = await emailStatusOf(value, labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain); } catch { verdict = { status: "unverified", stop: null }; }
+          try {
+            const domain = labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain;
+            verdict = stopRun ? { status: emailOnOtherDomain(value, domain) ? "other_company" : "unverified", stop: null } : await emailStatusOf(value, domain);
+          } catch { verdict = { status: "unverified", stop: null }; }
           if (verdict.stop) stopRun = verdict.stop;
           if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
           statusAr = emailStatusAr(verdict.status);
@@ -611,21 +642,25 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
           else if (verdict.status === "verified") out.filled.verified += 1;
         } else {
-          // EVERY PHONE IS VALIDATED: «رقم من دولة أخرى» when its country is not the company's, «موثّق» only when a validator says the number is valid, «غير موثّق» otherwise
           const company = companyOf(parentId);
-          const checked = await phoneVerdictOf(value, company.country);
+          const mayValidate = !useOffice && (!stopRun || legacyCompanyLookup);
+          const checked = mayValidate ? await phoneVerdictOf(value, company.country) : { verdict: null, stop: null };
           if (checked.stop) stopRun = checked.stop;
-          if ((step.validators ?? []).length > 0) asked = true;
+          if (mayValidate && (step.validators ?? []).length > 0) asked = true;
           const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
           statusAr = phoneStatusAr(status);
-          if (status === "verified") out.filled.verified += 1; else if (hit || typeAr === PHONE_TYPE_COMPANY_AR) out.filled.unverified += 1;
+          if (keptOffice && !useOffice) statusAr = labelledStatus(statusAr, `${officeTypeOf(keptOffice)}: ${keptOffice.value}`);
+        else if (keptOffice && !step.type_key) statusAr = labelledStatus(statusAr, officeTypeOf(keptOffice));
+          if (status === "verified") out.filled.verified += 1; else if (hit || (!useOffice && typeAr === PHONE_TYPE_COMPANY_AR)) out.filled.unverified += 1;
         }
-        if (givenCompany) {
-          pending.push({ t: "clear", stage: step.stage_key, id: String(row.id), keys: [step.column_key, step.status_key] });
+        const id = String(row.id);
+        if (givenCompany || (priorOffice && !useOffice)) {
+          pending.push({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key,
+            ...(priorOffice ? [...(step.type_key ? [step.type_key] : []), contactSrcKey(step.column_key), contactCallKey(step.column_key)] : [])] });
         }
         const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
-        if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
+        if (hit || (!useOffice && existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
         // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
         if (step.kind === "email" && !labelAr && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
       }
@@ -670,6 +705,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
       // EVERY RUN writes it (DT-20261118-05 item 3), also when nobody could be asked: the next live run proves why a cell is empty
       await writeAttempts(deps, step, { outcomes, people: peopleCount, reached, stopped: stoppedBy ?? stop });
+      if (rejected.size > 0) await putInternalFile(deps, `contacts/rejected_${step.stage_key}_${step.kind}.json`, Object.fromEntries(rejected));
       if (notTried.size > 0) await putInternalFile(deps, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, Object.fromEntries(notTried));
       await items.mirror(step.stage_key);
       try {
