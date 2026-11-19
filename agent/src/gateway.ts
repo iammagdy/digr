@@ -314,7 +314,8 @@ export function createGateway(deps: GatewayDeps) {
       if (gateOn) poolUsd = Math.min(poolUsd, MAX_SINGLE_OPERATION_USD);
       const minBound = tregCallBoundUsd(estimate);
       // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
-      const money = callMoney(poolUsd, estimate, maxAttempts);
+      // PLANNING (D-0138 follow-up, live re-test R2): one call that cannot be reckoned must never be able to take all the planning money, so a planning call holds at most HALF of what is left (never below its own estimate)
+      const money = callMoney(poolUsd, estimate, maxAttempts, deps.phase === "planning" ? { maxShare: 0.5 } : {});
       if (!money) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
       // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
       // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.

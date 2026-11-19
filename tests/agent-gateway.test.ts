@@ -145,7 +145,8 @@ describe("treg_call records and digests", () => {
     await h.gateway.tregCall({ endpoint_id: POSTS_ENDPOINT, params: { query: "q", max_results: 4 } });
     // 4 posts at 0.005 = an estimate of 0.02: the reservation is capped at 20 x 0.02 and by the harness's whole budget
     expect(h.budget.spentUsd()).toBeGreaterThanOrEqual(0.02 - 1e-9);
-    expect(h.budget.spentUsd()).toBeCloseTo(Math.min(callMoneyCapUsd(0.02), h.budget.ceilingUsd ?? Infinity), 6);
+    // a planning call holds at most half of the money left (never below its own estimate 0.02)
+    expect(h.budget.spentUsd()).toBeCloseTo(Math.max(0.02, Math.min(callMoneyCapUsd(0.02), (h.budget.ceilingUsd ?? Infinity) / 2)), 6);
   });
 
   it("never returns a price of the mission to the model", async () => {

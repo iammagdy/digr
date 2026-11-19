@@ -192,10 +192,10 @@ describe("the daily ledger and the owner's grant take the SAME amount as the hea
 });
 
 describe("planning: the kept share of the stages that are not sampled yet is never spent (a planning call is limited by the remaining planning money)", () => {
-  it("(c) a planning sample sends the planning money left after the kept share, not the estimate", async () => {
+  it("(c) a planning sample sends HALF the planning money left after the kept share (0.14 / 2), not the estimate", async () => {
     const w = world({ phase: "planning", budgetUsd: 0.2, stageBudget: { stages: 2, budgetUsd: 0.2, reservesUsd: [0.06, 0.06] }, call: provider(0.0198) });
     expect((await ask(w, 1)).ok).toBe(true);
-    expect(Number((w.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBe(0.14);
+    expect(Number((w.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBe(0.07);
   });
 });
 
@@ -281,6 +281,19 @@ describe("D-0138 (Megz): H = min(max(0.05, 20 x the call's own estimate bound), 
     expect(w.budget.leftUsd(0)!).toBeGreaterThan(0.05);
     const second = await w.gateway.tregCall({ endpoint_id: "aviato.companies.employees", params: { website: "other.example", perPage: 5, page: 0 } });
     expect(second).not.toMatchObject({ refused: expect.anything() });
+  });
+  it("(2b) live re-test R2: findymail count 3, planning 0.20, ONE timeout: the planning keeps at least half its money, the next sample still goes out, and nothing is refused over_budget (no planning_over_budget, so never «حد من جانبنا»)", async () => {
+    let n = 0;
+    const w = world({ phase: "planning", budgetUsd: 0.2, stageBudget: { stages: 2, budgetUsd: 0.2, reservesUsd: [0.03, 0.03] }, call: async (o) => (n++ === 0 ? timeoutAnswer() : provider(0.0594)(o)) });
+    const first = await ask(w, 3);
+    expect(first).toMatchObject({ ok: false, failed: true });
+    expect((first as { charge_usd?: number | null }).charge_usd).toBeNull();
+    // H = half of what the planning could give (never the 1.19 of 20 x the estimate, never all 0.20)
+    expect(Number((w.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBeLessThanOrEqual(0.1 + 1e-9);
+    expect(w.budget.spentUsd()).toBeLessThanOrEqual(0.1 + 1e-9);
+    const second = await ask(w, 3);
+    expect(second.ok).toBe(true);
+    expect(w.store.calls.some((c) => String(c.refused_reason ?? "").startsWith("over_budget"))).toBe(false);
   });
   it("(3) findymail count 3 and blitz max_results 10 pass under the normal approved money of (a) 2 companies + 1 manager and (b) 5 companies + 2 managers", async () => {
     for (const money of [0.145454, 0.1775, 0.3069, 1.0422]) {
