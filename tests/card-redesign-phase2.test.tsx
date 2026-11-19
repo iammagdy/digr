@@ -25,11 +25,13 @@ describe("the request line", () => {
     expect(card({ phase: "plan", requestPartsAr: [] })).not.toContain("agent-request-line");
     expect(card({ phase: "cancelled", requestPartsAr: ["إكس"] })).not.toContain("agent-request-line");
   });
+  // DT-20261118-09 S2: the platform is named in the card only when the customer wrote it
+  const SAID = ["٣٠ تغريدة على إكس عن لقاح الإنفلونزا"];
   it("the planner reads the parts from the understanding: platform, topic, period in Arabic digits; a step per parent adds nothing", () => {
     const step = (over: Record<string, unknown>) => ({ key: "t", title_ar: "التغريدات", platform: "x", capability: "x.search.posts", parent: null, deliver: true, count: { total: 30, per_parent: null, all: false }, source: null, topic: "لقاح الإنفلونزا", search_terms: [], period: { from: "2026-10-16", to: "2026-11-16" }, ...over }) as never;
-    expect(requestPartsAr([step({})])).toEqual(["إكس", "لقاح الإنفلونزا", "١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦"]);
-    expect(requestPartsAr([step({ topic: null, period: null })])).toEqual(["إكس"]);
-    expect(requestPartsAr([])).toEqual([]);
+    expect(requestPartsAr([step({})], SAID)).toEqual(["إكس", "لقاح الإنفلونزا", "١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦"]);
+    expect(requestPartsAr([step({ topic: null, period: null })], SAID)).toEqual(["إكس"]);
+    expect(requestPartsAr([], SAID)).toEqual([]);
   });
 });
 
