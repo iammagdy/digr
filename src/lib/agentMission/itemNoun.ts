@@ -32,6 +32,8 @@ export const ITEM_NOUNS: ReadonlyArray<ItemNoun> = [
   N("تعليق", "تعليقان", "تعليقين", "تعليقات", "تعليقًا", false),
   N("فيديو", "فيديوهان", "فيديوهين", "فيديوهات", "فيديو", false, ["مقاطع", "مقطع"]),
   N("شركة", "شركتان", "شركتين", "شركات", "شركة", true),
+  N("مدير", "مديران", "مديرين", "مديرين", "مديرًا", false, ["مديرو", "مديرون", "مدراء"]),
+  N("مسؤول", "مسؤولان", "مسؤولين", "مسؤولين", "مسؤولًا", false, ["مسئول", "مسئولين", "مسؤولو", "مسئولو"]),
   N("موظف", "موظفان", "موظفين", "موظفين", "موظفًا", false, ["موظفو", "موظفون"]),
   N("تقييم", "تقييمان", "تقييمين", "تقييمات", "تقييمًا", false),
   N("مراجعة", "مراجعتان", "مراجعتين", "مراجعات", "مراجعة", true),
@@ -51,6 +53,7 @@ export const ITEM_NOUNS: ReadonlyArray<ItemNoun> = [
   N("رد", "ردان", "ردين", "ردود", "ردًا", false),
 ];
 export const GENERIC_ITEM_NOUN: ItemNoun = N("عنصر", "عنصران", "عنصرين", "عناصر", "عنصرًا", false);
+export const CONTACT_ITEM_NOUN: ItemNoun = N("جهة تواصل", "جهتا تواصل", "جهتي تواصل", "جهات تواصل", "جهة تواصل", true);
 
 const KNOWN = new Map<string, ItemNoun>();
 for (const n of ITEM_NOUNS) for (const form of [n.singular, n.dual, n.dualGen, n.plural, n.tamyiz, ...(n.aliases ?? [])]) KNOWN.set(normalizeText(form), n);
