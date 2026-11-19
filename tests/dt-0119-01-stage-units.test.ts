@@ -241,6 +241,12 @@ describe("Gate 1 P1-2: the inventory of every route that settles a job", () => {
     expect(calls.length).toBe(3);
     for (const c of calls) expect(/deliveredUnits: 0,/.test(c) || /stageUnits && stageCounts/.test(c), c.slice(0, 120)).toBe(true);
     expect(readFileSync(path.join(ROOT, "src/lib/agentMission/addonSettlement.ts"), "utf8")).not.toMatch(/stageUnits/);
+    // a plan with an estimated stage and no units is never settled by the one-unit function; that refusal is decided BEFORE the ownership check, so the check is the very line before the settlement call (tests/worker-ownership.test.ts guards that line)
+    const lines = run.split("\n");
+    const at = lines.findIndex((l) => l.includes("const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, {"));
+    expect(at).toBeGreaterThan(0);
+    expect(lines[at - 1].trim()).toBe("await ensureOwned(deps, mission.id);");
+    expect(run).toMatch(/const stageUnavailable: SettleResult \| null = hasEstimate && !stageUnits \? \{ ok: false, code: "stage_units_unavailable"/);
     // every route of a mission's end (normal end, run failed too often, worker restarted too often, recovery after an error) goes through the one settleExecution
     expect(run.match(/settleExecution\(/g)!.length).toBeGreaterThanOrEqual(3);
   });
