@@ -1,6 +1,5 @@
-import { buildMissionNotice, type MissionNoticeFacts, type MissionNoticeKind } from "../agentMission/notices";
+import { buildMissionNotice, noticeTitleAr, type MissionNoticeFacts, type MissionNoticeKind } from "../agentMission/notices";
 import { userWillBeEmailed } from "../agentMission/emailEligibility";
-import { missionTitleAr } from "../agentMission/fileNames";
 import { openJobHref } from "../requestLinks";
 import { conversationOfMissionId } from "./jobConversation";
 import { insertJobNotice } from "./jobNotices";
@@ -18,7 +17,7 @@ export async function sendMissionNotice(client: any, input: { userId: string; mi
     let title: string | null = null;
     try {
       const { data: mission } = await client.from("missions").select("plan,request_text").eq("id", input.missionId).maybeSingle();
-      if (mission) title = missionTitleAr({ plan: mission.plan ?? null, requestText: mission.request_text ?? null });
+      if (mission) title = noticeTitleAr({ plan: mission.plan ?? null, requestText: mission.request_text ?? null });
     } catch { /* the notice says «مهمتك» */ }
     const notice = buildMissionNotice(input.kind, input.facts, title);
     const conversationId = input.kind === "started" ? null : await conversationOfMissionId(client, input.userId, input.missionId);
