@@ -8,6 +8,7 @@ import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCard
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import { peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
+import { countSupportedByMessage, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -438,11 +439,28 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
   if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
+  if (checked?.ok) return { ok: true, value: withCheckedPerCompany(checked.value, input.words) };
   return checked ?? { ok: false, error: "no answer" };
 }
 
 /** The model declined the request twice (live eval 16 Nov 2026: «the private messages of an Instagram account»): the customer is told what the platform collects, never a vague «no source». */
 export const REFUSED_REQUEST_AR = "لا نستطيع تنفيذ هذا الطلب: نجمع البيانات العامة المنشورة على المنصات فقط، وليس الرسائل الخاصة ولا الحسابات المغلقة. إن كان لديك طلب على بيانات عامة فاكتبه وسنجهّزه لك.";
+
+/**
+ * THE COUNT OF PEOPLE PER COMPANY IS ONE THE CUSTOMER WROTE (DT-20261118-08 FIX1, Gate 2 P1-3): the model's per_company is kept only when the customer's own words hold it (#575's check: the number is written,
+ * or the words the model cites are in the message and say that number) and it is not the count of the companies themselves (the model copying «شركتين» or «٥ شركات» into it; the same number written twice is the customer's). Otherwise it is «not given»: code's
+ * default count is used and the card says so («لم تحدد عدد … فاعتمدنا …»), where the customer can change it before approving.
+ */
+export function withCheckedPerCompany(u: Understanding, words: ReadonlyArray<string>): Understanding {
+  const ask = u.people_of_companies;
+  if (!ask || ask.per_company === null) return u;
+  const message = words.join("\n");
+  const said = countSupportedByMessage(message, ask.per_company, ask.per_company_text || null);
+  const companies = u.steps.find((s) => s.parent === null)?.count.total ?? null;
+  // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»)
+  const kept = said !== null && (said !== companies || writtenElsewhere(message, ask.per_company_text, said)) ? said : null;
+  return kept === ask.per_company ? u : { ...u, people_of_companies: { ...ask, per_company: kept } };
+}
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
