@@ -154,3 +154,56 @@ describe("FIX2: the schema and the prompt carry the companies' words", () => {
     expect(UNDERSTAND_SYSTEM).toContain("companies_text");
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// FIX3 (QA final recheck + Gate 2 r3 P1-1 / P2-1): with NO company count to compare with, a per-company count is not trusted
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+describe("FIX3: when the company count cannot be established, the per-company count is «not given» (the card says «فاعتمدنا»)", () => {
+  const unit = (words: string, answer: ReturnType<typeof answerOf>) => withCheckedPerCompany(answer as never, [words]);
+  it("the QA case: «cannot», no steps, per_company 2 cited «شركتين», companies_text EMPTY (the model left it out): dropped; the card line is present with the default count", async () => {
+    const got = await cardOf({ words: [REQUEST] }, answerOf({ per_company: 2, per_company_text: "شركتين", companies_text: "" }, [], "cannot"));
+    expect(got.people).toMatchObject({ noun_ar: "الأشخاص", parent_ar: "الشركات", per_parent: null });
+    expect(got.card).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+    expect(unit("عايز شركتين مقاولات والمديرين فيهم", answerOf({ per_company: 2, per_company_text: "شركتين" }, [], "cannot")).people_of_companies!.per_company).toBeNull();
+  });
+  it("50 companies and 50 per company, companies_text empty: dropped, not 2,500 people; the card says «فاعتمدنا»", async () => {
+    const got = await cardOf({ words: ["عايز ٥٠ شركة مقاولات في القاهرة ومعاهم الإدارة العليا"] }, answerOf({ per_company: 50, per_company_text: "٥٠" }, [], "cannot"));
+    expect(got.people?.per_parent).toBeNull();
+    expect(got.card).toContain(LINE(DEFAULT_PEOPLE_PER_PARENT));
+    expect(got.rows).toBe(DEFAULT_PEOPLE_PER_PARENT);
+  });
+  it("the same rule on the STEP path: a parent step with no total (all the companies) and a people step's per_parent 2: dropped; with the company count known the step keeps what the customer wrote", () => {
+    const allCompanies = { ...companiesStep, count: { total: null, all: true } };
+    const noTotal = withCheckedPerCompany({ ...(answerOf({ per_company: 2, per_company_text: "اتنين" }, []) as object), steps: [{ ...allCompanies, parent: null }, { ...peopleStep(2), parent: "companies" }] } as never, ["عايز كل الشركات ومن كل شركة اتنين من الإدارة العليا"]);
+    expect(noTotal.steps[1].count.per_parent).toBeNull();
+    expect(noTotal.people_of_companies!.per_company).toBeNull();
+    const known = withCheckedPerCompany({ ...(answerOf({ per_company: 2, per_company_text: "اتنين" }, []) as object), steps: [{ ...companiesStep, parent: null, count: { total: 5, all: false } }, { ...peopleStep(2), parent: "companies" }] } as never, ["عايز ٥ شركات ومن كل شركة اتنين من الإدارة العليا"]);
+    expect(known.steps[1].count.per_parent).toBe(2);
+    expect(known.people_of_companies!.per_company).toBe(2);
+  });
+  it("the control: companies_text filled and in the message — a legit «٣ شركات … ٣ مديرين» is kept (written twice), and so is a different per-company count; the card has no «لم تحدد» line", async () => {
+    const same = await cardOf({ words: ["عايز ٣ شركات مقاولات ومن كل شركة ٣ من الإدارة العليا"] }, answerOf({ per_company: 3, per_company_text: "٣", companies_text: "٣ شركات" }, [], "cannot"));
+    expect(same.people).toMatchObject({ per_parent: 3 });
+    expect(same.card.filter((l) => l.startsWith("لم تحدد عدد"))).toEqual([]);
+    expect(same.rows).toBe(3);
+    const other = await cardOf({ words: ["عايز شركتين مقاولات ومن كل شركة ٣ من الإدارة العليا"] }, answerOf({ per_company: 3, per_company_text: "٣", companies_text: "شركتين" }, [], "cannot"));
+    expect(other.people).toMatchObject({ per_parent: 3 });
+    expect(other.rows).toBe(3);
+  });
+});
+
+describe("FIX3 (Gate 2 r3 P2-1): the words cited for the companies must stand in the message as WHOLE words", () => {
+  it("«5» is not inside «50», «خمس» is not inside «خمسين»; the conjunction «و» before the cited words is allowed", () => {
+    expect(countWrittenIn("عايز 50 شركة", "5")).toBeNull();
+    expect(countWrittenIn("عايز ٥٠ شركة", "٥")).toBeNull();
+    expect(countWrittenIn("عايز 50 شركة", "50")).toBe(50);
+    expect(countWrittenIn("عايز خمسين شركة", "خمس")).toBeNull();
+    expect(countWrittenIn("عايز مقاولات وخمس شركات", "خمس شركات")).toBe(5);
+    expect(countWrittenIn("عايز ٥ شركات", "٥ شركات")).toBe(5);
+    expect(countWrittenIn("عايز شركتين مقاولات", "شركتين")).toBe(2);
+  });
+  it("a company count the model cites for a number that is only PART of a bigger number is not a known count: the per-company count is then «not given»", () => {
+    const per = withCheckedPerCompany({ ...(answerOf({ per_company: 3, per_company_text: "٣", companies_text: "٥" }, [], "cannot") as object), steps: [] } as never, ["عايز ٥٠ شركة ومن كل شركة ٣ من الإدارة العليا"]).people_of_companies!.per_company;
+    expect(per).toBeNull();
+  });
+});

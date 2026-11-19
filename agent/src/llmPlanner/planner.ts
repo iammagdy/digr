@@ -458,7 +458,8 @@ export function customerSaidOf(input: Pick<LlmPlannerInput, "words" | "answer" |
  * THE COUNT OF PEOPLE PER COMPANY IS ONE THE CUSTOMER WROTE (DT-20261118-08 FIX1 P1-3, FIX2): a count the model returned for the people of each company, in `people_of_companies.per_company` AND in the `per_parent` of every
  * people-of-company step it wrote, is kept only when the customer's own words hold it (#575's check: the number is written, or the words the model cites are in what the customer said and say that number) and it is not the count
  * of the companies themselves (the model copying «شركتين» or «٥ شركات» into it; the same number written twice is the customer's). The companies' count is the parent step's total, or, when the model wrote no company step
- * («cannot»), the words it cites for it (`companies_text`) checked the same way. A count that fails is «not given»: code's default count is used and the card says so («لم تحدد عدد … فاعتمدنا …»), where the customer can change it before approving.
+ * («cannot»), the words it cites for it (`companies_text`) checked the same way. FIX3 (QA, Gate 2 r3 P1-1): when NO company count can be established (no parent total, and `companies_text` empty or not in what the customer said) a per-company
+ * count cannot be told from the companies' own number, so it is not trusted: the fail-safe is «not given». A count that fails is «not given»: code's default count is used and the card says so («لم تحدد عدد … فاعتمدنا …»), where the customer can change it before approving.
  */
 export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<string>): Understanding {
   const ask = u.people_of_companies;
@@ -466,6 +467,8 @@ export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<stri
   const companies = u.steps.find((s) => s.parent === null)?.count.total ?? countWrittenIn(message, ask?.companies_text || null);
   const keep = (n: number, cited: string): number | null => {
     const written = countSupportedByMessage(message, n, cited || null);
+    // FIX3: no company count to compare with → the number may be the companies' own, copied: «not given» (the default count and the «فاعتمدنا» line; the customer can edit it on the card)
+    if (written !== null && companies === null) return null;
     // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»)
     return written !== null && (written !== companies || writtenElsewhere(message, cited, written)) ? written : null;
   };

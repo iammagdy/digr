@@ -210,11 +210,12 @@ describe("FIX1: only a real true is «asked» (Gate 2 P2, the surviving truthy m
 // BUG HUNTER proposal (Gate 2 r2): the wiring in understandRequest
 describe("BH: understandRequest applies the per-company count check (kills M1)", () => {
   it("through planWithLlm: 50 per company the customer never wrote reaches the understanding as «not given»; a written 3 is kept", async () => {
-    const got = async (words: string, per: number, text: string) => {
-      const r = await planWithLlm({ words: [words], request: "" }, depsOf(scripted(understanding(ask(true, "المديرون", per, [], text), [{ ...companiesStep(), count: { total: 5, all: false } }], "cannot")).model));
+    // FIX3: with «cannot» the model's steps are not kept, so the companies' count is the words it cites for it (companies_text)
+    const got = async (words: string, per: number, text: string, companiesText = "") => {
+      const r = await planWithLlm({ words: [words], request: "" }, depsOf(scripted(understanding(ask(true, "المديرون", per, [], text, companiesText), [{ ...companiesStep(), count: { total: 5, all: false } }], "cannot")).model));
       return r.understanding!.people_of_companies!.per_company;
     };
     expect(await got("عايز ٥ شركات مصرية ومعاهم المديرين", 50, "")).toBeNull();
-    expect(await got("عايز ٥ شركات ومن كل شركة ٣ مديرين", 3, "٣ مديرين")).toBe(3);
+    expect(await got("عايز ٥ شركات ومن كل شركة ٣ مديرين", 3, "٣ مديرين", "٥ شركات")).toBe(3);
   });
 });

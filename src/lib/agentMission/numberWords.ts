@@ -129,7 +129,9 @@ export function writtenElsewhere(message: string, cited: string, n: number): boo
  */
 export function countWrittenIn(message: string, cited: string | null): number | null {
   const words = normalizeWords(cited ?? "");
-  if (words === "" || !normalizeWords(message).includes(words)) return null;
+  // the cited words must stand in the message as WHOLE words (FIX3, Gate 2 r3 P2): «5» is not inside «50», «خمس» is not inside «خمسين»; the Arabic «و» that joins a word to the one before it is allowed
+  const padded = ` ${normalizeWords(message)} `;
+  if (words === "" || !(padded.includes(` ${words} `) || padded.includes(` و${words} `))) return null;
   const digits = writtenNumbers(words);
   if (digits.length > 0) return digits.length === 1 ? digits[0] : null;
   return countOfWords(words);
