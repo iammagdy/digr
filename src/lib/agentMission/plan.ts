@@ -156,6 +156,16 @@ export interface RecordedCall {
   params?: Record<string, unknown>;
 }
 
+export interface SavedEndpointCallDetail {
+  callId: string;
+  rows: number;
+  rowPath?: string | null;
+  parentKey?: string | null;
+  linkedToParent?: boolean;
+  linkScore?: number;
+  roleNote?: string;
+}
+
 export interface PlanLookup {
   /** S3: a social request in the redesigned mode: the AI never judges what belongs, so a text-search stage is accepted without a relevance rule and a rule that does not match the sample refuses nothing (the rule is dropped once the whole plan is built by code; a plan that falls back to the old pipeline keeps it). */
   noRelevance?: boolean;
@@ -185,8 +195,8 @@ export interface PlanLookup {
   peopleEstimate?: PeopleEstimate;
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
-  /** Saved successful calls with positive rows per endpoint, so an unserved-step repair can name exact saved call IDs. */
-  savedCallsByEndpoint?(): ReadonlyMap<string, ReadonlyArray<{ callId: string; rows: number }>>;
+  /** Saved successful calls with positive rows per endpoint, ranked usable/linked first, so repair names exact call IDs and row paths. */
+  savedCallsByEndpoint?(): ReadonlyMap<string, ReadonlyArray<SavedEndpointCallDetail>>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
   contactFinders?(kind: FinderKind): FinderInfo[];
   /** The helpers of the finder steps besides the finders (the e-mail verifiers), ranked and priced from the catalog. */
@@ -851,26 +861,34 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       // A STEP THE CATALOG CAN SERVE IS NOT «UNSERVED»: the model's «no source gives it» is accepted only after it really tried the sources the catalog has for that step and none gave rows (live: the managers of a company were declared unserved
       // while four people sources take a company's website)
       const serving = lookup.childStepSources?.(q.noun!) ?? [];
-      if (reason && serving.length > 0) {
+      if (serving.length > 0) {
         const called = lookup.endpointsCalled?.() ?? new Map<string, { rows: number }>();
         const tried = serving.filter((s) => called.has(s.id));
         const working = tried.filter((s) => (called.get(s.id)?.rows ?? 0) > 0);
         if (working.length > 0) {
           const savedByEp = lookup.savedCallsByEndpoint?.();
-          const savedEntries = working.flatMap((s) => {
+          const rankedSaved = working.flatMap((s) => {
             const rowsForEp = savedByEp?.get(s.id);
-            if (rowsForEp && rowsForEp.length > 0) return rowsForEp.map((c) => `${c.callId} (${s.id}, ${c.rows} rows)`);
-            return [`${s.id} (${called.get(s.id)?.rows ?? 0} rows)`];
-          });
-          const firstSaved = working.flatMap((s) => savedByEp?.get(s.id) ?? [])[0]?.callId;
+            if (rowsForEp && rowsForEp.length > 0) return rowsForEp.map((c) => ({ endpointId: s.id, ...c }));
+            return [{ endpointId: s.id, callId: "", rows: called.get(s.id)?.rows ?? 0 }];
+          }).sort((a, b) => Number(Boolean(b.linkedToParent)) - Number(Boolean(a.linkedToParent)) || (b.linkScore ?? 0) - (a.linkScore ?? 0) || b.rows - a.rows);
+          const best = rankedSaved[0];
+          const firstSaved = rankedSaved.find((x) => x.callId)?.callId;
+          const rowPathHint = best?.rowPath ?? (firstSaved ? `inputs.${firstSaved}` : undefined);
           const rootStage = priced.find((st) => st.parent_key === null) ?? priced[0];
-          const parentKey = typeof rootStage?.key === "string" && rootStage.key ? rootStage.key : "companies";
+          const parentKey = best?.parentKey || (typeof rootStage?.key === "string" && rootStage.key ? rootStage.key : "companies");
+          const savedEntries = rankedSaved.map((c) => `${c.callId || c.endpointId} (${c.endpointId}, ${c.rows} rows${c.rowPath ? `, path ${c.rowPath}` : ""}${c.linkedToParent ? ", linked" : ""})`);
+          const role = roleOfNoun(q.of ?? q.noun);
+          const roleHint = best?.roleNote || (role ? `; role criteria: rank matching ${role.key} / leadership titles first in your summary/ranking without dropping real rows` : "");
+          const header = reason
+            ? `the step «${what}» CANNOT be declared in unserved_steps because saved people call(s) ALREADY returned rows`
+            : `the customer asked for a step the plan does not have: «${what}» (${q.value} per ${parentNoun}). It CANNOT be omitted or re-sampled because saved people call(s) ALREADY returned rows`;
           issues.push(
-            `the step «${what}» CANNOT be declared in unserved_steps because saved people call(s) ALREADY returned rows: ${savedEntries.join(", ")}. Do NOT repeat paid sample calls, lower validation, or invent rows. Inspect the saved page with run_code${firstSaved ? ` (files: ["${firstSaved}"])` : ""}, return a bare JSON array mapping each real person object (with id, full_name, job_title, company, linkedin) for yield_from, add the child stage (key "people", parent_key "${parentKey}", deliver true, per_parent_rows ${q.value}, endpoint_id "${working[0].id}", measured_by [${firstSaved ? `"${firstSaved}"` : `"${working[0].id}"`}]), and drop unserved_steps. If those saved rows are incompatible with the companies or request, do not fabricate a match`,
+            `${header}: ${savedEntries.join(", ")}. Do NOT repeat paid sample calls, lower validation, or invent rows. Inspect the saved page with run_code${firstSaved ? ` (files: ["${firstSaved}"])` : ""}${rowPathHint ? ` reading ${rowPathHint}` : ""}, return a bare JSON array mapping each real person object (with id, full_name, job_title, company, linkedin) for yield_from, add the child stage (key "people", parent_key "${parentKey}", deliver true, per_parent_rows ${q.value}, endpoint_id "${best?.endpointId ?? working[0].id}", measured_by [${firstSaved ? `"${firstSaved}"` : `"${working[0].id}"`}])${roleHint}${reason ? ", and drop unserved_steps" : ""}. If those saved rows are incompatible with the companies or request, do not fabricate a match`,
           );
           return;
         }
-        if (tried.length < Math.min(2, serving.length)) {
+        if (reason && tried.length < Math.min(2, serving.length)) {
           issues.push(`the step «${what}» CAN be served: the catalog has ${serving.slice(0, 4).map((s) => `${s.id} (takes the company's ${s.accepts.join(" / ")})`).join(", ")}. Sample one of them with a company of your first sample (its website, link or name as that source's input), add the stage (parent_key = the companies' stage, per_parent_rows ${q.value}) and drop unserved_steps for it. If the companies' source gives none of those fields, choose a companies source that gives the website. unserved_steps for this step is accepted only after at least two of these sources were really tried and gave no rows`);
           return;
         }

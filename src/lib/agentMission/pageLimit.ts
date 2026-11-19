@@ -37,3 +37,32 @@ export function pageCapOfSource(endpoint: Pick<CatalogEndpoint, "inputs" | "summ
   if (!limit) return sampleRows !== null && sampleRows > 0 ? sampleRows : null;
   return limit.max ?? limit.default ?? (sampleRows !== null && sampleRows > 0 ? sampleRows : null);
 }
+
+const CHILD_EXTRA_SIZE_INPUT = /^(?:limit_per_item|match_limit|numResults|num_results|contactsLimit|contacts_limit)$/i;
+
+/**
+ * C5: During PLANNING only, enforce a small child-stage sample size equal to the customer's asked per-parent count
+ * (default 1 when unspecified), read generically from catalog metadata (never endpoint/provider names, never endpoint defaults).
+ * Endpoints without a marked size input are returned unchanged.
+ */
+export function smallChildPlanningSampleParams(
+  endpoint: Pick<CatalogEndpoint, "inputs" | "summary"> | null | undefined,
+  params: unknown,
+  options: { perParent?: number | null; onlyWhenUnset?: boolean } = {},
+): unknown {
+  if (!endpoint || !params || typeof params !== "object" || Array.isArray(params)) return params;
+  const limit = pageLimitOf(endpoint);
+  const input = limit
+    ? endpoint.inputs.find((i) => i.name === limit.param)
+    : endpoint.inputs.find((i) => (SIZE_INPUT.test(i.name) || CHILD_EXTRA_SIZE_INPUT.test(i.name)) && (i.type === "integer" || i.type === "number" || i.type === "int" || i.type === "string"));
+  if (!input) return params;
+  const rec = params as Record<string, unknown>;
+  if (options.onlyWhenUnset && rec[input.name] !== undefined && rec[input.name] !== null) return params;
+  const asked = options.perParent !== null && options.perParent !== undefined && Number.isFinite(options.perParent) && options.perParent >= 1
+    ? Math.floor(options.perParent)
+    : 1;
+  const minVal = typeof input.minimum === "number" && input.minimum > 0 ? Math.ceil(input.minimum) : 1;
+  const maxVal = (limit?.max ?? (typeof input.maximum === "number" && input.maximum > 0 ? Math.floor(input.maximum) : null));
+  const bounded = Math.max(minVal, maxVal !== null ? Math.min(asked, maxVal) : asked);
+  return { ...rec, [input.name]: input.type === "string" ? String(bounded) : bounded };
+}

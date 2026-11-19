@@ -132,12 +132,18 @@ export function MissionInspector({ data }: { data: Inspection }) {
       <Card title="الأحداث" sub="الأحداث الداخلية (قياسات وعلامات المشرف) باهتة.">
         {data.events.length === 0 ? <EmptyState title="لا توجد أحداث." /> : (
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
-            {data.events.map((e) => (
-              <li key={e.id ?? `${e.at}-${e.kind}`} className="flex flex-col gap-0.5 border-t border-ln pt-2 first:border-t-0 first:pt-0" style={{ opacity: e.internal ? 0.6 : 1 }}>
-                <span className="text-[11px] text-mut">{dateTimeAr(e.at)} · {e.kind}{e.internal ? " · داخلي" : ""}</span>
-                <span className="break-words text-xs text-ink" dir="auto">{e.messageAr}</span>
-              </li>
-            ))}
+            {data.events.map((e) => {
+              const diagCounts = e.internal ? Object.entries(e.counts ?? {}).filter(([k, v]) => /^(?:adm_flag|issue_|finish_)/.test(k) && typeof v === "number" && Number.isFinite(v)) : [];
+              return (
+                <li key={e.id ?? `${e.at}-${e.kind}`} className="flex flex-col gap-0.5 border-t border-ln pt-2 first:border-t-0 first:pt-0" style={{ opacity: e.internal ? 0.6 : 1 }}>
+                  <span className="text-[11px] text-mut">{dateTimeAr(e.at)} · {e.kind}{e.internal ? " · داخلي" : ""}</span>
+                  <span className="break-words text-xs text-ink" dir="auto">{e.messageAr}</span>
+                  {diagCounts.length > 0 && (
+                    <span className="font-mono text-[11px] text-mut" dir="ltr">{diagCounts.map(([k, v]) => `${k}=${v}`).join(" · ")}</span>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         )}
       </Card>
