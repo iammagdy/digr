@@ -159,7 +159,8 @@ export function countWrittenIn(message: string, cited: string | null): number | 
  * for a bare number the message is read: it is another noun's count when EVERY place the message writes that number is such a span (the word after it is a noun of 4 letters or more, which no preposition is, and not the people's).
  */
 export function isCountOfOtherNoun(message: string, cited: string, n: number, peopleTitle: string): boolean {
-  const people = tokensOf(peopleTitle);
+  // DT-20261118-09 (BUG HUNTER FIX4 P1-1): the HEAD noun of the title is the people's own noun; a later word that names the companies («مسؤولو الشركات») must not make the companies' count read as the people's
+  const people = tokensOf(peopleTitle).slice(0, 1);
   const isPeople = (t: string): boolean => people.some((p) => sameStem(t, p));
   const isNumber = (t: string): boolean => /^\d+$/.test(t) || wordNumbersIn(t, 1).length > 0;
   const numberOf = (t: string): number | null => (/^\d+$/.test(t) ? Number(t) : (wordNumbersIn(t, 1)[0] ?? null));
