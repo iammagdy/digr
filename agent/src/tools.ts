@@ -11,27 +11,28 @@ import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMissio
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES, WEB_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { smallChildPlanningSampleParams } from "../../src/lib/agentMission/pageLimit";
-import { firstSentenceAr, validateAndPricePlan, type PricedPlan, type RecordedCall, type SavedEndpointCallDetail } from "../../src/lib/agentMission/plan";
+import { validateAndPricePlan, type PricedPlan, type RecordedCall, type SavedEndpointCallDetail } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
-import { buildShapeDigest, digestValue } from "../../src/lib/modelPlanner/digest";
+import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
-import { RAW_PATH, rowsExpressionOf } from "./gateway";
+import { RAW_PATH } from "./gateway";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { Reviewer } from "./review";
 import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
-import { codeRunPath, deriveEngineSpecsChecked, parentBinding, type CodeRun } from "./engine/spec";
+import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { alignedModelCall } from "./periodRequest";
 import { tokenOverlayCode, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
-import type { AgentStore, CallPhase, MissionRecord } from "./types";
+import type { AgentStore, CallPhase, CallRow, MissionRecord } from "./types";
+import { inspectSavedCompanyAndPeople, recordQuestionOnce, recoverCompanyPeopleFromSavedEvidence, type RecoveryResult, type SavedEvidenceInspection, type UnderstoodCompaniesSummary, type UnderstoodPeopleSummary } from "./companyPeopleRecovery";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
 import { cheaperAlternatives, EMPTY_ONCE_FACTOR, SKIP_REASONS, sourceHealth, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
 import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
@@ -103,6 +104,8 @@ export interface RunState {
   finishOrigin?: "model_finish" | "code_forced_cap" | "sdk_stop";
   /** Where the rows of each answered sample are, as code (`rows_in_code` of its answer), by call id: an EMPTY run_code result over such a page is told where its rows are (round 52). */
   rowsAt?: Map<string, { rows: number; expr: string }>;
+  /** Last root stage array seen from propose_plan in this run so finish(cannot_serve)/sdk_stop recovery can reuse it if valid. */
+  lastRootStages?: Array<Record<string, unknown>>;
 }
 export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map(), webOutcomes: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
@@ -121,7 +124,9 @@ export interface ToolContext {
   /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
   peopleOfCompanies?: boolean;
   /** The people step the planner understood, with its own title and count (DT-20261118-05): the plan check treats it as a step the customer asked for, whatever the wording. */
-  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone">; companies?: number };
+  understoodPeople?: UnderstoodPeopleSummary;
+  /** The companies parent step the planner understood (used to preserve scale count/title when recovering from saved evidence). */
+  understoodCompanies?: UnderstoodCompaniesSummary;
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */
@@ -135,7 +140,10 @@ export interface ToolContext {
   catalog: TregCatalog;
   access: AccountAccess;
   state: RunState;
+  /** The sandboxed code runner override (tests). */
   sandbox?: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** Optional diagnostic logger from runMission. */
+  log?: (line: string) => void;
   /** The model review of uncertain rows (execution phase), within the review budget; absent: uncertain rows are not delivered. */
   review?: Reviewer;
   /** The markup and the minimum charge in force when the plan is priced. */
@@ -267,68 +275,192 @@ function rejectPlan(state: RunState, message: string, issues: ReadonlyArray<stri
   return err(message, { issues: issues.slice(0, 12) });
 }
 
-interface SavedPeopleCandidate {
-  callId: string;
-  endpointId: string;
-  rows: number;
-  rowExpr: string;
-  rawJson: unknown;
-  usable: boolean;
-  linkScore: number;
-  parentKey: string | null;
+function createPlanCoordinator(ctx: ToolContext) {
+  const { store, mission, state } = ctx;
+  const runSandbox = ctx.sandbox ?? ((code: string, inputs: Record<string, unknown>) => runInSandbox(code, inputs));
+
+  const loadEvidenceMap = async (stagesList: any[]): Promise<Map<string, string | null>> => {
+    const ids = new Set<string>();
+    for (const s of stagesList) {
+      if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
+      if (s && typeof s.yield_from === "string") ids.add(s.yield_from);
+    }
+    const ev = new Map<string, string | null>();
+    for (const id of ids) ev.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
+    return ev;
+  };
+
+  const makeBuildContext = async (calls: CallRow[], stagesIn: Array<Record<string, unknown>>, inspectionIn?: SavedEvidenceInspection) => {
+    const prefix = `${mission.id}:`;
+    const inspection = inspectionIn ?? await inspectSavedCompanyAndPeople({ mission, store, catalog: ctx.catalog, calls, callParams: state.callParams, stagesIn });
+    const estimateAllowed = (id: string): boolean => policyVerdict(id, ctx.access).allowed && !blockedEndpointReason(id) && isSellable(id, ctx.catalog);
+    const peopleEstimate = (() => {
+      if (!ctx.understoodPeople) return null;
+      const ranked = peopleSourcesForCompanies(ctx.catalog, estimateAllowed);
+      const answers = peopleAnswersOf(calls, new Set(ranked.map((x) => x.id)));
+      if (answers.gaveRows || answers.answeredEmpty.size === 0) return null;
+      return peopleEstimateOf(ranked, answers.answeredEmpty);
+    })();
+    const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
+    const makeLookup = (evMap: Map<string, string | null>) => ({
+      ...(noRelevance ? { noRelevance: true } : {}),
+      ...(peopleEstimate ? { peopleEstimate } : {}),
+      call: (id: string): RecordedCall | null => {
+        const row = calls.find((c) => c.id === `${mission.id}:${id}`);
+        return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: Object.fromEntries(Object.entries(row.params_digest ?? {}).filter(([k]) => !k.startsWith("__"))) } : null;
+      },
+      evidenceText: (id: string) => evMap.get(id) ?? null,
+      endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
+      endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && webSourceAvailable(endpointId, webAvailableOf(ctx))) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
+      requestText: askedTextOf(mission),
+      ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
+      isContactSource,
+      pricingSettings: ctx.pricingSettings,
+      ...(ctx.understoodPeople ? { understoodPeople: ctx.understoodPeople } : {}),
+      childStepSources: (noun: string) => { const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
+      contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
+      mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
+      contactAids: (kind: "email" | "phone") => {
+        const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+        return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("email", ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
+      },
+      endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
+      savedCallsByEndpoint: () => {
+        const m = new Map<string, Array<SavedEndpointCallDetail>>();
+        for (const c of calls) {
+          if (c.status !== "ok") continue;
+          const rows = Number(c.rows_returned) || 0;
+          if (rows <= 0) continue;
+          const callId = c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id;
+          const enriched = inspection.savedPeopleMap.get(c.endpoint_id)?.find((x) => x.callId === callId);
+          const list = m.get(c.endpoint_id) ?? [];
+          list.push(enriched ?? { callId, rows });
+          m.set(c.endpoint_id, list);
+        }
+        return m;
+      },
+    });
+
+    const finalizeAcceptedPlan = async (planIn: PricedPlan, evMap: Map<string, string | null>, options: { skipAdvice?: boolean; persist?: boolean } = {}): Promise<{ ok: true; plan: PricedPlan; note: string } | { ok: false; advice?: string[]; issues?: string[] }> => {
+      if (!options.skipAdvice && state.peopleSendBacks < PEOPLE_SEND_BACKS_MAX) {
+        const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
+        const lk = makeLookup(evMap);
+        const advice = peopleAndContactAdvice({
+          plan: planIn, requestText: lk.requestText, capabilityOf: lk.endpointCapability,
+          peopleSources: peopleSourcesForCompanies(ctx.catalog, allowedSource).map((p) => p.id), phoneSources: phoneSourcesOf(ctx.catalog, allowedSource).map((p) => p.id),
+          calls: lk.endpointsCalled(),
+          evidenceOf: (stageKey: string) => { const st = planIn.stages.find((x) => x.key === stageKey); const texts = (st?.measured_by ?? []).map((id) => evMap.get(id)).filter((t): t is string => typeof t === "string"); return texts.length > 0 ? texts.join("\n") : null; },
+        });
+        if (advice.length > 0) return { ok: false, advice };
+      }
+      let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
+      try {
+        derived = await deriveEngineSpecsChecked(planIn, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
+      } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
+      if (derived && derived.issues.length > 0) return { ok: false, issues: derived.issues };
+      if (derived) {
+        for (const st of planIn.stages) {
+          const spec = derived.specs.get(st.key);
+          if (spec) st.engine = spec;
+          const filters = derived.filters.get(st.key);
+          if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
+          const missing = derived.unresolved.get(st.key);
+          if (missing && missing.length > 0) st.unresolved_sources = missing;
+          const stageGaps = derived.gaps.get(st.key);
+          if (stageGaps && stageGaps.length > 0) applyGapNotes(planIn, stageGaps);
+          const approxDates = derived.approx.get(st.key);
+          if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
+        }
+      }
+      if (planIn.contact_steps && planIn.contact_steps.length > 0) for (const st of planIn.stages) st.columns = withContactColumns(st.key, st.columns, planIn.contact_steps);
+      {
+        const contracted = withContractColumns(planIn.stages);
+        planIn.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
+        if (planIn.contact_steps) planIn.contact_steps = bindCompanySteps(planIn.stages, planIn.contact_steps);
+      }
+      let finalized = planIn;
+      if (derived) {
+        const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+        finalized = await withRepliesStages(finalized, {
+          catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
+          remapWithTokens: async (st, tokens) => {
+            const sp = st.engine;
+            if (!sp) return null;
+            try {
+              const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+              if (page === null) return null;
+              const code = tokenOverlayCode(sp.map_code, tokens);
+              const [before, after] = await Promise.all([runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) }), runSandbox(code, { [sp.map_file_id]: JSON.parse(page) })]);
+              if (!before.ok || !after.ok || before.resultJson === null || after.resultJson === null) return null;
+              const a1 = JSON.parse(before.resultJson) as unknown;
+              const a2 = JSON.parse(after.resultJson) as unknown;
+              if (!Array.isArray(a1) || !Array.isArray(a2) || a1.length !== a2.length || a2.length === 0) return null;
+              if (!a2.every((r, i) => isObject(r) && String(r.id) === String((a1[i] as { id?: unknown }).id))) return null;
+              return a2.some((r) => isObject(r) && tokens.every((t) => typeof r[t.key] === "string" && r[t.key] !== "")) ? code : null;
+            } catch { return null; }
+          },
+          sampleRowsOf: async (st) => {
+            const sp = st.engine;
+            if (!sp) return null;
+            try {
+              const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+              if (page === null) return null;
+              const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+              if (!out.ok || out.resultJson === null) return null;
+              const rows = JSON.parse(out.resultJson) as unknown;
+              return Array.isArray(rows) ? rows.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x)) : null;
+            } catch { return null; }
+          },
+        });
+      }
+      if (derived && finalized.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
+        const stripped = (t: string) => t.replace(/[\u064B-\u0652]/g, "");
+        finalized.assumptions_ar = (finalized.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
+        if (finalized.assumptions_ar.length === 0) delete finalized.assumptions_ar;
+        if (!(finalized.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) finalized.notes_ar = [...(finalized.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
+      }
+      if (options.persist !== false) {
+        state.proposedPlan = finalized;
+        state.terminal = true;
+        await store.updateMission(mission.id, { plan: finalized as any });
+      }
+      return { ok: true, plan: finalized, note: "the plan was recorded; the site computes the price and shows it to the customer. Stop now." };
+    };
+
+    return { inspection, makeLookup, finalizeAcceptedPlan };
+  };
+
+  const recoverFromSaved = async (calls: CallRow[], opts: { stagesIn?: Array<Record<string, unknown>>; summaryHint?: string; assumptionsHint?: unknown; inspection?: SavedEvidenceInspection; log?: (line: string) => void } = {}): Promise<RecoveryResult> => {
+    const stagesIn = opts.stagesIn ?? state.lastRootStages ?? [];
+    const build = await makeBuildContext(calls, stagesIn, opts.inspection);
+    return recoverCompanyPeopleFromSavedEvidence({
+      mission, store, catalog: ctx.catalog, access: ctx.access, capabilities: ctx.capabilities,
+      calls, callParams: state.callParams, codeRuns: state.codeRuns, outSeq: state.outSeq,
+      stagesIn, summaryHint: opts.summaryHint, assumptionsHint: opts.assumptionsHint,
+      understoodCompanies: ctx.understoodCompanies, understoodPeople: ctx.understoodPeople,
+      runSandbox, loadEvidenceMap, makeLookup: build.makeLookup,
+      finalizePlan: (p, ev, o) => build.finalizeAcceptedPlan(p, ev, { ...o, persist: false }),
+      inspection: build.inspection, log: opts.log,
+    });
+  };
+
+  return { loadEvidenceMap, makeBuildContext, recoverFromSaved };
 }
 
-function nonEmptyStr(v: unknown): string {
-  return typeof v === "string" && v.trim() !== "" ? v.trim() : typeof v === "number" ? String(v) : "";
-}
-
-function extractPersonPreview(raw: Record<string, unknown>) {
-  const person = isObject(raw.person) ? raw.person : raw;
-  const exps = Array.isArray(person.experiences) ? person.experiences : Array.isArray(raw.experiences) ? raw.experiences : Array.isArray(raw.employment_history) ? raw.employment_history : [];
-  const exp = exps.find(isObject) ?? {};
-  const fullName = nonEmptyStr(person.full_name) || nonEmptyStr(person.fullName) || nonEmptyStr(person.name) || [nonEmptyStr(person.first_name) || nonEmptyStr(person.firstName), nonEmptyStr(person.last_name) || nonEmptyStr(person.lastName)].filter(Boolean).join(" ") || nonEmptyStr(raw.full_name) || nonEmptyStr(raw.name);
-  const jobTitle = nonEmptyStr(person.job_title) || nonEmptyStr(person.jobTitle) || nonEmptyStr(person.title) || nonEmptyStr(person.headline) || nonEmptyStr(person.position) || nonEmptyStr(exp.job_title) || nonEmptyStr(exp.title) || nonEmptyStr(raw.job_title) || nonEmptyStr(raw.title);
-  const compObj = isObject(person.company) ? person.company : isObject(raw.organization) ? raw.organization : null;
-  const company = (typeof person.company === "string" ? person.company.trim() : "") || nonEmptyStr(person.company_name) || nonEmptyStr(person.companyName) || nonEmptyStr(exp.company_name) || nonEmptyStr(exp.companyName) || nonEmptyStr(compObj?.name) || nonEmptyStr(raw.companyName) || nonEmptyStr(raw.company_name);
-  const urls = isObject(person.URLs) ? person.URLs : null;
-  const linkedin = nonEmptyStr(person.linkedin_url) || nonEmptyStr(person.linkedinUrl) || nonEmptyStr(person.linkedin) || nonEmptyStr(person.profile_url) || nonEmptyStr(urls?.linkedin) || nonEmptyStr(raw.linkedin_url) || nonEmptyStr(raw.linkedin);
-  const email = nonEmptyStr(person.email) || nonEmptyStr(raw.email);
-  const id = nonEmptyStr(raw.id) || nonEmptyStr(raw.personID) || nonEmptyStr(raw.person_id) || nonEmptyStr(person.id) || linkedin || email;
-  return { id, fullName, jobTitle, company, linkedin };
-}
-
-function buildSavedPeopleMapCode(rowExpr: string): string {
-  return [
-    `const list = ${rowExpr};`,
-    `if (!Array.isArray(list)) return [];`,
-    `const s = (v) => typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : "";`,
-    `return list.filter((r) => r && typeof r === "object").map((r) => {`,
-    `  const p = r.person && typeof r.person === "object" ? r.person : r;`,
-    `  const exps = Array.isArray(p.experiences) ? p.experiences : Array.isArray(r.experiences) ? r.experiences : Array.isArray(r.employment_history) ? r.employment_history : [];`,
-    `  const exp = exps.find((x) => x && typeof x === "object") || {};`,
-    `  const compObj = p.company && typeof p.company === "object" ? p.company : r.organization && typeof r.organization === "object" ? r.organization : {};`,
-    `  const urls = p.URLs && typeof p.URLs === "object" ? p.URLs : {};`,
-    `  const full_name = s(p.full_name) || s(p.fullName) || s(p.name) || [s(p.first_name) || s(p.firstName), s(p.last_name) || s(p.lastName)].filter(Boolean).join(" ").trim() || s(r.full_name) || s(r.name);`,
-    `  const job_title = s(p.job_title) || s(p.jobTitle) || s(p.title) || s(p.headline) || s(p.position) || s(exp.job_title) || s(exp.title) || s(r.job_title) || s(r.title);`,
-    `  const company = (typeof p.company === "string" ? p.company.trim() : "") || s(p.company_name) || s(p.companyName) || s(exp.company_name) || s(exp.companyName) || s(compObj.name) || s(r.companyName) || s(r.company_name);`,
-    `  const linkedin = s(p.linkedin_url) || s(p.linkedinUrl) || s(p.linkedin) || s(p.profile_url) || s(urls.linkedin) || s(r.linkedin_url) || s(r.linkedin);`,
-    `  const email = s(p.email) || s(r.email);`,
-    `  const id = s(r.id) || s(r.personID) || s(r.person_id) || s(p.id) || linkedin || email;`,
-    `  return { id, full_name, job_title, company, linkedin };`,
-    `}).filter((row) => row.id && row.full_name && (row.job_title || row.company || row.linkedin));`,
-  ].join("\n");
-}
-
-function parentCompanyMatchScore(params: Record<string, unknown>, rows: ReadonlyArray<Record<string, unknown>>, parentRows: Array<Record<string, unknown>>): number {
-  if (parentRows.length === 0) return 0;
-  if (parentBinding(params, parentRows)) return 2;
-  const parentNames = parentRows.flatMap((p) => [p.name, p.company_name, p.website, p.domain].map((v) => nonEmptyStr(v).toLowerCase()).filter((v) => v.length >= 3));
-  if (parentNames.length === 0) return 0;
-  for (const r of rows) {
-    const comp = extractPersonPreview(r).company.toLowerCase();
-    if (comp && parentNames.some((pn) => comp.includes(pn) || pn.includes(comp.split(" ")[0] ?? ""))) return 1;
+/** Shared entry point for runMission.ts when the SDK ends without proposing or finishing cleanly. */
+export async function recoverCompanyPeoplePlan(ctx: ToolContext, log?: (line: string) => void): Promise<RecoveryResult> {
+  const calls = await ctx.store.listCalls(ctx.mission.id);
+  const coord = createPlanCoordinator(ctx);
+  const rec = await coord.recoverFromSaved(calls, { log });
+  if (rec.kind === "plan") {
+    ctx.state.outSeq = rec.outSeq;
+    ctx.state.proposedPlan = rec.plan;
+  } else if (rec.kind === "question") {
+    const asked = await recordQuestionOnce({ store: ctx.store, missionId: ctx.mission.id, question_ar: rec.question_ar, options_ar: rec.options_ar, log });
+    if (!asked) return { kind: "none" };
+    ctx.state.question = rec.question_ar;
   }
-  return 0;
+  return rec;
 }
 
 
@@ -488,6 +620,28 @@ export async function withStageLock<T>(key: string, fn: () => Promise<T>): Promi
 export function buildTools(ctx: ToolContext): ToolSpec[] {
   const { store, mission, gateway, state } = ctx;
   const runSandbox = ctx.sandbox ?? ((code: string, inputs: Record<string, unknown>) => runInSandbox(code, inputs));
+  const coord = createPlanCoordinator(ctx);
+  const applyRecoveryResult = async (res: RecoveryResult): Promise<Record<string, unknown> | null> => {
+    if (res.kind === "plan") {
+      state.finish = null;
+      delete state.finishOrigin;
+      state.outSeq = res.outSeq;
+      state.proposedPlan = res.plan;
+      state.terminal = true;
+      await store.updateMission(mission.id, { plan: res.plan as any });
+      return { ok: true, note: "the plan was assembled from verified saved evidence and recorded; stop now." };
+    }
+    if (res.kind === "question") {
+      const asked = await recordQuestionOnce({ store, missionId: mission.id, question_ar: res.question_ar, options_ar: res.options_ar });
+      if (!asked) return null;
+      state.finish = null;
+      delete state.finishOrigin;
+      state.question = res.question_ar;
+      state.terminal = true;
+      return { ok: true, note: "the question was shown to the customer; stop now" };
+    }
+    return null;
+  };
 
   const loadFileIds = async (ids: string[]): Promise<{ ok: true; inputs: Record<string, unknown> } | { ok: false; error: string }> => {
     const inputs: Record<string, unknown> = {};
@@ -845,6 +999,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
+        if (stagesIn.some((st) => isObject(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === ""))) {
+          state.lastRootStages = stagesIn.filter(isObject);
+        }
         // PR B (round 18): ONE PATH FOR SOCIAL. A plan whose stages read a social platform is made by the plan compiler (agent/src/compiled.ts), never by the model: a social plan proposed here is not accepted and the request ends honestly (nothing held, nothing charged).
         if (!modelPlanningForTests() && stagesIn.some((st) => isSocialPlatform(String(ctx.catalog.byId.get(String(st?.endpoint_id ?? ""))?.capability ?? "").split(".")[0]))) {
           state.finish = { outcome: "cannot_serve", summary_ar: "", kind: "unsupported" };
@@ -860,283 +1017,38 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           .sort()
           .join("|");
 
+        const build = await coord.makeBuildContext(calls, stagesIn);
+        const rejectOrRecover = async (message: string, issues: ReadonlyArray<string>, hasSavedPeople = false) => {
+          const r = rejectPlan(state, message, issues, evidenceDigest, hasSavedPeople);
+          if (!state.terminal) return r;
+          const recovered = await applyRecoveryResult(await coord.recoverFromSaved(calls, {
+            stagesIn,
+            summaryHint: typeof a.summary_ar === "string" ? a.summary_ar : undefined,
+            assumptionsHint: a.assumptions_ar,
+            inspection: build.inspection,
+            log: ctx.log,
+          }));
+          return recovered ?? r;
+        };
+
         // UNIFIED CAPABILITY DISCOVERY: every stage reads one of the capabilities code validated for this request (inputs, outputs, availability, policy, price); the model recommends, code decides
         if (ctx.capabilities) {
           const capIssues = planStageIssues(stagesIn.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog);
-          if (capIssues.length > 0) return rejectPlan(state, "the plan was not accepted; fix these and propose again", capIssues, evidenceDigest);
+          if (capIssues.length > 0) return rejectOrRecover("the plan was not accepted; fix these and propose again", capIssues, build.inspection.peopleCandidates.length > 0);
         }
-        // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
-        const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
-        const loadEvidenceMap = async (stagesList: any[]): Promise<Map<string, string | null>> => {
-          const ids = new Set<string>();
-          for (const s of stagesList) {
-            if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
-            if (s && typeof s.yield_from === "string") ids.add(s.yield_from);
-          }
-          const ev = new Map<string, string | null>();
-          for (const id of ids) ev.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
-          return ev;
-        };
-        const evidence = await loadEvidenceMap(stagesIn);
-        // DT-20261119-01: the ESTIMATE of a people stage is offered to the plan check only when code proves, from the calls of THIS planning, that a people source answered empty and none gave a row (peopleEstimate.ts); never from the model's word
-        const estimateAllowed = (id: string): boolean => policyVerdict(id, ctx.access).allowed && !blockedEndpointReason(id) && isSellable(id, ctx.catalog);
-        const peopleEstimate = (() => {
-          if (!ctx.understoodPeople) return null;
-          const ranked = peopleSourcesForCompanies(ctx.catalog, estimateAllowed);
-          const answers = peopleAnswersOf(calls, new Set(ranked.map((x) => x.id)));
-          if (answers.gaveRows || answers.answeredEmpty.size === 0) return null;
-          return peopleEstimateOf(ranked, answers.answeredEmpty);
-        })();
-
-        // C1: inspect saved positive people calls (raw page + row path + parent binding against sampled parent rows) so repair messages and recovery both rank usable linked evidence first.
-        const parentRowsOf = async (): Promise<{ key: string | null; rows: Array<Record<string, unknown>> }> => {
-          const root = stagesIn.find((st) => isObject(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === ""));
-          const rootKey = isObject(root) && typeof root.key === "string" && root.key ? root.key : null;
-          if (isObject(root) && typeof root.yield_from === "string" && FILE_ID.test(root.yield_from)) {
-            const raw = await store.getFile(mission.id, pathOfFile(root.yield_from));
-            try { const arr = raw ? JSON.parse(raw) : null; if (Array.isArray(arr) && arr.length > 0 && arr.every(isObject)) return { key: rootKey, rows: arr }; } catch { /* fall through */ }
-          }
-          if (isObject(root) && Array.isArray(root.sample_rows) && root.sample_rows.some(isObject)) {
-            return { key: rootKey, rows: root.sample_rows.filter(isObject) };
-          }
-          return { key: rootKey, rows: [] };
-        };
-        const { key: rootParentKey, rows: parentRows } = await parentRowsOf();
-        const savedPeopleCandidates: SavedPeopleCandidate[] = [];
-        const prefix = `${mission.id}:`;
-        for (const c of calls) {
-          if ((c.phase ?? "planning") !== "planning" || c.status !== "ok") continue;
-          const rows = Number(c.rows_returned) || 0;
-          if (rows <= 0) continue;
-          const ep = ctx.catalog.byId.get(c.endpoint_id);
-          if (!ep?.capability || !PEOPLE_OF_COMPANY_CAPABILITIES.has(ep.capability)) continue;
-          const callId = c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id;
-          const rawText = await store.getFile(mission.id, RAW_PATH(callId));
-          let rawJson: unknown = null;
-          let rowExpr = `inputs.${callId}.results`;
-          let rawRows: Array<Record<string, unknown>> = [];
-          try {
-            if (rawText) {
-              rawJson = JSON.parse(rawText);
-              const { reading } = buildShapeDigest(rawJson, ep);
-              rowExpr = rowsExpressionOf(callId, reading.listPath, reading.listStrategy) ?? rowExpr;
-              rawRows = reading.rows.filter(isObject);
-            }
-          } catch { /* ignore malformed raw file */ }
-          const usable = rawRows.some((r) => {
-            const p = extractPersonPreview(r);
-            return Boolean(p.id && p.fullName && (p.jobTitle || p.company || p.linkedin));
-          });
-          const params = state.callParams.get(callId) ?? Object.fromEntries(Object.entries(c.params_digest ?? {}).filter(([k]) => !k.startsWith("__")));
-          const linkScore = parentCompanyMatchScore(params, rawRows, parentRows);
-          savedPeopleCandidates.push({ callId, endpointId: c.endpoint_id, rows, rowExpr, rawJson, usable, linkScore, parentKey: rootParentKey });
-        }
-        savedPeopleCandidates.sort((a, b) => Number(b.usable) - Number(a.usable) || b.linkScore - a.linkScore || b.rows - a.rows || a.callId.localeCompare(b.callId));
-        const savedPeopleMap = new Map<string, Array<SavedEndpointCallDetail>>();
-        for (const cand of savedPeopleCandidates) {
-          const list = savedPeopleMap.get(cand.endpointId) ?? [];
-          list.push({ callId: cand.callId, rows: cand.rows, rowPath: cand.rowExpr, ...(cand.parentKey ? { parentKey: cand.parentKey } : {}), linkedToParent: cand.linkScore > 0, linkScore: cand.linkScore });
-          savedPeopleMap.set(cand.endpointId, list);
-        }
-
-        const makeLookup = (evMap: Map<string, string | null>) => ({
-          ...(noRelevance ? { noRelevance: true } : {}),
-          ...(peopleEstimate ? { peopleEstimate } : {}),
-          call: (id: string): RecordedCall | null => {
-            const row = calls.find((c) => c.id === `${mission.id}:${id}`);
-            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: Object.fromEntries(Object.entries(row.params_digest ?? {}).filter(([k]) => !k.startsWith("__"))) } : null;
-          },
-          evidenceText: (id: string) => evMap.get(id) ?? null,
-          endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
-          endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && webSourceAvailable(endpointId, webAvailableOf(ctx))) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
-          requestText: askedTextOf(mission),
-          ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
-          isContactSource,
-          pricingSettings: ctx.pricingSettings,
-          ...(ctx.understoodPeople ? { understoodPeople: ctx.understoodPeople } : {}),
-          childStepSources: (noun: string) => { const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
-          contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
-          mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
-          contactAids: (kind: "email" | "phone") => {
-            const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-            return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("email", ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
-          },
-          endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
-          savedCallsByEndpoint: () => {
-            const m = new Map<string, Array<SavedEndpointCallDetail>>();
-            for (const c of calls) {
-              if (c.status !== "ok") continue;
-              const rows = Number(c.rows_returned) || 0;
-              if (rows <= 0) continue;
-              const callId = c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id;
-              const enriched = savedPeopleMap.get(c.endpoint_id)?.find((x) => x.callId === callId);
-              const list = m.get(c.endpoint_id) ?? [];
-              list.push(enriched ?? { callId, rows });
-              m.set(c.endpoint_id, list);
-            }
-            return m;
-          },
-        });
-
-        const finalizeAcceptedPlan = async (planIn: PricedPlan, evMap: Map<string, string | null>, options: { skipAdvice?: boolean } = {}): Promise<{ ok: true; note: string } | { ok: false; advice?: string[]; issues?: string[] }> => {
-          if (!options.skipAdvice && state.peopleSendBacks < PEOPLE_SEND_BACKS_MAX) {
-            const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
-            const lk = makeLookup(evMap);
-            const advice = peopleAndContactAdvice({
-              plan: planIn, requestText: lk.requestText, capabilityOf: lk.endpointCapability,
-              peopleSources: peopleSourcesForCompanies(ctx.catalog, allowedSource).map((p) => p.id), phoneSources: phoneSourcesOf(ctx.catalog, allowedSource).map((p) => p.id),
-              calls: lk.endpointsCalled(),
-              evidenceOf: (stageKey: string) => { const st = planIn.stages.find((x) => x.key === stageKey); const texts = (st?.measured_by ?? []).map((id) => evMap.get(id)).filter((t): t is string => typeof t === "string"); return texts.length > 0 ? texts.join("\n") : null; },
-            });
-            if (advice.length > 0) return { ok: false, advice };
-          }
-          let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
-          try {
-            derived = await deriveEngineSpecsChecked(planIn, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
-          } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
-          if (derived && derived.issues.length > 0) return { ok: false, issues: derived.issues };
-          if (derived) {
-            for (const st of planIn.stages) {
-              const spec = derived.specs.get(st.key);
-              if (spec) st.engine = spec;
-              const filters = derived.filters.get(st.key);
-              if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
-              const missing = derived.unresolved.get(st.key);
-              if (missing && missing.length > 0) st.unresolved_sources = missing;
-              const stageGaps = derived.gaps.get(st.key);
-              if (stageGaps && stageGaps.length > 0) applyGapNotes(planIn, stageGaps);
-              const approxDates = derived.approx.get(st.key);
-              if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
-            }
-          }
-          if (planIn.contact_steps && planIn.contact_steps.length > 0) for (const st of planIn.stages) st.columns = withContactColumns(st.key, st.columns, planIn.contact_steps);
-          {
-            const contracted = withContractColumns(planIn.stages);
-            planIn.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
-            if (planIn.contact_steps) planIn.contact_steps = bindCompanySteps(planIn.stages, planIn.contact_steps);
-          }
-          let finalized = planIn;
-          if (derived) {
-            const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-            finalized = await withRepliesStages(finalized, {
-              catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
-              remapWithTokens: async (st, tokens) => {
-                const sp = st.engine;
-                if (!sp) return null;
-                try {
-                  const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
-                  if (page === null) return null;
-                  const code = tokenOverlayCode(sp.map_code, tokens);
-                  const [before, after] = await Promise.all([runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) }), runSandbox(code, { [sp.map_file_id]: JSON.parse(page) })]);
-                  if (!before.ok || !after.ok || before.resultJson === null || after.resultJson === null) return null;
-                  const a1 = JSON.parse(before.resultJson) as unknown;
-                  const a2 = JSON.parse(after.resultJson) as unknown;
-                  if (!Array.isArray(a1) || !Array.isArray(a2) || a1.length !== a2.length || a2.length === 0) return null;
-                  if (!a2.every((r, i) => isObject(r) && String(r.id) === String((a1[i] as { id?: unknown }).id))) return null;
-                  return a2.some((r) => isObject(r) && tokens.every((t) => typeof r[t.key] === "string" && r[t.key] !== "")) ? code : null;
-                } catch { return null; }
-              },
-              sampleRowsOf: async (st) => {
-                const sp = st.engine;
-                if (!sp) return null;
-                try {
-                  const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
-                  if (page === null) return null;
-                  const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
-                  if (!out.ok || out.resultJson === null) return null;
-                  const rows = JSON.parse(out.resultJson) as unknown;
-                  return Array.isArray(rows) ? rows.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x)) : null;
-                } catch { return null; }
-              },
-            });
-          }
-          if (derived && finalized.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
-            const stripped = (t: string) => t.replace(/[\u064B-\u0652]/g, "");
-            finalized.assumptions_ar = (finalized.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
-            if (finalized.assumptions_ar.length === 0) delete finalized.assumptions_ar;
-            if (!(finalized.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) finalized.notes_ar = [...(finalized.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
-          }
-          state.proposedPlan = finalized;
-          state.terminal = true;
-          await store.updateMission(mission.id, { plan: finalized as any });
-          return { ok: true, note: "the plan was recorded; the site computes the price and shows it to the customer. Stop now." };
-        };
-
-        const lookup = makeLookup(evidence);
+        const evidence = await coord.loadEvidenceMap(stagesIn);
+        const lookup = build.makeLookup(evidence);
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) {
-          const cats = checked.issues.map(classifyPlanIssue);
-          const hasPeopleRepair = cats.includes("people_saved_unserved") || (cats.includes("child_step_unserved") && savedPeopleCandidates.length > 0);
-          if (hasPeopleRepair && (state.unservedPeopleRejections ?? 0) >= UNSERVED_PEOPLE_REPAIR_MAX && savedPeopleCandidates.length > 0) {
-            // C1: On repeat unserved/omitted people rejection with saved people evidence, assemble & validate a real card OR ask ONE specific question — never end in plan_invalid internal refusal while usable people evidence exists.
-            const linked = savedPeopleCandidates.find((p) => p.usable && p.linkScore > 0 && p.rawJson !== null);
-            const rootStage = stagesIn.find((st) => isObject(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === ""));
-            if (linked && rootStage) {
-              const code = buildSavedPeopleMapCode(linked.rowExpr);
-              const sb = await runSandbox(code, { [linked.callId]: linked.rawJson });
-              let mapped: unknown[] = [];
-              if (sb.ok && sb.resultJson) {
-                try { const parsed = JSON.parse(sb.resultJson); if (Array.isArray(parsed)) mapped = parsed; } catch { /* empty */ }
-              }
-              if (mapped.length > 0 && mapped.every(isObject)) {
-                state.outSeq += 1;
-                const mappedOutId = outId(state.outSeq);
-                await store.putFile(mission.id, `out/${mappedOutId}.json`, JSON.stringify(mapped), "application/json");
-                state.codeRuns.set(mappedOutId, { code, files: [linked.callId] });
-                try { await store.putNew(mission.id, codeRunPath(mappedOutId), JSON.stringify({ code, files: [linked.callId] }), "application/json"); } catch { /* ignore */ }
-                const pKey = String(rootStage.key || "companies");
-                const perCount = ctx.understoodPeople?.per_parent ?? 1;
-                const peopleTitle = ctx.understoodPeople?.noun_ar ? `${ctx.understoodPeople.noun_ar} كل شركة` : "مسؤولو كل شركة";
-                const parentTitle = String(rootStage.title_ar ?? "الشركات").trim();
-                const assembledSummary = `${firstSentenceAr(String(a.summary_ar ?? "")).replace(/\.$/, "") || `ستحصل على ${parentTitle}`}، ومع كل شركة مسؤولها حسب المتاح.`;
-                const assembledStages = [
-                  rootStage,
-                  {
-                    key: "people",
-                    title_ar: peopleTitle,
-                    endpoint_id: linked.endpointId,
-                    parent_key: pKey,
-                    per_parent_rows: perCount,
-                    expected_rows: Math.max(1, Number(rootStage.expected_rows) || 1) * perCount,
-                    deliver: true,
-                    columns: [
-                      { key: "full_name", title_ar: "الاسم الكامل" },
-                      { key: "job_title", title_ar: "المسمى الوظيفي" },
-                      { key: "company", title_ar: "الشركة" },
-                      { key: "linkedin", title_ar: "الملف المهني" },
-                    ],
-                    measured_by: [linked.callId],
-                    yield_from: mappedOutId,
-                  },
-                ];
-                const ev2 = await loadEvidenceMap(assembledStages);
-                const capOk = !ctx.capabilities || planStageIssues(assembledStages.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog).length === 0;
-                const candidateCheck = capOk ? validateAndPricePlan({ summary_ar: assembledSummary, stages: assembledStages, ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, makeLookup(ev2)) : { ok: false as const, issues: [] };
-                if (candidateCheck.ok) {
-                  const fin = await finalizeAcceptedPlan(candidateCheck.plan, ev2, { skipAdvice: true });
-                  if (fin.ok) return { ok: true, note: "the plan was assembled from verified saved evidence and recorded; stop now." };
-                }
-              }
-            }
-            if (savedPeopleCandidates.some((p) => p.usable) && !mission.answer_text && state.question === null) {
-              const question = "لم نتمكن من ربط نتائج مسؤولي الشركات تلقائيًا بالخطة؛ هل تفضّل الاستمرار بالشركات فقط أم تحديد مسمى وظيفي آخر؟";
-              const options = ["الاستمرار بالشركات فقط", "تحديد مسمى وظيفي آخر"];
-              state.question = question;
-              state.terminal = true;
-              await store.updateMission(mission.id, { plan_public: { question_options: options } as any });
-              await store.addEvent(mission.id, { kind: "question", message_ar: question });
-              return { ok: true, note: "the question was shown to the customer; stop now" };
-            }
-          }
-          return rejectPlan(state, "the plan was not accepted; fix these and propose again", checked.issues, evidenceDigest, savedPeopleCandidates.length > 0);
+          return rejectOrRecover("the plan was not accepted; fix these and propose again", checked.issues, build.inspection.peopleCandidates.length > 0);
         }
-        const finalized = await finalizeAcceptedPlan(checked.plan, evidence);
+        const finalized = await build.finalizeAcceptedPlan(checked.plan, evidence);
         if (!finalized.ok) {
           if (finalized.advice) {
             state.peopleSendBacks += 1;
             return err("the plan was not accepted yet; fix this and propose again", { issues: finalized.advice.slice(0, 6) });
           }
-          return rejectPlan(state, "the plan was not accepted; fix these and propose again", finalized.issues ?? [], evidenceDigest);
+          return rejectOrRecover("the plan was not accepted; fix these and propose again", finalized.issues ?? [], build.inspection.peopleCandidates.length > 0);
         }
         return { ok: true, note: finalized.note };
       },
@@ -1238,6 +1150,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             return err(`do not finish yet: ${short.map((st) => `stage «${st.key}» still needs ${st.planned_rows - items.counts(st.key).accepted} matching items`).join("; ")}, and the source has more pages. Collect the next pages (collect_pages with the same inputs resumes), run_code, save_rows; finish only when still_needed is 0, the source ends, or a call is refused`);
           }
           if (short.length > 0 && more) for (const st of short) await items.exclusive(() => items.commit([{ t: "stop", stage: st.key, reason: "model_stopped" as StopReason }]));
+        }
+        if (ctx.phase === "planning" && outcome === "cannot_serve") {
+          const recovered = await applyRecoveryResult(await coord.recoverFromSaved(await store.listCalls(mission.id)));
+          if (recovered) return recovered;
         }
         state.finish = { outcome, summary_ar: checked.text, ...(outcome === "cannot_serve" && (a.kind === "unsupported" || a.kind === "empty") ? { kind: a.kind as "unsupported" | "empty" } : {}) };
         state.finishOrigin = "model_finish";
