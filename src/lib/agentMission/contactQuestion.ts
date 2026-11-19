@@ -31,12 +31,14 @@ export function requestAsksForPeople(request: unknown): boolean {
  * `people.gaveRows`: a people source of the catalog already gave named people in this planning; `people.sourceIds`: the catalog's people-of-company sources this account may buy, cheapest first. With no person in hand the
  * planner is told to call those sources (item 3 of the order), never to put «companies only or any employees?» to the customer.
  */
-export interface UnderstoodPeopleFacts { gaveRows: boolean; sourceIds: ReadonlyArray<string> }
+export interface UnderstoodPeopleFacts { gaveRows: boolean; /** A people source was tried and ANSWERED, with no person: that is measured, and the honest question to the customer is allowed (FIX1, Gate 2 P1-3). */ answeredEmpty?: boolean; sourceIds: ReadonlyArray<string> }
 export function contactVerificationQuestionIssue(request: unknown, question: string, options: ReadonlyArray<string> = [], people?: UnderstoodPeopleFacts): string | null {
   if (!people && !requestAsksForPeople(request)) return null;
   const q = normalizeText(question);
   const all = normalizeText([question, ...options].join(" "));
   if (!(CONTACT_WORD.test(all) && VERIFY_WORD.test(q))) return null;
+  // a people source answered and gave nobody: the question is the honest way on, it is not refused (the refusal is for «no source tried» and «every try failed»)
+  if (people && !people.gaveRows && people.answeredEmpty === true) return null;
   if (people && !people.gaveRows) return `do not ask this: the customer already asked for the people, and no people source has given a person yet, so «not found» is not known. ${people.sourceIds.length > 0 ? `Call a people source of the catalog with a company you found, cheapest first: ${people.sourceIds.slice(0, 4).join(", ")}. ` : ""}An empty answer for one company is not an answer for the source: try the next company of your sample, then the next people source. Plan the people stage on a source that gave named people. If every people source failed or answered with no rows, end with finish (cannot_serve): code tells the customer the truth. Never ask the customer to choose between the companies alone and other employees`;
   return "do not ask this: the customer already asked for the people. Deliver every person the source gives, with the name, the job title and the professional page; an e-mail or a phone is filled only when code verified it and the cell is left empty otherwise (verification never decides whether a person is delivered). Decide, say it in one line of assumptions_ar (no number), and go on with the plan";
 }

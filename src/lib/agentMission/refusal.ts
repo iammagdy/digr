@@ -45,7 +45,9 @@ export function classifyNoCardEnd(input: NoCardEndInput): { cls: RefusalClass; r
   // DT-20261118-09 F2: the people were asked for and no people tool answered (every call failed or was refused, or none was made): that is a failure to reach them, never «they were not found» and never «not served».
   // A catalog with no people tool says nothing about them (an empty set is no evidence).
   const peopleIds = input.peopleEndpointIds;
-  if (input.peopleAsked && peopleIds && peopleIds.size > 0 && !planning.some((c) => c.endpoint_id !== undefined && peopleIds.has(c.endpoint_id) && (c.status === "ok" || c.status === "empty"))) {
+  // FIX1 (Gate 2 P1-1): only when the COMPANIES answered with rows (something real was found for the people to hang on); a companies search that was empty or failed, or no call at all, keeps its own class
+  const isPeople = (c: PlanningCallFact): boolean => c.endpoint_id !== undefined && peopleIds !== undefined && peopleIds.has(c.endpoint_id);
+  if (input.peopleAsked && peopleIds && peopleIds.size > 0 && planning.some((c) => c.status === "ok" && (c.rows_returned ?? 0) > 0 && !isPeople(c)) && !planning.some((c) => c.endpoint_id !== undefined && peopleIds.has(c.endpoint_id) && (c.status === "ok" || c.status === "empty"))) {
     return { cls: "internal", reason: planning.some((c) => c.endpoint_id !== undefined && peopleIds.has(c.endpoint_id)) ? "people_sources_failed" : "people_sources_not_tried" };
   }
   // every source it tried failed or was unavailable: nothing was learned about the request, and that is ours
