@@ -20,6 +20,9 @@ const code = (): string => sql().replace(/--[^\n]*/g, "");
 /** The statements without comments AND without the text of string literals (a message or a comment-on text may name a word a statement must not use). */
 const statements = (): string => code().replace(/'(?:[^']|'')*'/g, "''");
 
+/** D-0098: does this migration name the missions table? A left boundary only (see the test of the rule below); `--` comments are not text. */
+const namesTheMissionsTable = (sql: string): boolean => /(?<![a-z0-9])missions/i.test(sql.replace(/--[^\n]*/g, ""));
+
 describe("the migration file", () => {
   it("there is exactly one, named the way the Supabase CLI names a migration (a timestamp, then the name), and it sorts AFTER every other migration", () => {
     expect(FILE).toHaveLength(1);
@@ -28,7 +31,18 @@ describe("the migration file", () => {
     // it sorts after EVERY migration that existed when it was written (the last one before it is the quote-and-settle migration); a migration added LATER (DT-20261118-06 admin_campaigns,
     // D-0094 point 2) may follow it, but no later migration may name the missions table, so nothing applied after it can touch the index or the rows it guards
     expect(all.indexOf(FILE[0])).toBe(all.indexOf("20261104222000_record_production_quote_and_settle.sql") + 1);
-    for (const later of all.slice(all.indexOf(FILE[0]) + 1)) expect(readFileSync(path.join(MIGRATIONS, later), "utf8").replace(/--[^\n]*/g, ""), later).not.toMatch(/missions/i);
+    for (const later of all.slice(all.indexOf(FILE[0]) + 1)) expect(namesTheMissionsTable(readFileSync(path.join(MIGRATIONS, later), "utf8")), later).toBe(false);
+  });
+  // DT-20261118-06 PR 2 (BUG HUNTER Gate 1 P1-3 CONFIRMED D-0098's intent: «any naming of the missions table»): FIX1 matched the letters «missions» ANYWHERE, so a later migration that merely holds «admissions» or «permissions» failed this test.
+  // The rule is now a LEFT boundary only: the word must not continue a letter or a digit on its left. `public.missions`, `"missions"`, `missions_one_open_addon_per_file`, `missions_idx` and `agent_missions` (the underscore is not in the class) still fail;
+  // `admissions`, `permissions`, `submissions` pass. The `i` flag stays (a quoted "Missions"), `--` comments are stripped as before, a block comment is NOT stripped (a false positive that is accepted: it can only fail, never pass).
+  it("the rule that no later migration names the missions table: every case D-0098 names fails, words that merely contain the letters pass", () => {
+    const table: Array<[string, boolean]> = [
+      ["ALTER TABLE public.missions ADD COLUMN x int;", true], ['SELECT * FROM "missions";', true], ["DROP INDEX missions_one_open_addon_per_file;", true], ["CREATE INDEX missions_idx ON t(a);", true],
+      ["CREATE TABLE agent_missions (id int);", true], ["UPDATE Missions SET a = 1;", true], ["UPDATE MISSIONS SET a = 1;", true], ["/* missions */ SELECT 1;", true], ["SELECT 1 FROM public . missions", true], ["(missions)", true], ["CREATE TABLE missions2 (id int);", true],
+      ["-- the missions table is not touched here\nSELECT 1;", false], ["COMMENT ON TABLE t IS 'admissions';", false], ["GRANT permissions TO r;", false], ["CREATE TABLE submissions (id int);", false], ["SELECT 'remissions'", false], ["SELECT 1;", false],
+    ];
+    for (const [sql, names] of table) expect(namesTheMissionsTable(sql), sql).toBe(names);
   });
   it("it creates ONE unique partial index on the key plan->addon->>of, with the key and the deny-list of the four ENDED statuses in the predicate, if not exists", () => {
     const c = code().replace(/\s+/g, " ");

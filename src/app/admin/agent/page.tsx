@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { adminDownload, adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
@@ -283,6 +284,7 @@ export default function AgentPage() {
         <section className={SECTION} aria-label="تفاصيل المهمة" data-testid="agent-detail">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="m-0 text-[14px] font-semibold text-ink">{STATUS_AR[m.status] ?? m.status}{live ? " …" : ""}</h3>
+            {!m.is_addon ? <Link href={`/admin/missions/${m.id}`} className="text-[13px] font-semibold text-info" data-testid="inspect-link">فحص المهمة</Link> : null}
             {!m.is_addon && ["queued", "needs_input", "plan_ready"].includes(m.status) ? <button type="button" className={BTN} disabled={busy} onClick={() => act("cancel")}>إلغاء</button> : null}
           </div>
           <p className="m-0 text-[13px] text-ink2">{m.request_text}</p>

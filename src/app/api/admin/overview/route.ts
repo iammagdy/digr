@@ -18,12 +18,12 @@ const readError = () => NextResponse.json({ error: "تعذّر قراءة الم
 
 type Client = ReturnType<typeof createAdminClient>;
 
-/** The missions created since `since`, newest first, in pages of OVERVIEW_PAGE_SIZE (the API's cap), at most OVERVIEW_PAGES pages. `truncated`: the last page read was full at the cap. */
+/** The missions created since `since`, newest first (then by id: a total order, so a page boundary never loses a row), in pages of OVERVIEW_PAGE_SIZE (the API's cap), at most OVERVIEW_PAGES pages. `truncated`: the last page read was full at the cap. */
 async function readWindow(client: Client, since: string): Promise<{ rows: OverviewMissionRow[]; truncated: boolean } | null> {
   const rows: OverviewMissionRow[] = [];
   for (let page = 0; page < OVERVIEW_PAGES; page += 1) {
     const from = page * OVERVIEW_PAGE_SIZE;
-    const { data, error } = await client.from(MISSION_TABLE).select(OVERVIEW_COLUMNS).gte("created_at", since).order("created_at", { ascending: false }).range(from, from + OVERVIEW_PAGE_SIZE - 1);
+    const { data, error } = await client.from(MISSION_TABLE).select(OVERVIEW_COLUMNS).gte("created_at", since).order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, from + OVERVIEW_PAGE_SIZE - 1);
     if (error) return null;
     const got = Array.isArray(data) ? (data as unknown as OverviewMissionRow[]) : [];
     rows.push(...got);

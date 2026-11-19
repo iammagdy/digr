@@ -8,7 +8,7 @@ import { shortStampAr, initials, tint } from "@/components/admin/format";
 interface Entry { id: string; kind: string; who: string; label: string; target: string; ip: string; createdAt: string }
 
 const TABS: Array<[string, string]> = [["all", "الكل"], ["money", "الشحن"], ["keys", "المفاتيح والمزودون"], ["settings", "الإعدادات والدخول"]];
-const KIND_COLOR: Record<string, string> = { approve: "var(--ok)", reject: "var(--bad)", key: "var(--gold)", toggle: "var(--info)", setting: "var(--mut)", login: "var(--mut)" };
+const KIND_COLOR: Record<string, string> = { approve: "var(--ok)", reject: "var(--bad)", key: "var(--gold)", toggle: "var(--info)", setting: "var(--mut)", login: "var(--mut)", inspect: "var(--info)" };
 
 export default function AuditPage() {
   const { toast, isMobile } = useAdmin();
