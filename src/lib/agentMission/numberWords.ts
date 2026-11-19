@@ -1,3 +1,5 @@
+import { normalizeDigits } from "../arabicDigits";
+
 /**
  * ROUND 58: NUMBERS WRITTEN IN WORDS («ثلاثة وثلاثون»، «ثلاثمائة وخمسة وعشرين»). The reply guard checked digits only, and the real chat model answered «يعني ٣٢ شركة؟» on merged main 99acb4f with «الرقم ثلاثة وثلاثون هو مجموع العناصر» (the plan's
  * number is 32): a wrong number in words passed. This reads Arabic cardinal numbers from 11 to 999,999 written in words, so the guard can hold them to the same allowed numbers as digits. Small numbers (≤ 10: «مرة واحدة»، «خطوتين»، «ثلاث خطوات»)
@@ -73,4 +75,105 @@ export function wordNumbersIn(text: string, min = 11): number[] {
     i = Math.max(j, i + 1);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// A COUNT THE CUSTOMER WROTE (DT-20261118-05, shared since DT-20261118-08 FIX1)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/** A message's words, normalised for comparing (Arabic-Indic digits to ASCII, no diacritics, one alif, ة → ه, no punctuation, one space). */
+export const normalizeWords = (raw: string): string => normalizeDigits(String(raw ?? "")).replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").toLowerCase().replace(/[،,.!؟?؛;:"'«»()[\]{}\-_/\\|*#@~`+=<>]/g, " ").replace(/\s+/g, " ").trim();
+
+/** The numbers written in a message, as integers. */
+export const writtenNumbers = (message: string): number[] => (normalizeWords(message).match(/\d+/g) ?? []).map(Number).filter((n) => Number.isSafeInteger(n));
+
+/**
+ * THE NUMBER THE CITED WORDS SAY (QA #575 FAIL 2: {count: 700, count_text: «شركتين»} passed because the words are in the message). A number in words is read by the reader the reply guard already uses (numberWords.ts: the grammar of
+ * Arabic cardinals, no list of services or providers); words that hold no number word may only be the Arabic DUAL of a noun («شركتين»، «تعليقين»: one word ending in ين or ان), which means two. Anything else says no number.
+ */
+export function countOfWords(words: string): number | null {
+  const said = wordNumbersIn(words, 1);
+  if (said.length > 0) return said.length === 1 ? said[0] : null;
+  const tokens = words.split(" ");
+  return tokens.length === 1 && /^\p{L}{2,}(?:ين|ان)$/u.test(tokens[0]) ? 2 : null;
+}
+
+/**
+ * A count a model returned is kept only when the customer WROTE that number (moved here from conversationModel.ts for the planner's per-company count, DT-20261118-08 FIX1; the chat's behaviour is unchanged).
+ */
+export function countSupportedByMessage(message: string, count: number | null, countText: string | null = null): number | null {
+  if (count === null) return null;
+  if (writtenNumbers(message).includes(count)) return count;
+  // THE COUNT WRITTEN IN WORDS («شركتين», «اتنين», «عشر»): the model says which words of the message wrote it; code checks those words are really in the message AND say the same number (a count the words do not say is dropped)
+  const words = normalizeWords(countText ?? "");
+  if (words.length < 2 || /\d/.test(words) || !normalizeWords(message).includes(words)) return null;
+  return countOfWords(words) === count ? count : null;
+}
+
+/**
+ * Does the message write the number n OUTSIDE the words the model cited for it (DT-20261118-08 FIX1)? Used when a count per company equals the count of the companies: the customer wrote it twice
+ * («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … ومن كل شركة مديرين اتنين»), or the model copied the companies' own number («شركتين»، «٥ شركات») into it. Digits and number words are read by the readers above;
+ * for two, an indefinite Arabic dual word elsewhere («شركتين») also writes it (grammar: one word ending in ين or ان without «ال»; no word list).
+ */
+export function writtenElsewhere(message: string, cited: string, n: number): boolean {
+  const m = ` ${normalizeWords(message)} `;
+  const c = normalizeWords(cited);
+  const said = (text: string): number => [...writtenNumbers(text), ...wordNumbersIn(text, 1)].filter((x) => x === n).length;
+  if (c === "" || !m.includes(` ${c} `)) return said(m) >= 2;
+  const rest = m.replace(` ${c} `, " ");
+  return said(rest) >= 1 || (n === 2 && rest.split(" ").some((t) => t !== "" && !/^و?ال/.test(t) && countOfWords(t) === 2));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// WORDS AS THE ARABIC WRITES THEM (DT-20261118-08 FIX4): a digit glued to its noun («٥شركات»), a noun with the one-letter words that join it to the word before («لشركتين»، «بشركتين»، «وشركتين»)
+// or the article («الشركتين»، «للشركتين»). Grammar of the language; no word of any service, provider or company is named here.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/** The words of a text as tokens: normalised, a digit run split from the letters glued to it. */
+export const tokensOf = (text: string): string[] => normalizeWords(text).replace(/(\d)(?=\p{L})/gu, "$1 ").replace(/(\p{L})(?=\d)/gu, "$1 ").split(" ").filter((t) => t !== "");
+/** The ways an Arabic word can start with what is joined to it: [و|ف] then [ل|ب|ك|ال|لل|بال|كال]. */
+const PROCLITICS: string[] = (() => { const out: string[] = []; for (const a of ["", "و", "ف"]) for (const b of ["", "ل", "ب", "ك", "ال", "لل", "بال", "كال"]) out.push(a + b); return out.sort((x, y) => y.length - x.length); })();
+/** The word without what is joined to its front (kept when too little would be left). */
+const bareOf = (t: string): string => { for (const p of PROCLITICS) if (p !== "" && t.startsWith(p) && t.length - p.length >= 3) return t.slice(p.length); return t; };
+/** The root of a noun for comparing it with another form of the same noun («مديرين»، «المديرين»، «لمديرين» → «مدير»): no clitic, no plural or dual or feminine ending. */
+const stemOf = (t: string): string => { const b = bareOf(t); for (const e of ["ون", "ين", "ان", "ات", "ه", "ي", "و"]) if (b.endsWith(e) && b.length - e.length >= 3) return b.slice(0, -e.length); return b; };
+const sameStem = (a: string, b: string): boolean => { const x = stemOf(a), y = stemOf(b); return x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)); };
+
+/**
+ * The number that words the model cited say, when they are really in the message (DT-20261118-08 FIX2: the count of the COMPANIES the customer wrote, cited by the model when it wrote no company step, e.g. «cannot»).
+ * Digits in the words, one number word, or the Arabic dual (grammar, no word list); two numbers or none: null. The cited words must stand in the message as WHOLE words (FIX3: «5» is not inside «50», «خمس» is not
+ * inside «خمسين»); the first of them may carry what is joined to the front of an Arabic word («وخمس شركات»، «لشركتين») and a digit may be glued to its noun («٥شركات») (FIX4).
+ */
+export function countWrittenIn(message: string, cited: string | null): number | null {
+  const w = tokensOf(cited ?? "");
+  const m = tokensOf(message);
+  if (w.length === 0 || !m.some((_, i) => w.every((t, k) => (k === 0 ? PROCLITICS.some((p) => m[i] === p + t) : m[i + k] === t)))) return null;
+  const words = w.join(" ");
+  const digits = writtenNumbers(words);
+  if (digits.length > 0) return digits.length === 1 ? digits[0] : null;
+  return countOfWords(words);
+}
+
+/**
+ * IS THIS NUMBER THE COUNT OF SOME OTHER NOUN, NOT OF THE PEOPLE? (DT-20261118-08 FIX4.) Asked only when the count of the companies could not be established: the number the model cites for each company may then be the
+ * companies' own, copied. By the grammar of Arabic counting, a number is a count of a noun when the noun follows it («٥٠ شركة»، «٥شركات»), or when it is the dual form alone («شركتين»، «لشركتين»). Such a span counts
+ * ANOTHER noun unless the noun is the people's own (same root as the people's title the planner wrote: «٣ مديرين» under «المديرين»). A bare number («اتنين»، «٣») or a span that is a phrase («٣ من كل شركة») is a per-company amount;
+ * for a bare number the message is read: it is another noun's count when EVERY place the message writes that number is such a span (the word after it is a noun of 4 letters or more, which no preposition is, and not the people's).
+ */
+export function isCountOfOtherNoun(message: string, cited: string, n: number, peopleTitle: string): boolean {
+  const people = tokensOf(peopleTitle);
+  const isPeople = (t: string): boolean => people.some((p) => sameStem(t, p));
+  const isNumber = (t: string): boolean => /^\d+$/.test(t) || wordNumbersIn(t, 1).length > 0;
+  const numberOf = (t: string): number | null => (/^\d+$/.test(t) ? Number(t) : (wordNumbersIn(t, 1)[0] ?? null));
+  const isDual = (t: string): boolean => !isNumber(t) && countOfWords(bareOf(t)) === 2;
+  const nouns = tokensOf(cited).filter((t) => !isNumber(t));
+  if (nouns.length === 1) return !isPeople(nouns[0]);
+  if (nouns.length >= 2) return false;
+  const m = tokensOf(message);
+  let seen = 0;
+  let counting = 0;
+  m.forEach((t, i) => {
+    const next = m[i + 1];
+    if (isNumber(t) && numberOf(t) === n) { seen += 1; if (next !== undefined && !isNumber(next) && bareOf(next).length >= 4 && !isPeople(next)) counting += 1; }
+    else if (n === 2 && isDual(t)) { seen += 1; if (!isPeople(t)) counting += 1; }
+  });
+  return seen > 0 && counting === seen;
 }

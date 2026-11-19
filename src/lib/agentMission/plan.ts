@@ -176,7 +176,7 @@ export interface PlanLookup {
   /** The catalog sources that can carry out a step the request asks per parent (the people of a company), cheapest first: a plan may not call such a step «unserved» while one of them was never tried. */
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
   /** THE REQUEST'S STRUCTURE as the planning model understood it (a people step under a companies step), read from its understanding, never from the words: the people of the companies are asked for whatever the customer's wording, so the check below treats them as a step. */
-  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null };
+  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> };
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
@@ -822,7 +822,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   }
   // the customer asked for work e-mails or phones: the plan needs a contact stage (a contact source, or a column of verified contact values), or one honest sentence saying why it cannot
   const notes: string[] = [];
-  const wants = requestWantsContacts(lookup.requestText);
+  // what was asked: the customer's words as read so far, AND the person contacts the planner's required answer names (DT-20261118-08: a wording code does not read is never a reason to drop them)
+  const wantsRead = requestWantsContacts(lookup.requestText);
+  const askedKinds = lookup.understoodPeople?.contact_kinds ?? [];
+  const wants = { ...wantsRead, email: wantsRead.email || askedKinds.includes("email"), phone: wantsRead.phone || askedKinds.includes("phone") };
   if ((wants.email || wants.phone) && lookup.isContactSource) {
     // a delivered PEOPLE stage always carries the finder steps (added below by code), so the planner never has to plan or to excuse them
     // (round 51, live evaluation Z14 «مطاعم المهندسين … وأرقام تليفوناتها»: the PLACES' own phone, the number of the business's public listing that the places contract already delivers, is what was asked; the planner was sent to add a

@@ -7,8 +7,10 @@ import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
+import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
+import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
-import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, platformIndex, platformsOf } from "./catalogView";
+import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
@@ -71,7 +73,7 @@ export interface UnderstoodStep {
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
 }
 export interface Understanding {
-  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; steps: UnderstoodStep[];
+  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; steps: UnderstoodStep[];
 }
 
 export type LlmPlanResult =
@@ -172,7 +174,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
   if (!isObj(u)) return { ok: false, error: "the answer is not an object" };
   const decision = u.decision === "ask" || u.decision === "cannot" ? u.decision : "plan";
   const understanding_ar = str(u.understanding_ar);
-  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true, ...(u.accepts_available === true ? { accepts_available: true } : {}) } as Understanding;
+  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true, ...(u.accepts_available === true ? { accepts_available: true } : {}), ...(peopleOfCompaniesAskOf(u.people_of_companies).asked ? { people_of_companies: peopleOfCompaniesAskOf(u.people_of_companies) } : {}) } as Understanding;
   if (decision === "ask") {
     const q = str(u.question_ar);
     if (!q) return { ok: false, error: "decision ask needs question_ar" };
@@ -426,7 +428,7 @@ function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number; refused
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
 export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string }> {
   const ask = asker(deps, cost);
-  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}`;
+  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
   const userPrompt = understandPrompt(input, deps.today);
   let checked: ReturnType<typeof checkUnderstanding> | null = null;
@@ -437,11 +439,53 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
   if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
+  if (checked?.ok) return { ok: true, value: withCheckedPerCompany(checked.value, customerSaidOf(input)) };
   return checked ?? { ok: false, error: "no answer" };
 }
 
 /** The model declined the request twice (live eval 16 Nov 2026: «the private messages of an Instagram account»): the customer is told what the platform collects, never a vague «no source». */
 export const REFUSED_REQUEST_AR = "لا نستطيع تنفيذ هذا الطلب: نجمع البيانات العامة المنشورة على المنصات فقط، وليس الرسائل الخاصة ولا الحسابات المغلقة. إن كان لديك طلب على بيانات عامة فاكتبه وسنجهّزه لك.";
+
+/**
+ * WHAT THE CUSTOMER SAID, for the checks of a count (DT-20261118-08 FIX2, Gate 2 r2 P1-C): their own messages AND their answers to the questions of this planning (`answer`, `exchanges`): a count given only
+ * in an answer is theirs. Never the questions, the chat's summary or the earlier conversation (the model wrote or read those, they are not what the customer wrote for this request).
+ */
+export function customerSaidOf(input: Pick<LlmPlannerInput, "words" | "answer" | "exchanges">): string[] {
+  return [...input.words, ...(input.exchanges ?? []).map((e) => e.answer), ...(input.answer ? [input.answer] : [])].filter((w) => typeof w === "string" && w.trim() !== "");
+}
+
+/**
+ * THE COUNT OF PEOPLE PER COMPANY IS ONE THE CUSTOMER WROTE (DT-20261118-08 FIX1 P1-3, FIX2): a count the model returned for the people of each company, in `people_of_companies.per_company` AND in the `per_parent` of every
+ * people-of-company step it wrote, is kept only when the customer's own words hold it (#575's check: the number is written, or the words the model cites are in what the customer said and say that number) and it is not the count
+ * of the companies themselves (the model copying «شركتين» or «٥ شركات» into it; the same number written twice is the customer's). The companies' count is the parent step's total, or, when the model wrote no company step
+ * («cannot»), the words it cites for it (`companies_text`) checked the same way. FIX3 (QA, Gate 2 r3 P1-1) and FIX4: when NO company count can be established (no parent total, and `companies_text` empty or not in what the customer said) a per-company
+ * count that is itself the count of another noun than the people («شركتين»، «٥٠ شركة»، «لشركتين»، «٥شركات»: see isCountOfOtherNoun) may be the companies' own copied, so it is not trusted: the fail-safe is «not given»;
+ * a bare per-company amount the customer wrote is kept. A count that fails is «not given»: code's default count is used and the card says so («لم تحدد عدد … فاعتمدنا …»), where the customer can change it before approving.
+ */
+export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<string>): Understanding {
+  const ask = u.people_of_companies;
+  const message = said.join("\n");
+  const companies = u.steps.find((s) => s.parent === null)?.count.total ?? countWrittenIn(message, ask?.companies_text || null);
+  const keep = (n: number, cited: string): number | null => {
+    const written = countSupportedByMessage(message, n, cited || null);
+    // FIX3/FIX4: no company count to compare with → a number that counts ANOTHER noun than the people (the dual «شركتين», «٥٠ شركة») may be the companies' own, copied: «not given» (the default count and the «فاعتمدنا» line; the
+    // customer can edit it on the card). A bare amount («اتنين»، «٣ مديرين», «٣ من كل شركة») is the customer's per-company count, in their words or in an answer, and is kept.
+    if (written !== null && companies === null && isCountOfOtherNoun(message, cited, written, ask?.title_ar ?? "")) return null;
+    // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»)
+    return written !== null && (written !== companies || writtenElsewhere(message, cited, written)) ? written : null;
+  };
+  const per = ask && ask.per_company !== null ? keep(ask.per_company, ask.per_company_text) : null;
+  let changed = ask !== undefined && ask.per_company !== null && per !== ask.per_company;
+  const steps = u.steps.map((s) => {
+    if (s.parent === null || s.count.per_parent === null || !isPeopleOfCompanyStep(s)) return s;
+    // a people step's own count has no cited words: the words of the answer field are used when it is the same number
+    const kept = keep(s.count.per_parent, ask && ask.per_company === s.count.per_parent ? ask.per_company_text : "");
+    if (kept === s.count.per_parent) return s;
+    changed = true;
+    return { ...s, count: { ...s.count, per_parent: kept } };
+  });
+  return changed ? { ...u, steps, ...(ask ? { people_of_companies: { ...ask, per_company: per } } : {}) } : u;
+}
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
@@ -482,7 +526,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80)).filter((o): o is string => o !== null), understanding: u, costUsd };
-  if (u.decision === "cannot") return { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
+  // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
+  if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
   await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");

@@ -13,6 +13,7 @@ export const UNDERSTAND_SYSTEM = `You are the planner of Diger, a service that c
 How to read the request:
 - The customer's own messages are the truth. Read all of them in order: a later message adds to or corrects an earlier one. An answer to a question you asked completes the request.
 - Count: the customer's number is the target, exactly. "400 تغريدة", "بحد أقصى 400", "حتى 400", "لحد 400" all mean 400. Arabic-Indic digits and number words count ("تغريدتين" = 2, "ميت" = 100). If a number is given per parent ("تعليقين على كل منشور") it is per_parent. "كل التعليقات"/"all" = all:true. No number at all: omit total.
+- People of companies: answer people_of_companies EVERY time. asked is true when the customer wants the people who work at the companies or businesses of the request (their staff, managers, owners, officials, executives or decision makers, in any wording or language); then title_ar names those people as the customer did (Arabic plural), per_company is the number of PEOPLE the customer asked for EACH company (digits, number words, the dual of the people noun) or 0, per_company_text is the customer's own words that gave that number (empty when 0), companies_text is the customer's own words that gave the number of COMPANIES (empty when no number of companies was given), and contact_kinds lists the person contacts asked ("email", "phone": a personal phone, a mobile, a WhatsApp number). The number of COMPANIES is never per_company: «شركات» counted as two or five says how many companies, not how many people in each; with no number of people per company, per_company is 0. Also plan them as a child step of the companies step (see PEOPLE OF COMPANIES below when it is given). Never answer that these people or their contacts are unavailable.
 - Several kinds of items (posts AND their comments AND the replies; tweets AND TikTok videos) are several steps. A child step (comments, replies, a profile of each author…) names its parent step. Every step the customer asked for must be there; never drop one.
 - Items of ONE named thing (the reviews of a named restaurant, hotel, app or product; the details of a named place) given by its NAME, not by a link or an id: the tools of such items usually need the thing's own id (a place id, an app id, a product id). When the platform has a search capability that finds such things (google.serp.maps for places, app-store.search.apps, google-play.search.apps, amazon.search.products …), make a FIRST step that finds it (that search capability, count total 1, deliver false, the name and city as its topic) and make the requested items its child step. Not needed when the customer gave a link or an id, or when the platform has no such search.
 - Source: a named account, page, channel, group, subreddit, hashtag or link limits WHERE items come from. Put it in "source" as the customer gave it (a handle without @, a link as is, a name as written). A named organisation without a handle: keep its name; the tool step will find the handle.
@@ -47,6 +48,19 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
     assumptions_ar: { type: "array", items: { type: "string" } },
     no_repeat: { type: "boolean" },
     accepts_available: { type: "boolean", description: "true only when the customer's answer to a question about what the real search found accepts what exists" },
+    people_of_companies: {
+      type: "object",
+      description: "ALWAYS answered: whether the customer wants the PEOPLE who work at the companies (or businesses) of the request",
+      properties: {
+        asked: { type: "boolean" },
+        title_ar: { type: "string", description: "those people as the customer named them, Arabic plural; empty when asked is false" },
+        per_company: { type: "integer", description: "how many PEOPLE the customer asked for EACH company; never the number of companies; 0 when not given" },
+        per_company_text: { type: "string", description: "the customer's own words that gave per_company, exactly as written; empty when per_company is 0" },
+        companies_text: { type: "string", description: "the customer's own words that gave the number of COMPANIES, exactly as written; empty when no number of companies was given" },
+        contact_kinds: { type: "array", items: { type: "string", enum: ["email", "phone"] }, description: "the PERSON contacts the customer asked for those people; empty when none" },
+      },
+      required: ["asked", "title_ar", "per_company", "per_company_text", "companies_text", "contact_kinds"],
+    },
     steps: {
       type: "array",
       items: {
@@ -77,7 +91,8 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
     },
   },
   // accepts_available is REQUIRED on purpose: the structured-output compiler refuses a schema with too many OPTIONAL properties («Schema is too complex», live 16 Nov 2026: adding it as optional made every understanding call fail)
-  required: ["decision", "understanding_ar", "steps", "accepts_available"],
+  // people_of_companies is REQUIRED too, with every property of it required (DT-20261118-08): no optional property is added (the size limit above); code acts on the answer even when no people step is written
+  required: ["decision", "understanding_ar", "steps", "accepts_available", "people_of_companies"],
 };
 
 export const TOOL_CHOICE_SYSTEM = `You choose the data tool for ONE step of a customer's collection plan and write its exact inputs. You are given the step (what the customer wants, already understood), the candidate tools from the catalog (each with what it does, every input with its type, limits and note, how it pages, what an item carries, its measured reliability and price), and, for a child step, sample items of its parent step.

@@ -549,7 +549,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (r) {
       const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
       deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
-      if (r.understanding) understoodPeople = understoodPeopleOf(r.understanding.steps);
+      if (r.understanding) understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies);
       if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
       if (r.kind === "plan") {
         let plan = r.plan;

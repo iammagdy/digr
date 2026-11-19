@@ -82,12 +82,38 @@ export function asksPeopleOfCompanies(steps: ReadonlyArray<{ key: string; parent
   return steps.some((s) => s.parent !== null && s.platform === PEOPLE_PLATFORM && steps.find((p) => p.key === s.parent)?.platform === COMPANIES_PLATFORM);
 }
 /** The same structure with its facts, as the planning model wrote them (its own titles and the count per company it read, never a word list): what the plan check needs to treat the people of the companies as a step. */
-export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; count: { per_parent: number | null } }>): { noun_ar: string; parent_ar: string; per_parent: number | null } | null {
+/** A step is the PEOPLE of another step's items by what its tool IS (a people-of-company capability of the catalog), whatever platform key the model gave it (the catalog files these tools under «companies», «people» and «linkedin»). */
+export const isPeopleOfCompanyStep = (s: { platform: string; capability?: string | null }): boolean => s.platform === PEOPLE_PLATFORM || (typeof s.capability === "string" && PEOPLE_OF_COMPANY_CAPABILITIES.has(s.capability));
+/**
+ * WHAT THE CUSTOMER ASKED ABOUT THE PEOPLE OF THE COMPANIES, as the planning model answered it in its REQUIRED `people_of_companies` field (DT-20261118-08): whether they were asked, the people as
+ * the customer named them, the count per company the model read (digits, the dual or words; 0 = none given) and the person contacts asked. Code acts on this answer even when the model wrote no
+ * people step (live after #575: «شركتين مقاولات … ومسؤولي الإدارة فيهم بأرقامهم الشخصية» got no people step). Code never reads the customer's words for it.
+ */
+export interface PeopleOfCompaniesAsk { asked: boolean; title_ar: string; per_company: number | null; /** the customer's own words that gave per_company (FIX1: code checks they are in the message and say that number) */ per_company_text: string; /** the customer's own words that gave the number of COMPANIES, empty when none (FIX2: code compares per_company with it, also when the model wrote no company step) */ companies_text: string; contact_kinds: Array<"email" | "phone"> }
+export function peopleOfCompaniesAskOf(raw: unknown): PeopleOfCompaniesAsk {
+  const o = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const per = typeof o.per_company === "number" && Number.isInteger(o.per_company) && o.per_company > 0 ? o.per_company : null;
+  const kinds = Array.isArray(o.contact_kinds) ? [...new Set(o.contact_kinds.filter((k): k is "email" | "phone" => k === "email" || k === "phone"))] : [];
+  return { asked: o.asked === true, title_ar: typeof o.title_ar === "string" ? o.title_ar.trim().slice(0, 60) : "", per_company: per, per_company_text: typeof o.per_company_text === "string" ? o.per_company_text.trim().slice(0, 40) : "", companies_text: typeof o.companies_text === "string" ? o.companies_text.trim().slice(0, 40) : "", contact_kinds: kinds };
+}
+/** The fixed labels of the structure (never a detector): the people, and their parent, when the model's own words cannot be shown. */
+export const PEOPLE_LABEL_AR = "الأشخاص";
+export const COMPANIES_LABEL_AR = "الشركات";
+// FIX2 (QA-2): a title the model wrote is NEVER shown in the card's count line («لم تحدد عدد {noun} لكل …»). FIX1 let any title through that checkCustomerText accepted; that guard knows a finite list of source
+// names, so a source name written in Arabic letters passed (QA probe of FIX1). Nothing in code can know every name a source goes by, and the Arabic of a title inflects («مسؤولي»/«مسؤولو»), so a «built only of the
+// customer's own words» test would reject honest titles as often as it caught a name: the line uses the two fixed labels, always. The customer's own words still decide the count (planner.ts withCheckedPerCompany).
+export interface UnderstoodPeople { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> }
+/** The people of the companies as the planner understood them: the people step it wrote, else its required answer (the parent is then the first top-level step it wrote). The answer's count and contacts complete a step that has none. */
+export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>, ask?: PeopleOfCompaniesAsk | null): UnderstoodPeople | null {
+  const extra = ask?.asked ? { contact_kinds: ask.contact_kinds } : {};
   for (const s of steps) {
-    const parent = s.parent !== null && s.platform === PEOPLE_PLATFORM ? steps.find((p) => p.key === s.parent) : undefined;
-    if (parent && parent.platform === COMPANIES_PLATFORM) return { noun_ar: s.title_ar, parent_ar: parent.title_ar, per_parent: s.count.per_parent };
+    const parent = s.parent !== null && isPeopleOfCompanyStep(s) ? steps.find((p) => p.key === s.parent) : undefined;
+    // the parent of a people step is the companies step by structure; its own platform key is not read (a companies step may be a map search or a business directory)
+    if (parent) return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: s.count.per_parent ?? (ask?.asked ? ask.per_company : null), ...extra };
   }
-  return null;
+  if (!ask?.asked) return null;
+  // FIX1 (Gate 2 P1-1, QA): a «cannot» answer has no steps at all; the people of the companies are still the request's structure, under the fixed label of its parent
+  return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: ask.per_company, ...extra };
 }
 
 /** What a person row of a source gives the e-mail and phone finders: a professional page (a LinkedIn profile), a name, a domain. Read from the catalog's own field names and example answer (values like «linkedin.com/in/…»), never from the request. */
