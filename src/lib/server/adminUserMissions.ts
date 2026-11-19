@@ -58,11 +58,17 @@ export async function countUserMissions(client: any, userId: string): Promise<{ 
   return { count: rows.length, lastAt: rows[0]?.created_at ?? null };
 }
 
-/** The request count of each person on one page of the list, in ONE read (no read per person). */
+/** The request count of each person on one page of the list: pages of 1,000 rows (the API's cap per request), at most 5 pages; never one read per person. */
 export async function countMissionsByUser(client: any, userIds: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (userIds.length === 0) return out;
-  const { data } = await client.from(MISSION_TABLE).select(`user_id,${ADDON_MARKER_COLUMN}`).in("user_id", userIds).limit(PAGE_MISSION_COUNT_CAP);
-  for (const r of withoutAddonRows(Array.isArray(data) ? (data as Array<{ user_id: string }>) : [])) out.set(r.user_id, (out.get(r.user_id) ?? 0) + 1);
+  for (let page = 0; page < 5; page += 1) {
+    const from = page * 1000;
+    const { data, error } = await client.from(MISSION_TABLE).select(`id,user_id,${ADDON_MARKER_COLUMN}`).in("user_id", userIds).order("id", { ascending: true }).range(from, from + 999);
+    if (error) break;
+    const rows = Array.isArray(data) ? (data as Array<{ user_id: string }>) : [];
+    for (const r of withoutAddonRows(rows)) out.set(r.user_id, (out.get(r.user_id) ?? 0) + 1);
+    if (rows.length < 1000) break;
+  }
   return out;
 }
