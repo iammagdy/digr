@@ -183,6 +183,9 @@ export function createGateway(deps: GatewayDeps) {
   /** Contact finders (planning): the kinds a finder was called for, and the USD those samples cost. At most one sample per kind and a quarter of the planning budget in all (contactSampling.ts). */
   const contactKinds = new Set<ContactFinderKind>();
   let contactSpentUsd = 0;
+  /** F4 (Gate 2): the contact-finder money that is IN FLIGHT (held by a sample that is being sent) and the kinds being sampled right now: the quarter cap is checked against spent + held, so two racing samples can never both take it. */
+  let contactHeldUsd = 0;
+  const contactPending = new Set<ContactFinderKind>();
   const sourceKeyOf = (endpoint: CatalogEndpoint, params: Record<string, unknown>): string | null => deps.phase === "planning" && isListingEndpoint(endpoint) ? `${endpoint.id}|${String(params[sourceInputOf(endpoint) ?? ""] ?? "").trim().toLowerCase()}` : null;
   // REBUILT FROM THE RECORD: this gateway is created again after the customer answers a question (and after a restart), and the planning budget it shares among the stages is already partly spent
   if (deps.phase === "planning") {
@@ -271,7 +274,7 @@ export function createGateway(deps: GatewayDeps) {
       if (finderKind) {
         const capUsd = contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd);
         const cheapestId = cheapestFinder(finderKind, capUsd);
-        const why = contactSampleRefusal({ kind: finderKind, estimateUsd: estimate, capUsd, sampledKinds: contactKinds, spentOnContactUsd: contactSpentUsd, endpointId, cheapestId });
+        const why = contactSampleRefusal({ kind: finderKind, estimateUsd: estimate, capUsd, sampledKinds: new Set([...contactKinds, ...contactPending]), spentOnContactUsd: contactSpentUsd + contactHeldUsd, endpointId, cheapestId });
         if (why) {
           const refused = await refuse(id, endpointId, trace, "contact_sample", `${finderKind}_${why}`);
           return { ...refused, message: contactSampleMessage(why, finderKind, cheapestId) } as GatewayCallResult;
@@ -280,6 +283,20 @@ export function createGateway(deps: GatewayDeps) {
       if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
       // what this call holds on the job's money: its estimate now, the money it may take once step 6 has reserved it (DT-20261119-11 D1)
       let held = estimate;
+      // F4: a contact-finder sample also holds its money on the CONTACT allowance (the quarter cap), in the same synchronous step as the job's hold, and marks its kind as being sampled; every exit below gives it back exactly once
+      if (finderKind) { contactHeldUsd += estimate; contactPending.add(finderKind); }
+      /** The job's hold of this call is released (settled at `actual`, null = the whole hold stays spent): the contact hold goes with it. */
+      const settleHeld = (amount: number, actual: number | null) => { deps.budget.settle(amount, actual); if (finderKind) { contactHeldUsd = Math.max(0, contactHeldUsd - amount); contactPending.delete(finderKind); } };
+      /** Replaces the hold of this call (job + contact allowance) in ONE synchronous step; false (nothing changed) when either ledger has no room. */
+      const reholdAll = (from: number, to: number, capUsd: number | null = null): boolean => {
+        if (finderKind && to > from) {
+          const contactCap = contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd);
+          if (contactCap !== null && contactSpentUsd + (contactHeldUsd - from) + to > contactCap + 1e-9) return false;
+        }
+        if (!deps.budget.rehold(from, to, capUsd)) return false;
+        if (finderKind) contactHeldUsd = Math.max(0, contactHeldUsd - from) + to;
+        return true;
+      };
       let planCapUsd: number | null = null;
       // 5a: THE PLANNING BUDGET IS SHARED BY EVERY STAGE: a call may not spend what the first sample of a stage that is still unsampled needs (a new job counts as the stage it samples)
       if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
@@ -288,7 +305,7 @@ export function createGateway(deps: GatewayDeps) {
         const reserves = [...(deps.stageBudget.reservesUsd ?? [])].sort((a, b) => b - a);
         const kept = reserves.length > 0 ? reserves.slice(0, unsampledOthers).reduce((n, r) => n + r, 0) : unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
         planCapUsd = deps.stageBudget.budgetUsd - kept;
-        if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
+        if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
       }
 
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
@@ -296,7 +313,7 @@ export function createGateway(deps: GatewayDeps) {
       const sampled = samplesWithRows.get(endpointId) ?? 0;
       const perSource = Math.max(GATEWAY_MAX_SAMPLES_PER_SOURCE, deps.maxSamplesPerSource ?? 0);
       const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= perSource || sampled >= Math.max(GATEWAY_MAX_NAMED_SOURCE_SAMPLES, perSource) : sampled >= perSource;
-      if (deps.phase === "planning" && repeated) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
+      if (deps.phase === "planning" && repeated) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: THE MONEY THIS CALL MAY TAKE (DT-20261119-11, D1/D2/D5). The header sent to TREG IS the amount reserved here, on EVERY ledger, BEFORE anything is sent: the job's money (the estimate held until now is REPLACED in one step, so two calls in flight can
       // never hold the same money), the planning stages' kept share, a capped stage's money, the provider's daily cap and the owner's grant. TREG refuses a route above the header before billing, so a stale catalog price can never make a call that
@@ -308,7 +325,10 @@ export function createGateway(deps: GatewayDeps) {
       const maxAttempts = noKeyPool ? 1 : Math.max(maxTregAttempts({}), deps.spendGate?.tregAttempts ?? 1);
       const gateOn = Boolean(deps.spendGate && deps.spendGate.mode !== "off");
       const stageLimitUsd = Number.isFinite(Number(input.spend_limit_usd)) ? Number(input.spend_limit_usd) : null;
-      const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd].filter((v): v is number => v !== null);
+      // F4: the contact allowance left (the quarter cap less what was spent and what OTHER contact samples hold) limits what a finder sample may reserve, so the header and the unknown-charge hold can never pass the cap
+      const contactCapUsd = finderKind ? contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd) : null;
+      const contactLeftUsd = contactCapUsd !== null ? floorMicroUsd(contactCapUsd - contactSpentUsd - Math.max(0, contactHeldUsd - held)) : null;
+      const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd, contactLeftUsd].filter((v): v is number => v !== null);
       // no ceiling anywhere: the one default the client always had (0.05 per request), reserved like any other amount
       let poolUsd = left.length ? Math.min(...left) : GATEWAY_NO_CEILING_REQUEST_USD * maxAttempts;
       // the owner gate's existing aggregate limit (bounds.ts MAX_SINGLE_OPERATION_USD) applies to what it reserves: all the attempts together
@@ -317,7 +337,7 @@ export function createGateway(deps: GatewayDeps) {
       // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
       // PLANNING (D-0138 follow-up, live re-test R2): one call that cannot be reckoned must never be able to take all the planning money, so a planning call holds at most HALF of what is left (never below its own estimate)
       const money = callMoney(poolUsd, estimate, maxAttempts, deps.phase === "planning" ? { maxShare: 0.5 } : {});
-      if (!money) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
+      if (!money) { settleHeld(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
       // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
       // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.
       const candidates: Array<{ perRequest: number; attempts: number }> = [];
@@ -330,15 +350,15 @@ export function createGateway(deps: GatewayDeps) {
       for (const { perRequest, attempts } of candidates) {
         const aggregate = Number((perRequest * attempts).toFixed(6));
         // the job's money (and the planning stages' kept share): replace this call's hold in ONE step
-        if (!deps.budget.rehold(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
+        if (!reholdAll(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
         const was = held;
         held = aggregate;
         // the provider's daily cap, recorded BEFORE the call
         const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: aggregate, jobId: deps.jobId });
         if (!reservation.allowed) {
-          deps.budget.rehold(held, was); held = was;
+          reholdAll(held, was); held = was;
           if (reservation.reason === "cap") { lastRefusal = { code: "daily_cap", detail: reservation.reason ?? "" }; continue; }
-          deps.budget.settle(held, 0);
+          settleHeld(held, 0);
           return refuse(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
         }
         // 6b: THE HARD SPEND GATE: what is reserved against the owner's grant is the amount the header allows, per attempt. Each call (a new call id) is a new paid attempt with its own reservation key.
@@ -355,18 +375,18 @@ export function createGateway(deps: GatewayDeps) {
           if (!gated.proceed || observedNoRoom) {
             // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
             await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
-            deps.budget.rehold(held, was); held = was;
+            reholdAll(held, was); held = was;
             const reason = gated.proceed ? gated.observedRefusal : gated.reason;
             // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
             if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }
-            deps.budget.settle(held, 0);
+            settleHeld(held, 0);
             return refuse(id, endpointId, trace, "spend_gate", String(reason));
           }
         }
         chosen = { perRequest, attempts, aggregate, reservation, gated };
         break;
       }
-      if (!chosen) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
+      if (!chosen) { settleHeld(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
       const { reservation, gated } = chosen;
       const headerUsd = chosen.perRequest;
       // what the call may be billed, all attempts together: reserved on every ledger, and kept for a call whose charge is unknown (timeout, no charge reported)
@@ -415,7 +435,7 @@ export function createGateway(deps: GatewayDeps) {
       if (gated) await gateAfter(deps.spendGate, gated, gateActualUsd());
       if (!outcome.ok) {
         // what this call reserved must not stay open: it was never sent, so it is given back (zero) and committed at zero as a failed call
-        deps.budget.settle(held, 0);
+        settleHeld(held, 0);
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
         void sensitiveRefusalAr; // the Arabic sentence is for the customer's screen, not for the model
         return refuse(id, endpointId, trace, outcome.refused as SensitiveRefusal, "sensitive");
@@ -424,7 +444,7 @@ export function createGateway(deps: GatewayDeps) {
       const durationMs = Date.now() - started;
       const result = res as TregCallResult | null;
       // THIS call's reservation is settled once: its known charge (zero stays zero, never clipped), or the whole reserved amount when the charge is unknown
-      deps.budget.settle(held, knownChargeUsd());
+      settleHeld(held, knownChargeUsd());
       const chargeFacts = { charge_usd: knownChargeUsd(), reserved_usd: reservedUsd };
       // the model reads the whole result: the money facts are for the stage only, so they are NOT enumerable (JSON.stringify and the model never see them)
       const withFacts = <T extends object>(r: T): T => { for (const [k, v] of Object.entries(chargeFacts)) Object.defineProperty(r, k, { value: v, enumerable: false }); return r; };
