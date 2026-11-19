@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const proposalMigrations = [
-  "20261017150000_register_professional_people_search.sql",
-  "20261017175000_cleanup_capability_registry_social.sql",
-  "20261017175500_settle_completed_jobs_with_stale_lease.sql",
-  "20261017180000_create_quote_atomic.sql",
-  "20261017180500_approve_topup_atomic_privileges.sql",
-  "20261017181000_settle_decision_maker_fields.sql",
+  "20261017181315_register_professional_people_search.sql",
+  "20261017181323_cleanup_capability_registry_social.sql",
+  "20261017181338_settle_completed_jobs_with_stale_lease.sql",
+  "20261017181346_create_quote_atomic.sql",
+  "20261017181352_approve_topup_atomic_privileges.sql",
+  "20261017184147_settle_decision_maker_fields.sql",
 ];
 
 describe("release_job_atomic migration immutability", () => {
@@ -21,7 +21,7 @@ describe("release_job_atomic migration immutability", () => {
 
   it("keeps the stale-lease proposal limited to settle_job_atomic", () => {
     const sql = readFileSync(
-      resolve(process.cwd(), "supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql"),
+      resolve(process.cwd(), "supabase/migrations/20261017181338_settle_completed_jobs_with_stale_lease.sql"),
       "utf8",
     );
     expect(sql.match(/CREATE OR REPLACE FUNCTION/gi)).toHaveLength(1);
