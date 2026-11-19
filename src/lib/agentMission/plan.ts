@@ -6,6 +6,7 @@ import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contact
 import { isPeopleStage, stageKindByCapability } from "./people";
 import { buildCompanySteps, buildContactSteps, isEmailColumn, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
+import { PEOPLE_ESTIMATE_NOTE_AR, type PeopleEstimate } from "./peopleEstimate";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
@@ -177,6 +178,11 @@ export interface PlanLookup {
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
   /** THE REQUEST'S STRUCTURE as the planning model understood it (a people step under a companies step), read from its understanding, never from the words: the people of the companies are asked for whatever the customer's wording, so the check below treats them as a step. */
   understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> };
+  /**
+   * DT-20261119-01: present ONLY when code proved, from the calls of this planning, that a people source ANSWERED EMPTY for the companies, no people source gave a row, and the estimate table (peopleEstimate.ts) has a source left: a delivered
+   * people stage under the companies' stage that cites no measured call is then priced by `costPerPersonUsd` (its `estimated` flag set), on one of `endpointIds`. Absent: a stage must cite a measured call with rows, as always.
+   */
+  peopleEstimate?: PeopleEstimate;
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
@@ -572,7 +578,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     let measuredMs = 0;
     let measuredMsRows = 0;
     let evidence = "";
-    if (measuredBy.length === 0) issues.push(`${label}: measured_by must cite the calls that measured it (ids returned by treg_call)`);
+    // A PEOPLE STAGE PRICED BY AN ESTIMATE (peopleEstimate.ts): code proved the sample of the people sources came back empty; the stage cites no call and is read through one of the estimate's sources
+    const estimateOf = lookup.peopleEstimate;
+    const estimatedStage = estimateOf !== undefined && raw.deliver === true && isChild && measuredBy.length === 0 && estimateOf.endpointIds.includes(endpointId);
+    if (measuredBy.length === 0 && !estimatedStage) issues.push(`${label}: measured_by must cite the calls that measured it (ids returned by treg_call)${estimateOf !== undefined && isChild ? `. The people sources you sampled answered empty: a PEOPLE stage may be given with measured_by [] and no sample_rows, and code then prices it by an estimate, when its endpoint_id is one of ${estimateOf.endpointIds.slice(0, 6).join(", ")}` : ""}`);
     const sourceFields: SourceField[] = [];
     for (const id of measuredBy) {
       const call = lookup.call(id);
@@ -586,8 +595,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (searchQueryOf(call.params) !== null) foundBySearch = true;
       if (typeof call.durationMs === "number" && call.durationMs > 0) { measuredMs += call.durationMs; measuredMsRows += call.rows; }
     }
-    const costPerRow = measuredCostPerRowUsd(measuredCalls);
-    if (measuredCalls.length === 0 || costPerRow === null) issues.push(`${label}: no measured call with rows and a recorded charge`);
+    const costPerRow = estimatedStage ? estimateOf!.costPerPersonUsd : measuredCostPerRowUsd(measuredCalls);
+    if (estimatedStage) { /* the estimate is the cost of this stage's rows: nothing was measured and nothing is claimed as measured */ }
+    else if (measuredCalls.length === 0 || costPerRow === null) issues.push(`${label}: no measured call with rows and a recorded charge`);
     else if (!(costPerRow > 0)) issues.push(`${label}: the measured charge is zero, so no price can be built on it; measure with a call that was charged`);
 
     // EVERY USEFUL FIELD THE SOURCE GIVES stays in the file: a date, an author, a link, the counts (likes, replies, shares, views) that the saved page carries must each have a column (the agent maps them in its code)
@@ -604,7 +614,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     let samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     const sampleSourceIds = [String(raw.yield_from ?? ""), ...(Array.isArray(raw.measured_by) ? raw.measured_by.map(String) : [])].filter((x) => /^out_\d+/.test(x));
     let samplesDerived = false;
-    if (samples.length === 0) {
+    // an estimated stage was never read: no row of it is shown as a sample, whatever the model wrote
+    if (estimatedStage) samples = [];
+    if (samples.length === 0 && !estimatedStage) {
       for (const id of sampleSourceIds) {
         const text = lookup.evidenceText(id);
         if (!text) continue;
@@ -612,7 +624,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       }
     }
     if (samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw (you gave ${samples.length})`);
-    else if (samples.length < 1) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw. Either write them, or cite in yield_from (or measured_by) the out_ id of a run_code output that is a JSON ARRAY of the mapped rows: code then takes the samples from it. ${sampleRowsDiagnosis(sampleSourceIds, lookup.evidenceText)}`);
+    else if (samples.length < 1 && !estimatedStage) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw. Either write them, or cite in yield_from (or measured_by) the out_ id of a run_code output that is a JSON ARRAY of the mapped rows: code then takes the samples from it. ${sampleRowsDiagnosis(sampleSourceIds, lookup.evidenceText)}`);
     for (const s of samples) {
       if (!isRecord(s)) { issues.push(`${label}: a sample row must be an object`); continue; }
       if (evidence && !samplesDerived) issues.push(...sampleRowIssues(s, evidence, key));
@@ -788,6 +800,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,
+      ...(estimatedStage ? { estimated: true as const } : {}),
       ...(measuredMsRows > 0 ? { measured_ms_per_row: Math.round(measuredMs / measuredMsRows) } : {}),
       ...(relevance ? { relevance, yield_share: yieldShare, review_share: reviewShare, sample_examined: sampleExamined, sample_matching: sampleMatching, ...(typeof raw.yield_from === "string" && raw.yield_from ? { yield_from: raw.yield_from } : {}) } : {}),
       ...(resolved.filters.length ? { filters: resolved.filters } : {}),
@@ -896,6 +909,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     }
     summaryText = summaryWithoutRoleClaimAr(summaryText, st.role_preference.role, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
   }
+  // an estimated people stage says so on the card, in the code's own words (peopleEstimate.ts)
+  if (priced.some((st) => st.estimated === true) && !assumptions.includes(PEOPLE_ESTIMATE_NOTE_AR)) assumptions.push(PEOPLE_ESTIMATE_NOTE_AR);
   notes.push(...languageOffNotes);
   return { ok: true, plan: { summary_ar: summaryText, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
