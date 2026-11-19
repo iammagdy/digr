@@ -17,7 +17,7 @@ import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "..
 import { planningBudgetFacts } from "../../src/lib/agentMission/planningBudget";
 import { sourceHealth, statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib/agentMission/capabilities/routingFacts";
-import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
+import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { planningJudge, topicVariants } from "./researchJudge";
@@ -42,7 +42,7 @@ import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
-import { understoodPeopleOf } from "../../src/lib/agentMission/childSources";
+import { PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
 import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
@@ -883,13 +883,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
-    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}) });
+    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}), ...(understoodPeople ? { peopleAsked: true, peopleEndpointIds: new Set(deps.catalog.endpoints.filter((e) => e.capability && PEOPLE_OF_COMPANY_CAPABILITIES.has(e.capability)).map((e) => e.id)) } : {}) });
     deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason}`);
     if (verdict.cls === "internal") {
       // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours
-      await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: refusalSentenceAr("internal"), error: `admin: planning_failed class=internal reason=${verdict.reason}${output.error ? ` detail=${output.error}` : ""}`.slice(0, 300) });
+      await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: noCardSentenceAr(verdict), error: `admin: planning_failed class=internal reason=${verdict.reason}${output.error ? ` detail=${output.error}` : ""}`.slice(0, 300) });
       await store.addEvent(mission.id, { kind: "call", message_ar: "علامة للمشرف: تعذّر التخطيط من جانبنا.", counts: { adm_flag: 1 } });
-      await store.addEvent(mission.id, { kind: "result", message_ar: refusalSentenceAr("internal") });
+      await store.addEvent(mission.id, { kind: "result", message_ar: noCardSentenceAr(verdict) });
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
     } else {
       // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
