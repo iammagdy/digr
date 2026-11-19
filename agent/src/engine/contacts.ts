@@ -1,6 +1,6 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import {
-  FINDERS_PER_STEP,
+  personAlternatesOf,
   companyDomainAddressIn,
   companyMailboxIn,
   contactStatusAr,
@@ -17,12 +17,14 @@ import {
   EMAIL_LABEL_COMPANY_AR,
   EMAIL_LABEL_SHARED_AR,
   EMAIL_LABEL_DOMAIN_AR,
+  PHONE_TYPE_FAX_AR,
+  type OfficeLine,
   type ContactStep,
   type FinderInfo,
   type FoundContact,
   type PersonFacts,
 } from "../../../src/lib/agentMission/contactFinders";
-import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
+import { B2B_NOT_SEARCHED_AR, NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
 import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
@@ -124,8 +126,7 @@ async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_k
 }
 
 /**
- * ONE PASS PER PEOPLE STAGE, DECISION MAKERS FIRST: the people are taken in the order of their titles (roles.ts) and EACH person gets every step of the plan (the e-mail with its verifier, then the phone with its validator) before the next person is looked at. When the money or the
- * time ends, the chief executive and the general manager have all their cells and the ones left without are the people of the lowest titles. Each step keeps its own spend against its own priced cap; the job budget is shared and ends everything at once.
+ * DECISION MAKERS FIRST: every person gets the primary e-mail and phone chains in ranked order. A second pass lets people still missing a contact try the ranked alternates. The same limits apply to both passes.
  */
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const out = await runContactSteps(deps);
@@ -162,8 +163,13 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
     const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned));
     const groupStart = deps.budget.spentUsd();
     let stopped: ContactStop | null = null;
+    const deferred: ResumeContact[] = [];
     try {
-      outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row); if (stopped) break outer; }
+      outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row, deferred); if (stopped) break outer; }
+      for (const resume of deferred) {
+        const nextStop = await resume(stopped);
+        stopped ??= nextStop;
+      }
     } finally {
       // the group's stop is every step's stop (Gate 2 P2: only the runner that saw it said why)
       for (const runner of runners) await runner.finish(stopped);
@@ -175,7 +181,7 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
 }
 
 /** One call a step wants to make, and what came of it. */
-type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown; callId: string };
+type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown; readable: boolean; callId: string };
 /** What the steps of one person learned for the next step of the same person (DT-20261118-05 item 4). */
 type LearnedFacts = { email?: string; linkedin?: string };
 
@@ -396,17 +402,28 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
     }
     down.set(helper.id, 0);
     let page: unknown = null;
-    try { const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id)); page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
-    return { t: "page", page, callId: result.call_id };
+    let readable = false;
+    try {
+      const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id));
+      if (raw !== null) { page = JSON.parse(raw); readable = true; }
+    } catch { /* an unreadable result is not an answered miss */ }
+    return { t: "page", page, callId: result.call_id, readable };
   };
   return { attempt, down };
 }
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
+type ResumeContact = (stop: ContactStop | null) => Promise<ContactStop | null>;
+
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
   // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
   const outcomes = new Map<string, number>();
+  // Old approved plans may contain a separate, already validated company lookup.
+  const legacyCompanyLookup = step.kind === "phone" && !!step.type_key && (step.company_phone ?? []).length > 0;
+  const rejected = new Map<string, { rejected: number; number_typed: number; scan_truncated: number }>();
+  const alternates = personAlternatesOf(step);
+  const resolutionIds = [...new Set(step.finders.map((f) => f.id)), ...alternates.map((f) => f.id)];
   let stoppedBy: string | null = null;
   // the people this step was run for (the rest, when the run stopped, are counted as never reached)
   let reached = 0;
@@ -415,7 +432,6 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const companyAddresses = (parentId: string): Set<string> => new Set(Object.values(items.acceptedRows(stage.parent_key ?? "").find((r) => String(r.id) === parentId) ?? {}).map(addressOf).filter(isAddress));
   const isCompanyAddress = (parentId: string, v: unknown): boolean => step.kind === "email" && stage.parent_key !== null && companyAddresses(parentId).has(addressOf(v));
-  /** The company addresses of this stage. */
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
@@ -479,11 +495,19 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     return { verdict: null, stop: null };
   };
   return {
-    async process(row: Row): Promise<ContactStop | null> {
+    async process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null> {
       reached += 1;
       let stopRun: ContactStop | null = null;
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
+      const priorType = step.type_key ? String(row[step.type_key] ?? "").trim() :
+        existingStatus.split(" — ").find((part) => part === PHONE_TYPE_COMPANY_AR || part === PHONE_TYPE_FAX_AR) ?? "";
+      const hadMarker = existing === NOT_AVAILABLE_AR || existing === B2B_NOT_SEARCHED_AR;
+      const priorOffice: OfficeLine | null = step.kind === "phone" && existing !== "" && !hadMarker &&
+        (priorType === PHONE_TYPE_COMPANY_AR || priorType === PHONE_TYPE_FAX_AR) &&
+        !(legacyCompanyLookup && priorType === PHONE_TYPE_COMPANY_AR && statusHead(existingStatus) === PHONE_STATUS_VERIFIED_AR)
+        ? { value: existing, type: priorType === PHONE_TYPE_FAX_AR ? "fax" : "company" } : null;
+      if (hadMarker || priorOffice) { existing = ""; existingStatus = ""; }
       let givenCompany: string | null = null;
       // an address the people source already gave that is the company's own is kept as company address before anything else (D-0118)
       if (existing !== "" && isCompanyAddress(String(row.parent_id ?? ""), existing)) {
@@ -508,14 +532,19 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let keptPersonal: { value: string; finderId: string; callId: string } | null = null;
       let keptCompany: { value: string; finderId?: string; callId?: string } | null = givenCompany ? { value: givenCompany } : null;
       let origin: { endpointId: string; callId: string } | null = null;
+      let keptOffice: (OfficeLine & { endpointId?: string; callId?: string }) | null = priorOffice;
+      let useOffice = false;
+      let answeredEmpty = false;
+      let unfinished = false;
+      // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
+      const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}${outcome === "not_tried" && v ? `:${v}` : ""}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
+      // ONE PERSON NEVER COSTS MORE THAN THE CHAIN'S OWN PRICE FOR ONE PERSON (DT-20261118-05 item 4, no money change): the profile lookup and the alternates share it; a call billed on a hit counts only when it found something
+      const personCeilingUsd = step.finders.reduce((n, f) => n + f.usd, 0);
+      let personUsd = 0;
+      const affordable = (f: FinderInfo): boolean => personUsd + f.usd <= personCeilingUsd + 1e-9;
+      const spent = (f: FinderInfo, found: boolean): void => { if (f.bill === "call" || found) personUsd += f.usd; };
+      const officeTypeOf = (line: OfficeLine): string => line.type === "fax" ? PHONE_TYPE_FAX_AR : PHONE_TYPE_COMPANY_AR;
       if (value === "") {
-        // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
-        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => { const k = `${endpointId}|${outcome}${outcome === "not_tried" && v ? `:${v}` : ""}`; outcomes.set(k, (outcomes.get(k) ?? 0) + 1); deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) }); };
-        // ONE PERSON NEVER COSTS MORE THAN THE CHAIN'S OWN PRICE FOR ONE PERSON (DT-20261118-05 item 4, no money change): the profile lookup and the alternates share it; a call billed on a hit counts only when it found something
-        const personCeilingUsd = step.finders.reduce((n, f) => n + f.usd, 0);
-        let personUsd = 0;
-        const affordable = (f: FinderInfo): boolean => personUsd + f.usd <= personCeilingUsd + 1e-9;
-        const spent = (f: FinderInfo, found: boolean): void => { if (f.bill === "call" || found) personUsd += f.usd; };
         // (c) THE PERSON'S PROFESSIONAL PAGE FIRST (item 4c): a person without one is looked up by name and company, so the finders that need the page can be asked
         if (step.kind === "phone" && facts.linkedin === null) {
           for (const finder of step.profile_lookup ?? []) {
@@ -533,25 +562,25 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             if (profile) { facts = { ...facts, linkedin: profile }; learned.set(String(row.id), { ...learned.get(String(row.id)), linkedin: profile }); break; }
           }
         }
-        // (b) THE CHAIN, THEN ITS ALTERNATES (item 4b): a finder the person cannot be asked by gives its turn to the next ranked finder of the catalog the person CAN be asked by; at most FINDERS_PER_STEP calls
-        let tried = 0;
-        const maxTries = Math.max(FINDERS_PER_STEP, step.finders.length);
-        const chain = [...step.finders, ...(step.alternates ?? []).filter((x) => !step.finders.some((f) => f.id === x.id))];
-        for (const finder of stopRun ? [] : chain) {
-          if (tried >= maxTries) break;
+      }
+      const look = async (finders: FinderInfo[]): Promise<void> => {
+        for (const finder of finders) {
+          if (stopRun || value !== "") break;
           const params = finderParamsFor(finder, facts);
           // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
-          if (!params) { const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
-          if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
-          tried += 1;
+          if (!params) { unfinished = true; const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
+          if (!affordable(finder)) { unfinished = true; note(finder.id, "not_tried", "person_budget"); continue; }
           const a = await attempt(finder, params);
           if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
-          if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
+          if (a.t === "skip") { unfinished = true; note(finder.id, "not_tried"); continue; }
           asked = true;
-          if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
+          if (a.t === "failed" || !a.readable) { unfinished = true; note(finder.id, "failed"); continue; } // the next ranked finder is tried
           const detail = foundContactDetailIn(step.kind, a.page);
           hit = detail.found;
-          spent(finder, hit !== null);
+          spent(finder, hit !== null || detail.officeLine !== null);
+          if (detail.rejected || detail.numberTyped || detail.scanTruncated) {
+            rejected.set(`${finder.id}|${a.callId}`, { rejected: detail.rejected, number_typed: detail.numberTyped, scan_truncated: Number(detail.scanTruncated) });
+          }
           let keptNow = false;
           // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is kept as personal mailbox (D-0118)
           if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") {
@@ -568,13 +597,20 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             out.withheld.personal_email += 1;
             if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
           }
-          note(finder.id, (hit || keptNow) ? "value" : "empty", hit ? hit.value : undefined);
+          if (detail.officeLine && !keptOffice) keptOffice = { ...detail.officeLine, endpointId: finder.id, callId: a.callId };
+          const hasAnswer = !!(hit || keptNow || detail.officeLine);
+          const truncatedMiss = !hasAnswer && detail.scanTruncated;
+          if (truncatedMiss) unfinished = true;
+          answeredEmpty ||= !hasAnswer && !truncatedMiss;
+          note(finder.id, hasAnswer ? "value" : truncatedMiss ? "not_tried" : "empty", hit?.value ?? detail.officeLine?.value ?? (truncatedMiss ? "scan_truncated" : undefined));
           if (!hit) continue;
           origin = { endpointId: finder.id, callId: a.callId };
           value = hit.value;
           if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;
           break;
         }
+      };
+      const finalize = async (afterGroupStop = false): Promise<ContactStop | null> => {
         if (value === "") {
           if (keptPersonal) {
             value = keptPersonal.value;
@@ -587,55 +623,94 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             if (keptCompany.finderId && keptCompany.callId) origin = { endpointId: keptCompany.finderId, callId: keptCompany.callId };
             labelAr = EMAIL_LABEL_COMPANY_AR;
           }
-        }
-        // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
-        // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
-        if (value === "" && step.kind === "phone" && step.type_key && (step.company_phone ?? []).length > 0) {
-          const cp = await companyPhoneFor(parentId);
-          if (cp.stop) { stopRun = cp.stop; }
-          if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; if (cp.origin) origin = cp.origin; }
-        }
-      } else if (step.kind === "phone" && step.type_key && String(row[step.type_key] ?? "").trim() === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
-      if (value !== "") {
-        if (step.kind === "email") {
-          // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier (rate limit, failure, a thrown error, the budget) the verdict is «غير موثّق» and the cells below are still written (a verifier only ever improves the status)
-          let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
-          try { verdict = await emailStatusOf(value, labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain); } catch { verdict = { status: "unverified", stop: null }; }
-          if (verdict.stop) stopRun = verdict.stop;
-          if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
-          statusAr = emailStatusAr(verdict.status);
-          if (labelAr) statusAr = labelledStatus(statusAr, labelAr);
-          else if (keptPersonal && hit && emailValueTypeOf(hit.value) === "professional") {
-            statusAr = labelledStatus(statusAr, `${EMAIL_LABEL_PERSONAL_AR}: ${keptPersonal.value}`);
+          if (value === "" && keptOffice) {
+            useOffice = true;
+            value = keptOffice.value;
+            typeAr = officeTypeOf(keptOffice);
+            if (keptOffice.endpointId && keptOffice.callId) {
+              hit = { value, status: "unverified" };
+              origin = { endpointId: keptOffice.endpointId, callId: keptOffice.callId };
+            }
           }
-          if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
-          else if (verdict.status === "verified") out.filled.verified += 1;
+          // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
+          // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
+          if (value === "" && !afterGroupStop && legacyCompanyLookup) {
+            const cp = await companyPhoneFor(parentId);
+            if (cp.stop) { stopRun = cp.stop; }
+            if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; if (cp.origin) origin = cp.origin; }
+          }
+        } else if (step.kind === "phone" && !hit && step.type_key && priorType === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
+        if (value !== "") {
+          if (step.kind === "email") {
+            // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier (rate limit, failure, a thrown error, the budget) the verdict is «غير موثّق» and the cells below are still written (a verifier only ever improves the status)
+            let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
+            try {
+              const domain = labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain;
+              verdict = stopRun ? { status: emailOnOtherDomain(value, domain) ? "other_company" : "unverified", stop: null } : await emailStatusOf(value, domain);
+            } catch { verdict = { status: "unverified", stop: null }; }
+            if (verdict.stop) stopRun = verdict.stop;
+            if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
+            statusAr = emailStatusAr(verdict.status);
+            if (labelAr) statusAr = labelledStatus(statusAr, labelAr);
+            else if (keptPersonal && hit && emailValueTypeOf(hit.value) === "professional") {
+              statusAr = labelledStatus(statusAr, `${EMAIL_LABEL_PERSONAL_AR}: \u200E${keptPersonal.value}`);
+            }
+            if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
+            else if (verdict.status === "verified") out.filled.verified += 1;
+          } else {
+            const company = companyOf(parentId);
+            const mayValidate = !useOffice && (!stopRun || (legacyCompanyLookup && !afterGroupStop));
+            const checked = mayValidate ? await phoneVerdictOf(value, company.country) : { verdict: null, stop: null };
+            if (checked.stop) stopRun = checked.stop;
+            if (mayValidate && (step.validators ?? []).length > 0) asked = true;
+            const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
+            statusAr = phoneStatusAr(status);
+            if (keptOffice && !useOffice) statusAr = labelledStatus(statusAr, `${officeTypeOf(keptOffice)}: ${keptOffice.value}`);
+          else if (keptOffice && !step.type_key) statusAr = labelledStatus(statusAr, officeTypeOf(keptOffice));
+            if (status === "verified") out.filled.verified += 1; else if (hit || (!useOffice && typeAr === PHONE_TYPE_COMPANY_AR)) out.filled.unverified += 1;
+          }
+          const id = String(row.id);
+          if (givenCompany || hadMarker || (priorOffice && !useOffice)) {
+            pending.push({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key,
+              ...(priorOffice ? [...(step.type_key ? [step.type_key] : []), contactSrcKey(step.column_key), contactCallKey(step.column_key)] : [])] });
+          }
+          const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
+          if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
+          if (hit || (!useOffice && existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
+          // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
+          if (step.kind === "email" && !labelAr && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
         } else {
-          // EVERY PHONE IS VALIDATED: «رقم من دولة أخرى» when its country is not the company's, «موثّق» only when a validator says the number is valid, «غير موثّق» otherwise
-          const company = companyOf(parentId);
-          const checked = await phoneVerdictOf(value, company.country);
-          if (checked.stop) stopRun = checked.stop;
-          if ((step.validators ?? []).length > 0) asked = true;
-          const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
-          statusAr = phoneStatusAr(status);
-          if (status === "verified") out.filled.verified += 1; else if (hit || typeAr === PHONE_TYPE_COMPANY_AR) out.filled.unverified += 1;
+          const stageKey = step.stage_key;
+          const id = String(row.id);
+          const unavailable = answeredEmpty && !unfinished && !stopRun && (step.company_phone ?? []).length === 0 &&
+            (!deps.attempts || deps.attempts.cellFor(stageKey, id, step.column_key, resolutionIds) === NOT_AVAILABLE_AR);
+          if (unavailable) {
+            if (hadMarker && String(row[step.column_key]).trim() !== NOT_AVAILABLE_AR) pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+            pending.push({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: NOT_AVAILABLE_AR } });
+          } else if (hadMarker) {
+            pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+          }
         }
-        if (givenCompany) {
-          pending.push({ t: "clear", stage: step.stage_key, id: String(row.id), keys: [step.column_key, step.status_key] });
-        }
-        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
-        if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
-        if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
-        // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
-        if (step.kind === "email" && !labelAr && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
+        if (stopRun) stoppedBy = stopRun;
+        if (asked) out.looked += 1; else out.skipped += 1;
+        if (pending.length >= COMMIT_EVERY) await flush();
+        return stopRun;
+      };
+      await look(step.finders);
+      if (!stopRun && value === "" && alternates.length > 0) {
+        deferred.push(async (groupStop) => {
+          stopRun = groupStop;
+          const learnedEmail = learned.get(String(row.id))?.email;
+          if (step.kind === "phone" && !facts.email && learnedEmail && isOwnWorkEmail(learnedEmail)) facts = { ...facts, email: learnedEmail };
+          await look(alternates);
+          return finalize(groupStop !== null);
+        });
+        return null;
       }
-      if (stopRun) stoppedBy = stopRun;
-      if (asked) out.looked += 1; else out.skipped += 1;
-      if (pending.length >= COMMIT_EVERY) await flush();
-      return stopRun;
+      return finalize();
     },
     async finish(stop: ContactStop | null = null): Promise<void> {
-      // one address held by 2+ people of the same company is kept and labelled «مشترك» (D-0118)
+      // one address held by 2+ people of the same company is kept and labelled «إيميل مشترك» (D-0118)
       // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
       await flush();
       if (step.kind === "email" && stage.parent_key !== null) {
@@ -650,7 +725,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           if (ids.length < 2) continue;
           for (const id of ids) {
             const currentRow = items.acceptedRows(step.stage_key).find((r) => String(r.id) === id);
-            const currentStatus = String(currentRow?.[step.status_key] ?? "");
+            const currentStatus = String(currentRow?.[step.status_key] ?? "").split(" — ").filter((part) => part.trim() !== "مشترك").join(" — ");
             pending.push({
               t: "clear",
               stage: step.stage_key,
@@ -670,6 +745,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       // the finders not tried and why, per finder and missing input (an internal file of the mission; the admin and the team read it)
       // EVERY RUN writes it (DT-20261118-05 item 3), also when nobody could be asked: the next live run proves why a cell is empty
       await writeAttempts(deps, step, { outcomes, people: peopleCount, reached, stopped: stoppedBy ?? stop });
+      if (rejected.size > 0) await putInternalFile(deps, `contacts/rejected_${step.stage_key}_${step.kind}.json`, Object.fromEntries(rejected));
       if (notTried.size > 0) await putInternalFile(deps, `contacts/not_tried_${step.stage_key}_${step.kind}.json`, Object.fromEntries(notTried));
       await items.mirror(step.stage_key);
       try {

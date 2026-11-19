@@ -722,7 +722,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
           contactAids: (kind: "email" | "phone") => {
             const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-            return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
+            return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("email", ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
           },
           endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
         };

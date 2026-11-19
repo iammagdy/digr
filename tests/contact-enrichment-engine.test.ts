@@ -85,7 +85,7 @@ describe("the engine fills the cells of the people it delivered", () => {
     expect(w.calls.filter((c) => c.endpoint === EMAIL_A.id).length).toBe(5);
     expect(w.calls.some((c) => c.endpoint === EMAIL_B.id)).toBe(false);
   });
-  it("a miss goes to the next ranked finder; a value the check does not verify is delivered with «غير موثّق»; a person nothing was found for keeps empty cells and is still delivered", async () => {
+  it("a miss goes to the next ranked finder; a value the check does not verify is delivered with «غير موثّق»; a person nothing was found for gets an unavailable marker and is still delivered", async () => {
     // the step's priced amount is 0.002 a person here, so a dearer fallback finder fits for the people the cheap one missed
     const w = await world({ steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.002, finders: [EMAIL_A, EMAIL_B] }], answers: (ep, p) => {
       if (ep === EMAIL_A.id) return String(p.person_linkedin_url).endsWith("person1") ? hitEmail("one") : null;
@@ -98,7 +98,7 @@ describe("the engine fills the cells of the people it delivered", () => {
     // CHANGED (item 2): an address on another domain than the company's says so: «غير موثّق لهذه الشركة» (tests/phase5-b2b-contacts.test.ts keeps that for a company domain).
     // CHANGED (D-0118): gmail.com is a PRIVATE MAILBOX: kept and labelled «غير موثّق — إيميل شخصي»
     expect(cellsOf(w.items, "p3")).toMatchObject({ email: "person3@gmail.com", email_status: "غير موثّق — إيميل شخصي" });
-    expect(cellsOf(w.items, "p5")).toMatchObject({ email: "", email_status: "", phone: "", phone_status: "" });
+    expect(cellsOf(w.items, "p5")).toMatchObject({ email: "غير متوفر", email_status: "", phone: "", phone_status: "" });
     expect(w.items.acceptedRows("people").length).toBe(5);
   });
   // DT-20261118-03 PR-3, rewritten STRUCTURALLY (Megz D-0086: no word list): an address is the company's mailbox when it equals an address of the person's company row, or when 2+ people of the same company share it
@@ -114,11 +114,11 @@ describe("the engine fills the cells of the people it delivered", () => {
     await w.run();
     expect(cellsOf(w.items, "p1")).toMatchObject({ email: "ahmed@orascom-em.com.eg", email_status: "غير موثّق" });
   });
-  it("DT-20261118-03 PR-3: one address found for two people of the same company is kept on both with «مشترك»", async () => {
+  it("DT-20261118-03 PR-3: one address found for two people of the same company is kept on both with «إيميل مشترك»", async () => {
     const w = await world({ people: [person(1, "General Manager"), person(2, "Chief Executive Officer")], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "sales@orascom-em.com.eg" } : null) });
     await w.run();
-    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "sales@orascom-em.com.eg", email_status: "غير موثّق — مشترك" });
-    expect(cellsOf(w.items, "p2")).toMatchObject({ email: "sales@orascom-em.com.eg", email_status: "غير موثّق — مشترك" });
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "sales@orascom-em.com.eg", email_status: "غير موثّق — إيميل مشترك" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: "sales@orascom-em.com.eg", email_status: "غير موثّق — إيميل مشترك" });
   });
   it("DT-20261118-03 PR-3: a person's own role-like address (gm@, sales@) that only they have and that is not the company row's is kept: no word decides", async () => {
     const w = await world({ companyEmail: "info@orascom-em.com.eg", people: [person(1, "General Manager")], steps: EMAIL_ONLY(), answers: (ep) => (ep === EMAIL_A.id ? { email: "gm@orascom-em.com.eg" } : null) });
@@ -186,26 +186,26 @@ describe("which finders the catalog offers for a person", () => {
 describe("DT-20261118-03 fix round 1: a shared address is kept and labelled whatever its status and wherever the run stopped", () => {
   const EMAIL_ONLY: ContactStep[] = [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.02, finders: [EMAIL_A, EMAIL_B] }];
   const SHARED = "team@orascom-em.com.eg";
-  it("two people of one company whose address already has its final status «موثّق» keep it with «مشترك»; a third person's own final address stays", async () => {
+  it("two people of one company whose address already has its final status «موثّق» keep it with «إيميل مشترك»; a third person's own final address stays", async () => {
     const w = await world({
       people: [{ ...person(1, "General Manager"), email: SHARED, email_status: "موثّق" }, { ...person(2, "Chief Executive Officer"), email: SHARED, email_status: "موثّق" }, { ...person(3, "Accountant"), email: "own3@orascom-em.com.eg", email_status: "موثّق" }],
       steps: EMAIL_ONLY,
       answers: () => null,
     });
     await w.run();
-    expect(cellsOf(w.items, "p1")).toMatchObject({ email: SHARED, email_status: "موثّق — مشترك" });
-    expect(cellsOf(w.items, "p2")).toMatchObject({ email: SHARED, email_status: "موثّق — مشترك" });
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: SHARED, email_status: "موثّق — إيميل مشترك" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: SHARED, email_status: "موثّق — إيميل مشترك" });
     expect(cellsOf(w.items, "p3")).toMatchObject({ email: "own3@orascom-em.com.eg", email_status: "موثّق" });
   });
-  it("one person's final address that a finder also returns for a second person is kept on both with «مشترك», and the found count stays", async () => {
+  it("one person's final address that a finder also returns for a second person is kept on both with «إيميل مشترك», and the found count stays", async () => {
     const w = await world({
       people: [{ ...person(1, "General Manager"), email: SHARED, email_status: "موثّق" }, person(2, "Chief Executive Officer")],
       steps: EMAIL_ONLY,
       answers: (ep) => (ep === EMAIL_A.id ? { email: SHARED } : null),
     });
     const out = await w.run();
-    expect(cellsOf(w.items, "p1")).toMatchObject({ email: SHARED, email_status: "موثّق — مشترك" });
-    expect(cellsOf(w.items, "p2")).toMatchObject({ email: SHARED, email_status: "غير موثّق — مشترك" });
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: SHARED, email_status: "موثّق — إيميل مشترك" });
+    expect(cellsOf(w.items, "p2")).toMatchObject({ email: SHARED, email_status: "غير موثّق — إيميل مشترك" });
     expect(out.filled.email).toBe(1);
   });
   it("a run stopped on its first person still labels an address that two people it never reached share", async () => {
@@ -216,7 +216,7 @@ describe("DT-20261118-03 fix round 1: a shared address is kept and labelled what
     });
     const out = await w.run();
     expect(out.stopped).not.toBeNull();
-    expect(cellsOf(w.items, "p3")).toMatchObject({ email: SHARED, email_status: "مشترك" });
-    expect(cellsOf(w.items, "p5")).toMatchObject({ email: SHARED, email_status: "مشترك" });
+    expect(cellsOf(w.items, "p3")).toMatchObject({ email: SHARED, email_status: "إيميل مشترك" });
+    expect(cellsOf(w.items, "p5")).toMatchObject({ email: SHARED, email_status: "إيميل مشترك" });
   });
 });

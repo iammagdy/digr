@@ -53,6 +53,8 @@ export const REPLY_TO_TITLE_AR = "معرّف التعليق الأصلي";
 export const NO_DECISION_MAKERS_NOTE_AR = "لم نجد صناع قرار في هذه الشركة";
 /** What a cell says when nothing was found for it (never an empty cell where a value was looked for). */
 export const NOT_AVAILABLE_AR = "غير متوفر";
+/** What a cell says when its contact lookup chain did not finish (failed, refused, skipped, or truncated scan): never «غير متوفر». */
+export const B2B_NOT_SEARCHED_AR = "لم يكتمل البحث";
 
 /** THE COMPANY SHEET of «companies and their decision makers»: the owner's columns 1 to 6 («الإيميل العام للشركة» and «هاتف المقر الرئيسي» are his top priority), then a note. */
 export const COMPANY_SHEET_ORDER: ReadonlyArray<ContractColumn> = [

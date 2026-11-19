@@ -121,9 +121,9 @@ describe("DT-20261118-05 item 4b: a person without a page is asked by the next r
     expect(w.calls.map((c) => c.endpoint)).toEqual([AIARK.id]);
     expect((await w.attempts()).outcomes[`${DEAR.id}|not_tried:person_budget`]).toBe(1);
   });
-  it("a person with a page keeps today's chain: the alternates are never asked once FINDERS_PER_STEP finders were", async () => {
+  it("a person with a page gets the next ranked alternate after the whole chain answers empty", async () => {
     const w = await world({ people: [{ ...NAME_ONLY, linkedin: "https://www.linkedin.com/in/mina-naguib" }], phone: { alternates: [QUICK] }, answers: () => null });
-    expect(w.calls.map((c) => c.endpoint)).toEqual([BLITZ.id, AIARK.id, TOMBA.id]);
+    expect(w.calls.map((c) => c.endpoint)).toEqual([BLITZ.id, AIARK.id, TOMBA.id, QUICK.id]);
     expect(FINDERS_PER_STEP).toBe(3);
   });
 });

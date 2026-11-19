@@ -98,15 +98,15 @@ describe("D-0084: the company's number is never written in a person's phone cell
     const cell = (id: string) => { const r = items.acceptedRows("people").find((x) => x.id === id)!; return { phone: String(r.phone ?? ""), type: String(r.phone_type ?? "") }; };
     return { store, calls, cell };
   };
-  it("no personal phone found: the cell stays empty and no map search is paid for", async () => {
+  it("no personal phone found: the cell says unavailable and no map search is paid for", async () => {
     const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], (ep) => (ep.includes("maps") ? { places: [{ title: "Falcon Misr", phone: "+20 2 2345 6789" }] } : null));
-    expect(w.cell("p1")).toEqual({ phone: "", type: "" });
+    expect(w.cell("p1")).toEqual({ phone: "غير متوفر", type: "" });
     expect(w.calls).toEqual([BLITZ.id]);
   });
   // BUG HUNTER Gate 1 delta P0: the company ROW's own phone was copied into the person's cell with no search at all
   it("the company row's own phone is never copied into a person's cell", async () => {
     const w = await run([{ id: "p1", full_name: "Mina Naguib", linkedin: "linkedin.com/in/mina-naguib" }], () => null, "+20 2 2345 6789");
-    expect(w.cell("p1")).toEqual({ phone: "", type: "" });
+    expect(w.cell("p1")).toEqual({ phone: "غير متوفر", type: "" });
     expect(w.calls).toEqual([BLITZ.id]);
   });
   it("a profile without https:// reaches the finder and the person's own number is written as «شخصي»", async () => {

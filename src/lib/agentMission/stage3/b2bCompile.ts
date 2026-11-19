@@ -1,9 +1,10 @@
 import { normalizeDigits, toArabicDigits } from "../../arabicDigits";
 import { countAr, knownItemNoun } from "../itemNoun";
 import {
-  COMPANY_ACTIVITY_TITLE_AR, COMPANY_EMAIL_TITLE_AR, COMPANY_NAME_TITLE_AR, COMPANY_PHONE_TITLE_AR, DECISION_MAKER_FLAG_TITLE_AR, NOT_AVAILABLE_AR, NOTES_TITLE_AR,
+  B2B_NOT_SEARCHED_AR, COMPANY_ACTIVITY_TITLE_AR, COMPANY_EMAIL_TITLE_AR, COMPANY_NAME_TITLE_AR, COMPANY_PHONE_TITLE_AR, DECISION_MAKER_FLAG_TITLE_AR, NOT_AVAILABLE_AR, NOTES_TITLE_AR,
   PERSON_EMAIL_TITLE_AR, PERSON_NAME_TITLE_AR, PERSON_PHONE_TITLE_AR, PERSON_TITLE_TITLE_AR, ROW_NUMBER_TITLE_AR,
 } from "../taskContracts";
+export { B2B_NOT_SEARCHED_AR };
 import { b2bConditionLabelAr, type B2BAsk, type B2BCondition } from "./b2bAsk";
 import { B2B_CARDS, b2bCardsFor, type B2BCard, type B2BCarry, type B2BField, type B2BRole } from "./b2bCards";
 
@@ -19,8 +20,6 @@ import { B2B_CARDS, b2bCardsFor, type B2BCard, type B2BCarry, type B2BField, typ
  * Wiring it into the planning and the engine is left for the next session (docs/STAGE-3.md), behind `DIGER_STAGE3_COMPANIES`.
  */
 export const COMPANY_HQ_TITLE_AR = "المقر الرئيسي";
-/** A contact cell whose chain was not tried to its end (a tool refused by the daily cap, the time limit): never «غير متوفر». */
-export const B2B_NOT_SEARCHED_AR = "لم يكتمل البحث";
 export const MARK_YES_AR = "نعم";
 export const MARK_NO_AR = "لا";
 export const MARK_UNKNOWN_AR = "غير معروف";

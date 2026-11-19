@@ -43,11 +43,11 @@ export interface ContactStep {
   validators?: FinderInfo[];
   /** PHONE steps: the map searches that give a COMPANY's phone, cheapest first, used when no personal phone was found (one lookup per company). */
   company_phone?: FinderInfo[];
-  /** PHONE steps (DT-20261118-05 item 4b): the NEXT ranked phone finders of the catalog, after the chain. A person the chain cannot ask (no professional page) is asked by these instead, at most FINDERS_PER_STEP calls in all and never more than the chain's own price for one person; not priced. */
+  /** The next ranked finders for this kind. Asked only after the primary pass; up to FINDERS_PER_STEP additional calls per person within the primary chain ceiling. */
   alternates?: FinderInfo[];
   /** PHONE steps (DT-20261118-05 item 4c): the catalog's profile lookup (a person's name and company → the professional page), asked first for a person without one, inside the same price for one person; not priced. */
   profile_lookup?: FinderInfo[];
-  /** PHONE steps: the cell that says whose number it is, «شخصي» / «رقم الشركة». */
+  /** PHONE steps: the cell that says whose number it is, «شخصي» / «رقم الشركة» / «فاكس». */
   type_key?: string;
   /** Set on a step of the COMPANY (audit 2026-11, taskContracts.ts): `stage_key` is the stage whose rows are the companies; the e-mail step looks up the company's own role mailbox (`finders` are mailbox listers), the phone step the company's HQ phone (`company_phone` are the map searches). Absent: a step of the people of a stage. */
   level?: "company";
@@ -60,7 +60,8 @@ export const CONTACT_STATUS_UNVERIFIED_AR = "غير موثّق";
 
 export const EMAIL_LABEL_PERSONAL_AR = "إيميل شخصي";
 export const EMAIL_LABEL_COMPANY_AR = "إيميل الشركة";
-export const EMAIL_LABEL_SHARED_AR = "مشترك";
+export const EMAIL_LABEL_SHARED_AR = "إيميل مشترك";
+export const PHONE_TYPE_FAX_AR = "فاكس";
 export const EMAIL_LABEL_DOMAIN_AR = "إيميل على نطاق الشركة";
 
 /**
@@ -76,7 +77,7 @@ export function labelledStatus(status: string, label: string): string {
   return `${trimmed} — ${cleanLabel}`;
 }
 
-/** The status verdict before any label or note (e.g. «موثّق» from «موثّق — مشترك»). */
+/** The status verdict before any label or note (e.g. «موثّق» from «موثّق — إيميل مشترك»). */
 export function statusHead(s: string): string {
   const trimmed = s.trim();
   const idx = trimmed.indexOf(" — ");
@@ -85,6 +86,20 @@ export function statusHead(s: string): string {
 }
 /** The most finders one person is tried with, per kind (the first that finds a value ends it). */
 export const FINDERS_PER_STEP = 3;
+
+/** The distinct, stored person alternates covered by the second pass and its attempt resolution. */
+export function personAlternatesOf(step: Pick<ContactStep, "finders" | "alternates">): FinderInfo[] {
+  const seen = new Set(step.finders.map((finder) => finder.id));
+  const alternates: FinderInfo[] = [];
+  for (const finder of step.alternates ?? []) {
+    if (seen.has(finder.id)) continue;
+    alternates.push(finder);
+    seen.add(finder.id);
+    if (alternates.length === FINDERS_PER_STEP) break;
+  }
+  return alternates;
+}
+
 export const statusKeyOf = (columnKey: string): string => `${columnKey}_status`;
 const KIND_OF: Record<FinderKind, ContactKind> = { email: "work_email", phone: "phone" };
 const DEFAULT_COLUMN: Record<FinderKind, { key: string; title_ar: string }> = { email: { key: "email", title_ar: "الإيميل" }, phone: { key: "phone", title_ar: "رقم التليفون" } };
@@ -145,7 +160,7 @@ export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowe
   return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD, offset });
 }
 
-/** THE NEXT RANKED FINDERS of a kind (DT-20261118-05 item 4b): the same catalog group, ranking and ceiling as finderSourcesOf, after its first FINDERS_PER_STEP. A person the chain cannot ask is asked by these instead. */
+/** THE NEXT RANKED FINDERS of a kind (DT-20261118-05 item 4b): the same catalog group, ranking and ceiling as finderSourcesOf, after its first FINDERS_PER_STEP. People still missing a value after the primary chain may be asked by these. */
 export function alternateFinderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
   return finderSourcesOf(kind, catalog, isAllowed, stats, now, FINDERS_PER_STEP);
 }
@@ -292,7 +307,7 @@ export function buildContactSteps(
       const help = aids?.(kind) ?? {};
       const verifiers = kind === "email" && help.verifiers && help.verifiers.length > 0 ? help.verifiers : undefined;
       const validators = kind === "phone" && help.validators && help.validators.length > 0 ? help.validators : undefined;
-      // D-0084: a person's phone cell holds the PERSON's number only; the company's number is a column of the company (buildCompanySteps), never a stand-in here
+      // D-0084: the company-row phone is never copied into a person's step; D-0119 only allows an office/fax answer from the person's phone finder
       const company_phone: FinderInfo[] | undefined = undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
       // what one person is EXPECTED to cost (the price): the chain of finders by measured hit rates, then for an e-mail the verifier for those an address was found for, for a phone the company-phone search for those no personal number was found for (one search per company: an upper bound) and
@@ -303,7 +318,7 @@ export function buildContactSteps(
       const validatorUsd = validators ? chainPriceUsd(validators) : 0;
       const perPerson = chain.costUsd + (1 - chain.missShare) * verifierUsd + chain.missShare * companyUsd + validatorUsd;
       const maxPerson = list.reduce((n, f) => n + f.usd, 0) + verifierUsd + companyUsd + validatorUsd;
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}), ...(kind === "phone" && help.alternates && help.alternates.length > 0 ? { alternates: help.alternates } : {}), ...(kind === "phone" && help.profile_lookup && help.profile_lookup.length > 0 ? { profile_lookup: help.profile_lookup } : {}) });
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}), ...(help.alternates && help.alternates.length > 0 ? { alternates: help.alternates } : {}), ...(kind === "phone" && help.profile_lookup && help.profile_lookup.length > 0 ? { profile_lookup: help.profile_lookup } : {}) });
     }
   }
   return out;
@@ -406,77 +421,146 @@ const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
 const BAD_STATUS = /^(invalid|undeliverable|risky|unknown|catch_?all|accept_?all|disposable|bounce|bad)$/i;
 
+export interface OfficeLine { value: string; type: "company" | "fax" }
+
 export interface ContactDetail {
   found: FoundContact | null;
   personalAlso: string | null;
+  officeLine: OfficeLine | null;
+  rejected: number;
+  numberTyped: number;
+  scanTruncated: boolean;
 }
 
-/** The value a finder's answer carries, with detail for ranking and notes. */
+const PHONE_SCAN_KEY = /(^|_)(phones?|tel|telephones?|mobiles?|cell|gsm|whatsapp|msisdn)(_|$)/i;
+const NON_CONTACT_KEY = /(^|_)(ids?|uuid|zip|postal|postcode|date|time|timestamp|year|price|amount|score|count|created|updated|registration|tracking|reference|ein|sku|longitude|latitude|ip)(_|$)|_at$/i;
+const DATE_OR_DECIMAL = /^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$|^\d+[.]\d+$|^(?:\d{1,3}[.]){3}\d{1,3}$/;
+const FALLBACK_PHONE = /^(\+\d|0\d)[\d\s().-]{6,17}$/;
+const normalizeKey = (key: string): string => key.replace(/([A-Z])([A-Z][a-z])/g, "$1_$2").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
+const nonPersonalKey = (key: string): boolean => NOT_PERSONAL_KEY.test(key) || /(^|_)(home|business)(_|$)/i.test(key);
+const phoneRank = (label: string): number => /^(mobile|cell|direct|work|business)$/i.test(label) ? 0 : /^(home|other)$/i.test(label) ? 2 : 1;
+const phoneShape = (raw: string, minimum = 7): boolean => {
+  const digits = raw.replace(/\D/g, "");
+  return /^[+\d(][\d\s().-]*$/.test(raw) && !DATE_OR_DECIMAL.test(raw) && digits.length >= minimum && digits.length <= 15;
+};
+
+interface PhonePath { container: boolean; recognised: boolean; phoneKey: boolean; office: boolean; fax: boolean; rank: number }
+
+function phoneDetailIn(page: unknown): ContactDetail {
+  const detail: ContactDetail = { found: null, personalAlso: null, officeLine: null, rejected: 0, numberTyped: 0, scanTruncated: false };
+  let bestRank = Infinity;
+  let leaves = 0;
+  const root: PhonePath = { container: false, recognised: false, phoneKey: false, office: false, fax: false, rank: 1 };
+  const read = (node: unknown, path: PhonePath, scan: boolean, listItem: boolean): void => {
+    if (node === null || node === undefined || typeof node === "boolean") return;
+    const raw = text(node);
+    if (!raw) return;
+    if (scan && typeof node === "number") {
+      if (!path.recognised && /^\d{8,15}$/.test(raw)) detail.numberTyped += 1;
+      return;
+    }
+    if (!scan && !path.recognised && !(listItem && PHONE_LIKE.test(raw))) return;
+    if (scan && (path.recognised || !FALLBACK_PHONE.test(raw) || !(path.phoneKey || raw.startsWith("+")) || !phoneShape(raw, 8))) return;
+    if (!phoneShape(raw)) { detail.rejected += 1; return; }
+    if (path.office) {
+      detail.officeLine ??= { value: raw, type: path.fax ? "fax" : "company" };
+    } else if (path.rank < bestRank) {
+      const checked = scan ? null : verifyContactValue("phone", raw);
+      detail.found = { value: checked ?? raw, status: checked ? "verified" : "unverified" };
+      bestRank = path.rank;
+    }
+  };
+  const walk = (node: unknown, depth: number, path: PhonePath, scan: boolean, listItem = false): void => {
+    if (node === null || node === undefined) return;
+    if (depth > 6) { if (scan) detail.scanTruncated = true; return; }
+    if (scan && leaves >= 40) { detail.scanTruncated = true; return; }
+    if (Array.isArray(node)) {
+      for (const item of scan ? node : node.slice(0, 8)) {
+        walk(item, depth + 1, path, scan, true);
+        if (scan && detail.scanTruncated && leaves >= 40) break;
+      }
+      return;
+    }
+    if (typeof node !== "object") {
+      if (scan) leaves += 1;
+      read(node, path, scan, listItem);
+      return;
+    }
+    const row = node as Record<string, unknown>;
+    const label = text(row.type ?? row.line_type ?? row.kind ?? row.label);
+    const office = path.office || NOT_PERSONAL_TYPE.test(label);
+    const fax = path.fax || /^fax$/i.test(label);
+    for (const [rawKey, value] of Object.entries(row)) {
+      const key = normalizeKey(rawKey);
+      if (NON_CONTACT_KEY.test(key) || /^(type|line_type|kind|label)$/.test(key)) continue;
+      const officeKey = office || nonPersonalKey(key);
+      const faxKey = fax || /fax/i.test(key);
+      const phoneKey = PHONE_SCAN_KEY.test(key);
+      const container = isPhoneContainerKey(key);
+      const recognised = PHONE_KEYS.test(key) || ((path.container || office) && PHONE_ITEM_KEYS.test(key)) ||
+        (officeKey && (phoneKey || faxKey || (nonPersonalKey(key) && /(^|_)(numbers?|lines?)(_|$)/.test(key))));
+      walk(value, depth + 1, { container: path.container || container, recognised, phoneKey: path.phoneKey || phoneKey,
+        office: officeKey, fax: faxKey, rank: label ? phoneRank(label) : path.rank }, scan);
+      if (scan && detail.scanTruncated && leaves >= 40) break;
+    }
+  };
+  walk(page, 0, root, false);
+  if (!detail.found && !detail.officeLine) walk(page, 0, root, true);
+  return detail;
+}
+
+/** The value a finder's answer carries, with detail for ranking, notes and rejects. */
 export function foundContactDetailIn(kind: FinderKind, page: unknown): ContactDetail {
-  const keys = kind === "email" ? EMAIL_KEYS : PHONE_KEYS;
+  if (kind === "phone") return phoneDetailIn(page);
+  const detail: ContactDetail = { found: null, personalAlso: null, officeLine: null, rejected: 0, numberTyped: 0, scanTruncated: false };
   let sourceStatus: "good" | "bad" | null = null;
   const seen: string[] = [];
-  // LESS SURE FINDS, taken only when no key named like an address gave one: any key with «mail» in its name, then any value that IS an address (live 2026-11-01: a finder BILLED a hit and the cell stayed empty, because the key was not one of the few names above)
   const loose: string[] = [];
   const stray: string[] = [];
-  const walk = (node: unknown, depth: number, inPhone = false, notPersonal = false): void => {
+  const walk = (node: unknown, depth: number): void => {
     if (depth > 6 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else if (typeof x === "string" && kind === "phone" && !notPersonal && PHONE_LIKE.test(x.trim())) seen.push(x.trim()); else walk(x, depth + 1, inPhone, notPersonal); } return; }
+    if (Array.isArray(node)) {
+      for (const item of node.slice(0, 8)) {
+        if (typeof item === "string" && item.includes("@")) seen.push(item);
+        else walk(item, depth + 1);
+      }
+      return;
+    }
     if (typeof node !== "object") return;
-    const o = node as Record<string, unknown>;
-    if (kind === "phone" && NOT_PERSONAL_TYPE.test(text(o.type ?? o.line_type ?? o.kind ?? o.label ?? ""))) return;
-    for (const [k, v] of Object.entries(o)) {
-      const np = notPersonal || (kind === "phone" && NOT_PERSONAL_KEY.test(k));
-      if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { if (kind === "phone" && np) continue; const t = text(v); if (t) seen.push(t); }
-      else if (kind === "phone" && inPhone && PHONE_ITEM_KEYS.test(k) && (typeof v === "string" || typeof v === "number")) { if (np) continue; const t = text(v); if (t) seen.push(t); }
-      else if (kind === "email" && typeof v === "string" && /mail/i.test(k) && !/status|valid|verif|deliver|score|quality|domain|provider/i.test(k) && v.includes("@")) { const t = text(v); if (t) loose.push(t); }
-      else if (kind === "email" && typeof v === "string" && ADDRESS_ONLY.test(v.trim().replace(/^mailto:/i, ""))) { stray.push(text(v)); }
-      else if (kind === "email" && /^(verification|email_status|status|verified|deliverability|validity)$/i.test(k)) {
-        const s = typeof v === "object" && v !== null ? text((v as Record<string, unknown>).status) : text(v);
-        if (v === true || GOOD_STATUS.test(s)) sourceStatus = sourceStatus ?? "good"; else if (v === false || BAD_STATUS.test(s)) sourceStatus = "bad";
-      } else if (typeof v === "object") walk(v, depth + 1, inPhone || (kind === "phone" && isPhoneContainerKey(k)), np);
+    for (const [key, value] of Object.entries(node)) {
+      if (EMAIL_KEYS.test(key) && (typeof value === "string" || typeof value === "number")) {
+        const raw = text(value);
+        if (raw) seen.push(raw);
+      } else if (typeof value === "string" && /mail/i.test(key) && !/status|valid|verif|deliver|score|quality|domain|provider/i.test(key)) {
+        const raw = text(value);
+        if (raw) loose.push(raw);
+      } else if (typeof value === "string" && ADDRESS_ONLY.test(value.trim().replace(/^mailto:/i, ""))) {
+        stray.push(text(value));
+      } else if (/^(verification|email_status|status|verified|deliverability|validity)$/i.test(key)) {
+        const status = typeof value === "object" && value !== null ? text((value as Record<string, unknown>).status) : text(value);
+        if (value === true || GOOD_STATUS.test(status)) sourceStatus = sourceStatus ?? "good";
+        else if (value === false || BAD_STATUS.test(status)) sourceStatus = "bad";
+      } else if (typeof value === "object") walk(value, depth + 1);
     }
   };
   walk(page, 0);
-  const usable = (v: string): boolean => !v.includes("*") && (kind === "email" ? v.includes("@") : v.replace(/\D/g, "").length >= 7);
-  const candidates = [...seen, ...loose, ...stray].filter(usable);
-  if (candidates.length === 0) return { found: null, personalAlso: null };
-
-  if (kind === "email") {
-    const emailRank = (addr: string): number => {
-      const t = emailValueTypeOf(addr);
-      return t === "professional" ? 0 : t === "personal_mailbox" ? 2 : 3;
-    };
-    let best = candidates[0];
-    let bestRank = emailRank(best);
-    for (let i = 1; i < candidates.length; i++) {
-      const r = emailRank(candidates[i]);
-      if (r < bestRank) {
-        best = candidates[i];
-        bestRank = r;
-      }
-    }
-    const checked = verifyContactValue("work_email", best);
-    const found: FoundContact = checked
-      ? { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" }
-      : { value: best.replace(/^mailto:/i, "").trim().toLowerCase(), status: "unverified" };
-
-    let personalAlso: string | null = null;
-    if (emailValueTypeOf(found.value) === "professional") {
-      const personalCandidate = candidates.find((c) => emailValueTypeOf(c) === "personal_mailbox");
-      if (personalCandidate) {
-        personalAlso = personalCandidate.replace(/^mailto:/i, "").trim().toLowerCase();
-      }
-    }
-    return { found, personalAlso };
+  let bestRank = Infinity;
+  let best: string | null = null;
+  let personal: string | null = null;
+  for (const value of [...seen, ...loose, ...stray]) {
+    const type = emailValueTypeOf(value);
+    if (type === "invalid") { detail.rejected += 1; continue; }
+    if (type === "personal_mailbox") personal ??= value;
+    const rank = type === "professional" ? 0 : 2;
+    if (rank < bestRank) { bestRank = rank; best = value; }
   }
-
-  const raw = candidates[0];
-  const checked = verifyContactValue(KIND_OF[kind], raw);
-  const found: FoundContact = checked
-    ? { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" }
-    : { value: raw.trim(), status: "unverified" };
-  return { found, personalAlso: null };
+  if (best !== null) {
+    const checked = verifyContactValue("work_email", best);
+    detail.found = checked ? { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" } :
+      { value: best.replace(/^mailto:/i, "").trim().toLowerCase(), status: "unverified" };
+    if (bestRank === 0 && personal) detail.personalAlso = personal.replace(/^mailto:/i, "").trim().toLowerCase();
+  }
+  return detail;
 }
 
 /** The value a finder's answer carries, and whether it is verified: found by walking the answer (an object, a list of objects, nested `data`); a MASKED value (stars) is no value. verified = it passes the code check (a plausible address on a company domain, a phone of 7 to 15 digits) and the source does not say otherwise. */

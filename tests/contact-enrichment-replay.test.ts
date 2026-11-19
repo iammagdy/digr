@@ -53,12 +53,12 @@ async function peopleSheet(r: Awaited<ReturnType<typeof a1>>) {
 }
 
 describe("A1 replay: the people's e-mail and phone cells", () => {
-  it("BEFORE: finders that find nothing: the same 10 people are delivered, no e-mail and no phone, no status", async () => {
+  it("BEFORE: finders that find nothing: the same 10 people are delivered, no found e-mail or phone, no status", async () => {
     const r = await a1("none");
     const s = await peopleSheet(r);
     expect(s.people.length).toBe(10);
-    expect(s.col("إيميل المسؤول المباشر").filter(Boolean).length).toBe(0);
-    expect(s.col("هاتف / محمول المسؤول").filter(Boolean).length).toBe(0);
+    expect(s.col("إيميل المسؤول المباشر").filter((v) => v && v !== "غير متوفر")).toEqual([]);
+    expect(s.col("هاتف / محمول المسؤول").filter((v) => v && v !== "غير متوفر")).toEqual([]);
     expect(s.col("حالة توثيق إيميل المسؤول المباشر").filter(Boolean).length).toBe(0);
   });
 
@@ -69,19 +69,23 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     expect(s.people.length).toBe(10);
     const emails = s.col("إيميل المسؤول المباشر");
     const status = s.col("حالة توثيق إيميل المسؤول المباشر");
-    const filled = emails.filter(Boolean);
+    const filled = emails.filter((v) => v && v !== "غير متوفر");
     expect(filled.length).toBeGreaterThan(0);
     // every value has its status beside it, and the empty cells have none
-    emails.forEach((e, i) => expect(status[i] === "").toBe(e === ""));
+    emails.forEach((e, i) => expect(status[i] === "").toBe(e === "" || e === "غير متوفر"));
     // D-0118: the verifier verdict stays first, and the personal mailbox keeps its label in the cell or note.
-    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "موثّق — إيميل شخصي", "موثّق — إيميل شخصي: person6421@gmail.com"]));
+    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "موثّق — إيميل شخصي", "موثّق — إيميل شخصي: \u200Eperson6421@gmail.com"]));
+    const noteAt = status.findIndex((v) => v.includes("\u200E"));
+    const statusColumn = s.header.indexOf("حالة توثيق إيميل المسؤول المباشر");
+    expect(noteAt).toBeGreaterThanOrEqual(0);
+    expect(s.people[noteAt].getCell(statusColumn).alignment).toMatchObject({ readingOrder: "rtl" });
     expect(emails.some((e) => /@gmail\.com$/i.test(e))).toBe(true);
     emails.forEach((e, i) => {
-      if (!e) return;
+      if (!e || e === "غير متوفر") return;
       if (/@gmail\.com$/i.test(e)) expect(status[i]).toBe("موثّق — إيميل شخصي");
       else expect(e).toMatch(/\.com\.eg$/);
     });
-    const phones = s.col("هاتف / محمول المسؤول").filter(Boolean);
+    const phones = s.col("هاتف / محمول المسؤول").filter((v) => v && v !== "غير متوفر");
     expect(phones.length).toBeGreaterThan(0);
     expect(s.col("حالة توثيق هاتف / محمول المسؤول").filter(Boolean).length).toBe(phones.length);
     // the status column sits right after its value column
@@ -92,11 +96,11 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     expect(r.mission.charged_points).toBe(none.mission.charged_points);
     expect(Number(r.mission.charged_points)).toBeLessThanOrEqual(Number(r.mission.reserved_points));
     expect(Number(r.mission.execution_treg_usd)).toBeLessThanOrEqual(executionBudgetUsd(Number(r.mission.reserved_points)) + 1e-9);
-    // the finders ran as the plan said: only the plan's ranked finders were called, at most three per person and kind
-    const steps = (r.plannedPlan as any).contact_steps as Array<{ finders: Array<{ id: string }> }>;
-    const allowed = new Set(steps.flatMap((x) => x.finders.map((f) => f.id)));
+    // the finders ran as the plan said: the primary chain plus published alternates is finite for each person and kind
+    const steps = (r.plannedPlan as any).contact_steps as Array<{ finders: Array<{ id: string }>; alternates?: Array<{ id: string }> }>;
+    const allowed = new Set(steps.flatMap((x) => [...x.finders, ...(x.alternates ?? [])].map((f) => f.id)));
     const finderCalls = (await r.store.listCalls(r.missionId)).filter((c) => c.phase === "execution" && allowed.has(c.endpoint_id));
     expect(finderCalls.length).toBeGreaterThan(0);
-    expect(finderCalls.length).toBeLessThanOrEqual(10 * 3 * 2);
+    expect(finderCalls.length).toBeLessThanOrEqual(10 * steps.reduce((n, step) => n + step.finders.length + (step.alternates?.length ?? 0), 0));
   });
 });

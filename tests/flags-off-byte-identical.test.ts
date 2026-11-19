@@ -32,6 +32,8 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // DT-20261118-03 CHANGED (Megz D-0084, D-0085): every section of g1_electromechanical / g2_petroleum was re-pinned, compared section by section with the commit before: the person rows no longer carry the company's number as
 // their phone (8 of 10 «رقم الشركة» before, 0 now in these fake worlds, whose answers hold no personal number), the person-phone chain is blitz, aiark, tomba up to 0.05 USD a call (no company-number search and no validator call for it),
 // and the price follows (hold 1,341 -> 2,569, charge 1,166 -> 2,234 points for the same 15 rows). The three other worlds are unchanged.
+// DT-20261119-07 B: the two people worlds store e-mail alternates and test the second pass; the workbook has unavailable contact cells.
+// Only mission, providerCalls and workbook are re-pinned for those worlds. The existing ledger, planView, finalView, notices and visible event hashes still apply.
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
 const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);
 const norm = (value: unknown): string => JSON.stringify(value, (k, v) => {
@@ -72,7 +74,18 @@ describe("every flag off: byte-identical to the code before this pull request", 
   const collected: Record<string, Record<string, string>> = {};
   for (const [name, make] of Object.entries(SCENARIOS)) {
     it(`${name}`, async () => {
-      const sections = await sectionsOf(await make());
+      const result = await make();
+      if (name === "g1_electromechanical" || name === "g2_petroleum") {
+        const people = (await readWorkbook(result)).worksheets[2];
+        const header = people.getRow(1).values as string[];
+        for (const title of ["إيميل المسؤول المباشر", "هاتف / محمول المسؤول"]) {
+          const col = header.indexOf(title);
+          expect(col).toBeGreaterThan(0);
+          const values = Array.from({ length: people.rowCount - 1 }, (_, i) => people.getRow(i + 2).getCell(col).value);
+          expect(values.every((value) => value === null || value === "غير متوفر")).toBe(true);
+        }
+      }
+      const sections = await sectionsOf(result);
       collected[name] = sections;
       if (writing) { mkdirSync(path.dirname(FIXTURE), { recursive: true }); writeFileSync(FIXTURE, JSON.stringify({ ...(existsSync(FIXTURE) ? JSON.parse(readFileSync(FIXTURE, "utf-8")) : {}), [name]: sections }, null, 1)); return; }
       expect(pinned[name], `no pinned digest for ${name}`).toBeDefined();

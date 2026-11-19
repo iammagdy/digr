@@ -22,7 +22,7 @@ import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 import { buildMethodology, routesOfFacts, type MissionFacts } from "./methodology";
-import { COMMENT_KIND_COMMENT_AR, COMMENT_KIND_KEY, COMMENT_KIND_REPLY_AR, COMMENT_KIND_TITLE_AR, DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, REPLY_TO_KEY, REPLY_TO_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
+import { COMMENT_KIND_COMMENT_AR, COMMENT_KIND_KEY, COMMENT_KIND_REPLY_AR, COMMENT_KIND_TITLE_AR, DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NOT_AVAILABLE_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, REPLY_TO_KEY, REPLY_TO_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
 import { bilingualActivity, bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
 import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
@@ -180,7 +180,9 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
       // ROUND 27 (item 4): a counter (or a field the tool may not give) is never merged into another column because their numbers coincide («0» shares and «0» saves on nine of ten videos dropped «الحفظ»)
       const availability = isAvailabilityKey(plan, stage, c.key);
-      if (!rawSheet && !availability && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      // Identical missing-contact markers make no claim that two contact fields are the same.
+      const unavailableContact = (c.kind === "work_email" || c.kind === "phone") && values.some((value) => value === NOT_AVAILABLE_AR);
+      if (!rawSheet && !availability && !unavailableContact && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);
@@ -411,7 +413,20 @@ function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: R
  */
 export function fileLayoutsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, companyMailboxes?: CompanyMailboxes) {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
-  const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
+  // A person's contact field has its own evidence and must not inherit an address or phone from the parent.
+  const personContactFields = new Map<string, Set<string>>();
+  for (const step of plan.contact_steps ?? []) {
+    if (step.level !== undefined) continue;
+    const keys = personContactFields.get(step.stage_key) ?? new Set<string>();
+    keys.add(step.column_key);
+    personContactFields.set(step.stage_key, keys);
+  }
+  const readableKeys = (key: string) => {
+    const stage = plan.stages.find((candidate) => candidate.key === key);
+    return stage ? readableColumns(stage).map((column) => column.key) : [];
+  };
+  const reconciled = reconcileParentColumns(plan.stages, rowsIn,
+    (key) => readableKeys(key).filter((column) => !personContactFields.get(key)?.has(column)), readableKeys);
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
   const providers = providerContext();
   const cleaned = cleanRowsForCustomer(reconciled.rowsByStage, providers);
@@ -537,7 +552,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       row.eachCell({ includeEmpty: true }, (cell, col) => {
         cell.border = BORDER;
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } };
-        cell.alignment = { vertical, wrapText: specs[col - 1]?.wrap ?? true };
+        cell.alignment = { vertical, wrapText: specs[col - 1]?.wrap ?? true, ...(typeof cell.value === "string" && cell.value.includes("إيميل شخصي: \u200E") ? { readingOrder: "rtl" as any } : {}) };
         if (col <= lay.columns.length && dateAt[col - 1] && cellFormat[col - 1]) { cell.numFmt = cellFormat[col - 1]!; cell.alignment = { horizontal: "center", vertical }; }
         if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
         else if (col > lay.columns.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } };
