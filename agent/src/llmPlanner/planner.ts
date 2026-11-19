@@ -12,7 +12,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
+import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -525,10 +525,12 @@ export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<stri
   const message = said.join("\n");
   const companies = u.steps.find((s) => s.parent === null)?.count.total ?? countWrittenIn(message, ask?.companies_text || null);
   const keep = (n: number, cited: string): number | null => {
-    const written = countSupportedByMessage(message, n, cited || null);
-    // FIX3/FIX4: no company count to compare with → a number that counts ANOTHER noun than the people (the dual «شركتين», «٥٠ شركة») may be the companies' own, copied: «not given» (the default count and the «فاعتمدنا» line; the
-    // customer can edit it on the card). A bare amount («اتنين»، «٣ مديرين», «٣ من كل شركة») is the customer's per-company count, in their words or in an answer, and is kept.
-    if (written !== null && companies === null && isCountOfOtherNoun(message, cited, written, ask?.title_ar ?? "")) return null;
+    const rawWritten = countSupportedByMessage(message, n, cited || null);
+    const singularOne = n === 1 && rawWritten === null && isSingularPerParentCitation(message, cited || (ask?.per_company_text ?? ""));
+    const written = singularOne ? 1 : rawWritten;
+    // FIX3/FIX4: no company count to compare with → a number that counts ANOTHER noun than the people (the dual «شركتين», «٥٠ شركة», «لشركتين», «٥شركات») may be the companies' own, copied: «not given» (the default count and the «فاعتمدنا» line; the
+    // customer can edit it on the card). A bare amount («اتنين»، «٣ مديرين», «٣ من كل شركة») or distributive singular («من كل شركة مدير») is the customer's per-company count and is kept.
+    if (written !== null && !singularOne && companies === null && isCountOfOtherNoun(message, cited, written, ask?.title_ar ?? "")) return null;
     // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»)
     return written !== null && (written !== companies || writtenElsewhere(message, cited, written)) ? written : null;
   };
