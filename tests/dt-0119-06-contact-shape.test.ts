@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { contactShape, emailShape, phoneShape } from "../src/lib/agentMission/contactShape";
-import { hasContact, peopleWithoutRequestedContact } from "../src/lib/agentMission/billableRows";
+import { billedUnits, hasContact, peopleWithoutRequestedContact } from "../src/lib/agentMission/billableRows";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { ingestRows } from "../agent/src/items/ingest";
 import { layoutOf } from "../agent/src/workbook";
+import { settlementCharge } from "../src/lib/agentMission/price";
 import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
 
 /**
@@ -14,12 +15,16 @@ import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
 describe("phoneShape: the shape of a phone, never a word list", () => {
   it.each([
     ["international", "+20 100 111 2222"], ["international, parentheses and a trunk zero", "+20 (0)22 345 6789"], ["local mobile", "01001112222"], ["local mobile, dashes", "0100-111-2222"], ["office, area code in parentheses", "(02) 2345 6789"],
-    ["office", "+20 2 3333 4444"], ["fax", "+20 2 3333 4445"], ["a tel: link", "tel:+201001112222"], ["plain digits in a phone column", "20123456"], ["seven digits", "2345678"], ["fifteen digits", "+201001112222333"],
+    ["office", "+20 2 3333 4444"], ["fax", "+20 2 3333 4445"], ["a tel: link", "tel:+201001112222"], ["plain digits in a phone column", "20123456"],
+    ["local mobile, spaced", "010 1234 5678"], ["international, spaced", "+20 10 1234 5678"], ["international, no spaces", "+201012345678"], ["office, parentheses and a dash", "(02) 2345-6789"], ["office, dashed groups", "02-2345-6789"], ["a phone written in groups (not a date)", "010-12-3456"],
+    ["a grouped number whose groups are not a day and a month (ranges)", "55-77-2024"], ["a dotted phone", "010.1234.5678"], ["an international number with a dot after a real country code", "+44.2071234567"], ["NANP with a dot", "+1.2025551234"], ["seven digits", "2345678"], ["fifteen digits", "+201001112222333"],
   ])("a phone: %s", (_name, value) => { expect(phoneShape(value), value).toBe(true); });
   it.each([
     ["an ISO date", "2021-03-12"], ["a day-first date", "12/03/2021"], ["a dotted date", "12.03.2021"], ["a decimal", "3.14159265"], ["an IPv4 address", "192.168.100.200"], ["a registration label", "Reg No: 12345678"], ["a commercial register", "CR 1234567"],
     ["a tax id label", "Tax ID 123-456-789"], ["a date with words", "March 3, 2021"], ["too short", "123456"], ["too long", "+2010011122223334"], ["masked", "+20 100 *** 22"], ["a placeholder", "غير متوفر"], ["a placeholder", "لم يكتمل البحث"],
     ["blank", "  "], ["junk", "N/A"], ["an address", "a@b.co"],
+    ["a date with spaces around the separators (r2 P0)", "2021 - 03 - 12"], ["a signed decimal (r2 P0)", "+3.14159265"], ["an all-zero placeholder (r2 P0)", "0000000000"], ["a day-first date with spaces", "12 / 05 / 2024"], ["a dashed day-first date with spaces", "12 - 05 - 2024"],
+    ["a negative decimal", "-3.75"], ["a dashed all-zero placeholder", "000-000-0000"], ["a plus all-zero placeholder", "+0 000 000 0000"], ["one repeated digit", "1111111111"], ["a dotted date, year first", "2021.03.12"], ["a long signed decimal", "+1234567.89"],
   ])("NOT a phone: %s", (_name, value) => { expect(phoneShape(value), value).toBe(false); });
   it("null and undefined are not phones", () => { expect(phoneShape(null)).toBe(false); expect(phoneShape(undefined)).toBe(false); });
 });
@@ -70,4 +75,35 @@ describe("through ingest, the people sheet and the charge: a native phone field 
     // and settlement: 5 of the 8 delivered people carry no phone
     expect(peopleWithoutRequestedContact(plan as never, { people: kept as never }, { people: 8 })).toMatchObject({ byStage: { people: 5 }, total: 5, kinds: ["phone"] });
   });
+});
+
+/** The Gate 2 r2 P0 (Megz D-0126): each value, in a native phone cell of the second person of a card of 2 rows at 100 points, through ingest -> the people sheet -> settlement: the cell is EMPTY and the charge is 100 for 1 unit (never 200), the customer's line shows 1 person. */
+describe("Gate 2 r2: a date with spaces, a signed decimal or an all-zero placeholder in a native phone cell is not billable", () => {
+  it.each(["2021 - 03 - 12", "+3.14159265", "0000000000", "12 / 05 / 2024", "-3.75", "000-000-0000", "+0 000 000 0000"])("%s -> cell empty, 1 billable unit of 2, charged 100 of a 200 hold, reduction 1", async (bad) => {
+    const st = stage();
+    const plan = { summary_ar: "x", stages: [st], contact_steps: [{ stage_key: "people", column_key: "phone", kind: "phone" }], price: { deliveredRows: 2 } } as unknown as PricedPlan;
+    const items = await ItemStore.open(createMemoryStore(), "msn_shape_r2", { legacyStages: ["people"] });
+    await ingestRows({ items, plan, addEvent: async () => undefined }, st, [{ id: "1", full_name: "Ahmed Hassan", phone: "+20 100 111 2222" }, { id: "2", full_name: "Mona Samir", phone: bad }], { silent: true, idField: null });
+    const kept = items.acceptedRows("people");
+    expect(kept).toHaveLength(2);
+    expect(String((kept.find((r) => r.id === "2") as Record<string, unknown>).phone ?? "")).toBe("");
+    expect(String((kept.find((r) => r.id === "1") as Record<string, unknown>).phone ?? "")).not.toBe("");
+    const unbilled = peopleWithoutRequestedContact(plan as never, { people: kept as never }, { people: 2 });
+    expect(unbilled.total).toBe(1);
+    const billed = billedUnits({ delivered: 2, unbilledTotal: unbilled.total, unbilledInGroup: 0, stageCounts: null });
+    expect(billed).toMatchObject({ deliveredUnits: 1, reduced: 1 });
+    expect(settlementCharge({ deliveredUnits: billed.deliveredUnits, unitPricePoints: 100, reservedPoints: 200 }).chargedPoints).toBe(100);
+  });
+  it.each(["01012345678", "010 1234 5678", "+20 10 1234 5678", "+201012345678", "(02) 2345-6789", "tel:+201012345678"])("COUNTER: %s stays a billable phone (2 units, 200)", async (good) => {
+    const st = stage();
+    const plan = { summary_ar: "x", stages: [st], contact_steps: [{ stage_key: "people", column_key: "phone", kind: "phone" }], price: { deliveredRows: 2 } } as unknown as PricedPlan;
+    const items = await ItemStore.open(createMemoryStore(), "msn_shape_r2c", { legacyStages: ["people"] });
+    await ingestRows({ items, plan, addEvent: async () => undefined }, st, [{ id: "1", full_name: "Ahmed Hassan", phone: "+20 100 111 2222" }, { id: "2", full_name: "Mona Samir", phone: good }], { silent: true, idField: null });
+    const kept = items.acceptedRows("people");
+    expect(String((kept.find((r) => r.id === "2") as Record<string, unknown>).phone ?? "")).not.toBe("");
+    const unbilled = peopleWithoutRequestedContact(plan as never, { people: kept as never }, { people: 2 });
+    expect(unbilled.total).toBe(0);
+    expect(settlementCharge({ deliveredUnits: billedUnits({ delivered: 2, unbilledTotal: 0, unbilledInGroup: 0, stageCounts: null }).deliveredUnits, unitPricePoints: 100, reservedPoints: 200 }).chargedPoints).toBe(200);
+  });
+  it("COUNTER: consumer mailboxes (gmail etc.) stay billable e-mails", () => { for (const v of ["person@gmail.com", "x.y@hotmail.com", "z@yahoo.com"]) expect(contactShape("email", v), v).toBe(true); });
 });
