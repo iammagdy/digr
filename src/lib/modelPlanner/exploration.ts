@@ -83,10 +83,11 @@ export interface ExplorationAttempt {
 }
 
 /**
- * THE SHARED EXPLORATION LEDGER, RESERVED BEFORE THE REQUEST (DT-20261119-11 D1): the request's and the day's money are counted from `exploration_calls`, so a call writes a RESERVATION row (cost = the most it may bill) first, then re-reads the totals; when
- * the reservation does not fit either cap it is released and nothing is sent. Two calls in parallel therefore cannot both spend the same money. After the call the row is updated to what was charged, or KEPT at the reserved amount when the charge is unknown.
+ * THE SHARED EXPLORATION LEDGER, RESERVED BEFORE THE REQUEST (DT-20261119-11 D1): the request's and the day's money are counted from `exploration_calls`, so a call writes ITS OWN ROW first with a cost equal to the most it may bill (the reservation), then re-reads the
+ * totals; when the reservation does not fit either cap the row is zeroed and nothing is sent. Two calls in parallel therefore cannot both spend the same money. After the call the SAME row is updated to what was charged, or KEPT at the reserved amount when the
+ * charge is unknown.
  */
-async function holdExploration(deps: ExplorationDeps, holdUsd: number, endpointId: string, capUsd: number): Promise<{ tag: string } | null> {
+async function holdExploration(deps: ExplorationDeps, holdUsd: number, row: { endpointId: string; params: PlanParam[]; limit: number | null }, capUsd: number): Promise<{ tag: string } | null> {
   const now = deps.now ?? new Date();
   const mem = deps.memory ?? MEMORY;
   const tag = `reserved:${now.getTime()}:${Math.random().toString(36).slice(2, 10)}`;
@@ -100,7 +101,7 @@ async function holdExploration(deps: ExplorationDeps, holdUsd: number, endpointI
   if (client && typeof client.from === "function") {
     try {
       const { error } = await client.from(EXPLORATION_TABLE).insert({
-        request_id: deps.requestId, user_id: deps.userId, endpoint_id: endpointId, params_digest: { reserved: true }, cost_usd: Number(holdUsd.toFixed(6)), http_status: null, rows_returned: 0, duration_ms: 0,
+        request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId, params_digest: { names: row.params.map((p) => p.name), limit: row.limit }, cost_usd: Number(holdUsd.toFixed(6)), http_status: null, rows_returned: 0, duration_ms: 0,
         budget_usd: capUsd, refused_reason: tag, created_at: now.toISOString(),
       });
       if (error) { release(); return null; }
@@ -116,35 +117,24 @@ async function holdExploration(deps: ExplorationDeps, holdUsd: number, endpointI
   return { tag };
 }
 
-/** The reservation is given back once the attempt's own row (the charge, or the reserved amount when the charge is unknown) is written: the row and the reservation never both count after this. */
-async function releaseExploration(deps: ExplorationDeps, held: { tag: string }, holdUsd: number): Promise<void> {
+async function recordAttempt(deps: ExplorationDeps, row: { endpointId: string; params: PlanParam[]; limit: number | null; attempt: ExplorationAttempt; budgetUsd: number }, held?: { tag: string; holdUsd: number }): Promise<void> {
   const now = deps.now ?? new Date();
   const mem = deps.memory ?? MEMORY;
-  mem.request.set(deps.requestId, Math.max(0, (mem.request.get(deps.requestId) ?? 0) - holdUsd));
-  mem.day.set(utcDay(now), Math.max(0, (mem.day.get(utcDay(now)) ?? 0) - holdUsd));
+  // an attempt that holds a reservation REPLACES it (its row is updated, its memory hold is swapped for the final amount); any other attempt adds its cost
+  mem.request.set(deps.requestId, Math.max(0, (mem.request.get(deps.requestId) ?? 0) - (held?.holdUsd ?? 0) + row.attempt.costUsd));
+  mem.day.set(utcDay(now), Math.max(0, (mem.day.get(utcDay(now)) ?? 0) - (held?.holdUsd ?? 0) + row.attempt.costUsd));
   const client = deps.client;
   if (!client || typeof client.from !== "function") return;
+  const values = {
+    request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId,
+    params_digest: { names: row.params.map((p) => p.name), limit: row.limit },
+    cost_usd: Number(row.attempt.costUsd.toFixed(6)), http_status: row.attempt.httpStatus || null, rows_returned: row.attempt.rows, duration_ms: Math.max(0, Math.round(row.attempt.durationMs)),
+    budget_usd: row.budgetUsd, refused_reason: row.attempt.outcome === "ok" ? null : `${row.attempt.outcome}: ${row.attempt.internal ?? row.attempt.detail}`.slice(0, 300), created_at: now.toISOString(),
+  };
   try {
-    await client.from(EXPLORATION_TABLE).update({ cost_usd: 0, refused_reason: `settled:${held.tag}`.slice(0, 300) }).eq("request_id", deps.requestId).eq("refused_reason", held.tag);
-  } catch (err) {
-    console.warn(JSON.stringify({ tag: "exploration_release_failed", message: String((err as Error)?.message ?? "").slice(0, 160) }));
-  }
-}
-
-async function recordAttempt(deps: ExplorationDeps, row: { endpointId: string; params: PlanParam[]; limit: number | null; attempt: ExplorationAttempt; budgetUsd: number }): Promise<void> {
-  const now = deps.now ?? new Date();
-  const mem = deps.memory ?? MEMORY;
-  mem.request.set(deps.requestId, (mem.request.get(deps.requestId) ?? 0) + row.attempt.costUsd);
-  mem.day.set(utcDay(now), (mem.day.get(utcDay(now)) ?? 0) + row.attempt.costUsd);
-  const client = deps.client;
-  if (!client || typeof client.from !== "function") return;
-  try {
-    const { error } = await client.from(EXPLORATION_TABLE).insert({
-      request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId,
-      params_digest: { names: row.params.map((p) => p.name), limit: row.limit },
-      cost_usd: Number(row.attempt.costUsd.toFixed(6)), http_status: row.attempt.httpStatus || null, rows_returned: row.attempt.rows, duration_ms: Math.max(0, Math.round(row.attempt.durationMs)),
-      budget_usd: row.budgetUsd, refused_reason: row.attempt.outcome === "ok" ? null : `${row.attempt.outcome}: ${row.attempt.internal ?? row.attempt.detail}`.slice(0, 300), created_at: now.toISOString(),
-    });
+    const { error } = held
+      ? await client.from(EXPLORATION_TABLE).update(values).eq("request_id", deps.requestId).eq("refused_reason", held.tag)
+      : await client.from(EXPLORATION_TABLE).insert(values);
     if (error) console.warn(JSON.stringify({ tag: "exploration_record_failed", message: String(error.message ?? error.code ?? "").slice(0, 160) }));
   } catch (err) {
     console.warn(JSON.stringify({ tag: "exploration_record_failed", message: String((err as Error)?.message ?? "").slice(0, 160) }));
@@ -300,7 +290,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
 
   // THE MONEY OF THIS CALL (D1/D2): all the exploration money left, split over the requests the call can make, reserved on the SHARED ledger before the request and sent as the header
   const money = callMoney(allowed, estimate, maxTregAttempts({}));
-  const held = money ? await holdExploration(deps, money.holdUsd, id, capUsd) : null;
+  const held = money ? await holdExploration(deps, money.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
   if (!money || !held) {
     const a = attempt({ outcome: "over_budget", detail: "this call does not fit the exploration budget left for this request" });
     await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
@@ -310,8 +300,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
   /** The attempt's row, then the reservation given back: a charge that is not known keeps the reserved amount (never zero). */
   const settleRecord = async (a: ExplorationAttempt, chargeKnown: boolean): Promise<void> => {
     if (!chargeKnown) { a.costUsd = money.holdUsd; a.detail = `${a.detail}${a.detail ? " " : ""}(the charge is not known: the reserved amount stays counted)`.slice(0, 300); }
-    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
-    await releaseExploration(deps, held, money.holdUsd);
+    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd }, { tag: held.tag, holdUsd: money.holdUsd });
   };
   const n = (sampleCounter += 1);
   const store = deps.client?.storage?.from?.("partials");
@@ -367,7 +356,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     const left = Math.min(capUsd - after.request, EXPLORATION_DAY_CAP_USD - after.day);
     const time = deps.deadlineAtMs !== undefined ? Math.min(SAMPLE_CALL_TIMEOUT_MS, deps.deadlineAtMs - Date.now() - PLANNER_MIN_TURN_MS) : SAMPLE_CALL_TIMEOUT_MS;
     const money2 = estimate <= left + 1e-12 && time >= 3_000 ? callMoney(left, estimate, maxTregAttempts({})) : null;
-    const held2 = money2 ? await holdExploration(deps, money2.holdUsd, id, capUsd) : null;
+    const held2 = money2 ? await holdExploration(deps, money2.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
     if (money2 && held2) {
       const second = await call({
         endpointId: id, method: endpoint.method === "GET" ? "GET" : "POST", params: { ...callParams, [cursorParam]: reading.nextCursor }, userId: deps.userId, jobId: `${EXPLORATION_JOB_PREFIX}${deps.requestId}`,
@@ -378,8 +367,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
       const secondCost = known2 && second ? Math.max(0, second.costMicro || 0) / 1_000_000 : money2.holdUsd;
       const r2 = second && second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
       const a2 = attempt({ outcome: second && second.ok && r2 > 0 ? "ok" : second && second.ok ? "empty" : "http_error", httpStatus: second?.httpStatus ?? 0, rows: r2, costUsd: secondCost, durationMs: 0, detail: `second page, to measure the rows one call returns${known2 ? "" : " (the charge is not known: the reserved amount stays counted)"}` });
-      await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd });
-      await releaseExploration(deps, held2, money2.holdUsd);
+      await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd }, { tag: held2.tag, holdUsd: money2.holdUsd });
       a.costUsd += secondCost;
       if (second && second.ok && r2 > 0) pageRows.push(Math.min(r2, SAMPLE_PAGE_ROWS_PER_CALL));
     }

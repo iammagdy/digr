@@ -423,6 +423,8 @@ export function createGateway(deps: GatewayDeps) {
       // THIS call's reservation is settled once: its known charge (zero stays zero, never clipped), or the whole reserved amount when the charge is unknown
       deps.budget.settle(held, knownChargeUsd());
       const chargeFacts = { charge_usd: knownChargeUsd(), reserved_usd: reservedUsd };
+      // the model reads the whole result: the money facts are for the stage only, so they are NOT enumerable (JSON.stringify and the model never see them)
+      const withFacts = <T extends object>(r: T): T => { for (const [k, v] of Object.entries(chargeFacts)) Object.defineProperty(r, k, { value: v, enumerable: false }); return r; };
       // a finder that was called is a sample of its kind, whatever it gave (a call that was cut may have been billed: its estimate counts)
       if (finderKind) { contactKinds.add(finderKind); contactSpentUsd += actualUsd; }
       await deps.store.updateMission(deps.missionId, { [spendField]: Number(deps.budget.spentUsd().toFixed(6)) });
@@ -430,7 +432,7 @@ export function createGateway(deps: GatewayDeps) {
       if (!result) {
         await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
         await logCall({ id, endpoint_id: endpointId, params: { ...trace, _failure: "the call did not complete (no answer)" }, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
-        return { ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more", ...chargeFacts };
+        return withFacts({ ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more" } as GatewayCallResult);
       }
       if (result.blocked) {
         // executeTregCall's own gate refused (it runs the same lists): nothing was sent
@@ -454,18 +456,18 @@ export function createGateway(deps: GatewayDeps) {
       await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure, ...(result.isRouteMaxCost ? { _failure_kind: "price_cap" } : result.paymentScope === "endpoint" ? { _failure_kind: "endpoint_payment" } : {}) } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {
-        return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240), ...chargeFacts };
+        return withFacts({ ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) } as GatewayCallResult);
       }
       const rowsIn = storagePath && rows > 0 ? rowsExpressionOf(id, digest?.listPath, digest?.listStrategy) : null;
-      return {
-        ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows, ...chargeFacts,
+      return withFacts({
+        ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows,
         has_more: reading?.hasMore ?? null, next_cursor: reading?.nextCursor ?? null,
         shape: digest ? { rows_in_page: digest.rowsInSample, list_path: digest.listPath, fields: digest.fields, next_cursor_path: digest.nextCursorPath, cursor_kind: digest.cursorKind } : null,
         first_rows: (reading?.rows ?? []).slice(0, AGENT_FIRST_ROWS).map((r) => digestValue(r)),
         warnings: reading?.warnings ?? [],
         saved: storagePath ? `${id} (the full page is saved; give "${id}" to run_code to process it${rowsIn ? `: its rows are ${rowsIn}` : ""})` : "not saved",
         ...(rowsIn ? { rows_in_code: rowsIn } : {}),
-      };
+      } as GatewayCallResult);
     },
   };
 }
