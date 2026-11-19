@@ -455,7 +455,7 @@ function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number; refused
  * THE RETRY NEVER LOSES WHAT THE MODEL ALREADY SAID ABOUT THE CUSTOMER'S REQUEST (DT-20261119-04, live after #580: «شركتين مقاولات … ومسؤولي الإدارة فيهم بأرقامهم الشخصية» became a card of companies and company phones with no people step and no unserved block).
  * A refused «ask» is followed by a retry whose answer REPLACES the first one; the people of the companies live only in that answer. When the first answer said the people were asked and the retry says no people at all (no `people_of_companies`, no people step),
  * the first answer's `people_of_companies` is restored, so the plan check demands a people stage or an honest unserved step; when the retry asks them too but gives no contact kind, the first answer's kinds complete it. A retry that asks the people with its
- * own contact kinds, or that wrote a people step, stands as it is (nothing changes). Reads the model's two ANSWERS only: no word of the customer's request is read.
+ * own contact kinds stands as it is (nothing changes); a retry that wrote a people step but no people ask gets the first answer's ask (its contact kinds) back (FIX1, QA: the phone was lost). Reads the model's two ANSWERS only: no word of the customer's request is read.
  */
 export function withKeptPeopleAsk(retry: Understanding, refused: Understanding | null): Understanding {
   // (checkUnderstanding keeps `people_of_companies` only when the people were asked, so its presence is the first answer's «asked»)
@@ -463,7 +463,8 @@ export function withKeptPeopleAsk(retry: Understanding, refused: Understanding |
   if (!first) return retry;
   const now = retry.people_of_companies;
   if (now?.asked === true) return now.contact_kinds.length > 0 || first.contact_kinds.length === 0 ? retry : { ...retry, people_of_companies: { ...now, contact_kinds: first.contact_kinds } };
-  if (retry.steps.some((s) => s.parent !== null && isPeopleOfCompanyStep(s))) return retry;
+  // a retry that wrote the people step but no people ask has lost the contact kinds (they live only in the ask): they come back with the first answer's ask; with no kind to keep the retry stands as it is
+  if (retry.steps.some((s) => s.parent !== null && isPeopleOfCompanyStep(s))) return first.contact_kinds.length > 0 ? { ...retry, people_of_companies: first } : retry;
   return { ...retry, people_of_companies: first };
 }
 

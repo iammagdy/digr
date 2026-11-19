@@ -80,8 +80,17 @@ describe("must-pass 1-4: the retry keeps what the first answer said about the pe
     const step = await understood([askAnswer(), planAnswer({ steps: [companiesStep, peopleStep], people_of_companies: peopleAsk(false) })]);
     expect(step.value.steps.map((x) => x.key)).toEqual(["companies", "pp"]);
     expect(step.people).not.toBeNull();
-    expect(step.value.people_of_companies).toBeUndefined();
-    expect(step.people?.contact_kinds).toBeUndefined();
+    // FIX1 (QA): the step stands, and the contact kind the first answer asked comes back (it lived only in the ask)
+    expect(step.value.people_of_companies).toMatchObject({ asked: true, contact_kinds: ["phone"] });
+    expect(step.people).toMatchObject({ contact_kinds: ["phone"] });
+    // the retry's own kinds stay (step + its own ask with e-mail); a first answer with NO kind changes nothing
+    const own2 = await understood([askAnswer(), planAnswer({ steps: [companiesStep, peopleStep], people_of_companies: peopleAsk(true, ["email"]) })]);
+    expect(own2.people?.contact_kinds).toEqual(["email"]);
+    const noKind = await understood([askAnswer({ people_of_companies: peopleAsk(true, []) }), planAnswer({ steps: [companiesStep, peopleStep], people_of_companies: peopleAsk(false) })]);
+    expect(noKind.value.people_of_companies).toBeUndefined();
+    expect(noKind.people?.contact_kinds).toBeUndefined();
+    const noAsk = await understood([askAnswer({ people_of_companies: peopleAsk(false), missing: [] }), planAnswer({ steps: [companiesStep, peopleStep], people_of_companies: peopleAsk(false) })]);
+    expect(noAsk.value.people_of_companies).toBeUndefined();
   });
   it("4. the retry's text says to keep everything the customer asked; the first call's text does not", async () => {
     const r = await understood([askAnswer(), planAnswer()]);
