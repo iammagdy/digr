@@ -440,6 +440,15 @@ describe("T1: companies count reaches the planner and hand-over", () => {
         expect(control.companies).toBe(5);
         expect(withFalseCite).toEqual(control);
       }, 180_000);
+      // FIX3 (فزاع Gate 2 r3, P0): the model copies the REAL dual cite into BOTH fields (per_company 2, per_company_text «شركتين»): the companies' own noun still binds 2 and the money follows 2, exactly as with a plain «شركتين» citation
+      it("P0 (r3): the dual «شركتين» cited in BOTH fields still binds 2: company target, hold, max charge and settled charge EQUAL the plain «شركتين» run", async () => {
+        const request = "عايز شركتين مصريتين في قطاع الكهروميكانيكا ومن كل شركة المديرين";
+        const run = (per: number, perText: string) => replay({ request, planning: planFlowWithRows(5), execution: execution(), answers: answers([2, 2, 2, 2, 2]) as any, deps: mixedDeps("شركتين", per, perText) });
+        const duplicated = moneyOf(await run(2, "شركتين"));
+        const plain = moneyOf(await run(2, ""));
+        expect(plain.companies).toBe(2);
+        expect(duplicated).toEqual(plain);
+      }, 180_000);
     });
   });
 });
@@ -535,9 +544,13 @@ describe("FIX2 (P0): the per-company citation is never evidence for the companie
     const u2 = U([mixedRoot], peopleAsk(true, cited, "الأشخاص"));
     expect(withCheckedCompaniesCount(u2, [message]).companies_count).toBeUndefined();
   });
-  it("(a) the per-company span is never evidence, even when it names the companies' noun («٣ شركات» written as the per-company text)", () => {
-    const u = U([companiesStep], peopleAsk(true, "٣ شركات", "الأشخاص", { per_company: 3, per_company_text: "٣ شركات" }));
-    expect(withCheckedCompaniesCount(u, ["عايز ٣ شركات ومن كل شركة مدير"]).companies_count).toBeUndefined();
+  it("the SAME citation in both fields: a PEOPLE noun («٨ مديرين») never binds; a COMPANIES noun («شركتين», «٣ شركات») still binds (the model copying the real cite into the per-company field must not discard it)", () => {
+    const peopleDup = U([mixedRoot], peopleAsk(true, "٨ مديرين", "الأشخاص", { per_company: 8, per_company_text: "٨ مديرين" }));
+    expect(withCheckedCompaniesCount(peopleDup, ["عايز شركات ومن كل شركة ٨ مديرين"]).companies_count).toBeUndefined();
+    const dualDup = U([mixedRoot], peopleAsk(true, "شركتين", "الأشخاص", { per_company: 2, per_company_text: "شركتين" }));
+    expect(withCheckedCompaniesCount(dualDup, ["عايز شركتين مصريتين في قطاع الكهروميكانيكا ومن كل شركة المديرين"]).companies_count).toBe(2);
+    const digitsDup = U([companiesStep], peopleAsk(true, "٣ شركات", "الأشخاص", { per_company: 3, per_company_text: "٣ شركات" }));
+    expect(withCheckedCompaniesCount(digitsDup, ["عايز ٣ شركات ومن كل شركة مدير"]).companies_count).toBe(3);
   });
   it("(b) the cited noun matches the HEAD of the root title, not a later word: «٣ محافظات» with the title «شركات المحافظات الجنوبية» does not bind (it counts governorates)", () => {
     const u = U([{ ...companiesStep, title_ar: "شركات المحافظات الجنوبية" }], peopleAsk(true, "٣ محافظات", "الأشخاص"));

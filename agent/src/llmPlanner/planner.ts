@@ -12,7 +12,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, normalizeWords, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
+import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -562,11 +562,8 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
   const message = said.join("\n");
   const n = countWrittenIn(message, cited);
   if (n === null || n < 1) return u;
-  // FIX2 (فزاع Gate 2 r2, P0): a span that is (part of) the PER-COMPANY citation is never evidence for the companies' count («٨ مديرين» cited for both counts bound 8 companies and priced them)
-  const perSpan = normalizeWords(ask?.per_company_text ?? "");
-  if (perSpan !== "" && perSpan.includes(normalizeWords(cited))) return u;
   const citedNouns = tokensOf(cited).filter((t) => /^\p{L}{4,}$/u.test(t) && wordNumbersIn(t, 1).length === 0);
-  // the cited noun names the ROOT ENTITY: never a people noun (isPeopleNoun, the structural helper the plan check already uses)
+  // the cited noun names the ROOT ENTITY (FIX2/FIX3: this, not the model's per-company field, decides: the same cite copied into both fields binds when it is the companies' noun and never when it is a people noun): never a people noun (isPeopleNoun, the structural helper the plan check already uses)
   if (citedNouns.length === 0 || citedNouns.some((c) => isPeopleNoun(c))) return u;
   // the cited noun must be the COMPANIES' own noun: it matches a word of the companies step's title (or of the fixed label of the parent), never only «not the people's title» (a generic people title let «مديرين» or «مهندسين» through)
   // ...and matches the HEAD noun of the root step's title (the first word of its own words: «شركات الكهروميكانيكا وبيانات المديرين» has the head «شركات», not «المديرين»), or the fixed label of the parent
