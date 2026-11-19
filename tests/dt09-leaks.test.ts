@@ -162,10 +162,10 @@ describe("item 7: the card's headline does not promise managers only when the pe
     expect(mixed).toContain("نجمع ما يعرضه المصدر.");
     expect(mixed).not.toMatch(/مدير/);
   });
-  it("a plan whose people stage carries no role preference keeps its summary", () => {
+  it("a plan whose people stage carries no role preference no longer headlines a role either (DT-20261119-03 R4 supersedes keeping it)", () => {
     const r = validateAndPricePlan({ summary_ar: "شركتان مقاولات في الرياض مع ثلاثة من مديريها.", stages: [companies, { ...people, title_ar: "الأشخاص في كل شركة" }] }, lookupOf("عايز شركتين مقاولات في الرياض ومعاهم أشخاص"));
     if (r.ok) expect(r.plan.stages.find((s) => s.key === "people")!.role_preference).toBeUndefined();
-    if (r.ok) expect(r.plan.summary_ar).toContain("مديريها");
+    if (r.ok) expect(r.plan.summary_ar).not.toContain("مديريها");
   });
   it("FIX1 (Gate 2 P2): a kept sentence that already names the companies is not repeated; «إدارة» in a sentence about the companies' trade is not a role claim", () => {
     const repeat = planOf("نجمع شركات المقاولات في الرياض. ثلاثة من مديريها.", ASK).summary_ar;

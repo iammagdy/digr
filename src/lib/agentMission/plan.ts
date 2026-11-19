@@ -12,7 +12,7 @@ import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { CONTRACT_ONLY_CLASSES, REPLY_TO_KEY, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
-import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, summaryWithoutRoleClaimAr, type RoleKey } from "./roles";
+import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, summaryWithoutAnyRoleClaimAr, summaryWithoutRoleClaimAr, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { isPeopleNoun } from "./childSources";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -881,9 +881,14 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // THE HEADLINE too: a sentence of the summary that names the role the people are only ranked by is replaced by the code's own (roles.ts, DT-20261118-09 item 7)
   let summaryText = summary.text;
   for (const st of priced) {
-    if (!st.role_preference || st.parent_key === null || !st.deliver) continue;
+    if (st.parent_key === null || !st.deliver) continue;
     const parent = priced.find((p) => p.key === st.parent_key);
     if (!parent) continue;
+    // DT-20261119-03 R4: a people stage the code does not filter by role may not be headlined with a role either
+    if (!st.role_preference) {
+      if (isPeopleStage({ parent_key: st.parent_key, title_ar: st.title_ar, ...(st.capability ? { capability: st.capability } : {}) })) summaryText = summaryWithoutAnyRoleClaimAr(summaryText, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
+      continue;
+    }
     summaryText = summaryWithoutRoleClaimAr(summaryText, st.role_preference.role, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
   }
   notes.push(...languageOffNotes);
