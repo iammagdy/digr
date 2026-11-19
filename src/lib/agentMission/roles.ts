@@ -99,8 +99,10 @@ const END_KEY = /^(?:end(?:ed)?|until|to)(?:_?(?:date|at|on))?$|(?:^|_)end(?:ed)
 export function roleEnded(row: Record<string, unknown>): boolean {
   for (const [k, v] of Object.entries(row)) {
     if (!(END_KEY.test(k) || END_KEY.test(k.replace(/([a-z])([A-Z])/g, "$1_$2")))) continue;
+    // a key that says «ended» holding true is an ended position; a number is a year; a text is a date only when it says a YEAR (a bare «12» parses as a date but is a month, a count or an id)
+    if (v === true) return true;
     if (typeof v === "number") { if (Number.isFinite(v) && v >= 1900 && v <= 2200) return true; continue; }
-    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Date.parse(v.trim()))) return true;
+    if (typeof v === "string" && /(?<![0-9])(?:19|20|21)[0-9]{2}(?![0-9])/.test(v) && Number.isFinite(Date.parse(v.trim()))) return true;
   }
   return false;
 }

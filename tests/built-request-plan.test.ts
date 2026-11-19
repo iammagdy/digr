@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { ENDPOINT, TOPIC, pages, planning } from "./helpers/engineXScenario";
@@ -22,6 +22,10 @@ function withFilters(steps: FakeStep[]): FakeStep[] {
 const flags = (value: unknown) => (d: Parameters<NonNullable<Parameters<typeof replay>[0]["deps"]>>[0]) => { (d.store as MemoryStore).settings.redesign_flags = value; return d; };
 
 describe("the recipe is built by code in the redesigned mode", () => {
+  // DT-20261119-04 FIX1: the fixtures are dated 2026-10-20 and the plan check judges «the last 30 days» from the clock: the clock is the fixture's own day, so these tests never depend on today's date (they went red on 2026-11-19 at 10:00 UTC)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-29T12:00:00Z"), shouldAdvanceTime: false }); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("the clock of this block is the fixture's day, whatever day it really is", () => { expect(new Date().toISOString().slice(0, 10)).toBe("2026-10-29"); });
   it("flags all off (the default): the model's measured request, no built_by, no gaps", async () => {
     const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: withFilters(planning()), execution: () => [], answers: [pages(1)[0], ...pages(30)] });
     const engine = r.plannedPlan.stages[0].engine!;
