@@ -3,6 +3,7 @@ import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { contactVerificationQuestionIssue } from "../../src/lib/agentMission/contactQuestion";
+import { peopleAnswersOf, peopleEstimateOf } from "../../src/lib/agentMission/peopleEstimate";
 import { PEOPLE_PLATFORM, childStepSourcesFor, identifierTier, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies, rankedPeopleSources } from "../../src/lib/agentMission/childSources";
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { alternateFinderSourcesOf, companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, profileLookupSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
@@ -692,8 +693,18 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const calls = await store.listCalls(mission.id);
         const evidence = new Map<string, string | null>();
         for (const id of ids) evidence.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
+        // DT-20261119-01: the ESTIMATE of a people stage is offered to the plan check only when code proves, from the calls of THIS planning, that a people source answered empty and none gave a row (peopleEstimate.ts); never from the model's word
+        const estimateAllowed = (id: string): boolean => policyVerdict(id, ctx.access).allowed && !blockedEndpointReason(id) && isSellable(id, ctx.catalog);
+        const peopleEstimate = (() => {
+          if (!ctx.understoodPeople) return null;
+          const ranked = peopleSourcesForCompanies(ctx.catalog, estimateAllowed);
+          const answers = peopleAnswersOf(calls, new Set(ranked.map((x) => x.id)));
+          if (answers.gaveRows || answers.answeredEmpty.size === 0) return null;
+          return peopleEstimateOf(ranked, answers.answeredEmpty);
+        })();
         const lookup = {
           ...(noRelevance ? { noRelevance: true } : {}),
+          ...(peopleEstimate ? { peopleEstimate } : {}),
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: Object.fromEntries(Object.entries(row.params_digest ?? {}).filter(([k]) => !k.startsWith("__"))) } : null;
