@@ -19,7 +19,7 @@ describe("the people of the companies are known by the capability of their tool,
     ["companies.employees", step("companies", "companies.employees")],
     ["linkedin.company.people", step("linkedin", "linkedin.company.people", 2)],
   ])("%s is the people step under the companies", (_n, s) => {
-    expect(understoodPeopleOf([company, s])).toMatchObject({ noun_ar: "مسؤولو الإدارة", parent_ar: "الشركات" });
+    expect(understoodPeopleOf([company, s])).toMatchObject({ noun_ar: "الأشخاص", parent_ar: "الشركات" });
   });
   it("a companies step from a map search is still a parent; a request with no people step has none", () => {
     expect(understoodPeopleOf([{ ...company, platform: "google", capability: "google.maps.search" }, step("linkedin", "linkedin.company.people")])).not.toBeNull();

@@ -122,3 +122,15 @@ export function writtenElsewhere(message: string, cited: string, n: number): boo
   const rest = m.replace(` ${c} `, " ");
   return said(rest) >= 1 || (n === 2 && rest.split(" ").some((t) => t !== "" && !/^و?ال/.test(t) && countOfWords(t) === 2));
 }
+
+/**
+ * The number that words the model cited say, when they are really in the message (DT-20261118-08 FIX2: the count of the COMPANIES the customer wrote, cited by the model when it wrote no company step, e.g. «cannot»).
+ * Digits in the words, one number word, or the Arabic dual (grammar, no word list); two numbers or none: null.
+ */
+export function countWrittenIn(message: string, cited: string | null): number | null {
+  const words = normalizeWords(cited ?? "");
+  if (words === "" || !normalizeWords(message).includes(words)) return null;
+  const digits = writtenNumbers(words);
+  if (digits.length > 0) return digits.length === 1 ? digits[0] : null;
+  return countOfWords(words);
+}
