@@ -26,7 +26,8 @@ describe("what the team sees", () => {
     const h = html();
     for (const t of ["المهمة", "قرار المخطط", "المراحل", "الاستدعاءات", "الإجمالي لكل مصدر", "الأحداث"]) expect(h).toContain(t);
     expect(h).toContain("عايز شركتين مقاولات ومسؤوليهم");
-    expect(h).toContain("لماذا لا يوجد كارت: مصدر الأشخاص فشل في العينة");
+    expect(h).toContain("لماذا لا يوجد كارت: فشل مصدر بيانات مسؤولي الشركات في العينة");
+    expect(h).toMatch(/<span dir="ltr"[^>]*>\(people_sources_failed\)<\/span>/);
     expect(h).toContain("شركتان ومعهما أشخاصهما.");
     expect(h).toContain("سعر تقديري"); // the estimated people stage is marked
     expect(h).toContain("فشلت"); // its state: both calls failed or were refused
@@ -44,6 +45,20 @@ describe("what the team sees", () => {
     expect(noCardReasonAr({ cls: "internal", reason: "plan_invalid_after_3" })).toMatch(/غير صالحة/);
     expect(noCardReasonAr({ cls: "x", reason: "brand_new_reason" })).toContain("brand_new_reason");
   });
+  it.each([
+    [1, "محاولة رفض واحدة"], [2, "محاولتي رفض"],
+    [3, "٣ محاولات رفض"], [10, "١٠ محاولات رفض"], [99, "٩٩ محاولة رفض"],
+  ])("renders rejection count %i in the decision panel", (count, attempts) => {
+    const data = buildInspection({
+      now: new Date("2026-11-19T10:00:00Z"), calls: [], events: [], callTotal: 0,
+      mission: { id: "msn_fixture01", status: "failed", error: `admin: planning_failed class=internal reason=plan_invalid_after_${count}_rejections` },
+    });
+    const h = renderToStaticMarkup(createElement(MissionInspector, { data }));
+    expect(h).toContain(`لماذا لا يوجد كارت: الخطة المقترحة بقيت غير صالحة بعد ${attempts}`);
+    expect(h).toMatch(new RegExp(`<span dir="ltr"[^>]*>\\(plan_invalid_after_${count}_rejections\\)</span>`));
+    expect(h).not.toContain("[محجوب]");
+  });
+
   it("shows text the API redacted and nothing else: no e-mail-shaped or token-shaped string reaches the markup of a redacted fixture", () => {
     const h = renderToStaticMarkup(createElement(MissionInspector, { data: buildInspection({ now: new Date(), callTotal: 0, mission: { id: "msn_abcd1234", status: "failed", request_text: "كلّم a@b.co على +20 100 123 4567", plan: null }, calls: [], events: [] }) }));
     expect(h).not.toMatch(/a@b\.co|123 4567/);

@@ -14,14 +14,29 @@ export type Inspection = ReturnType<typeof buildInspection>;
 
 /** The no-card reasons the worker writes (`admin: planning_failed class=… reason=…`) in plain Arabic for the team; an unknown reason is shown as its code. */
 export const NO_CARD_REASON_AR: Record<string, string> = {
-  people_sources_failed: "مصدر الأشخاص فشل في العينة (لم يصل رد صالح) فلم يُبنَ كارت.",
-  people_sources_not_tried: "لم تُجرَّب مصادر الأشخاص قبل إنهاء التخطيط.",
-  sources_failed: "كل مصادر العينة فشلت أو كانت متوقفة.",
-  sample_empty: "عينة المصدر رجعت فاضية.",
-  not_served: "الطلب غير مخدوم بمصادر الكتالوج.",
-  claimed_empty_but_rows_returned: "النموذج قال إن المصدر فاضي مع أن النداءات رجّعت صفوفًا.",
+  planning_over_budget: "تجاوز ميزانية التخطيط",
+  planning_daily_cap: "استنفاد الحد اليومي لمصدر البيانات",
+  planning_recording_unavailable: "تعذّر تسجيل تكلفة النداءات",
+  planning_missing_params: "نقص في مدخلات الاستدعاء المطلوبة للمصدر",
+  sources_failed: "فشل جميع مصادر العينة أو توقفها",
+  people_sources_failed: "فشل مصدر بيانات مسؤولي الشركات في العينة",
+  people_sources_not_tried: "لم تُجرَّب مصادر مسؤولي الشركات قبل إنهاء التخطيط",
+  no_plan: "انتهى التخطيط من غير خطة",
+  sample_empty: "عينة المصدر رجعت فارغة",
+  not_served: "الطلب غير مخدوم بمصادر الكتالوج",
+  claimed_empty_but_rows_returned: "النموذج اعتبر المصدر فارغًا مع أن النداءات رجّعت بيانات",
 };
-export const noCardReasonAr = (r: { cls: string; reason: string }): string => NO_CARD_REASON_AR[r.reason] ?? (r.reason.startsWith("plan_invalid_after_") ? "الخطة المقترحة بقيت غير صالحة بعد عدة محاولات." : `سبب غير معروف (${r.reason}).`);
+export function noCardReasonAr(r: { cls: string; reason: string; rejectionCount?: number }): string {
+  if (r.reason === "plan_invalid" && r.rejectionCount !== undefined) {
+    const count = r.rejectionCount;
+    if (count === 1) return "الخطة المقترحة بقيت غير صالحة بعد محاولة رفض واحدة";
+    if (count === 2) return "الخطة المقترحة بقيت غير صالحة بعد محاولتي رفض";
+    const attempts = count <= 10 ? "محاولات رفض" : "محاولة رفض";
+    return `الخطة المقترحة بقيت غير صالحة بعد ${toArabicDigits(count)} ${attempts}`;
+  }
+  if (r.reason === "plan_invalid" || r.reason.startsWith("plan_invalid_after_")) return "الخطة المقترحة بقيت غير صالحة بعد عدة محاولات.";
+  return NO_CARD_REASON_AR[r.reason] ?? `سبب غير معروف (${r.reason}).`;
+}
 const STAGE_STATE_AR: Record<string, [string, BadgeTone]> = { not_reached: ["لم تصل", "mute"], running: ["جارية", "warn"], done: ["اكتملت", "ok"], empty: ["رجعت فاضية", "warn"], failed: ["فشلت", "bad"] };
 const CALL_STATUS_AR: Record<string, [string, BadgeTone]> = { ok: ["نجح", "ok"], empty: ["فاضي", "warn"], failed: ["فشل", "bad"], refused: ["رُفض", "bad"], unknown: ["غير معروف", "mute"] };
 const STATUS_AR: Record<string, string> = { queued: "في الانتظار", planning: "تخطيط", needs_input: "ينتظر إجابة", plan_ready: "كارت جاهز", approved: "معتمد", executing: "يُنفَّذ", completed: "اكتمل", failed: "فشل", unserved: "غير مخدوم", cancelled: "أُلغي" };
@@ -43,6 +58,9 @@ export function MissionInspector({ data }: { data: Inspection }) {
   }, [data.calls, filter]);
   const m = data.mission;
   const reason = data.planner.noCardReason;
+  const reasonCode = reason?.reason === "plan_invalid" && reason.rejectionCount !== undefined
+    ? `plan_invalid_after_${reason.rejectionCount}_rejections`
+    : reason && NO_CARD_REASON_AR[reason.reason] ? reason.reason : null;
   return (
     <div className="flex min-w-0 flex-col gap-3.5" data-testid="mission-inspector" dir="rtl">
       <Card title="المهمة" sub="للقراءة فقط: لا شيء هنا يغيّر مهمة أو رصيدًا." action={<StatusBadge tone={m.status === "failed" || m.status === "unserved" ? "bad" : m.status === "completed" ? "ok" : "warn"}>{STATUS_AR[m.status] ?? m.status}</StatusBadge>}>
@@ -66,7 +84,12 @@ export function MissionInspector({ data }: { data: Inspection }) {
             {data.planner.steps.map((s: { key: string; platform: string; capability: string; topic: string | null; hasSource: boolean }) => <li key={s.key}><span dir="ltr" style={MONO}>{s.key}</span> — <span dir="ltr" style={MONO}>{s.capability || s.platform}</span>{s.topic ? ` — ${s.topic}` : ""}{s.hasSource ? " — بمصدر محدد" : ""}</li>)}
           </ul>
         )}
-        {reason && <p className="m-0 rounded-xl bg-sf2 p-3 text-xs text-ink" data-testid="no-card-reason">لماذا لا يوجد كارت: {noCardReasonAr(reason)}</p>}
+        {reason && (
+          <p className="m-0 rounded-xl bg-sf2 p-3 text-xs text-ink" data-testid="no-card-reason">
+            لماذا لا يوجد كارت: {noCardReasonAr(reason)}
+            {reasonCode && <> <span dir="ltr" style={MONO} className="ms-1 text-[11px] text-mut">({reasonCode})</span></>}
+          </p>
+        )}
       </Card>
 
       <Card title="المراحل" sub="حالة كل مرحلة تُستنتج من النداءات التي استخدمت مصدرها.">
