@@ -882,7 +882,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
           const roleHint = best?.roleNote || (role ? `; role criteria: rank matching ${role.key} / leadership titles first in your summary/ranking without dropping real rows` : "");
           const header = reason
             ? `the step «${what}» CANNOT be declared in unserved_steps because saved people call(s) ALREADY returned rows`
-            : `the step «${what}» (omitted without reason) CANNOT be omitted or re-sampled because saved people call(s) ALREADY returned rows`;
+            : `the customer asked for a step the plan does not have: «${what}» (${q.value} per ${parentNoun}). It CANNOT be omitted or re-sampled because saved people call(s) ALREADY returned rows`;
           issues.push(
             `${header}: ${savedEntries.join(", ")}. Do NOT repeat paid sample calls, lower validation, or invent rows. Inspect the saved page with run_code${firstSaved ? ` (files: ["${firstSaved}"])` : ""}${rowPathHint ? ` reading ${rowPathHint}` : ""}, return a bare JSON array mapping each real person object (with id, full_name, job_title, company, linkedin) for yield_from, add the child stage (key "people", parent_key "${parentKey}", deliver true, per_parent_rows ${q.value}, endpoint_id "${best?.endpointId ?? working[0].id}", measured_by [${firstSaved ? `"${firstSaved}"` : `"${working[0].id}"`}])${roleHint}${reason ? ", and drop unserved_steps" : ""}. If those saved rows are incompatible with the companies or request, do not fabricate a match`,
           );
