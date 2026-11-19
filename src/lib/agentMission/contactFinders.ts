@@ -57,6 +57,32 @@ export interface ContactStep {
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
 export const CONTACT_STATUS_UNVERIFIED_AR = "غير موثّق";
+
+export const EMAIL_LABEL_PERSONAL_AR = "إيميل شخصي";
+export const EMAIL_LABEL_COMPANY_AR = "إيميل الشركة";
+export const EMAIL_LABEL_SHARED_AR = "مشترك";
+export const EMAIL_LABEL_DOMAIN_AR = "إيميل على نطاق الشركة";
+
+/**
+ * A label appended to a contact's status cell (e.g. «غير موثّق — إيميل شخصي»).
+ * Idempotent: does not append the label if it is already present.
+ */
+export function labelledStatus(status: string, label: string): string {
+  const trimmed = status.trim();
+  if (!trimmed) return label.trim();
+  const cleanLabel = label.trim();
+  const parts = trimmed.split(" — ").map((p) => p.trim());
+  if (parts.includes(cleanLabel)) return trimmed;
+  return `${trimmed} — ${cleanLabel}`;
+}
+
+/** The status verdict before any label or note (e.g. «موثّق» from «موثّق — مشترك»). */
+export function statusHead(s: string): string {
+  const trimmed = s.trim();
+  const idx = trimmed.indexOf(" — ");
+  if (idx === -1) return trimmed;
+  return trimmed.slice(0, idx).trim();
+}
 /** The most finders one person is tried with, per kind (the first that finds a value ends it). */
 export const FINDERS_PER_STEP = 3;
 export const statusKeyOf = (columnKey: string): string => `${columnKey}_status`;
@@ -380,8 +406,13 @@ const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
 const BAD_STATUS = /^(invalid|undeliverable|risky|unknown|catch_?all|accept_?all|disposable|bounce|bad)$/i;
 
-/** The value a finder's answer carries, and whether it is verified: found by walking the answer (an object, a list of objects, nested `data`); a MASKED value (stars) is no value. verified = it passes the code check (a plausible address on a company domain, a phone of 7 to 15 digits) and the source does not say otherwise. */
-export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | null {
+export interface ContactDetail {
+  found: FoundContact | null;
+  personalAlso: string | null;
+}
+
+/** The value a finder's answer carries, with detail for ranking and notes. */
+export function foundContactDetailIn(kind: FinderKind, page: unknown): ContactDetail {
   const keys = kind === "email" ? EMAIL_KEYS : PHONE_KEYS;
   let sourceStatus: "good" | "bad" | null = null;
   const seen: string[] = [];
@@ -408,11 +439,49 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
   };
   walk(page, 0);
   const usable = (v: string): boolean => !v.includes("*") && (kind === "email" ? v.includes("@") : v.replace(/\D/g, "").length >= 7);
-  const raw = [...seen, ...loose, ...stray].find(usable);
-  if (!raw) return null;
+  const candidates = [...seen, ...loose, ...stray].filter(usable);
+  if (candidates.length === 0) return { found: null, personalAlso: null };
+
+  if (kind === "email") {
+    const emailRank = (addr: string): number => {
+      const t = emailValueTypeOf(addr);
+      return t === "professional" ? 0 : t === "personal_mailbox" ? 2 : 3;
+    };
+    let best = candidates[0];
+    let bestRank = emailRank(best);
+    for (let i = 1; i < candidates.length; i++) {
+      const r = emailRank(candidates[i]);
+      if (r < bestRank) {
+        best = candidates[i];
+        bestRank = r;
+      }
+    }
+    const checked = verifyContactValue("work_email", best);
+    const found: FoundContact = checked
+      ? { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" }
+      : { value: best.replace(/^mailto:/i, "").trim().toLowerCase(), status: "unverified" };
+
+    let personalAlso: string | null = null;
+    if (emailValueTypeOf(found.value) === "professional") {
+      const personalCandidate = candidates.find((c) => emailValueTypeOf(c) === "personal_mailbox");
+      if (personalCandidate) {
+        personalAlso = personalCandidate.replace(/^mailto:/i, "").trim().toLowerCase();
+      }
+    }
+    return { found, personalAlso };
+  }
+
+  const raw = candidates[0];
   const checked = verifyContactValue(KIND_OF[kind], raw);
-  if (checked) return { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" };
-  return { value: kind === "email" ? raw.replace(/^mailto:/i, "").trim().toLowerCase() : raw.trim(), status: "unverified" };
+  const found: FoundContact = checked
+    ? { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" }
+    : { value: raw.trim(), status: "unverified" };
+  return { found, personalAlso: null };
+}
+
+/** The value a finder's answer carries, and whether it is verified: found by walking the answer (an object, a list of objects, nested `data`); a MASKED value (stars) is no value. verified = it passes the code check (a plausible address on a company domain, a phone of 7 to 15 digits) and the source does not say otherwise. */
+export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | null {
+  return foundContactDetailIn(kind, page).found;
 }
 
 export const contactStatusAr = (s: "verified" | "unverified"): string => (s === "verified" ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR);
@@ -463,6 +532,16 @@ export function companyMailboxIn(page: unknown, companyDomain: string | null): s
   if (own.length === 0) return null;
   const rank = (e: string): number => { const local = e.split("@")[0].replace(/[._\-+\d]/g, ""); const at = COMPANY_MAILBOX_ORDER.indexOf(local); return at >= 0 ? at : COMPANY_MAILBOX_ORDER.length; };
   return [...own].sort((a, b) => rank(a) - rank(b))[0];
+}
+
+/** An address on the company's domain from a page, when no role mailbox was found. */
+export function companyDomainAddressIn(page: unknown, companyDomain: string | null): string | null {
+  if (!companyDomain || !companyDomain.trim()) return null;
+  const list = addressesIn(page);
+  for (const e of list) {
+    if (!emailOnOtherDomain(e, companyDomain)) return e;
+  }
+  return null;
 }
 
 export const COMPANY_EMAIL_KEY = "company_email";
