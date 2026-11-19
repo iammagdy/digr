@@ -1,6 +1,7 @@
 import { CSV_LABEL_AR, CSV_METHODOLOGY_LABEL_AR } from "./csvLabels";
 import { queueLineV2 } from "./stage3/queueView";
-import { customerSafeText } from "./text";
+import { customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from "./text";
+import { foreignLatinIn, latinWordsOf, writtenLatinWords } from "./shownWords";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
@@ -483,7 +484,7 @@ export function requestedRowsOf(planPublic: unknown): number {
   return planned + (quantity ? Math.max(0, Math.floor(Number(quantity.requested) || 0) - Math.floor(Number(quantity.target) || 0)) : 0);
 }
 
-export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean; /** STAGE 3 S5: the new queue line, with the stored approval time (null: not measured). Absent: today's line. */ stage3Queue?: { approvedAtMs: number | null } }): CustomerMissionView {
+export function customerMissionView(input: { mission: MissionRowForCustomer; /** The customer's own request: a Latin word they wrote is theirs to see (DT-20261118-09 S1); absent: no Latin word is allowed in a line the model wrote. */ requestText?: string; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean; /** STAGE 3 S5: the new queue line, with the stored approval time (null: not measured). Absent: today's line. */ stage3Queue?: { approvedAtMs: number | null } }): CustomerMissionView {
   const { mission } = input;
   const now = input.now ?? Date.now();
   // the run's measured memory is for the admin: the customer never sees it
@@ -560,20 +561,32 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   // the limit is a key of the view ONLY when the plan carries one (a Facebook, Instagram or YouTube compiled plan): every other view is byte for byte what it was
   const limit = phase === "plan" ? limitViewOf(plan) : null;
   if (limit) view.limit = limit;
-  return guardViewText(view);
+  return guardViewText(view, input.requestText ?? "");
 }
 
 /**
  * Every customer text of a view, passed through the render-time guard: whatever a stored field holds (an older mission's title or summary, an event the model wrote, a release reason), the customer never reads an English or an internal
  * phrase, in any state of the mission. Data cells (the samples) and file names are the customer's data, not messages, and are left as they are.
  */
-export function guardViewText(v: CustomerMissionView): CustomerMissionView {
+export function guardViewText(v: CustomerMissionView, requestText = ""): CustomerMissionView {
   const g = (s: string): string => customerSafeText(s);
   const n = (s: string | null): string | null => (s === null ? null : customerSafeText(s) || null);
+  // DT-20261118-09 S1: a line the MODEL wrote (summary, notes, assumptions, request parts, question options, stage titles) that holds a Latin word the customer did not write is not shown, whether or not it also holds Arabic
+  // (live: an Arabic sentence with «ceo» inside passed, the old rule only caught a text with no Arabic at all); a Latin word the customer wrote themselves is theirs to see
+  const written = writtenLatinWords([requestText]);
+  const m = (s: string): string => {
+    const t = String(s ?? "").trim();
+    if (!t) return "";
+    const foreign = foreignLatinIn(t, written);
+    if (latinWordsOf(t).length === 0) return customerSafeText(t);
+    if (foreign.length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t);
+    return /[A-Za-z0-9]+_[A-Za-z0-9_]+/.test(t) ? customerSafeText(t) : toArabicDigits(t);
+  };
+  const nm = (s: string | null): string | null => (s === null ? null : m(s) || null);
   return {
     ...v,
-    summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), requestPartsAr: (v.requestPartsAr ?? []).map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
-    stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
+    summaryAr: nm(v.summaryAr), notesAr: v.notesAr.map(m).filter(Boolean), requestPartsAr: (v.requestPartsAr ?? []).map(m).filter((x) => x !== "" && x !== NEUTRAL_CUSTOMER_TEXT_AR), assumptionsAr: v.assumptionsAr.map(m).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(m).filter(Boolean),
+    stages: v.stages.map((s) => ({ ...s, titleAr: m(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
     samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
     fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), priceExplainAr: (v.priceExplainAr ?? []).map(g).filter(Boolean), countLinesAr: (v.countLinesAr ?? []).map(g).filter(Boolean), headlineCountAr: n(v.headlineCountAr ?? null), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
