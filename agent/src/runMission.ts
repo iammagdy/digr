@@ -45,7 +45,8 @@ import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/a
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
 import { PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
-import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
+import { buildTools, newRunState, recoverCompanyPeoplePlan, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
+import type { UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
@@ -537,6 +538,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // (with the hard spend gate active for this mission the planner does not run: its long structured requests are not on the gate's reviewed call path; production runs with the gate unset)
   // DT-20261118-03 PR-7: the request's STRUCTURE as the planner understood it (a people step under a companies step) reaches catalog_search of the path below
   let understoodPeople: ReturnType<typeof understoodPeopleOf> = null;
+  let understoodCompanies: UnderstoodCompaniesSummary | undefined;
   // the planner ran and answered (a plan, a question, a hand-over, or a failure to read it): the agent path below is never allowed to ask the customer (DT-20261119-03 R2)
   let plannerRan = false;
   if (deps.plannerModel && llmPlannerOn(settings) && !(deps.spendGate && deps.spendGate.active(mission.id))) {
@@ -554,7 +556,19 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
       deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
       plannerRan = true;
-      if (r.understanding) understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
+      if (r.understanding) {
+        understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
+        const compStep = r.understanding.steps.find((s) => !s.parent);
+        if (compStep) {
+          understoodCompanies = {
+            title_ar: compStep.title_ar,
+            topic: compStep.topic ?? null,
+            search_terms: compStep.search_terms ?? [],
+            country: compStep.country ?? null,
+            expected_rows: (compStep.count && !compStep.count.all ? compStep.count.total : null) ?? r.understanding.companies_count ?? null,
+          };
+        }
+      }
       if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
       if (r.kind === "plan") {
         let plan = r.plan;
@@ -657,7 +671,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
   }
   const capabilityPrompt = discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "";
-  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {
@@ -848,6 +862,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // a deploy restarted the worker while the planning ran (its model process ended with SIGTERM, exit code 143): the planning starts again on the next worker, it is never answered as «a limit of ours»
   if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
 
+  let forceClassifyFromCalls = false;
+  const shouldRecoverSdkStop = !state.proposedPlan && !state.question && !state.finish && !compiled && ((state.planRejections?.count ?? 0) !== 1 || output.stop !== "end");
+  if (shouldRecoverSdkStop) {
+    const existing = await store.getMission(mission.id).catch(() => null);
+    if (!existing || (existing.status !== "plan_ready" && !existing.plan && (!existing.worker_id || existing.worker_id === mission.worker_id))) {
+      const recovered = await recoverCompanyPeoplePlan(ctx, deps.log);
+      if (recovered.kind === "sources_unavailable" || recovered.kind === "own_limit") forceClassifyFromCalls = true;
+    }
+  }
+
   if (state.proposedPlan) {
     // THE CARD HOLDS THE FINAL PRICE (S1 live findings fix 3, redesigned mode only): a stored price that is not the one pricing function's number over the final stages is replaced before the card exists
     let plan = state.proposedPlan;
@@ -888,7 +912,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
-    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}), ...(understoodPeople ? { peopleAsked: true, peopleEndpointIds: new Set(deps.catalog.endpoints.filter((e) => e.capability && PEOPLE_OF_COMPANY_CAPABILITIES.has(e.capability)).map((e) => e.id)) } : {}) });
+    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish && !forceClassifyFromCalls, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}), ...(understoodPeople ? { peopleAsked: true, peopleEndpointIds: new Set(deps.catalog.endpoints.filter((e) => e.capability && PEOPLE_OF_COMPANY_CAPABILITIES.has(e.capability)).map((e) => e.id)) } : {}) });
     const issueCategories = state.planRejections?.lastCategories ?? [];
     const finishOrigin: "model_finish" | "code_forced_cap" | "sdk_stop" = !state.finish ? "sdk_stop" : (state.finishOrigin ?? "model_finish");
     deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason} origin=${finishOrigin}${issueCategories.length ? ` issues=${issueCategories.join(",")}` : ""}`);
