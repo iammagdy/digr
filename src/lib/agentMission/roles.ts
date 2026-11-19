@@ -132,10 +132,10 @@ export const roleLineAr = (role: RoleKey, parentNounSingularAr: string): string 
  */
 const ADMIN_STEM = ["ادار", "اداري"];
 /** Does this text name the role the customer asked for («مديريها», «موظفو الإدارة»)? Read from the role's own noun stems (the table above), after normalisation. */
-export function namesRoleAr(text: string, role: RoleKey): boolean {
+export function namesRoleAr(text: string, role: RoleKey, withAdminStem = true): boolean {
   const def = roleDefOf(role);
   const n = normalizeText(text);
-  const claims = [...(def?.nounStems ?? []).filter((x) => /[\u0600-\u06ff]/.test(x)), ...(role === "manager" ? ADMIN_STEM : [])].map((x) => normalizeText(x));
+  const claims = [...(def?.nounStems ?? []).filter((x) => /[\u0600-\u06ff]/.test(x)), ...(role === "manager" && withAdminStem ? ADMIN_STEM : [])].map((x) => normalizeText(x));
   return claims.some((c) => n.includes(c));
 }
 export function neutralPeopleTitleAr(title: string, role: RoleKey, parentNounSingularAr: string): string {
@@ -150,14 +150,20 @@ export function neutralPeopleTitleAr(title: string, role: RoleKey, parentNounSin
  */
 export function summaryWithoutRoleClaimAr(summary: string, role: RoleKey, parentTitleAr: string, perParent: number | null, parentNounSingularAr: string): string {
   const sentences = summary.split(/(?<=[.؟!])\s+/u).map((x) => x.trim()).filter(Boolean);
-  if (!sentences.some((x) => namesRoleAr(x, role))) return summary;
+  // FIX1 (Gate 2 P2): «إدارة» in a sentence about the companies' own trade («شركات إدارة العقارات») is not a role claim: only the role's own nouns are read here, not the stem of «الإدارة»
+  const claims = (x: string): boolean => namesRoleAr(x, role, false);
+  if (!sentences.some(claims)) return summary;
   const person = knownItemNoun("شخص");
   const amount = perParent !== null && perParent > 0 && person ? `${countAr(perParent, person)} من العاملين` : "عدد من العاملين";
-  const own = `${parentTitleAr.replace(/[.،\s]+$/u, "")}، مع ${amount} في كل ${parentNounSingularAr || "عنصر"}.`;
+  const parent = parentTitleAr.replace(/[.،\s]+$/u, "");
+  const kept = sentences.filter((x) => !claims(x));
+  // a kept sentence that already names the companies is not repeated: the code's sentence then says only who is delivered
+  const named = kept.some((x) => normalizeText(x).includes(normalizeText(parent)));
+  const own = `${named ? "" : `${parent}، `}مع ${amount} في كل ${parentNounSingularAr || "عنصر"}.`;
   const out: string[] = [];
   let placed = false;
   for (const x of sentences) {
-    if (!namesRoleAr(x, role)) { out.push(x); continue; }
+    if (!claims(x)) { out.push(x); continue; }
     if (!placed) { out.push(own); placed = true; }
   }
   return out.join(" ");
