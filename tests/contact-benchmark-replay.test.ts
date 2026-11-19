@@ -34,8 +34,9 @@ function dispatcher(mode: "benchmark" | "nothing", log: Array<{ capability: stri
       // CHANGED (owner decision after #321: finders are ranked by measured cost per hit): the chain now holds a finder that takes the person's NAME and the company's domain (no profile link); its person is the same one: first name -> index, domain -> company
       const FIRST = ["Hossam", "Mona", "Ahmed", "Salma", "Karim", "Nadia", "Tamer"];
       const p = (o.params ?? {}) as Record<string, unknown>;
-      const nameSlug = SLUGS.find((s) => String(p.company_domain ?? "").includes(s));
-      const nameIndex = FIRST.indexOf(String(p.first_name ?? ""));
+      const nameSlug = slug;
+      const name = String(p.first_name ?? p.firstName ?? p.firstname ?? p.full_name ?? p.fullName ?? p.name ?? p.person_name ?? "");
+      const nameIndex = FIRST.indexOf(name.split(/\s+/)[0]);
       const url = /\/in\/([a-z-]+-\d)/.exec(who)?.[1] ?? (nameSlug && nameIndex >= 0 ? `${nameSlug}-${nameIndex}` : who);
       asked.add(url);
       const order = [...asked].indexOf(url);
@@ -67,17 +68,17 @@ async function peopleSheet(r: Awaited<ReturnType<typeof replay>>) {
 }
 
 describe("the benchmark shapes, through a whole mission", () => {
-  it("8 of 10 e-mails, all verified; no personal phone, so every person carries their company's head-office phone, labelled and validated as local", async () => {
+  it("8 of 10 e-mails are verified and no personal phone is found", async () => {
     const { r, log } = await run("benchmark");
     const s = await peopleSheet(r);
     expect(s.n).toBe(10);
     const emails = s.col("إيميل المسؤول المباشر");
     const emailStatus = s.col("حالة توثيق إيميل المسؤول المباشر");
-    expect(emails.filter(Boolean).length).toBe(8);
-    emails.forEach((e, i) => expect(emailStatus[i]).toBe(e ? "موثّق" : ""));
+    expect(emails.filter((e) => e && e !== "غير متوفر").length).toBe(8);
+    emails.forEach((e, i) => expect(emailStatus[i]).toBe(e && e !== "غير متوفر" ? "موثّق" : ""));
     const phones = s.col("هاتف / محمول المسؤول");
-    // CHANGED (DT-20261118-03, Megz D-0084): no personal phone found, so the person's cell stays EMPTY; the company's head-office phone is a column of the company, never a stand-in here
-    expect(phones.filter(Boolean).length).toBe(0);
+    // CHANGED (DT-20261118-03, Megz D-0084): no personal phone found; the company's head-office phone is a column of the company, never a stand-in here
+    expect(phones.filter((v) => v && v !== "غير متوفر")).toEqual([]);
     expect(new Set(s.col("حالة توثيق هاتف / محمول المسؤول")).has("موثّق")).toBe(false);
     expect(new Set(s.col("نوع الرقم")).has("رقم الشركة")).toBe(false);
     // the type column sits right after the phone's status column
@@ -96,10 +97,14 @@ describe("the benchmark shapes, through a whole mission", () => {
     expect(Number(r.mission.execution_treg_usd)).toBeLessThanOrEqual(executionBudgetUsd(Number(r.mission.reserved_points)) + 1e-9);
   });
 
-  it("nothing found: the people are delivered, every contact cell is empty, and nothing claims «موثّق»", async () => {
+  it("nothing found: the people are delivered without a found contact or verification", async () => {
     const { r } = await run("nothing");
     const s = await peopleSheet(r);
     expect(s.n).toBe(10);
-    for (const title of ["إيميل المسؤول المباشر", "هاتف / محمول المسؤول", "حالة توثيق إيميل المسؤول المباشر", "حالة توثيق هاتف / محمول المسؤول", "نوع الرقم"]) expect(s.col(title).filter(Boolean).length).toBe(0);
+    for (const title of ["إيميل المسؤول المباشر", "هاتف / محمول المسؤول"]) {
+      expect(s.header).toContain(title);
+      expect(s.col(title).filter((v) => v && v !== "غير متوفر")).toEqual([]);
+    }
+    for (const title of ["حالة توثيق إيميل المسؤول المباشر", "حالة توثيق هاتف / محمول المسؤول", "نوع الرقم"]) expect(s.col(title).filter(Boolean)).toEqual([]);
   });
 });

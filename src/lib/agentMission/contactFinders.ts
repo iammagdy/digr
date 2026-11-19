@@ -43,7 +43,7 @@ export interface ContactStep {
   validators?: FinderInfo[];
   /** PHONE steps: the map searches that give a COMPANY's phone, cheapest first, used when no personal phone was found (one lookup per company). */
   company_phone?: FinderInfo[];
-  /** PHONE steps (DT-20261118-05 item 4b): the NEXT ranked phone finders of the catalog, after the chain. A person the chain cannot ask (no professional page) is asked by these instead, at most FINDERS_PER_STEP calls in all and never more than the chain's own price for one person; not priced. */
+  /** The next ranked finders for this kind. Asked only after the primary pass; up to FINDERS_PER_STEP additional calls per person within the primary chain ceiling. */
   alternates?: FinderInfo[];
   /** PHONE steps (DT-20261118-05 item 4c): the catalog's profile lookup (a person's name and company → the professional page), asked first for a person without one, inside the same price for one person; not priced. */
   profile_lookup?: FinderInfo[];
@@ -60,7 +60,7 @@ export const CONTACT_STATUS_UNVERIFIED_AR = "غير موثّق";
 
 export const EMAIL_LABEL_PERSONAL_AR = "إيميل شخصي";
 export const EMAIL_LABEL_COMPANY_AR = "إيميل الشركة";
-export const EMAIL_LABEL_SHARED_AR = "مشترك";
+export const EMAIL_LABEL_SHARED_AR = "إيميل مشترك";
 export const PHONE_TYPE_FAX_AR = "فاكس";
 export const EMAIL_LABEL_DOMAIN_AR = "إيميل على نطاق الشركة";
 
@@ -77,7 +77,7 @@ export function labelledStatus(status: string, label: string): string {
   return `${trimmed} — ${cleanLabel}`;
 }
 
-/** The status verdict before any label or note (e.g. «موثّق» from «موثّق — مشترك»). */
+/** The status verdict before any label or note (e.g. «موثّق» from «موثّق — إيميل مشترك»). */
 export function statusHead(s: string): string {
   const trimmed = s.trim();
   const idx = trimmed.indexOf(" — ");
@@ -86,6 +86,19 @@ export function statusHead(s: string): string {
 }
 /** The most finders one person is tried with, per kind (the first that finds a value ends it). */
 export const FINDERS_PER_STEP = 3;
+
+/** The distinct, stored person alternates covered by the second pass and its attempt resolution. */
+export function personAlternatesOf(step: Pick<ContactStep, "finders" | "alternates">): FinderInfo[] {
+  const seen = new Set(step.finders.map((finder) => finder.id));
+  const alternates: FinderInfo[] = [];
+  for (const finder of step.alternates ?? []) {
+    if (seen.has(finder.id)) continue;
+    alternates.push(finder);
+    seen.add(finder.id);
+    if (alternates.length === FINDERS_PER_STEP) break;
+  }
+  return alternates;
+}
 
 export const statusKeyOf = (columnKey: string): string => `${columnKey}_status`;
 const KIND_OF: Record<FinderKind, ContactKind> = { email: "work_email", phone: "phone" };
@@ -147,7 +160,7 @@ export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowe
   return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: kind === "phone" ? PHONE_FINDER_MAX_USD : FALLBACK_FINDER_MAX_USD, offset });
 }
 
-/** THE NEXT RANKED FINDERS of a kind (DT-20261118-05 item 4b): the same catalog group, ranking and ceiling as finderSourcesOf, after its first FINDERS_PER_STEP. A person the chain cannot ask is asked by these instead. */
+/** THE NEXT RANKED FINDERS of a kind (DT-20261118-05 item 4b): the same catalog group, ranking and ceiling as finderSourcesOf, after its first FINDERS_PER_STEP. People still missing a value after the primary chain may be asked by these. */
 export function alternateFinderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
   return finderSourcesOf(kind, catalog, isAllowed, stats, now, FINDERS_PER_STEP);
 }
@@ -305,7 +318,7 @@ export function buildContactSteps(
       const validatorUsd = validators ? chainPriceUsd(validators) : 0;
       const perPerson = chain.costUsd + (1 - chain.missShare) * verifierUsd + chain.missShare * companyUsd + validatorUsd;
       const maxPerson = list.reduce((n, f) => n + f.usd, 0) + verifierUsd + companyUsd + validatorUsd;
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}), ...(kind === "phone" && help.alternates && help.alternates.length > 0 ? { alternates: help.alternates } : {}), ...(kind === "phone" && help.profile_lookup && help.profile_lookup.length > 0 ? { profile_lookup: help.profile_lookup } : {}) });
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}), ...(help.alternates && help.alternates.length > 0 ? { alternates: help.alternates } : {}), ...(kind === "phone" && help.profile_lookup && help.profile_lookup.length > 0 ? { profile_lookup: help.profile_lookup } : {}) });
     }
   }
   return out;

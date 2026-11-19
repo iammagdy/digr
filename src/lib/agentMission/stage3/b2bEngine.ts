@@ -1,4 +1,4 @@
-import type { ContactStep } from "../contactFinders";
+import { personAlternatesOf, type ContactStep } from "../contactFinders";
 import { COMPANY_EMAIL_TITLE_AR, COMPANY_PHONE_TITLE_AR, NOT_AVAILABLE_AR } from "../taskContracts";
 import { B2B_NOT_SEARCHED_AR, gapLineAr, resolveField, type Attempt, type ColumnGap } from "./b2bCompile";
 import { stage3Enabled, stage3FlagMode } from "./flags";
@@ -51,7 +51,9 @@ export function contactColumnsOf(plan: PlanLike): ContactColumn[] {
   for (const step of plan.contact_steps ?? []) {
     const stage = plan.stages.find((s) => s.key === step.stage_key);
     if (!stage) continue;
-    const chain = (step.level === "company" && step.kind === "phone" ? step.company_phone ?? [] : step.finders).map((f) => f.id);
+    const finders = step.level === undefined ? [...step.finders, ...personAlternatesOf(step)] :
+      step.kind === "phone" ? step.company_phone ?? [] : step.finders;
+    const chain = finders.map((f) => f.id);
     const title = stage.columns.find((c) => c.key === step.column_key)?.title_ar ?? (step.kind === "email" ? COMPANY_EMAIL_TITLE_AR : COMPANY_PHONE_TITLE_AR);
     out.push({ stage: stage.key, column: step.column_key, titleAr: title, chain: [...new Set(chain)], noun: step.level === "company" ? "company" : "person" });
   }

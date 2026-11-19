@@ -181,7 +181,7 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
   });
 
   // Case b
-  it("b. personal first, work later: A gmail, B work -> cell = work address, status «غير موثّق — إيميل شخصي: person1.private@gmail.com», withheld.personal_email 1", async () => {
+  it("b. personal first, work later: A gmail, B work -> cell = work address, status «غير موثّق — إيميل شخصي: \u200Eperson1.private@gmail.com», withheld.personal_email 1", async () => {
     const w = await world({
       answers: (ep, p) => {
         if (ep === EMAIL_A.id) return { found: true, email: "person1.private@gmail.com" };
@@ -192,7 +192,7 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     const out = await w.run();
     expect(cellsOf(w.items, "p1")).toMatchObject({
       email: "person1@orascom-em.com.eg",
-      email_status: "غير موثّق — إيميل شخصي: person1.private@gmail.com",
+      email_status: "غير موثّق — إيميل شخصي: \u200Eperson1.private@gmail.com",
     });
     expect(out.withheld.personal_email).toBe(1);
     expect(out.filled.email).toBe(1);
@@ -204,14 +204,14 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
       answers: (ep) =>
         ep === EMAIL_A.id
           ? {
-              emails: ["person1.private@gmail.com", "person1@orascom-em.com.eg"],
+              emails: ["123.sales@gmail.com", "person1@orascom-em.com.eg"],
             }
           : null,
     });
     const out = await w.run();
     expect(cellsOf(w.items, "p1")).toMatchObject({
       email: "person1@orascom-em.com.eg",
-      email_status: "غير موثّق — إيميل شخصي: person1.private@gmail.com",
+      email_status: "غير موثّق — إيميل شخصي: \u200E123.sales@gmail.com",
     });
     expect(out.filled.email).toBe(1);
   });
@@ -294,7 +294,7 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
   });
 
   // Case f
-  it("f. shared address: two people of one company keep it with «مشترك»; final «موثّق» keep «موثّق — مشترك»; stopped run still labels", async () => {
+  it("f. shared address: two people of one company keep it with «إيميل مشترك»; final «موثّق» keep «موثّق — إيميل مشترك»; stopped run still labels", async () => {
     const SHARED = "team@orascom-em.com.eg";
     // f1: two people find the same address
     const w1 = await world({
@@ -304,18 +304,18 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     const out1 = await w1.run();
     expect(cellsOf(w1.items, "p1")).toMatchObject({
       email: SHARED,
-      email_status: "غير موثّق — مشترك",
+      email_status: "غير موثّق — إيميل مشترك",
     });
     expect(cellsOf(w1.items, "p2")).toMatchObject({
       email: SHARED,
-      email_status: "غير موثّق — مشترك",
+      email_status: "غير موثّق — إيميل مشترك",
     });
     expect(out1.filled.email).toBe(2);
 
     // f2: two people already have final «موثّق» address, third has own
     const w2 = await world({
       people: [
-        person(1, "Manager", { email: SHARED, email_status: "موثّق" }),
+        person(1, "Manager", { email: SHARED, email_status: "موثّق — مشترك" }),
         person(2, "CEO", { email: SHARED, email_status: "موثّق" }),
         person(3, "Accountant", { email: "own3@orascom-em.com.eg", email_status: "موثّق" }),
       ],
@@ -324,11 +324,11 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     await w2.run();
     expect(cellsOf(w2.items, "p1")).toMatchObject({
       email: SHARED,
-      email_status: "موثّق — مشترك",
+      email_status: "موثّق — إيميل مشترك",
     });
     expect(cellsOf(w2.items, "p2")).toMatchObject({
       email: SHARED,
-      email_status: "موثّق — مشترك",
+      email_status: "موثّق — إيميل مشترك",
     });
     expect(cellsOf(w2.items, "p3")).toMatchObject({
       email: "own3@orascom-em.com.eg",
@@ -347,16 +347,16 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     await w3.run();
     expect(cellsOf(w3.items, "p2")).toMatchObject({
       email: SHARED,
-      email_status: "غير موثّق — مشترك",
+      email_status: "غير موثّق — إيميل مشترك",
     });
     expect(cellsOf(w3.items, "p3")).toMatchObject({
       email: SHARED,
-      email_status: "غير موثّق — مشترك",
+      email_status: "غير موثّق — إيميل مشترك",
     });
   });
 
   // Case g
-  it("g. RE-RUN: second run appends no label twice (idempotent) and does not verify again a row whose status is «موثّق — مشترك» / «موثّق — إيميل شخصي»", async () => {
+  it("g. RE-RUN: second run appends no label twice (idempotent) and does not verify again a row whose status is «موثّق — إيميل مشترك» / «موثّق — إيميل شخصي»", async () => {
     const SHARED = "team@orascom-em.com.eg";
     let verifyCalls = 0;
     const companyStep: ContactStep = {
@@ -383,7 +383,7 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
       companyEmail: "company@orascom-em.com.eg",
       companyEmailStatus: "موثّق — إيميل على نطاق الشركة",
       people: [
-        person(1, "Manager", { email: SHARED, email_status: "موثّق — مشترك" }),
+        person(1, "Manager", { email: SHARED, email_status: "موثّق — إيميل مشترك" }),
         person(2, "CEO", { email: "p2@orascom-em.com.eg", email_status: "موثّق — إيميل شخصي" }),
       ],
       answers: (ep) => {
@@ -397,14 +397,14 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     await w.run();
     expect(verifyCalls).toBe(0);
     expect(companyCellsOf(w.items, "c1").company_email_status).toBe("موثّق — إيميل على نطاق الشركة");
-    expect(cellsOf(w.items, "p1").email_status).toBe("موثّق — مشترك");
+    expect(cellsOf(w.items, "p1").email_status).toBe("موثّق — إيميل مشترك");
     expect(cellsOf(w.items, "p2").email_status).toBe("موثّق — إيميل شخصي");
 
     // run again on the same store
     await w.run();
     expect(verifyCalls).toBe(0);
     expect(companyCellsOf(w.items, "c1").company_email_status).toBe("موثّق — إيميل على نطاق الشركة");
-    expect(cellsOf(w.items, "p1").email_status).toBe("موثّق — مشترك");
+    expect(cellsOf(w.items, "p1").email_status).toBe("موثّق — إيميل مشترك");
     expect(cellsOf(w.items, "p2").email_status).toBe("موثّق — إيميل شخصي");
   });
 
@@ -493,14 +493,14 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
   });
 
   // Case i (counters / controls - pass on main)
-  it("i. counters: empty finder answer stays empty; hit makes no further calls; plan with no contact step makes no calls", async () => {
-    // empty stays empty
+  it("i. counters: exhausted empty chain says unavailable; hit makes no further calls; plan with no contact step makes no calls", async () => {
+    // All finders answered and returned nothing.
     const w1 = await world({
       answers: () => null,
     });
     await w1.run();
     expect(cellsOf(w1.items, "p1")).toMatchObject({
-      email: "",
+      email: "غير متوفر",
       email_status: "",
     });
 
@@ -573,15 +573,15 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
   it("j. pure: labelledStatus and statusHead behave as specified", () => {
     const labelledStatus = (contactFinders as any).labelledStatus;
     const statusHead = (contactFinders as any).statusHead;
-    const EMAIL_LABEL_SHARED_AR = (contactFinders as any).EMAIL_LABEL_SHARED_AR ?? "مشترك";
+    const EMAIL_LABEL_SHARED_AR = (contactFinders as any).EMAIL_LABEL_SHARED_AR ?? "إيميل مشترك";
 
     expect(typeof labelledStatus).toBe("function");
     expect(typeof statusHead).toBe("function");
 
-    expect(labelledStatus("", EMAIL_LABEL_SHARED_AR)).toBe("مشترك");
-    expect(labelledStatus("غير موثّق", EMAIL_LABEL_SHARED_AR)).toBe("غير موثّق — مشترك");
-    expect(labelledStatus("غير موثّق — مشترك", EMAIL_LABEL_SHARED_AR)).toBe("غير موثّق — مشترك");
-    expect(statusHead("موثّق — مشترك")).toBe("موثّق");
+    expect(labelledStatus("", EMAIL_LABEL_SHARED_AR)).toBe("إيميل مشترك");
+    expect(labelledStatus("غير موثّق", EMAIL_LABEL_SHARED_AR)).toBe("غير موثّق — إيميل مشترك");
+    expect(labelledStatus("غير موثّق — إيميل مشترك", EMAIL_LABEL_SHARED_AR)).toBe("غير موثّق — إيميل مشترك");
+    expect(statusHead("موثّق — إيميل مشترك")).toBe("موثّق");
     expect(statusHead("موثّق")).toBe("موثّق");
   });
 });

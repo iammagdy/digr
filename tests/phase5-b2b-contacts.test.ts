@@ -106,7 +106,7 @@ describe("Phase 5 B2B: a private mailbox is not a work e-mail", () => {
     const out = await w.run();
     expect(w.row("p1")).toMatchObject({
       email: "person1@orascom-em.com.eg",
-      email_status: "غير موثّق — إيميل شخصي: person1.private@gmail.com",
+      email_status: "غير موثّق — إيميل شخصي: \u200Eperson1.private@gmail.com",
       [contactSrcKey("email")]: EMAIL_B.id,
     });
     expect(w.row("p2")).toMatchObject({
@@ -129,10 +129,10 @@ describe("Phase 5 B2B: missing or invalid values are never invented", () => {
     ["found: false", { found: false }],
     ["a masked address", { email: "m****@orascom-em.com.eg" }],
     ["text that is not an address", { email: "contact via website" }],
-  ])("%s: the cell stays empty and has no status, the person stays", async (_l, answer) => {
+  ])("%s: the cell says unavailable and has no status, the person stays", async (_l, answer) => {
     const w = await world((ep) => (ep === EMAIL_A.id || ep === EMAIL_B.id ? answer : null));
     await w.run();
-    for (const p of PEOPLE) expect(w.row(p.id)).toMatchObject({ email: "", email_status: "" });
+    for (const p of PEOPLE) expect(w.row(p.id)).toMatchObject({ email: "غير متوفر", email_status: "" });
     expect(w.items.acceptedRows("people")).toHaveLength(PEOPLE.length);
   });
 
