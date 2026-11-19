@@ -27,6 +27,8 @@ const OLD_ROUTES = [
 /** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
 // CHANGED (DT-20261118-06 phase 2A, the page folder src/app/admin/messages lands: «الرسائل والحملات» moves from MENU_ONLY_ROUTES into NEW_ROUTES)
 const NEW_ROUTES = ["/admin/invoices", "/admin/messages"];
+// CHANGED (DT-20261118-06 PR 2): the read-only mission inspector /admin/missions/[id] is a page folder reached by a link, not a menu entry: it is in the folder list and NOT in the menu list
+const FOLDER_ONLY_ROUTES = ["/admin/missions"];
 const MENU_ONLY_ROUTES: string[] = [];
 
 describe("every old admin address still opens its page", () => {
@@ -41,7 +43,7 @@ describe("every old admin address still opens its page", () => {
   it("no page was added, removed or renamed: the page folders are exactly the old list", () => {
     const dirs = readdirSync("src/app/admin", { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => `/admin/${d.name}`);
     // «الفواتير» (/admin/invoices) is the one deliberate addition of the invoices feature; every old folder is still there
-    expect([...dirs, "/admin"].sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES].sort());
+    expect([...dirs, "/admin"].sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES, ...FOLDER_ONLY_ROUTES].sort());
     expect(existsSync("src/app/admin/page.tsx")).toBe(true);
   });
 
