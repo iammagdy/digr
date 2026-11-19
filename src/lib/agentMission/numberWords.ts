@@ -180,30 +180,49 @@ export function isCountOfOtherNoun(message: string, cited: string, n: number, pe
 }
 
 const PER_EACH_DISTRIBUTIVE = new Set(["كل", "لكل", "بكل", "وكل", "فكل"]);
+const AFTER_DISTRIBUTIVE_PREP = new Set(["في", "من", "علي", "عن"]);
+const NON_PARENT_TIME = new Set(["يوم", "ايام", "اسبوع", "اسابيع", "شهر", "شهور", "اشهر", "سنه", "سنين", "سنوات", "ساعه", "ساعات", "دقيقه", "دقائق"]);
+
+const stripLeadingConj = (t: string): string => (t.length >= 4 && (t[0] === "و" || t[0] === "ف") ? t.slice(1) : t);
+const tokenMatchesWithConj = (a: string, b: string): boolean =>
+  a === b || (a.length >= 4 && (a[0] === "و" || a[0] === "ف") && a.slice(1) === b) || (b.length >= 4 && (b[0] === "و" || b[0] === "ف") && b.slice(1) === a);
+const isValidSingularIndefiniteNoun = (noun: string): boolean =>
+  /^\p{L}{3,}$/u.test(noun) && !/^(?:[وفبكل]*)?ال|^لل/.test(noun) && !/(?:ون|ين|ان|ات|اء)$/.test(noun);
+const isValidParentNounToken = (t: string | undefined): boolean =>
+  Boolean(t && /^\p{L}{2,}$/u.test(t) && wordNumbersIn(t, 1).length === 0 && !/\d/.test(t) && !NON_PARENT_TIME.has(t));
 
 /**
- * Pure Arabic morphology check (no keyword or service list): returns true when `cited` is an indefinite singular noun
- * (or short phrase ending in one) that stands in a distributive per-parent clause (`كل` / `لكل <parent> <singular>`)
- * inside `message`, e.g. «من كل شركة مدير» -> 1 per parent. Plural/dual/definite forms («المديرين», «مديرين») return false.
+ * Pure Arabic morphology check (no keyword or service list): returns true when `cited` names an indefinite singular noun
+ * that stands in a distributive per-parent clause inside `message` either AFTER (`من كل شركة مدير`) or BEFORE
+ * (`ومدير كل شركة`, `مدير لكل شركة`) with optional leading conjunction `و`/`ف`. Plural/dual/definite forms return false.
  */
 export function isSingularPerParentCitation(message: string, cited: string | null | undefined): boolean {
   const raw = normalizeWords(cited ?? "");
   if (raw.length < 2 || /\d/.test(raw) || wordNumbersIn(raw, 1).length > 0) return false;
   const cTokens = tokensOf(raw);
   if (cTokens.length === 0) return false;
-  const noun = cTokens[cTokens.length - 1];
-  if (!/^\p{L}{3,}$/u.test(noun)) return false;
-  if (/^(?:[وفبكل]*)?ال|^لل/.test(noun)) return false;
-  if (/(?:ون|ين|ان|ات|اء)$/.test(noun)) return false;
+  // If `cited` itself contains `<role> كل <parent>` (e.g. «ومدير كل شركة»), the singular noun precedes the distributive token.
+  const distInCited = cTokens.findIndex((t, idx) => idx > 0 && idx < cTokens.length - 1 && PER_EACH_DISTRIBUTIVE.has(t));
+  const nounOffset = distInCited > 0 ? distInCited - 1 : cTokens.length - 1;
+  const noun = stripLeadingConj(cTokens[nounOffset]);
+  if (!isValidSingularIndefiniteNoun(noun)) return false;
   if (cTokens.some((t) => wordNumbersIn(t, 1).length > 0 || /\d/.test(t))) return false;
   const mTokens = tokensOf(message);
   for (let i = 0; i <= mTokens.length - cTokens.length; i += 1) {
-    if (!cTokens.every((t, k) => mTokens[i + k] === t)) continue;
-    const endIdx = i + cTokens.length - 1;
-    // Check distributive token (`كل`/`لكل`/...) 1..3 tokens before the singular noun with at least one parent token in between.
+    if (!cTokens.every((t, k) => tokenMatchesWithConj(mTokens[i + k], t))) continue;
+    const nounIdx = i + nounOffset;
+    if (!isValidSingularIndefiniteNoun(stripLeadingConj(mTokens[nounIdx]))) continue;
+    // Pattern A: distributive token before the singular noun («من كل شركة مدير»)
     if (
-      (endIdx >= 2 && PER_EACH_DISTRIBUTIVE.has(mTokens[endIdx - 2])) ||
-      (endIdx >= 3 && PER_EACH_DISTRIBUTIVE.has(mTokens[endIdx - 3]))
+      (nounIdx >= 2 && PER_EACH_DISTRIBUTIVE.has(mTokens[nounIdx - 2]) && isValidParentNounToken(mTokens[nounIdx - 1])) ||
+      (nounIdx >= 3 && PER_EACH_DISTRIBUTIVE.has(mTokens[nounIdx - 3]) && isValidParentNounToken(mTokens[nounIdx - 2]))
+    ) {
+      return true;
+    }
+    // Pattern B: distributive token after the singular noun («ومدير كل شركة», «مدير لكل شركة», «مدير من كل شركة»)
+    if (
+      (nounIdx + 2 < mTokens.length && PER_EACH_DISTRIBUTIVE.has(mTokens[nounIdx + 1]) && isValidParentNounToken(mTokens[nounIdx + 2])) ||
+      (nounIdx + 3 < mTokens.length && AFTER_DISTRIBUTIVE_PREP.has(mTokens[nounIdx + 1]) && PER_EACH_DISTRIBUTIVE.has(mTokens[nounIdx + 2]) && isValidParentNounToken(mTokens[nounIdx + 3]))
     ) {
       return true;
     }

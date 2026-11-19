@@ -529,12 +529,12 @@ export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<stri
     const singularOne = n === 1 && rawWritten === null && isSingularPerParentCitation(message, cited || (ask?.per_company_text ?? ""));
     const written = singularOne ? 1 : rawWritten;
     // FIX3/FIX4: no company count to compare with → a number that counts ANOTHER noun than the people (the dual «شركتين», «٥٠ شركة», «لشركتين», «٥شركات») may be the companies' own, copied: «not given» (the default count and the «فاعتمدنا» line; the
-    // customer can edit it on the card). A bare amount («اتنين»، «٣ مديرين», «٣ من كل شركة») or distributive singular («من كل شركة مدير») is the customer's per-company count and is kept.
+    // customer can edit it on the card). A bare amount («اتنين»، «٣ مديرين», «٣ من كل شركة») or distributive singular («من كل شركة مدير» / «ومدير كل شركة») is the customer's per-company count and is kept.
     if (written !== null && !singularOne && companies === null && isCountOfOtherNoun(message, cited, written, ask?.title_ar ?? "")) return null;
-    // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»)
-    return written !== null && (written !== companies || writtenElsewhere(message, cited, written)) ? written : null;
+    // the number of the companies copied into per_company is dropped, unless the customer also wrote that number outside the cited words («٣ شركات ومن كل شركة ٣ مديرين»، «شركتين … مديرين اتنين»), or singular distributive («١ شركة ومدير كل شركة»)
+    return written !== null && (singularOne || written !== companies || writtenElsewhere(message, cited, written)) ? written : null;
   };
-  const per = ask && ask.per_company !== null ? keep(ask.per_company, ask.per_company_text) : null;
+  const per = ask ? (ask.per_company !== null ? keep(ask.per_company, ask.per_company_text) : (isSingularPerParentCitation(message, ask.per_company_text) ? 1 : null)) : null;
   let changed = ask !== undefined && ask.per_company !== null && per !== ask.per_company;
   const steps = u.steps.map((s) => {
     if (s.parent === null || s.count.per_parent === null || !isPeopleOfCompanyStep(s)) return s;
