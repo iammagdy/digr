@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chooseIdField, contentFingerprint, deriveItemId, proveMappedRows, textDedupeKey, dedupeScope } from "../src/lib/agentMission/contract";
 import { assumptionLinesShown, filterLineAr, filterVerdict, findFilterFields, flagIsSet, parseFilters, promiseIssues, refitFilters, resolveFilters, type StageFilter } from "../src/lib/agentMission/filters";
 import { validateAndPricePlan, customerPlanView, type PlanLookup } from "../src/lib/agentMission/plan";
@@ -176,6 +176,10 @@ describe("THE SAME TEXT TWICE (a post, a comment): one item", () => {
 });
 
 describe("the plan check: the card states what code checks", () => {
+  // DT-20261119-04 FIX1: the fixtures are dated 2026-10-20 and the plan check judges «the last 30 days» from the clock: the clock is the fixture's own day, so these tests never depend on today's date (they went red on 2026-11-19 at 10:00 UTC)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-29T12:00:00Z"), shouldAdvanceTime: false }); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("the clock of this block is the fixture's day, whatever day it really is", () => { expect(new Date().toISOString().slice(0, 10)).toBe("2026-10-29"); });
   const sample = (n: number) => ({ id: `s${n}`, text: `محمد صلاح يسجل هدفًا رقم ${n} مع ليفربول`, url: `https://x.example/s/${n}`, author: `fan${n}`, created_at: "2026-10-20T10:00:00Z", is_reply: "لا" });
   const mapped = [1, 2, 3, 4, 5].map(sample);
   const lookup = (requestText?: string, answerText?: string): PlanLookup => ({

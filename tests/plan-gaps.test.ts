@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { applyGapNotes, gapLinesAr } from "../src/lib/agentMission/gapLines";
 import type { MemoryStore } from "../agent/src/memoryStore";
@@ -50,6 +50,10 @@ describe("applied to the plan", () => {
 });
 
 describe("end to end: a tool that carries the period and the language adds no line", () => {
+  // DT-20261119-04 FIX1: the fixtures are dated 2026-10-20 and the plan check judges «the last 30 days» from the clock: the clock is the fixture's own day, so these tests never depend on today's date (they went red on 2026-11-19 at 10:00 UTC)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-29T12:00:00Z"), shouldAdvanceTime: false }); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("the clock of this block is the fixture's day, whatever day it really is", () => { expect(new Date().toISOString().slice(0, 10)).toBe("2026-10-29"); });
   function withFilters(steps: FakeStep[]): FakeStep[] {
     return steps.map((s) => s.tool !== "propose_plan" ? s : { tool: "propose_plan", args: (r) => { const plan = (s.args as (r: unknown) => Record<string, any>)(r); plan.stages[0].filters = [{ kind: "period", days: 30 }, { kind: "language", lang: "ar" }]; return plan; } } as FakeStep);
   }
