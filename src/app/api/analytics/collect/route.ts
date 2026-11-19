@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     let verifiedIsAdmin = false;
     const kind = String((body as any)?.k ?? "");
     if (kind === "login" || kind === "signup") {
-      const auth = await authenticateUser(req);
+      const auth = await authenticateUser(req, { sensitive: false });
       if (auth.ok) { verifiedUserId = auth.user.id; verifiedIsAdmin = auth.user.appRole === "admin"; }
     }
 

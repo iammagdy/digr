@@ -162,6 +162,7 @@ describe("AFTER the migrations are applied: the same routes use the new function
   it("redeeming and granting reach the approved functions, and the admin grant carries the admin's own id", async () => {
     state.admin = fakeSupabase({
       tables: baseTables,
+      authUsers, // the signed-in customer's account is known to the sign-in service, with no ban (a customer action asks it fresh: DT-20261118-06 fix push)
       rpc: {
         redeem_promo_code_atomic: () => ({ data: { success: true, points: 500, balance: 870 } }),
         admin_grant_credit_atomic: () => ({ data: { success: true, points: 50, balance: 420 } }),

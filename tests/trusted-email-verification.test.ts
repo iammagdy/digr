@@ -34,7 +34,7 @@ vi.mock("../src/lib/supabase/server", () => ({
     }
     return { auth };
   },
-  createAdminClient: () => ({ auth: { admin: { getUserById: async (id: string) => ({ data: { user: state.adminUsers[id] ?? null } }) } } }),
+  createAdminClient: () => ({ auth: { admin: { getUserById: async (id: string) => ({ data: { user: state.adminUsers[id] ?? { id } }, error: null }) } } }),
 }));
 
 import { resolveMissionViewer } from "../src/lib/server/missionViewer";
