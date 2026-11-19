@@ -1,7 +1,7 @@
 import { CSV_LABEL_AR, CSV_METHODOLOGY_LABEL_AR } from "./csvLabels";
 import { queueLineV2 } from "./stage3/queueView";
 import { customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from "./text";
-import { foreignLatinIn, latinWordsOf, writtenLatinWords } from "./shownWords";
+import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, withoutUnwrittenLabels, writtenLatinWords } from "./shownWords";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
@@ -568,31 +568,46 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
  * Every customer text of a view, passed through the render-time guard: whatever a stored field holds (an older mission's title or summary, an event the model wrote, a release reason), the customer never reads an English or an internal
  * phrase, in any state of the mission. Data cells (the samples) and file names are the customer's data, not messages, and are left as they are.
  */
+/** The headline when the model's own summary may not be shown (a Latin word the customer did not write): never an empty headline. */
+export const NEUTRAL_HEADLINE_AR = "نجهّز لك البيانات التي طلبتها كما وصفتها.";
+
 export function guardViewText(v: CustomerMissionView, requestText = ""): CustomerMissionView {
-  const g = (s: string): string => customerSafeText(s);
-  const n = (s: string | null): string | null => (s === null ? null : customerSafeText(s) || null);
-  // DT-20261118-09 S1: a line the MODEL wrote (summary, notes, assumptions, request parts, question options, stage titles) that holds a Latin word the customer did not write is not shown, whether or not it also holds Arabic
-  // (live: an Arabic sentence with «ceo» inside passed, the old rule only caught a text with no Arabic at all); a Latin word the customer wrote themselves is theirs to see
+  // ONE CHOKE POINT (DT-20261118-09 FIX1, QA FAIL on #578: a field routed around the S1/S2 rules leaked): every string of the view goes through `m`, and the view is rebuilt below field by field, so a field that is
+  // not routed is a field the test «every string of the view is clean» finds (tests/dt09-fix1-card.test.ts). A text with no Latin word and no source label of the code's own table is exactly what customerSafeText returns.
+  // 1. an internal phrase becomes its Arabic meaning (customerSafeText); 2. a source label of the code's own table the customer did not write becomes «المصدر»; 3. a Latin word the customer did not write removes the line
+  // (a word the customer wrote is theirs to see). The data cells of the samples and the file names are the customer's data, not messages, and are left as they are.
   const written = writtenLatinWords([requestText]);
   const m = (s: string): string => {
-    const t = String(s ?? "").trim();
-    if (!t) return "";
-    const foreign = foreignLatinIn(t, written);
+    const t0 = String(s ?? "").trim();
+    if (!t0) return "";
+    const t = withoutUnwrittenLabels(t0, [requestText]);
     if (latinWordsOf(t).length === 0) return customerSafeText(t);
-    if (foreign.length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t);
+    if (foreignLatinIn(t, written).length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t);
     return /[A-Za-z0-9]+_[A-Za-z0-9_]+/.test(t) ? customerSafeText(t) : toArabicDigits(t);
   };
-  const nm = (s: string | null): string | null => (s === null ? null : m(s) || null);
+  const nm = (s: string | null | undefined): string | null => (s === null || s === undefined ? null : m(s) || null);
+  const list = (a: ReadonlyArray<string> | undefined): string[] => (a ?? []).map(m).filter((x) => x !== "" && x !== NEUTRAL_CUSTOMER_TEXT_AR);
+  // an answer the customer taps that is only the neutral source word says nothing
+  const answers = (a: ReadonlyArray<string> | undefined): string[] => list(a).filter((x) => x !== SOURCE_LABEL_FALLBACK_AR);
   return {
     ...v,
-    summaryAr: nm(v.summaryAr), notesAr: v.notesAr.map(m).filter(Boolean), requestPartsAr: (v.requestPartsAr ?? []).map(m).filter((x) => x !== "" && x !== NEUTRAL_CUSTOMER_TEXT_AR), assumptionsAr: v.assumptionsAr.map(m).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(m).filter(Boolean),
-    stages: v.stages.map((s) => ({ ...s, titleAr: m(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
-    samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
-    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), priceExplainAr: (v.priceExplainAr ?? []).map(g).filter(Boolean), countLinesAr: (v.countLinesAr ?? []).map(g).filter(Boolean), headlineCountAr: n(v.headlineCountAr ?? null), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
-    steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
-    currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
-    resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),
-    ...(v.limit ? { limit: { ...v.limit, sentenceAr: n(v.limit.sentenceAr), rowsAr: n(v.limit.rowsAr) } } : {}),
+    summaryAr: v.summaryAr !== null && v.summaryAr.trim() !== "" ? m(v.summaryAr) || NEUTRAL_HEADLINE_AR : nm(v.summaryAr), notesAr: list(v.notesAr), requestPartsAr: list(v.requestPartsAr), assumptionsAr: list(v.assumptionsAr), unservedAr: list(v.unservedAr), questionOptionsAr: answers(v.questionOptionsAr),
+    stages: v.stages.map((s) => ({ ...s, titleAr: m(s.titleAr) || "مرحلة", noteAr: nm(s.noteAr) })),
+    samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr), columns: v.samples.columns.map((c) => ({ ...c, titleAr: m(c.titleAr) || c.key })) } : null,
+    fileContentsAr: nm(v.fileContentsAr), priceLineAr: nm(v.priceLineAr), priceFacts: (v.priceFacts ?? []).map((f) => ({ labelAr: m(f.labelAr), valueAr: m(f.valueAr) })), priceNoteAr: nm(v.priceNoteAr), priceExplainAr: list(v.priceExplainAr), countLinesAr: list(v.countLinesAr), headlineCountAr: nm(v.headlineCountAr ?? null),
+    totalRowsAr: m(v.totalRowsAr), ...(v.fileRowsAr !== undefined ? { fileRowsAr: nm(v.fileRowsAr) } : {}), periodAr: nm(v.periodAr), expectedAr: nm(v.expectedAr), progressLineAr: nm(v.progressLineAr), collectLineAr: nm(v.collectLineAr),
+    questionAr: nm(v.questionAr), queueLineAr: nm(v.queueLineAr),
+    steps: v.steps.map((s) => ({ ...s, titleAr: m(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: m(s.countAr) } : {}) })),
+    currentLineAr: m(v.currentLineAr), delayAr: nm(v.delayAr), remainingAr: nm(v.remainingAr), closePageAr: nm(v.closePageAr),
+    resultLinesAr: list(v.resultLinesAr), resultSummaryAr: nm(v.resultSummaryAr), endLineAr: nm(v.endLineAr),
+    ...(v.limit ? { limit: { ...v.limit, sentenceAr: nm(v.limit.sentenceAr), rowsAr: nm(v.limit.rowsAr) } } : {}),
+    // the plan editor: the stage and column titles and the labels are the model's words; the filter lines are code's, built from what the customer gave (their account, their words), so only the source-label rule applies to them
+    edit: v.edit ? { ...v.edit, stages: v.edit.stages.map((s) => ({
+      ...s, title_ar: m(s.title_ar) || "مرحلة", ...(s.per_parent_label_ar !== undefined ? { per_parent_label_ar: m(s.per_parent_label_ar) } : {}), ...(s.pages_label_ar !== undefined ? { pages_label_ar: m(s.pages_label_ar) } : {}),
+      ...(s.replies ? { replies: { ...s.replies, label_ar: m(s.replies.label_ar) } } : {}),
+      columns: s.columns.map((c) => ({ ...c, title_ar: m(c.title_ar) || c.key })),
+      filters: s.filters.map((f) => ({ ...f, label_ar: withoutUnwrittenLabels(f.label_ar, [requestText]), line_ar: withoutUnwrittenLabels(f.line_ar, [requestText]) })),
+    })) } : null,
   };
 }
 

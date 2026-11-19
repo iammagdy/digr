@@ -1,4 +1,8 @@
+import { OWN_SOURCE_LABELS } from "./platformLabels";
 import { normalizeText } from "./relevance";
+
+/** What a customer reads in place of the name of a source they did not write. */
+export const SOURCE_LABEL_FALLBACK_AR = "المصدر";
 
 /**
  * WHAT THE CUSTOMER WROTE DECIDES WHAT A SOURCE OR A FOREIGN WORD MAY BE SHOWN (DT-20261118-09, BUG HUNTER RCA3 S1 and S2). A line of the card that holds a Latin word (live: «ceo») or the name of a source the customer never
@@ -36,4 +40,11 @@ export function replaceLabel(text: string, label: string, replacement: string): 
     const c = /ال$/.test(clitic) ? clitic.slice(0, -2) : /لل$/.test(clitic) ? clitic.slice(0, -1) : clitic;
     return `${c}${replacement}`.replace(/لال/, "لل");
   });
+}
+
+/** The text with every label of the code's own table the customer did not write replaced by «المصدر»; a label the customer wrote stays. The one place this rule lives (planner and customer view). */
+export function withoutUnwrittenLabels(text: string, said: ReadonlyArray<string>): string {
+  let t = text;
+  for (const l of OWN_SOURCE_LABELS) if (!labelWrittenBy(l, said)) t = replaceLabel(t, l, SOURCE_LABEL_FALLBACK_AR);
+  return t;
 }

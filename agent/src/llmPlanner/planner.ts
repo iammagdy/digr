@@ -7,7 +7,9 @@ import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
-import { foreignLatinIn, labelWrittenBy, replaceLabel, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
+import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, withoutUnwrittenLabels, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
+import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
+export { PLATFORM_AR };
 import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
@@ -118,13 +120,8 @@ const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link"
 /** The card describes what is collected, never the person (live, 16 Nov 2026: «الطالب يريد قائمة بأربعين مطعمًا…»): a leading «الطالب/العميل يريد» becomes «المطلوب». */
 export const impersonalAr = (t: string): string => t.replace(/^\s*(?:ال)?(?:طالب|عميل|باحث)(?:ة)?\s+(?:ي|ت)(?:ريد|طلب|حتاج)\s+(?:أن\s+)?/u, "المطلوب: ");
 
-/** The platforms' Arabic names for the code-written sentences (a platform not listed is «المنصة»). */
-export const PLATFORM_AR: Record<string, string> = {
-  x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب", reddit: "ريديت", linkedin: "لينكدإن", threads: "ثريدز", telegram: "تليجرام", google: "خرائط جوجل", pinterest: "بنترست",
-  tripadvisor: "تريب أدفايزر", trustpilot: "ترست بايلوت", yelp: "يلب", "app-store": "متجر آبل", "google-play": "متجر جوجل بلاي", amazon: "أمازون", web: "الويب", bing: "الويب", rumble: "رمبل", spotify: "سبوتيفاي", github: "جيت هب", imdb: "آي إم دي بي",
-};
 /** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */
-export const PLATFORM_LABEL_FALLBACK_AR = "المصدر";
+export const PLATFORM_LABEL_FALLBACK_AR = SOURCE_LABEL_FALLBACK_AR;
 /** The table's label for a platform, with the step's capability: Google is Maps only for places and their reviews (live, 16 Nov 2026: a news request's card read «خرائط جوجل»), news read from the web are «مواقع الأخبار». */
 const tableLabelOf = (p: string, capability?: string): string | null => {
   const cap = String(capability ?? "");
@@ -132,8 +129,6 @@ const tableLabelOf = (p: string, capability?: string): string | null => {
   if (p === "google" && cap !== "") return /maps|place|reviews/.test(cap) ? "خرائط جوجل" : "بحث جوجل";
   return PLATFORM_AR[p] ?? null;
 };
-/** Every label the code's own table can write: a text of the model that names one the customer did not write is not shown (no new list: the table is the code's own). */
-const OWN_LABELS: ReadonlyArray<string> = [...new Set([...Object.values(PLATFORM_AR), "أخبار جوجل", "مواقع الأخبار", "بحث جوجل", "خرائط جوجل"])].sort((a, b) => b.split(" ").length - a.split(" ").length);
 /** The label of a platform, only when the customer wrote it in their own words (`said`); else «المصدر». A platform the table does not know stays «المنصة». */
 export const platformAr = (p: string, capability: string | undefined, said: ReadonlyArray<string>): string => {
   const label = tableLabelOf(p, capability);
@@ -149,7 +144,7 @@ export function customerSafe(text: string | null | undefined, maxChars = 400, sa
   let t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
   if (!t) return null;
   // a label of the code's own table the customer did not write becomes «المصدر» inside the model's sentence (the rest of the sentence is still the model's)
-  if (said !== undefined) for (const l of OWN_LABELS) if (!labelWrittenBy(l, said)) t = replaceLabel(t, l, PLATFORM_LABEL_FALLBACK_AR);
+  if (said !== undefined) t = withoutUnwrittenLabels(t, said);
   if (said !== undefined && foreignLatinIn(t, writtenLatinWords(said)).length === 0 && /[A-Za-z]{2,}/.test(t)) {
     return checkCustomerText(t.replace(/[A-Za-z]{2,}/g, "ـ"), { maxChars }).issues.length === 0 ? t : null;
   }
@@ -531,8 +526,10 @@ export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>, said: Reado
   if (!first) return [];
   const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform, s.capability, said)))].join(" و")];
   const topic = String(first.topic ?? "").trim();
-  // the topic is shown when it holds no Latin word the customer did not write and names no source they did not name (DT-20261118-09 S1, S2)
-  if (topic && topic.length <= 60 && customerSafe(topic, 60, said) !== null) parts.push(topic);
+  // the topic is shown as the customer-text check returns it: no Latin word the customer did not write, and a source they did not name replaced by «المصدر» (DT-20261118-09 S1, S2; FIX1: never the model's own text);
+  // a topic that is only that neutral word says nothing the first part has not said
+  const shown = topic && topic.length <= 60 ? customerSafe(topic, 60, said) : null;
+  if (shown !== null && shown !== PLATFORM_LABEL_FALLBACK_AR) parts.push(shown);
   const from = dayAr(first.period?.from), to = dayAr(first.period?.to);
   if (from && to) parts.push(`${from.text} – ${to.text} ${toArabicDigits(to.year)}`);
   return parts.filter(Boolean);
