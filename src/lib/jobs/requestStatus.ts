@@ -50,6 +50,18 @@ export function resolveRequestKind(input: {
   return "running";
 }
 
+/**
+ * THE JOB AS A SCREEN READS IT, when the job belongs to a mission (DT-20261119-06 PART B, D-0117). The job's `delivered_units` is the count the settlement CHARGED (the billable rows: a person with none of the asked contacts is delivered but not
+ * charged), and a mission delivered with nothing to charge releases its job (`failed`). Both are money facts, not delivery facts: the delivery is the mission's own count and status (precedent: walletLine.ts jobFactsForWallet).
+ * A mission with no recorded count, or one that did not complete with rows, leaves the job as it is.
+ */
+export function jobViewWithMission(job: { status?: unknown; delivered_units?: unknown }, mission: { status?: unknown; delivered_units?: unknown } | null | undefined): { status: string; delivered: number } {
+  const jobDelivered = Number(job.delivered_units) || 0;
+  const missionDelivered = mission && typeof mission.delivered_units === "number" && Number.isFinite(mission.delivered_units) ? mission.delivered_units : null;
+  if (missionDelivered === null) return { status: String(job.status ?? ""), delivered: jobDelivered };
+  return { status: String(mission?.status) === "completed" && missionDelivered > 0 ? "completed" : String(job.status ?? ""), delivered: missionDelivered };
+}
+
 /** "تم تسليم ٤ من ٥ سجلات" for a partial run. */
 export function partialDeliveryText(delivered: number, requested: number): string {
   return `${deliveredOfRequestedAr(delivered, requested)}؛ الخصم يقتصر على السجلات المسلّمة المطابقة.`;

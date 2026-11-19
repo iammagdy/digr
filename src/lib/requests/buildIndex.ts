@@ -3,7 +3,7 @@ import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../agentMission/addonMarker
 import { WAITING_STATUSES, expireWaitingMissions, isExpiredMission, EXPIRED_SENTENCE_AR } from "./expiry";
 import { failStuckPlanning, openMissionView } from "../agentMission/openMissions";
 import { customerSafeText } from "../agentMission/text";
-import { resolveRequestKind } from "../jobs/requestStatus";
+import { jobViewWithMission, resolveRequestKind } from "../jobs/requestStatus";
 import { customerFacingConversationTitle } from "../customerFacingConversationTitle";
 import { getJobIdForQuote } from "../md5";
 import { matchesSearch, searchTerms } from "./search";
@@ -102,7 +102,7 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
 
   const [jobs, missions] = await Promise.all([
     readAll((a, b) => client.from("jobs").select("id,status,delivered_units,target_volume_max,created_at").eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
-    readAll((a, b) => client.from(MISSION_TABLE).select(`id,status,job_id,request_text,created_at,lease_until,summary_ar,error,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
+    readAll((a, b) => client.from(MISSION_TABLE).select(`id,status,job_id,request_text,created_at,lease_until,summary_ar,error,delivered_units,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
   ]);
 
   const missionOfJob = new Map<string, any>();
@@ -111,9 +111,10 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
 
   const rows: Array<IndexRow & { text: string }> = [];
   for (const j of jobs) {
-    const delivered = j.delivered_units ?? 0;
-    const tab = tabOfKind(resolveRequestKind({ status: j.status, delivered, requested: typeof j.target_volume_max === "number" ? j.target_volume_max : undefined }));
     const mission = missionOfJob.get(String(j.id));
+    // a job of a mission is read through the MISSION's delivered count and status (the job's count is what was charged, and a delivery with nothing to charge releases the job: jobViewWithMission)
+    const view = jobViewWithMission(j, mission);
+    const tab = tabOfKind(resolveRequestKind({ status: view.status, delivered: view.delivered, requested: typeof j.target_volume_max === "number" ? j.target_volume_max : undefined }));
     // AUDIT D4: the job of a review or edit is NOT a research request: it was listed with «وصل ١٠٠ من ١٠٠» (points read as items) and opening it found no mission card. Its state and charge are on the file's own page («حالة طلباتك على هذا الملف») and in the wallet.
     if (mission && hasAddonMarker(mission)) continue;
     const title = mission ? oneLine(mission.request_text, 200) : null;
