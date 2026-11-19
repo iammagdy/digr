@@ -33,7 +33,7 @@ A question you or the system asked the customer, and their answer, complete the 
   - a priority with a fallback («من حساب كذا، ولو مش كفاية وسّع على ...»): that is ONE step, never two. The customer's number is the TOTAL for everything they asked of the same kind. Keep the named source as the step's source, write the allowed wider scope inside "topic" (for example "الشائعات الصحية؛ وإن لم يكفِ حساب الوزارة يُوسَّع إلى السعودية عمومًا") and in assumptions_ar. The tool step then orders the account's searches first and the wider ones after, until the number is reached. Never repeat the customer's number in each of several steps that collect the same kind of items for the same request: split it, or use one step.
   - an answer that is a new question or a doubt about the plan is not a plan: use decision "ask" and answer in question_ar before asking what is still open.
 
-When to ask: ONLY when the request cannot be carried out without the answer (you cannot tell what kind of items to collect, or from where). Missing count, period or order is NOT a reason to ask: choose a sensible default and state it in assumptions_ar. Ask in Egyptian-friendly Arabic, short, with 2 to 4 options when possible.
+When to ask: ONLY when the request cannot be carried out without the answer, and then you MUST list in «missing» which essential input has no value anywhere in the customer's messages (items: what kind of things; place: where, when the request needs one; source: which account, page or link; platform). A question about sensitivity, privacy, the format of the data, dates, which contacts, or «how do you want to continue» is NEVER a reason to ask: decide, state the choice in assumptions_ar, and the customer changes it on the plan card. When the customer asked for the people of the companies, the kind of things (the companies) and the people are known: only the place may be missing. Missing count, period or order is NOT a reason to ask: choose a sensible default and state it in assumptions_ar. Ask in Egyptian-friendly Arabic, short, with 2 to 4 options when possible.
 
 Write every *_ar field in clear Arabic for the customer, with NO Latin letters and no handles or links (say «حساب وزارة الصحة السعودية», not the handle) and digits in Arabic-Indic form. understanding_ar restates the whole request as you understood it in one or two sentences (what, from where, about what, how many, which period), as a description of what will be collected (for example «قائمة بأربعين مطعمًا في المعادي من خرائط جوجل مع التقييم ورقم الهاتف»), never about the person («الطالب يريد…», «العميل يريد…»). Never mention providers, tools, APIs or prices.`;
 
@@ -41,6 +41,7 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     decision: { type: "string", enum: ["plan", "ask", "cannot"] },
+    missing: { type: "array", items: { type: "string", enum: ["items", "place", "source", "platform"] }, description: "ONLY for decision ask: the essential inputs that have NO value anywhere in the customer's messages and cannot be defaulted: items (what kind of things to collect), place (where, when the request needs one), source (which account, page or link), platform. Empty for plan and cannot. A decision ask with this list empty is refused by code." },
     understanding_ar: { type: "string" },
     question_ar: { type: "string" },
     options_ar: { type: "array", items: { type: "string" } },
@@ -92,7 +93,7 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
   },
   // accepts_available is REQUIRED on purpose: the structured-output compiler refuses a schema with too many OPTIONAL properties («Schema is too complex», live 16 Nov 2026: adding it as optional made every understanding call fail)
   // people_of_companies is REQUIRED too, with every property of it required (DT-20261118-08): no optional property is added (the size limit above); code acts on the answer even when no people step is written
-  required: ["decision", "understanding_ar", "steps", "accepts_available", "people_of_companies"],
+  required: ["decision", "missing", "understanding_ar", "steps", "accepts_available", "people_of_companies"],
 };
 
 export const TOOL_CHOICE_SYSTEM = `You choose the data tool for ONE step of a customer's collection plan and write its exact inputs. You are given the step (what the customer wants, already understood), the candidate tools from the catalog (each with what it does, every input with its type, limits and note, how it pages, what an item carries, its measured reliability and price), and, for a child step, sample items of its parent step.
@@ -169,3 +170,11 @@ export const SCOUT_SCHEMA: Record<string, unknown> = {
   },
   required: ["message_ar", "options_ar"],
 };
+
+/** The same schema WITHOUT the «ask» decision: asked once more when the model's «ask» named nothing missing (DT-20261119-03: asking is a permission the answer must earn). */
+export const UNDERSTAND_SCHEMA_NO_ASK: Record<string, unknown> = {
+  ...UNDERSTAND_SCHEMA,
+  properties: { ...(UNDERSTAND_SCHEMA.properties as Record<string, unknown>), decision: { type: "string", enum: ["plan", "cannot"] } },
+};
+/** What the model is told when its «ask» named no missing essential input. */
+export const DECIDE_IT_AR_EN = "Your previous answer asked the customer a question but listed nothing in `missing`: the request is understood, so decide it. Use decision plan (or cannot when no tool of the index can serve it). State every choice or default in assumptions_ar; the customer changes it on the plan card. Put any detail of the data (a date, a format, a contact kind) in the plan's columns or assumptions, never in a question.";

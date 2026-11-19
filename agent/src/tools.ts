@@ -109,6 +109,8 @@ export const GIVE_UP_REFUSALS_MAX = 2;
 export const PEOPLE_SEND_BACKS_MAX = 3;
 
 export interface ToolContext {
+  /** The planner ran for this mission (it understood the request, or could not be read, or kept asking): the customer is NOT asked anything by this path (DT-20261119-03 R2). */
+  plannerRan?: boolean;
   /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
   peopleOfCompanies?: boolean;
   /** The people step the planner understood, with its own title and count (DT-20261118-05): the plan check treats it as a step the customer asked for, whatever the wording. */
@@ -633,6 +635,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         if (state.question !== null) return err("you already asked your one question");
+        // DT-20261119-03 R2: the planner already understood this request (or ran and could not be read): asking is a permission its own answer grants (a missing place, a missing kind of items), and it granted none. No excuse (privacy, format, dates, «how to continue») is a reason; the word-pattern guard below can never list them all
+        if (ctx.understoodPeople !== undefined || ctx.plannerRan === true) return err("the planner already understood this request completely, so the customer is not asked anything: decide, write every choice or default in assumptions_ar, put any date, format or contact detail in a column of the plan, and end with propose_plan (or finish when no source can serve it)");
         const checked = checkCustomerText(a.question_ar, { maxChars: 300 });
         if (checked.issues.length) return err(`rephrase the question: ${checked.issues.join("; ")}`);
         const options: string[] = [];

@@ -14,7 +14,7 @@ import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAs
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
-import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
  * THE LLM-FIRST PLANNER (owner direction, 15 Nov 2026: «the model must understand the request and call the catalog's tools the way the customer wants; no word rules, no filters»).
@@ -76,7 +76,7 @@ export interface UnderstoodStep {
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
 }
 export interface Understanding {
-  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; steps: UnderstoodStep[];
+  decision: "plan" | "ask" | "cannot"; understanding_ar: string; /** the essential inputs an «ask» says are missing (DT-20261119-03); only the valid kinds */ missing?: string[]; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; steps: UnderstoodStep[];
 }
 
 export type LlmPlanResult =
@@ -183,6 +183,18 @@ export function understandPrompt(input: LlmPlannerInput, today: string): string 
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,30}$/;
 
+/** The essential inputs an «ask» may name (the schema's enum). */
+export const MISSING_KINDS: ReadonlyArray<string> = ["items", "place", "source", "platform"];
+/**
+ * ASKING IS A PERMISSION THE ANSWER MUST EARN (DT-20261119-03). The question of an «ask» is shown only when it names an essential input that has no value anywhere in the customer's words (`missing`), after one cross-check against
+ * the model's OWN answer: when the people of the companies were asked, the kind of things (the companies) and the platform are known, so only the place can still be missing. Nothing here reads the question's words.
+ */
+export function askIsEarned(u: Pick<Understanding, "decision" | "missing" | "people_of_companies">): boolean {
+  if (u.decision !== "ask") return true;
+  const kinds = u.missing ?? []; // already reduced to the closed set by checkUnderstanding
+  const standing = u.people_of_companies?.asked === true ? kinds.filter((k) => k === "place") : kinds;
+  return standing.length > 0;
+}
 /** What code checks in the model's understanding: catalog names, keys, parents, numbers. The error text goes back to the model once. */
 export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: AccountAccess | null): { ok: true; value: Understanding } | { ok: false; error: string } {
   if (!isObj(u)) return { ok: false, error: "the answer is not an object" };
@@ -192,7 +204,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
   if (decision === "ask") {
     const q = str(u.question_ar);
     if (!q) return { ok: false, error: "decision ask needs question_ar" };
-    return { ok: true, value: { ...base, question_ar: q, options_ar: Array.isArray(u.options_ar) ? u.options_ar.map(str).filter(Boolean).slice(0, 4) : [], steps: [] } };
+    return { ok: true, value: { ...base, missing: Array.isArray(u.missing) ? [...new Set(u.missing.map(str).filter((k) => MISSING_KINDS.includes(k)))] : [], question_ar: q, options_ar: Array.isArray(u.options_ar) ? u.options_ar.map(str).filter(Boolean).slice(0, 4) : [], steps: [] } };
   }
   if (decision === "cannot") return { ok: true, value: { ...base, cannot_ar: str(u.cannot_ar) || understanding_ar, steps: [] } };
   const raw = Array.isArray(u.steps) ? u.steps : [];
@@ -440,18 +452,31 @@ function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number; refused
 }
 
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
-export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string }> {
+export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string; understanding?: Understanding }> {
   const ask = asker(deps, cost);
   const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
   const userPrompt = understandPrompt(input, deps.today);
   let checked: ReturnType<typeof checkUnderstanding> | null = null;
+  // an «ask» that names nothing missing is never shown: the second attempt has a schema with no «ask» (DT-20261119-03)
+  let refusedAsk: Understanding | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const answer = await ask(system, attempt === 0 ? userPrompt : `${userPrompt}\n\nYour previous answer could not be used: ${checked && !checked.ok ? checked.error : "no answer"}. Answer again using only names from the catalog index.`, tool, 4000);
+    const noAsk = attempt === 1 && refusedAsk !== null;
+    const retryText = noAsk ? `${userPrompt}\n\n${DECIDE_IT_AR_EN}` : `${userPrompt}\n\nYour previous answer could not be used: ${checked && !checked.ok ? checked.error : "no answer"}. Answer again using only names from the catalog index.`;
+    const answer = await ask(system, attempt === 0 ? userPrompt : retryText, noAsk ? { ...tool, schema: UNDERSTAND_SCHEMA_NO_ASK } : tool, 4000);
     checked = answer === null ? { ok: false, error: "no answer" } : checkUnderstanding(answer, deps.catalog, deps.access);
+    if (checked.ok && !askIsEarned(checked.value)) {
+      refusedAsk = checked.value;
+      deps.log?.(`llm_planner_ask_refused missing=${(checked.value.missing ?? []).join(",") || "none"}`);
+      checked = { ok: false, error: "ask_refused" };
+      continue;
+    }
     if (checked.ok) break;
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
+  // the model asked again although it had no «ask» to give: the customer is NOT asked; the earlier path runs with this understanding (and may not ask either)
+  if (checked && !checked.ok && refusedAsk !== null && checked.error === "ask_refused") return { ok: false, error: "ask_refused", understanding: refusedAsk };
+  if (checked && !checked.ok && refusedAsk !== null && cost.refused !== true) return { ok: false, error: "ask_refused", understanding: refusedAsk };
   if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
   if (checked?.ok) return { ok: true, value: withCheckedPerCompany(checked.value, customerSaidOf(input)) };
   return checked ?? { ok: false, error: "no answer" };
@@ -540,6 +565,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   const ask = asker(deps, cost);
   const checked = await understandRequest(input, deps, cost);
   let costUsd = cost.usd;
+  if (!checked.ok && checked.error === "ask_refused") return { kind: "cannot", reason_ar: "", understanding: checked.understanding ?? null, costUsd, detail: "ask_refused" };
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   const said = customerSaidOf(input);
