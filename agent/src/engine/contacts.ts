@@ -24,8 +24,7 @@ import {
   type FoundContact,
   type PersonFacts,
 } from "../../../src/lib/agentMission/contactFinders";
-import { B2B_NOT_SEARCHED_AR } from "../../../src/lib/agentMission/stage3/b2bCompile";
-import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
+import { B2B_NOT_SEARCHED_AR, NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
 import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
@@ -598,11 +597,12 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             out.withheld.personal_email += 1;
             if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
           }
-          const office = !hit ? detail.officeLine : null;
-          if (office && !keptOffice) keptOffice = { ...office, endpointId: finder.id, callId: a.callId };
-          const hasAnswer = !!(hit || keptNow || office);
-          answeredEmpty ||= !hasAnswer;
-          note(finder.id, hasAnswer ? "value" : "empty", hit?.value ?? office?.value);
+          if (detail.officeLine && !keptOffice) keptOffice = { ...detail.officeLine, endpointId: finder.id, callId: a.callId };
+          const hasAnswer = !!(hit || keptNow || detail.officeLine);
+          const truncatedMiss = !hasAnswer && detail.scanTruncated;
+          if (truncatedMiss) unfinished = true;
+          answeredEmpty ||= !hasAnswer && !truncatedMiss;
+          note(finder.id, hasAnswer ? "value" : truncatedMiss ? "not_tried" : "empty", hit?.value ?? detail.officeLine?.value ?? (truncatedMiss ? "scan_truncated" : undefined));
           if (!hit) continue;
           origin = { endpointId: finder.id, callId: a.callId };
           value = hit.value;

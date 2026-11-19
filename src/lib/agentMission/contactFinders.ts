@@ -497,7 +497,7 @@ function phoneDetailIn(page: unknown): ContactDetail {
       const faxKey = fax || /fax/i.test(key);
       const phoneKey = PHONE_SCAN_KEY.test(key);
       const container = isPhoneContainerKey(key);
-      const recognised = PHONE_KEYS.test(key) || (path.container && PHONE_ITEM_KEYS.test(key)) ||
+      const recognised = PHONE_KEYS.test(key) || ((path.container || office) && PHONE_ITEM_KEYS.test(key)) ||
         (officeKey && (phoneKey || faxKey || (nonPersonalKey(key) && /(^|_)(numbers?|lines?)(_|$)/.test(key))));
       walk(value, depth + 1, { container: path.container || container, recognised, phoneKey: path.phoneKey || phoneKey,
         office: officeKey, fax: faxKey, rank: label ? phoneRank(label) : path.rank }, scan);

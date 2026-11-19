@@ -233,3 +233,57 @@ it("L1 stores ranked e-mail alternates without changing the primary chain expect
 it.each(["رقم الشركة", "فاكس", "إيميل مشترك", "إيميل شخصي", "غير متوفر"])("customer contact label %s passes the existing text guard", (label) => {
   expect(checkCustomerText(label).issues).toEqual([]);
 });
+
+it("FIX1 P0: same-response fax beside mobile stays in status; fax-only stays in cell with type «فاكس»", async () => {
+  const both = await world([phone({ validators: [V] })], (id) => id === A.id ? { fax_number: office, mobile_phone: mobile } : verified);
+  expect((await both.run()).filled.phone).toBe(1);
+  expect(both.row()).toMatchObject({ phone: mobile, phone_type: "شخصي", phone_status: `موثّق — فاكس: ${office}`, _call_phone: "call_1" });
+  expect(both.ids()).toEqual([A.id, V.id]);
+
+  const faxOnly = await world([phone({ validators: [V] })], () => ({ fax_number: office }));
+  expect((await faxOnly.run()).filled.phone).toBe(1);
+  expect(faxOnly.row()).toMatchObject({ phone: office, phone_type: "فاكس", phone_status: "غير موثّق", _call_phone: "call_1" });
+  expect(faxOnly.ids()).toEqual([A.id]);
+});
+
+it("FIX1 P0: nested {office:{number}} counts as office context without promoting registration, year, id, or bare number", async () => {
+  const nested = { office: { number: "0223456789" } };
+  expect(foundContactIn("phone", nested)).toBeNull();
+  const w = await world([phone({ validators: [V] })], () => nested);
+  expect((await w.run()).filled.phone).toBe(1);
+  expect(w.row()).toMatchObject({ phone: "0223456789", phone_type: "رقم الشركة", phone_status: "غير موثّق", _call_phone: "call_1" });
+  expect(w.ids()).toEqual([A.id]);
+
+  for (const nonPhone of [
+    { office: { registration_number: "0223456789", year: "2024", id: "0223456789" } },
+    { number: "0223456789" },
+  ]) {
+    expect(foundContactIn("phone", nonPhone)).toBeNull();
+    const ctrl = await world([phone()], () => nonPhone);
+    expect((await ctrl.run()).filled.phone).toBe(0);
+    expect(ctrl.row().phone).toBe("غير متوفر");
+  }
+});
+
+it("FIX1 P1: scan-truncated miss stays incomplete (never «غير متوفر»), while usable hits and non-truncated empties keep their verdicts", async () => {
+  const truncatedMiss = { extras: Array.from({ length: 41 }, () => "x"), mobile_tail: mobile };
+  for (const log of [false, true]) {
+    const w = await world([phone()], () => truncatedMiss, { log });
+    expect((await w.run()).filled.phone).toBe(0);
+    expect(w.row().phone).toBe("");
+    expect(await w.file("contacts/rejected_people_phone.json")).toEqual({ "finder.a|call_1": { rejected: 0, number_typed: 0, scan_truncated: 1 } });
+    expect((await w.file("contacts/attempts_people_phone.json")).outcomes).toMatchObject({ "finder.a|not_tried:scan_truncated": 1 });
+    if (log) {
+      const ops = b2bContactCells(w.plan, { people: w.items.acceptedRows("people") }, w.attempts!);
+      expect(ops[0].cells.phone).toBe("لم يكتمل البحث");
+    }
+  }
+
+  const withHit = await world([phone()], () => ({ mobile_phone: mobile, extras: Array.from({ length: 41 }, () => "x") }));
+  expect((await withHit.run()).filled.phone).toBe(1);
+  expect(withHit.row().phone).toBe(mobile);
+
+  const empty = await world([phone()], () => ({}));
+  expect((await empty.run()).filled.phone).toBe(0);
+  expect(empty.row().phone).toBe("غير متوفر");
+});
