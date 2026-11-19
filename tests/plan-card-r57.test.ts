@@ -39,7 +39,9 @@ describe("the card's price explanation", () => {
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
     expect(html).toContain('data-testid="agent-price-explain"');
     expect(html).toContain("هامش أمان ٤٩ نقطة");
-    expect(html).toContain("٢٠ من «شركات مستحضرات التجميل في مصر من خرائط جوجل»");
+    // DT-20261118-09 FIX1: the stored stage title names a source («من خرائط جوجل») the customer never wrote (no request text here): the card says «المصدر»
+    expect(html).toContain("٢٠ من «شركات مستحضرات التجميل في مصر من المصدر»");
+    expect(html).not.toContain("خرائط جوجل");
   });
 });
 

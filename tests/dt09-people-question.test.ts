@@ -79,8 +79,8 @@ describe("item 3: the refusal tells the planner what to do next, from the catalo
     expect(after.ok).toBe(false);
     expect(after.error).toMatch(/Deliver every person/);
     h.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 0, key: "k" }]);
-    const empty: any = await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS });
-    expect(empty.error).toMatch(/no people source has given a person yet/);
+    // (a people source that ANSWERED with nobody lets the honest question through: FIX1 P1-3, tested below)
+    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(true);
   });
 });
 
@@ -115,6 +115,7 @@ describe("F2: people sources that failed, or were never tried, are never reporte
 });
 
 describe("F2 end to end: the planner understood the people, the old path ends with finish and no people tool answered", () => {
+  const COMPANIES_ENDPOINT = "tomba.companies.search.reveal";
   const COMPANIES_CAP = [...capabilitiesOf(catalog, NOT_ADMIN, "companies")].sort().find((c) => !PEOPLE_OF_COMPANY_CAPABILITIES.has(c))!;
   const understanding = (asked: boolean) => ({
     decision: "plan", understanding_ar: "شركتان مقاولات في الرياض.", accepts_available: false,
@@ -129,7 +130,10 @@ describe("F2 end to end: the planner understood the people, the old path ends wi
     const model: PlannerModel = async ({ tool }) => (tool.name === UNDERSTAND_TOOL ? { input: JSON.parse(JSON.stringify(understanding(asked))), costUsd: 0.001 } : null);
     const call = vi.fn(async (_o: TregCallOptions): Promise<TregCallResult> => { throw new Error("no paid call in this test"); });
     store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: REQUEST }));
-    const driver = createFakeDriver([{ tool: "finish", args: { outcome: "cannot_serve", kind: "unsupported", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة ولم أجد مصدرًا." } }]);
+    // the companies search of this planning answered with rows (FIX1 P1-1: the people sentence needs something real found for the people to hang on)
+    store.calls.push({ id: "call_seed1", mission_id: "msn_x", phase: "planning", endpoint_id: COMPANIES_ENDPOINT, params_digest: {}, status: "ok", refused_reason: null, http_status: 200, rows_returned: 2, cost_usd: 0.0002, estimate_usd: 0.0002, provider_cost_id: null, storage_path: null, duration_ms: 10 });
+    // a planning that holds real rows is sent back twice before it may give up (owner decision 2026-10-29): the third finish ends it
+    const driver = createFakeDriver(Array.from({ length: 3 }, () => ({ tool: "finish", args: { outcome: "cannot_serve", kind: "unsupported", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة ولم أجد مصدرًا." } })));
     const deps: RunnerDeps = { store, client: money.client, catalog, driver, recorder: rec.recorder, commit: rec.commit, call, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN, plannerModel: model, notify: async (n) => { notices.push({ kind: n.kind, facts: n.facts as unknown as Record<string, unknown> }); } };
     await runPlanning(deps, store.missions.get("msn_x")!);
     return { m: store.missions.get("msn_x")!, notices, money };
@@ -145,5 +149,42 @@ describe("F2 end to end: the planner understood the people, the old path ends wi
     const r = await run(false);
     expect(r.m.summary_ar).not.toBe(PEOPLE_UNAVAILABLE_AR);
     expect(r.m.error ?? "").not.toMatch(/people_sources_/);
+  });
+});
+
+describe("FIX1 P1-1: the people sentence is for a failure to reach the PEOPLE; a companies search that found nothing keeps its own class", () => {
+  const PEOPLE = new Set(["people.source.a"]);
+  const call = (endpoint_id: string, status: string, rows = 0) => ({ phase: "planning", endpoint_id, status, rows_returned: rows, refused_reason: null });
+  const base = { claim: "empty" as const, endedWithoutAnswer: false, peopleAsked: true, peopleEndpointIds: PEOPLE };
+  it("the only call is a companies search that came back EMPTY, or failed, or there is no call: main's class and sentence (never «people_sources_»)", () => {
+    expect(classifyNoCardEnd({ ...base, calls: [call("companies.source", "empty")] })).toEqual({ cls: "empty_source", reason: "sample_empty" });
+    expect(classifyNoCardEnd({ ...base, claim: "unsupported", calls: [call("companies.source", "failed")] }).reason).not.toMatch(/^people_sources_/);
+    expect(classifyNoCardEnd({ ...base, claim: "unsupported", calls: [] }).reason).not.toMatch(/^people_sources_/);
+  });
+  it("the companies answered with rows and no people call answered: the people sentence (the control)", () => {
+    expect(classifyNoCardEnd({ ...base, claim: "unsupported", calls: [call("companies.source", "ok", 2)] }).reason).toBe("people_sources_not_tried");
+  });
+});
+
+describe("FIX1 P1-3: once a people source was tried and ANSWERED with nobody, the honest question is allowed; before that, or after only failures, it is refused", () => {
+  const h = () => { const x = makeHarness({ phase: "planning", mission: { request_text: REQUEST } }); (x.ctx as { understoodPeople?: typeof UNDERSTOOD }).understoodPeople = UNDERSTOOD; return x; };
+  it("the guard: answeredEmpty lets the question through; gaveRows still refuses; neither refuses with the next-step sentence", () => {
+    expect(contactVerificationQuestionIssue(REQUEST, QUESTION, OPTIONS, { gaveRows: false, answeredEmpty: true, sourceIds: ["people.source.a"] })).toBeNull();
+    expect(contactVerificationQuestionIssue(REQUEST, QUESTION, OPTIONS, { gaveRows: true, answeredEmpty: true, sourceIds: ["people.source.a"] })).toMatch(/Deliver every person/);
+    expect(contactVerificationQuestionIssue(REQUEST, QUESTION, OPTIONS, { gaveRows: false, answeredEmpty: false, sourceIds: ["people.source.a"] })).toMatch(/no people source has given a person yet/);
+  });
+  it("through ask_question: not tried → refused; tried and failed (no sample recorded) → refused; answered empty → the question is stored for the customer; a person given → refused again", async () => {
+    const x = h();
+    const ask = buildTools(x.ctx).find((t) => t.name === "ask_question")!;
+    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
+    x.ctx.state.tried.add(PEOPLE_IDS[0]);
+    expect(((await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
+    x.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 0, key: "k" }]);
+    const empty = (await ask.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean };
+    expect(empty.ok).toBe(true);
+    expect(x.ctx.state.question).toBe(QUESTION);
+    const y = h();
+    y.ctx.state.samples.set(PEOPLE_IDS[0], [{ rows: 3, key: "k" }]);
+    expect(((await buildTools(y.ctx).find((t) => t.name === "ask_question")!.handler({ question_ar: QUESTION, options_ar: OPTIONS })) as { ok: boolean }).ok).toBe(false);
   });
 });

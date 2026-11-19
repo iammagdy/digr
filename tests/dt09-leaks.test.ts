@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { loadCustomerMission } from "../src/lib/agentMission/customerActions";
-import { customerMissionView, guardViewText, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
+import { NEUTRAL_HEADLINE_AR, customerMissionView, guardViewText, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { customerPlanView, validateAndPricePlan, type PlanLookup } from "../src/lib/agentMission/plan";
 import { PLATFORM_LABEL_FALLBACK_AR, customerSafe, platformAr, planWithLlm, requestPartsAr, scoutFallbackAr, type LlmPlannerDeps, type PlannerModel } from "../agent/src/llmPlanner/planner";
 
@@ -21,7 +21,7 @@ describe("S1: a line of the card that holds a Latin word the customer did not wr
   };
   it("summary, notes, assumptions, request parts and a stage title lose the line with the foreign Latin word; the lines without one stay", () => {
     const v = viewOf(plan, "عايز شركتين مقاولات في الرياض");
-    expect(v.summaryAr).toBeNull();
+    expect(v.summaryAr).toBe(NEUTRAL_HEADLINE_AR);
     expect(v.notesAr).toEqual(["نجمع بالعدد الذي طلبته."]);
     expect(v.requestPartsAr).toEqual(["شركات", "الرياض"]);
     expect(v.assumptionsAr).toEqual(["اعتمدنا الأقرب، وعرضنا سبع شركات."]);
@@ -166,5 +166,12 @@ describe("item 7: the card's headline does not promise managers only when the pe
     const r = validateAndPricePlan({ summary_ar: "شركتان مقاولات في الرياض مع ثلاثة من مديريها.", stages: [companies, { ...people, title_ar: "الأشخاص في كل شركة" }] }, lookupOf("عايز شركتين مقاولات في الرياض ومعاهم أشخاص"));
     if (r.ok) expect(r.plan.stages.find((s) => s.key === "people")!.role_preference).toBeUndefined();
     if (r.ok) expect(r.plan.summary_ar).toContain("مديريها");
+  });
+  it("FIX1 (Gate 2 P2): a kept sentence that already names the companies is not repeated; «إدارة» in a sentence about the companies' trade is not a role claim", () => {
+    const repeat = planOf("نجمع شركات المقاولات في الرياض. ثلاثة من مديريها.", ASK).summary_ar;
+    expect(repeat.match(/شركات المقاولات في الرياض/g)).toHaveLength(1);
+    expect(repeat).not.toMatch(/مدير/);
+    expect(repeat).toContain("من العاملين في كل شركة");
+    expect(planOf("شركات إدارة العقارات في الرياض فقط.", ASK).summary_ar).toBe("شركات إدارة العقارات في الرياض فقط.");
   });
 });
