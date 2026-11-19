@@ -8,7 +8,7 @@ import { planWithLlm, understandRequest, type LlmPlannerDeps, type PlannerModel,
 import { UNDERSTAND_TOOL } from "../agent/src/llmPlanner/prompts";
 import { NOT_ADMIN } from "./helpers/agentHarness";
 import { replay } from "./helpers/agentReplay";
-import { COMPANIES, PEOPLE, SLUGS, columnsOf, linkedinOf, personOf, why } from "./helpers/a1World";
+import { COMPANIES, PEOPLE, SLUGS, columnsOf, linkedinOf, personOf, request as A1_REQUEST, why } from "./helpers/a1World";
 import { callIds, lastOutputId } from "./helpers/agentFakeWorld";
 import { firstOutputId } from "./helpers/agentRelevance";
 import { dispatcher, PHONES, SECTOR_WORLD } from "./helpers/g1World";
@@ -416,4 +416,83 @@ describe("T1: companies count reaches the planner and hand-over", () => {
       });
     });
   });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// FIX1 (DT-20261119-05, فزاع Gate 2 P1-1 / M4 / M8a and QA's must-pass): the cited noun is the COMPANIES' own noun; the people's generic title cannot let a people word through
+describe("FIX1: the cited noun must match the companies' own noun (a generic people title is not a reason to bind)", () => {
+  const GENERIC = "الأشخاص";
+  it.each([
+    ["اتنين مديرين", "عايز شركات ومن كل شركة اتنين مديرين"],
+    ["مهندسين", "عايز شركات ومن كل شركة مهندسين"],
+    ["موظف", "عايز شركات ومن كل شركة موظف"],
+    ["مدن", "عايز شركات ومن كل شركة مدن"],
+    ["٥٠ موظف", "عايز شركات فيها ٥٠ موظف ومن كل شركة المديرين"],
+  ])("people title «الأشخاص», cited «%s» -> no companies_count", (cited, message) => {
+    const u = U([companiesStep], peopleAsk(true, cited, GENERIC));
+    expect(withCheckedCompaniesCount(u, [message]).companies_count).toBeUndefined();
+  });
+  it("«شركتين» binds 2 with the generic title, with a generic companies title (the fixed label of the parent), and with no companies step at all", () => {
+    expect(withCheckedCompaniesCount(U([companiesStep], peopleAsk(true, "شركتين", GENERIC)), [LIVE]).companies_count).toBe(2);
+    expect(withCheckedCompaniesCount(U([{ ...companiesStep, title_ar: "النتائج" }], peopleAsk(true, "شركتين", GENERIC)), [LIVE]).companies_count).toBe(2);
+    expect(withCheckedCompaniesCount(U([], peopleAsk(true, "شركتين", GENERIC), { decision: "cannot", cannot_ar: "x" }), [LIVE]).companies_count).toBe(2);
+  });
+  it("M4: a per-company count of 2 (even one the customer never wrote) does not block the companies' own «شركتين»; «أسوان» in the message changes nothing (the per-company guard was removed: after the noun check it only ever blocked a correct bind)", () => {
+    const msg = "عايز شركتين في أسوان ومن كل شركة المديرين";
+    const u = U([companiesStep], peopleAsk(true, "شركتين", "المديرين", { per_company: 2, per_company_text: "اتنين" }));
+    expect(withCheckedCompaniesCount(u, [msg]).companies_count).toBe(2);
+    const u2 = U([companiesStep], peopleAsk(true, "اتنين شركات", "المديرين", { per_company: 2, per_company_text: "اتنين" }));
+    expect(withCheckedCompaniesCount(u2, ["عايز اتنين شركات في أسوان ومن كل شركة مدير"]).companies_count).toBe(2);
+  });
+  it("M8a: understoodPeopleOf carries `companies` on the STEPS path (a people STEP, no ask), and through understandRequest with a people step", async () => {
+    const withStep = understoodPeopleOf([companiesStep, peopleStep], undefined, 2);
+    expect(withStep).toMatchObject({ noun_ar: "الأشخاص", parent_ar: "الشركات", per_parent: 2, companies: 2 });
+    expect(understoodPeopleOf([companiesStep, peopleStep], undefined)).not.toHaveProperty("companies");
+    const r = await understood([planAnswer({ steps: [companiesStep, peopleStep], people_of_companies: peopleAsk(true, "شركتين", GENERIC) })]);
+    if (!r.ok) throw new Error("understood failed");
+    expect((r.value as any).companies_count).toBe(2);
+    expect(r.people).toMatchObject({ companies: 2 });
+  });
+});
+
+describe("FIX1 (QA must-pass): one people source answered with no row, another FAILED, no estimate: the honest unserved card, through the real call mapping of tools.ts", () => {
+  const ALT = "blitzapi.people.employee-finder";
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-19T10:00:00Z"), shouldAdvanceTime: true }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const flow = (): FakeStep[] => {
+    const world = SECTOR_WORLD.electromechanical;
+    const ccols = columnsOf(["name", "اسم الشركة"], ["activity", "القطاع"], ["city", "المدينة"], ["website", "الموقع الإلكتروني"], ["phone", "التليفون"], ["address", "العنوان"], ["linkedin", "صفحة الشركة على الشبكة المهنية"]);
+    return [
+      { tool: "report_progress", args: { message_ar: "أبحث عن الشركات ومسؤوليها", counts: { sources: 2 } } },
+      { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
+      { tool: "describe_endpoint", args: { id: COMPANIES } },
+      { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { query: "electromechanical", page: 1 }, why } },
+      { tool: "run_code", args: (r: Results) => ({ code: `return inputs.${callIds(r)[0]}.data.companies.map(r => ({ id: r.linkedin_url, name: r.name, activity: r.industry || '', city: r.city || '', website: r.website_url || '', phone: r.phone_number || '', address: r.street_address || '', linkedin: r.linkedin_url || '' }))`, files: [callIds(r)[0]] }) },
+      { tool: "describe_endpoint", args: { id: PEOPLE } },
+      { tool: "treg_call", args: { endpoint_id: PEOPLE, params: { company_linkedin_url: linkedinOf("orascom-em"), cascade: [{ include_title: ["Chief Executive Officer"] }], max_results: 10 }, why } },
+      { tool: "treg_call", args: { endpoint_id: ALT, params: { company_linkedin_url: linkedinOf("orascom-em"), cascade: [{ include_title: ["Managing Director"] }], max_results: 10 }, why } },
+      { tool: "propose_plan", args: (res: Results) => ({
+        summary_ar: "ستحصل على الشركات المصرية في الكهروميكانيكا.",
+        stages: [{ key: "companies", title_ar: "شركات مصرية في المعدات الكهربائية والميكانيكية", endpoint_id: COMPANIES, expected_rows: 5, parent_key: null, deliver: true, columns: ccols,
+          sample_rows: [{ id: linkedinOf("orascom-em"), name: world.names[0], activity: world.industry, city: "Cairo", website: "orascom-em.com.eg", phone: PHONES[0], address: "1 Industrial Zone, Cairo", linkedin: linkedinOf("orascom-em") }], measured_by: [callIds(res)[0], firstOutputId(res)] }],
+        contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.",
+        unserved_steps: [{ reason_ar: "لم تُرجع المصادر المتاحة أسماء مديرين لهذه الشركات" }],
+      }) },
+    ];
+  };
+  const worldAnswers = (peopleFails: boolean) => Array.from({ length: 300 }, () => {
+    const base = dispatcher({});
+    return (o: TregCallOptions) => {
+      if (o.endpointId === PEOPLE) return tregResult({ results: [] }, 0.0005);
+      if (o.endpointId === ALT) { if (peopleFails) throw new Error("the provider is down"); return tregResult({ results: [] }, 0.0005); }
+      return base(o);
+    };
+  });
+  it("no planner understanding (so no estimate): the people step is declared unserved after two ATTEMPTED sources (one answered with no row, one failed): the plan is accepted with ONE unserved step and says so on the card", async () => {
+    const r = await replay({ request: A1_REQUEST, planning: flow(), execution: () => [], answers: worldAnswers(true) as any });
+    const plan = r.mission.plan as any;
+    expect(plan.unserved_steps).toHaveLength(1);
+    expect(plan.stages).toHaveLength(1);
+    expect(JSON.stringify(r.planView)).toMatch(/لم تُضَف إلى الخطة/);
+  }, 120_000);
 });

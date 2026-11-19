@@ -10,7 +10,8 @@ import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, withoutUnwrittenLabels, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
-import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
+import { COMPANIES_LABEL_AR, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
+import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
@@ -561,10 +562,12 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
   const message = said.join("\n");
   const n = countWrittenIn(message, cited);
   if (n === null || n < 1) return u;
-  if (!tokensOf(cited).some((t) => /^\p{L}{4,}$/u.test(t) && wordNumbersIn(t, 1).length === 0)) return u;
+  const citedNouns = tokensOf(cited).filter((t) => /^\p{L}{4,}$/u.test(t) && wordNumbersIn(t, 1).length === 0);
+  if (citedNouns.length === 0) return u;
+  // the cited noun must be the COMPANIES' own noun: it matches a word of the companies step's title (or of the fixed label of the parent), never only «not the people's title» (a generic people title let «مديرين» or «مهندسين» through)
+  const companiesTitles = [u.steps.find((s) => s.parent === null)?.title_ar ?? "", COMPANIES_LABEL_AR];
+  if (!citedNouns.some((c) => companiesTitles.some((t) => ownTitleWords(t).some((w) => sameNounStem(w, c))))) return u;
   if (!isCountOfOtherNoun(message, cited, n, title)) return u;
-  const per = ask && ask.per_company !== null ? ask.per_company : (peopleStep?.count.per_parent ?? null);
-  if (per !== null && n === per && !writtenElsewhere(message, ask?.per_company_text ?? "", n)) return u;
   return { ...u, companies_count: n };
 }
 
