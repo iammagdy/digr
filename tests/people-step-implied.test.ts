@@ -155,6 +155,165 @@ describe("the plan check: the decision makers are never dropped by one sentence"
     expect(checked.plan.price.reservePoints).toBeGreaterThan(600);
     expect((checked.plan.assumptions_ar ?? []).join(" ")).not.toMatch(/لم تحدد عدد/);
   });
+
+  // DT-20261119-05: T2 (1-10) companies count binding and estimate protection from «unserved»
+  describe("DT-20261119-05: companies count binding and estimate protection", () => {
+    const LIVE = "عايز شركتين صغيرتين ومن كل شركة المديرين وإيميل وتليفون كل مدير";
+    const handed = (c?: number): PlanLookup => ({
+      ...lookupOf([["aviato.companies.employees", 2]]),
+      noRelevance: true,
+      requestText: LIVE,
+      endpointCapability: (id) => catalog.byId.get(id)?.capability ?? null,
+      understoodPeople: { noun_ar: "الأشخاص", parent_ar: "الشركات", per_parent: null, ...(c ? { companies: c } : {}) },
+      childStepSources: () => peopleSourcesForCompanies(catalog, allowed),
+    });
+
+    // F1
+    it("1) companies expected_rows 8 + people, handed(2): ok, companies planned_rows 2, people planned_rows = 2 * per_parent_rows, deliveredRows consistent, reserve below the handed() run's; control handed(): companies planned_rows 8", () => {
+      const comp8 = { ...companies, expected_rows: 8 };
+      const ppl = people(2);
+      const r2 = validateAndPricePlan({ summary_ar: "شركتان", stages: [comp8, ppl] }, handed(2));
+      expect(r2.ok, JSON.stringify(r2)).toBe(true);
+      if (!r2.ok) return;
+      const cStage = r2.plan.stages.find((s) => s.key === "companies")!;
+      const pStage = r2.plan.stages.find((s) => s.key === "people")!;
+      expect(cStage.planned_rows).toBe(2);
+      expect(pStage.planned_rows).toBe(2 * (pStage.per_parent_rows ?? 2));
+      expect(r2.plan.price.deliveredRows).toBe(cStage.planned_rows + pStage.planned_rows);
+
+      const rControl = validateAndPricePlan({ summary_ar: "شركات", stages: [comp8, ppl] }, handed());
+      expect(rControl.ok, JSON.stringify(rControl)).toBe(true);
+      if (!rControl.ok) return;
+      expect(rControl.plan.stages.find((s) => s.key === "companies")!.planned_rows).toBe(8);
+      expect(r2.plan.price.reservePoints).toBeLessThan(rControl.plan.price.reservePoints);
+    });
+
+    it("2) counter a: requestText «عايز ٥ شركات ومن كل شركة المديرين», expected_rows 8, handed(2) -> 5", () => {
+      const lookup = { ...handed(2), requestText: "عايز ٥ شركات ومن كل شركة المديرين" };
+      const r = validateAndPricePlan({ summary_ar: "٥ شركات", stages: [{ ...companies, expected_rows: 8 }, people(2)] }, lookup);
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.stages.find((s) => s.key === "companies")!.planned_rows).toBe(5);
+    });
+
+    it("3) live card shape: [companies expected_rows 8] + unserved_steps with two attempted calls of rows 0, handed(2) -> ok, planned_rows 2, 1 unserved", () => {
+      const given = {
+        summary_ar: "شركتان",
+        stages: [{ ...companies, expected_rows: 8 }],
+        contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.",
+        unserved_steps: [{ reason_ar: "لم ترجع المصادر نتائج" }],
+      };
+      const lookup = {
+        ...handed(2),
+        endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 0 }], ["blitzapi.people.employee-finder", { rows: 0 }]]),
+      };
+      const r = validateAndPricePlan(given, lookup);
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.stages.find((s) => s.key === "companies")!.planned_rows).toBe(2);
+      expect(r.plan.unserved_steps).toHaveLength(1);
+    });
+
+    it("4) counter e: expected_rows 1 + valid target_reason_ar (no number), handed(2) -> plan quantity = {requested 2, target 1, reason}", () => {
+      const r = validateAndPricePlan({
+        summary_ar: "شركة واحدة",
+        stages: [{ ...companies, expected_rows: 1, target_reason_ar: "لم نجد سوى شركة واحدة مطابقة" }, people(2)],
+      }, handed(2));
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.quantity).toMatchObject({ requested: 2, stage_key: "companies", target: 1, reason_ar: "لم نجد سوى شركة واحدة مطابقة" });
+    });
+
+    it("5) counter d: requestText «عايز شركات ومن كل شركة المديرين», handed() -> rows as written", () => {
+      const lookup = { ...handed(), requestText: "عايز شركات ومن كل شركة المديرين" };
+      const r = validateAndPricePlan({ summary_ar: "شركات", stages: [{ ...companies, expected_rows: 8 }, people(2)] }, lookup);
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.stages.find((s) => s.key === "companies")!.planned_rows).toBe(8);
+    });
+
+    it("6) M19 two roots: stages [{ ...companies, key: 'other', title_ar: 'عناصر أخرى', expected_rows: 3, deliver: false }, companies (8), people], handed(2) -> companies planned_rows 2 AND 'other' stays 3", () => {
+      const other = { ...companies, key: "other", title_ar: "عناصر أخرى", expected_rows: 3, deliver: false };
+      const comp8 = { ...companies, expected_rows: 8 };
+      const ppl = { ...people(2), parent_key: "companies" };
+      const r = validateAndPricePlan({ summary_ar: "شركتان", stages: [other, comp8, ppl] }, handed(2));
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.stages.find((s) => s.key === "companies")!.planned_rows).toBe(2);
+      expect(r.plan.stages.find((s) => s.key === "other")!.planned_rows).toBe(3);
+    });
+
+    it("7) M18: companies stage given deliver: false, handed(2) -> stage deliver is not changed by the bound (named:false)", () => {
+      const comp8 = { ...companies, expected_rows: 8, deliver: false };
+      const ppl = { ...people(2), deliver: true };
+      const r = validateAndPricePlan({ summary_ar: "شركتان", stages: [comp8, ppl] }, handed(2));
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.stages.find((s) => s.key === "companies")!.deliver).toBe(false);
+    });
+
+    // F2
+    it("8) peopleEstimate + understoodPeople + [companies] + unserved_steps + two attempted calls -> NOT ok, issues match /priced by an ESTIMATE/ and contain endpoint id; control without peopleEstimate -> ok", () => {
+      const estimate = { endpointIds: ["limadata.people.employees.search"], costPerPersonUsd: 0.0005, ceilingPersonUsd: 0.001 };
+      const given = {
+        summary_ar: "شركات",
+        stages: [{ ...companies, expected_rows: 5 }],
+        contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.",
+        unserved_steps: [{ reason_ar: "لم نجد موظفين في المصادر المجربة" }],
+      };
+      const withEst = {
+        ...handed(),
+        peopleEstimate: estimate,
+        endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 0 }], ["blitzapi.people.employee-finder", { rows: 0 }]]),
+      };
+      const rWithEst = validateAndPricePlan(given, withEst);
+      expect(rWithEst.ok).toBe(false);
+      if (!rWithEst.ok) {
+        expect(rWithEst.issues.join(" ")).toMatch(/priced by an ESTIMATE/);
+        expect(rWithEst.issues.join(" ")).toContain("limadata.people.employees.search");
+      }
+
+      const control = {
+        ...handed(),
+        endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 0 }], ["blitzapi.people.employee-finder", { rows: 0 }]]),
+      };
+      const rControl = validateAndPricePlan(given, control);
+      expect(rControl.ok, JSON.stringify(rControl)).toBe(true);
+    });
+
+    it("9) the loop corner: no estimate, endpointsCalled = two attempted people sources with rows 0 -> ok with 1 unserved (honest card, not a re-refusal)", () => {
+      const given = {
+        summary_ar: "شركات",
+        stages: [{ ...companies, expected_rows: 5 }],
+        contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.",
+        unserved_steps: [{ reason_ar: "لم نجد موظفين" }],
+      };
+      const lookup = {
+        ...handed(),
+        endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 0 }], ["blitzapi.people.employee-finder", { rows: 0 }]]),
+      };
+      const r = validateAndPricePlan(given, lookup);
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      if (!r.ok) return;
+      expect(r.plan.unserved_steps).toHaveLength(1);
+    });
+
+    it("10) one attempted source only, no estimate -> NOT ok (today's rule unchanged)", () => {
+      const given = {
+        summary_ar: "شركات",
+        stages: [{ ...companies, expected_rows: 5 }],
+        contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.",
+        unserved_steps: [{ reason_ar: "لم نجد موظفين" }],
+      };
+      const lookup = {
+        ...handed(),
+        endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 0 }]]),
+      };
+      const r = validateAndPricePlan(given, lookup);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.issues.join(" ")).toMatch(/CAN be served/);
+    });
+  });
 });
 
 describe("planning: one over-budget refusal does not end the search", () => {
