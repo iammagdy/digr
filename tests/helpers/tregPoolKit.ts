@@ -235,7 +235,7 @@ export type FakePoolDb = ReturnType<typeof fakePoolDb>;
 // A fake TREG: answers by the token in the X-Treg-Token header. Never a real network call.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
-export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "endpoint402" | "free" | "forbid403" | "suspended403" | "route_max_cost" | "timeout" | "http503" | "http429" | "http400";
+export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "endpoint402" | "free" | "forbid403" | "suspended403" | "route_max_cost" | "route_cap_detail" | "route_cap_fields" | "balance_with_cap_fields" | "payment_with_cost_field" | "timeout" | "http503" | "http429" | "http400";
 export interface FakeTregKey { mode: TregMode; balanceMicro: number; email: string; org: string; meMode?: "ok" | "http503" | "timeout"; /** «unreadable»: the balance answers with no number (seen live for four keys on 2026-10-30) */ balanceMode?: "ok" | "unreadable" }
 
 export function fakeTreg() {
@@ -267,6 +267,12 @@ export function fakeTreg() {
         case "free": return json({ data: [{ id: "1", text: "row" }] }, 200, { "x-treg-cost-micro": "0" });
         case "endpoint402": return json({ error: "payment_required" }, 402);
         case "route_max_cost": return json({ error: "route_max_cost" }, 402);
+        // DT-20261119-09: the price cap as live 2026-11-19 showed it (the text starts with «{» and carries `estimated_cost_micro`): the fields sit inside `detail`, not in a top-level error string
+        case "route_cap_detail": return json({ detail: { error: "route_max_cost", max_cost_micro: 2633, estimated_cost_micro: 2634 } }, 402);
+        case "route_cap_fields": return json({ detail: { max_cost_micro: 2633, estimated_cost_micro: 2634 } }, 402);
+        // an explicit balance / payment refusal that quotes the reserve (فزاع's pre-push probe): the explicit code wins, whatever the numbers say
+        case "balance_with_cap_fields": return json({ error: "insufficient_balance", detail: { max_cost_micro: 3000, estimated_cost_micro: 2500 } }, 402);
+        case "payment_with_cost_field": return json({ error: "payment_required", detail: { estimated_cost_micro: 5000 } }, 402);
         case "forbid403": return json({ error: "forbidden" }, 403);
         // the incident of 2026-10-30: the identity and balance reads pass, every data call is refused with the account's own words
         case "suspended403": return json({ detail: "org suspended" }, 403);

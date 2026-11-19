@@ -103,6 +103,45 @@ export function sanitizeTregDetail(rawMsg: string, knownSecret?: string): string
   return sanitized.trim().slice(0, 300);
 }
 
+const objectOf = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+const capValueIn = (places: ReadonlyArray<Record<string, unknown>>, key: "max_cost_micro" | "estimated_cost_micro"): number | null => {
+  for (const o of places) {
+    const v = o[key];
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+};
+
+/**
+ * Whether a 402 answer is TREG's PRICE-CAP refusal (the call's reserve is above our `X-Treg-Route-Max-Cost`; nothing was charged and the balance has nothing to do with it), by STRUCTURE, never by a word list. A balance or payment
+ * refusal is never taken for one (DT-20261119-09, فزاع's pre-push): the key pool must still check the key and recover on a funded standby.
+ *  1. an explicit code other than `route_max_cost` (`insufficient_balance`, `payment_required`, …) ALWAYS wins: not a price cap, whatever fields travel with it;
+ *  2. the code `route_max_cost` (top level, in a `detail` object, in a JSON string or object under `detail` / `error`, in an `error` object): a price cap;
+ *  3. no code at all: the fields decide: `estimated_cost_micro` with `max_cost_micro` is a cap only when the reserve is ABOVE the cap; `estimated_cost_micro` alone (the shape seen live 2026-11-19) is a cap; `max_cost_micro` alone is not.
+ * A JSON string under `detail` or `error` is a CONTAINER (its fields are read), never itself a code.
+ */
+export function isRouteMaxCostBody(body: unknown): boolean {
+  const root = objectOf(body);
+  if (!root) return false;
+  const places: Array<Record<string, unknown>> = [root];
+  const containerStrings = new Set<string>();
+  for (const v of [root.detail, root.error]) {
+    const o = objectOf(v);
+    if (o) { places.push(o); continue; }
+    if (typeof v === "string" && v.trim().startsWith("{")) {
+      try { const parsed = objectOf(JSON.parse(v)); if (parsed) { places.push(parsed); containerStrings.add(v); } } catch { /* not JSON: no fields to read */ }
+    }
+  }
+  const codes = places.flatMap((o) => [o.error, o.code]).filter((c): c is string => typeof c === "string" && c.trim() !== "" && !containerStrings.has(c));
+  if (codes.some((c) => c !== "route_max_cost")) return false;
+  if (codes.includes("route_max_cost")) return true;
+  const max = capValueIn(places, "max_cost_micro");
+  const estimated = capValueIn(places, "estimated_cost_micro");
+  if (estimated !== null && max !== null) return estimated > max;
+  return estimated !== null;
+}
+
 export const SENSITIVE_INTERNAL_CONTROL_KEYS: ReadonlySet<string> = new Set([
   "exclusionrules",
   "exclusionfile",
@@ -434,8 +473,9 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   const bodyError = responseBody?.error;
-  const isRouteMaxCost = response.status === 402 && bodyError === "route_max_cost";
-  const isPlatformBalanceLow = response.status === 402 && bodyError !== "route_max_cost";
+  // DT-20261119-09 (F2): TREG's price-cap refusal is read wherever its fields sit (top level, inside a `detail` object or a JSON `detail` string): live 2026-11-19 six of them were read as «platform balance low» and traced «endpoint_payment_refused»
+  const isRouteMaxCost = response.status === 402 && isRouteMaxCostBody(responseBody);
+  const isPlatformBalanceLow = response.status === 402 && !isRouteMaxCost;
 
   let rawDetail = "";
   if (!response.ok) {
@@ -480,7 +520,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     costMicro,
     latencyMs,
     data: responseBody,
-    error: bodyError || (response.ok ? undefined : `http_${response.status}`),
+    error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : bodyError || (response.ok ? undefined : `http_${response.status}`),
     errorDetails: sanitizedDetail,
     detail: sanitizedDetail,
     isRouteMaxCost,

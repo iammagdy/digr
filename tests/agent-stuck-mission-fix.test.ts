@@ -329,8 +329,20 @@ describe("a failed sample does not end exploration", () => {
     const failed = await tool(h, "treg_call").handler({ endpoint_id: "crawl4ai.x.search.posts", params: { query: "from:nobody", limit: 20 } }) as any;
     expect(failed).toMatchObject({ ok: false, failed: true, http_status: 402 });
     expect(h.store.calls[0].params_digest._failure).toMatch(/^endpoint_payment_refused: /);
+    expect(h.store.calls[0].params_digest._failure_kind).toBe("endpoint_payment");
     const { classifyFailure } = await import("../src/lib/agentMission/sourceRanking");
     expect(classifyFailure(h.store.calls[0] as any)).toBe("payment");
+  });
+
+  it("DT-20261119-09: a 402 that is TREG's PRICE CAP (route_max_cost) is traced «route_max_cost», and source health reads it as nothing about the source", async () => {
+    const h = makeHarness({ responses: [tregResult(null, 0, { ok: false, httpStatus: 402, errorDetails: '{"max_cost_micro":2633,"estimated_cost_micro":2634}', isRouteMaxCost: true, isPlatformBalanceLow: false, data: null })] });
+    await tool(h, "catalog_search").handler({ words: ["tweets", "search"], platform: "x", limit: 5 });
+    const failed = await tool(h, "treg_call").handler({ endpoint_id: "crawl4ai.x.search.posts", params: { query: "from:nobody", limit: 20 } }) as any;
+    expect(failed).toMatchObject({ ok: false, failed: true, http_status: 402 });
+    expect(h.store.calls[0].params_digest._failure).toMatch(/^route_max_cost: /);
+    expect(h.store.calls[0].params_digest._failure_kind).toBe("price_cap");
+    const { classifyFailure } = await import("../src/lib/agentMission/sourceRanking");
+    expect(classifyFailure(h.store.calls[0] as any)).toBe("none");
   });
 
   it("a REAL failed sample (HTTP 400 from the source): its reason is kept for the admin, and the answer points to the next untried source", async () => {

@@ -99,5 +99,17 @@ function boundOf(input: ProviderOp): Bound {
  * estimate; under the gate both become this value.
  */
 export function tregRouteCapUsd(estimateUsd: number): number {
-  return Number(Math.max(Number(estimateUsd) || 0, 0.001).toFixed(6));
+  return ceilToMicroUsd(Math.max(Number(estimateUsd) || 0, 0.001));
+}
+
+/**
+ * A USD amount rounded UP to the micro-dollar (DT-20261119-09, F1). TREG compares its reserve, in whole micro-USD, with `X-Treg-Route-Max-Cost`: a cap rounded DOWN (`toFixed(6)` turned aiark.people.search's price 0.0026335 into
+ * 0.002633) is one micro-dollar under the price and TREG refuses the call (402 `route_max_cost`) every time. Float noise is not a fraction of a micro-dollar (0.000495 x 10 is 4950.000000000001 micro): a price that is exact to the micro stays exactly as it is.
+ */
+export function ceilToMicroUsd(usd: number): number {
+  const micro = Number(usd) * 1_000_000;
+  if (!Number.isFinite(micro)) return 0;
+  const nearest = Math.round(micro);
+  const whole = Math.abs(micro - nearest) < 1e-6 ? nearest : Math.ceil(micro);
+  return Number((whole / 1_000_000).toFixed(6));
 }

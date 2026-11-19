@@ -134,14 +134,14 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
 
 /**
  * PHASE 5 SAFETY GATE: THE MOST ONE TREG CALL OF THIS GATEWAY CAN COST, the route cap `tregCall` sends as `X-Treg-Route-Max-Cost` (TREG refuses, 402 `route_max_cost`, a route that would cost more). The same arithmetic as the
- * call itself: the parameters the catalog does not know are dropped, then the estimate, floored at 0.001 (a test pins this to the value the gateway really sends). Null: not a catalog id (no bound is known, none is assumed).
+ * call itself: the parameters the catalog does not know are dropped, then the estimate, floored at 0.001 and rounded UP to the micro-dollar (a test pins this to the value the gateway really sends). Null: not a catalog id (no bound is known, none is assumed).
  */
 export function tregRouteMaxUsd(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
   const endpoint = catalog.byId.get(endpointId);
   if (!endpoint) return null;
   const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
   const kept = Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => known.has(k)));
-  return Number(Math.max(estimateCallUsd(endpoint, kept, catalog), 0.001).toFixed(6));
+  return tregRouteCapUsd(estimateCallUsd(endpoint, kept, catalog));
 }
 
 const callIdOf = (n: number) => `call_${String(n).padStart(4, "0")}`;
@@ -403,8 +403,8 @@ export function createGateway(deps: GatewayDeps) {
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId, ...(result.keyRef ? { keyRef: result.keyRef } : {}) });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       // a 402 the key pool checked against the key's own balance (healthy): THIS source refused payment, and the trace says so (source health demotes it, never the key)
-      const failure = result.ok ? null : clip(`${result.paymentScope === "endpoint" ? "endpoint_payment_refused: " : ""}${result.errorDetails || result.detail || result.error || "the source answered with an error"}`, 160);
-      await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
+      const failure = result.ok ? null : clip(`${result.paymentScope === "endpoint" ? "endpoint_payment_refused: " : result.isRouteMaxCost ? "route_max_cost: " : ""}${result.errorDetails || result.detail || result.error || "the source answered with an error"}`, 160);
+      await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure, ...(result.isRouteMaxCost ? { _failure_kind: "price_cap" } : result.paymentScope === "endpoint" ? { _failure_kind: "endpoint_payment" } : {}) } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {
         return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) };
