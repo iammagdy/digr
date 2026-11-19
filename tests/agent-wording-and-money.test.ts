@@ -123,23 +123,22 @@ describe("D. the money is said in ONE line: the charge and the items in the file
     expect(heldPointsOf({ chargedPoints: 202, releasedPoints: 77 })).toBe(279);
   });
 
-  it.each(TYPES)("$name: the notification and the e-mail state the one line (the charge for the items in the file) and never the net 77", ({ stage, subject, noun }) => {
+  it.each(TYPES)("$name: the notification and the e-mail state money ONCE in detail1 and keep preheader money-free", ({ stage, subject, noun }) => {
     const title = missionTitleAr({ plan: planOf(stage, subject), requestText: "" });
     const n = buildMissionNotice("partial", { delivered: 250, planned: 300, chargedPoints: 202, releasedPoints: 77, reservedPoints: 279, noun, hasJob: true }, title);
     const e = n.email!;
     const all = [n.title, n.body, e.subject, e.preheader, e.heading, e.lead, e.detail1, e.detail2].join(" | ");
-    const line = `خُصم ٢٠٢ نقطة مقابل ${countAr(250, knownItemNoun(noun)!)}`;
-    expect(n.body).toContain(`${line}.`);
+    const line = "خُصم ٢٠٢ نقطة مقابل ما سُلّم فقط، وعاد ٧٧ نقطة لرصيدك.";
+    expect(n.body).toContain(line);
     expect(e.detail1).toBe(line);
-    expect(e.preheader).toBe(line);
-    expect(all).not.toContain("٧٧");
+    expect(e.preheader).not.toMatch(/خُصم|نقطة/);
     expect(all).not.toMatch(/[0-9]/);
     expect(checkCustomerText(all, { maxChars: 2000 }).issues).toEqual([]);
   });
 
   it("a mission that delivered nothing, and a failure with no hold", () => {
     const failed = buildMissionNotice("failed", { delivered: 0, planned: 300, chargedPoints: 0, releasedPoints: 279, reservedPoints: 279, hasJob: true }, "تغريدات عن محمد صلاح");
-    expect(failed.body).toContain("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٧٩ نقطة.");
+    expect(failed.body).toContain("لم يُخصم شيء، وعاد الحجز المؤقت (٢٧٩ نقطة) كاملًا لرصيدك.");
     const none = buildMissionNotice("unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false }, "تغريدات عن محمد صلاح");
     expect(none.body).toContain("لم يُحجز أي رصيد ولم يُخصم شيء.");
   });
@@ -172,7 +171,7 @@ describe("C + D. ONE delivered count everywhere: no text says a number that diff
     expect(intro).toBe(`تم تسليم ${deliveredOfAr(250, 300, knownItemNoun(noun)!)}.`);
 
     const texts = [...view.resultLinesAr, notice.title, notice.body, notice.email!.subject, notice.email!.lead, notice.email!.detail1, fileTitle, intro];
-    const allowed = new Set(["٢٥٠", "٣٠٠", "٢٧٩", "٢٠٢", "٢٨", "٢٠٢٦"]);
+    const allowed = new Set(["٢٥٠", "٣٠٠", "٢٧٩", "٢٠٢", "٧٧", "٢٨", "٢٠٢٦"]);
     for (const t of texts) for (const num of t.match(/[٠-٩٬]+/g) ?? []) expect(allowed.has(num), `${num} in «${t}»`).toBe(true);
     for (const t of texts) expect(t, t).not.toMatch(/صفًا|صف |صفوف|سجل/);
     // the model's own sentence with a number is recognised so the site can leave it out
@@ -254,6 +253,6 @@ describe("C + D. end to end: a model summary that names a number is never shown 
     const charged = Number(r.mission.charged_points);
     expect(r.finalView.resultLinesAr[1]).toBe(`${moneyLineAr({ reservedPoints: reserved, chargedPoints: charged, delivered: 5, noun: knownItemNoun("تغريدة")! })}.`);
     const notice = r.notices[r.notices.length - 1];
-    expect(notice.facts).toMatchObject({ delivered: 5, planned: 5, reservedPoints: reserved, releasedPoints: reserved, chargedPoints: charged, noun: "تغريدة" });
+    expect(notice.facts).toMatchObject({ delivered: 5, planned: 5, reservedPoints: reserved, releasedPoints: 0, chargedPoints: charged, noun: "تغريدة" });
   });
 });

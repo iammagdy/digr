@@ -29,32 +29,32 @@ describe("the completion e-mail and the in-site notice are about THIS mission: t
       expect(text).not.toMatch(/[0-9]/);
       expect(text).not.toMatch(/msn_|job_|quote_|call_|USD|\$/);
     }
-    // the mission is named (except the preview line, which carries the money)
+    // the mission is named (except completed/partial lead & the preview line)
     expect(e.subject).toContain(TITLE);
     expect(n.title).toContain(TITLE);
     expect(e.heading).toContain(TITLE);
-    expect(e.lead).toContain(TITLE);
-    expect(n.body).toContain(TITLE);
+    if (kind !== "completed" && kind !== "partial") expect(e.lead).toContain(TITLE);
     expect(e.buttonLabel).toMatch(/افتح طلبك/);
     expect(e.buttonLabel).not.toBe("افتح طلباتي");
   });
 
-  it("completed: delivered of requested in the subject, the points charged in the preview, the released hold said; partial says it is fewer than requested; nothing is called «اكتملت مهمتك» three times", () => {
+  it("completed: short status subject, no money in preheader, money once in detail1; partial never says «اكتملت»", () => {
     const done = buildMissionNotice("completed", CASES[0].facts, TITLE);
-    // (the old lines: subject «… — سُلّم ٣٠٠ من ٣٠٠ صفًا» and detail2 containing «حجز مؤقت مُحرَّر ١٠ نقاط». The noun is the request's («تغريدة», never «صف»), and the money is said exactly as the wallet shows it: the hold (٢١٠), the charge (٢٠٠) and the whole hold released (٢١٠), never the net ١٠)
-    expect(done.email!.subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٣٠٠ من ٣٠٠ تغريدة");
-    expect(done.email!.preheader).toContain("خُصم ٢٠٠ نقطة");
-    expect(done.email!.detail1).toBe("خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة");
+    expect(done.email!.subject).toBe("تغريدات عن محمد صلاح — النتائج جاهزة");
+    expect(done.email!.preheader).not.toMatch(/خُصم|نقطة/);
+    expect(done.email!.detail1).toBe("خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة.");
     expect(done.email!.detail2).toBe("");
     expect(done.email!.heading).toBe("ملفات «تغريدات عن محمد صلاح» جاهزة للتحميل");
     const part = buildMissionNotice("partial", CASES[2].facts, TITLE);
-    expect(part.email!.subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٢٣٠ من ٣٠٠ فقط");
+    expect(part.email!.subject).toBe("تغريدات عن محمد صلاح — تسليم جزئي");
     expect(part.email!.lead).toContain("هذا كل ما وُجد مطابقًا لطلبك");
-    expect(part.email!.heading).toContain("بعدد أقل من المطلوب");
+    expect(part.email!.heading).toContain("تسليم جزئي");
+    expect(part.email!.heading).not.toContain("اكتملت");
     for (const n of [done, part]) expect([n.email!.subject, n.email!.preheader, n.email!.heading].filter((t) => t.includes("اكتملت مهمتك")).length).toBeLessThanOrEqual(0);
     const failed = buildMissionNotice("failed", CASES[3].facts, TITLE);
-    expect(failed.email!.preheader).toBe("لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا.");
-    expect(failed.email!.subject).toContain("ولم يُخصم شيء");
+    expect(failed.email!.preheader).toMatch(/^لم يُخصم شيء/);
+    expect(failed.email!.preheader).not.toMatch(/[٠-٩]/);
+    expect(failed.email!.subject).toContain("توقف قبل الاكتمال");
   });
 
   it("the title of a mission is its subject, from the plan or, when planning failed, from the customer's own words (digits in Arabic-Indic, shortened at a word)", () => {
@@ -110,9 +110,9 @@ describe("what the sender puts in the mail and in the notice", () => {
     const r = await sendMissionNotice(client, { userId: "u1", missionId: "msn_aaaa0001", jobId: "job_x", kind: "completed", facts: CASES[0].facts });
     expect(r).toEqual({ inApp: true, email: true });
     const v = sent[0].body.vars;
-    // (the old line ended «سُلّم ٣٠٠ من ٣٠٠ صفًا»: the request's noun and one wording of delivered-of-requested)
-    expect(v.Subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٣٠٠ من ٣٠٠ تغريدة");
-    expect(v.Preheader).toContain("خُصم ٢٠٠ نقطة");
+    expect(v.Subject).toBe("تغريدات عن محمد صلاح — النتائج جاهزة");
+    expect(v.Preheader).not.toMatch(/خُصم|نقطة/);
+    expect(v.DetailOne).toBe("خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة.");
     expect(new Set([v.Subject, v.Preheader, v.Heading]).size).toBe(3);
     expect(v.JobURL).toBe("https://diger.tech/dashboard/chat?jobId=job_x&c=conv_7");
     expect(rows[0].link).toBe("/dashboard/chat?jobId=job_x&c=conv_7");

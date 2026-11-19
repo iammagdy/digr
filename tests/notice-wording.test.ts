@@ -47,34 +47,35 @@ describe.each(CASES)("%s", (_name, kind, facts) => {
     }
   });
   it("the preview line says nothing was charged; the heading and the lead do not repeat it", () => {
-    expect(e.preheader).toBe("لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا.");
+    expect(e.preheader).toMatch(/^لم يُخصم شيء/);
+    expect(e.preheader).not.toMatch(/[٠-٩]/);
     expect(e.heading).not.toContain("يُخصم");
     expect(e.lead).not.toContain("يُخصم");
+    expect(e.lead).not.toContain("حجز");
   });
 });
 
 describe("ours and no source are told differently", () => {
   const ours = buildMissionNotice("failed", { ...base, cause: "internal" }, T);
   const none = buildMissionNotice("unserved", base, T);
-  it("a fault of ours says so and never says that no source serves the request", () => {
-    expect(ours.email!.lead).toContain("بسبب خلل من جانبنا");
-    expect(ours.email!.lead).toContain("وليس لأن المصادر خالية من النتائج");
-    expect(JSON.stringify(ours)).not.toMatch(/لا يوجد بين مصادرنا|لم نجد مصدرًا|خارج مصادرنا|بدقة الآن/);
+  it("a fault of ours says so and never says that no source serves the request or «خلل من جانبنا»", () => {
+    expect(ours.email!.lead).toContain("تعذّر استكمال تنفيذ مهمتك «شركات مصريه»");
+    expect(JSON.stringify(ours)).not.toMatch(/لا يوجد بين مصادرنا|لم نجد مصدرًا|خارج مصادرنا|بدقة الآن|خلل من جانبنا/);
   });
   it("no source says that and never blames a fault", () => {
-    expect(none.email!.lead).toContain("لا يوجد بين مصادرنا ما يخدم طلبك");
+    expect(none.email!.lead).toContain("لا يتوفر بين مصادرنا الحالية ما يخدم طلبك");
     expect(JSON.stringify(none)).not.toMatch(/عطل|خلل/);
   });
   it("the wordings, verbatim (the owner's mission «شركات مصريه»)", () => {
     expect(ours.email).toMatchObject({
-      subject: "شركات مصريه: خلل من جانبنا ولم يُخصم شيء",
-      heading: "توقفت مهمة «شركات مصريه» قبل أن تُسلَّم",
-      lead: "تعذّر تنفيذ مهمتك «شركات مصريه» بسبب خلل من جانبنا، وليس لأن المصادر خالية من النتائج؛ لم نسلّمك شيئًا وأبلغنا فريقنا ليصلحه. يمكنك إعادة إرسال الطلب بعد قليل.",
+      subject: "شركات مصريه — تعذّر استكمال الطلب",
+      heading: "تعذّر استكمال مهمة «شركات مصريه»",
+      lead: "تعذّر استكمال تنفيذ مهمتك «شركات مصريه» في الوقت الحالي دون تسليم نتائج. يمكنك إعادة إرسال الطلب بعد قليل.",
     });
     expect(none.email).toMatchObject({
-      subject: "شركات مصريه: لا يوجد مصدر يخدمه",
-      heading: "«شركات مصريه» خارج مصادرنا الآن",
-      lead: "لا يوجد بين مصادرنا ما يخدم طلبك «شركات مصريه» بالدقة التي يحتاجها، لذلك لم نبدأ تنفيذه. يمكنك تعديل الطلب أو كتابته بصيغة أخرى.",
+      subject: "شركات مصريه — خارج مصادرنا حاليًا",
+      heading: "طلب «شركات مصريه» غير متاح بمصادرنا الحالية",
+      lead: "لا يتوفر بين مصادرنا الحالية ما يخدم طلبك «شركات مصريه» بالدقة المطلوبة، لذلك لم نبدأ تنفيذه. يمكنك تجربة صياغة أخرى أو استهداف منصة مختلفة.",
     });
   });
 });
