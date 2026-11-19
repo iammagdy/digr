@@ -208,9 +208,12 @@ describe("R62 ENFORCE, TREG: no reservation, no call", () => {
     const r = await ask(t);
     expect(r.ok).toBe(true);
     const sent = t.call.mock.calls[0][0] as TregCallOptions;
-    expect(c.reserves).toHaveLength(1);
-    expect(c.reserves[0].boundUsd).toBe(Number(sent.routeMaxCostUsd));
-    expect(c.reserves[0]).toMatchObject({ kind: "provider", op: `treg:${POSTS_ENDPOINT}`, missionId: MISSION });
+    // DT-20261119-11: the call first asks for the most it may take; a grant with no room for that (here its per-operation limit) is asked for a smaller amount, and the amount GRANTED is the one sent
+    const granted = c.reserves[c.reserves.length - 1];
+    expect(c.reserves.length).toBeGreaterThanOrEqual(1);
+    expect(granted.boundUsd).toBe(Number(sent.routeMaxCostUsd));
+    expect(c.reserves.every((r) => r.boundUsd >= granted.boundUsd)).toBe(true);
+    expect(granted).toMatchObject({ kind: "provider", op: `treg:${POSTS_ENDPOINT}`, missionId: MISSION });
     expect(c.settles).toEqual([{ id: expect.any(String), actual: 0.0004 }]);
     expect(w.owner.grant("g1")).toMatchObject({ reservedUsd: 0, spentUsd: 0.0004, overrunUsd: 0, state: "open" });
   });
@@ -234,7 +237,7 @@ describe("R62 ENFORCE, TREG: no reservation, no call", () => {
       await ask(t);
       expect(c.settles).toHaveLength(1);
       expect(c.settles[0].actual).toBeNull();
-      expect(w.owner.grant("g1")!.spentUsd).toBe(c.reserves[0].boundUsd);
+      expect(w.owner.grant("g1")!.spentUsd).toBe(c.reserves[c.reserves.length - 1].boundUsd);
     }
   });
 
@@ -258,22 +261,29 @@ describe("R62 ENFORCE, TREG: no reservation, no call", () => {
     await ask(t);
     await ask(t);
     expect(t.call).toHaveBeenCalledTimes(2);
-    expect(c.reserves).toHaveLength(2);
+    // one reservation key per paid attempt (the amounts tried for ONE attempt share its key: none was granted before the last)
     expect(new Set(c.reserves.map((r) => r.key)).size).toBe(2);
     // and the same call id after a restart still gets a fresh key
     expect(spendReservationKey("treg", MISSION, "call_0001")).not.toBe(spendReservationKey("treg", MISSION, "call_0001"));
   });
 
   it("CONCURRENT REQUESTS: twenty calls at once never reserve past the ceiling, and only the reserved ones are sent", async () => {
+    // the amount ONE call is granted under this grant (DT-20261119-11: the call asks for the most it may take, then for what the grant has room for)
+    const probeGate = createMemorySpendGate();
+    grantOf(probeGate, { ceilingUsd: 100, perOpMaxUsd: 0.5, perMissionMaxUsd: 100 });
+    const probeCounting = counting(probeGate.gate);
+    await ask(treg({ spendGate: { gate: probeCounting.gate, mode: "enforce" } }));
+    const unit = probeCounting.reserves[probeCounting.reserves.length - 1].boundUsd;
     const w = createMemorySpendGate();
-    const probe = treg();
-    await ask(probe);
-    const cap = Number((probe.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd);
-    grantOf(w, { ceilingUsd: cap * 5 + cap / 2, perOpMaxUsd: 0.5, perMissionMaxUsd: 1 });
+    grantOf(w, { ceilingUsd: unit * 5 + unit / 2, perOpMaxUsd: 0.5, perMissionMaxUsd: 100 });
     const t = treg({ spendGate: { gate: w.gate, mode: "enforce" }, budgetUsd: 10, responses: Array.from({ length: 20 }, () => async () => { await new Promise((r) => setTimeout(r, 5)); return tregResult(postsPage(1), 0); }) });
     const out = await Promise.all(Array.from({ length: 20 }, (_, i) => ask(t, `q${i}`)));
-    expect(t.call).toHaveBeenCalledTimes(5);
-    expect(out.filter((r) => !r.ok && (r as any).refused === "spend_gate")).toHaveLength(15);
+    const sent = (t.call as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    // at least the five that fit at full size are sent (a smaller amount may let one more in); every call that was NOT sent was refused by the gate; the ceiling is never passed
+    expect(sent).toBeGreaterThanOrEqual(5);
+    const refused = out.filter((r) => !r.ok);
+    expect(refused).toHaveLength(20 - sent);
+    expect(refused.every((r) => (r as any).refused === "spend_gate" || (r as any).refused === "over_budget")).toBe(true);
     const g = w.owner.grant("g1")!;
     expect(g.reservedUsd + g.spentUsd).toBeLessThanOrEqual(g.ceilingUsd + 1e-9);
   });
@@ -417,7 +427,8 @@ describe("R62 OBSERVE: measured honestly, and NOT budget enforcement", () => {
     await ask(t);
     await ask(t, "q2");
     const s = sg.finish(MISSION);
-    expect(s).toMatchObject({ reservations: 2, unknown_charges: 1, unreserved_ops: 0, would_refuse: 0 });
+    // DT-20261119-11: each call first asks the grant for the most it may take (above this grant's per-operation limit: observed, counted as «would refuse»), then for a smaller amount, which is reserved
+    expect(s).toMatchObject({ reservations: 2, unknown_charges: 1, unreserved_ops: 0, would_refuse: 2 });
     expect(s.settled_usd).toBeCloseTo(0.0004 + Number((t.call.mock.calls[1][0] as TregCallOptions).routeMaxCostUsd), 9);
     expect(lines.join("\n")).toContain("spend_gate.summary");
     expect(lines.join("\n")).not.toContain("real-key-never-logged");

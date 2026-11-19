@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
 import { ADMIN_LOOKUP_DAILY_CAP_USD, ADMIN_LOOKUP_PURPOSE, lookupCandidates, lookupPlan, lookupReserveUsd, runAdminLookup, runLookupAttempt } from "../src/lib/server/adminLookup";
+import { callMoney } from "../src/lib/server/callBudget";
 import { runSensitiveCall } from "../src/lib/server/sensitiveAccess";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { policyRuleOf } from "../src/lib/treg/dataPolicy";
@@ -19,6 +20,8 @@ const catalog = loadTregCatalog();
 const person = { data: { person: { full_name: "Sara Ahmed", company: "Acme Co", job_title: "Head of Sales", linkedin_url: "https://www.linkedin.com/in/sara-ahmed", country: "Egypt" } } };
 const EMAIL = "sara@acme.com";
 const FIRST = lookupCandidates("email", catalog, policyRuleOf)[0];
+/** DT-20261119-11 D4/D-0138: an attempt reserves, in its audit row, the money it may take: at most max(0.05, 20 x the call's estimate bound) of the day's money left (never the small route cap of before). */
+const HOLD = callMoney(ADMIN_LOOKUP_DAILY_CAP_USD, Math.max(FIRST.estimateUsd, 0.001), 1)!.holdUsd;
 const NOW = new Date("2026-11-14T10:00:00Z");
 
 const ok = (data: unknown, micro: number) => ({ ok: true, httpStatus: 200, tregCallId: "c", costMicro: micro, latencyMs: 1, data, isRouteMaxCost: false, isPlatformBalanceLow: false }) as any;
@@ -35,7 +38,7 @@ describe("Phase 5: the $2 daily cap is a HARD cap (audit log only, reserve befor
     const call = async (_o: TregCallOptions) => { seenDuringCall = { ...db.rows("sensitive_lookup_audit")[0] }; return ok(person, 20_000); };
     const out = await runLookupAttempt({ client: db, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call, now: NOW });
     expect(out.ok).toBe(true);
-    expect(seenDuringCall).toMatchObject({ outcome: "pending", cost_usd: lookupReserveUsd(FIRST.estimateUsd), purpose: ADMIN_LOOKUP_PURPOSE });
+    expect(seenDuringCall).toMatchObject({ outcome: "pending", cost_usd: HOLD, purpose: ADMIN_LOOKUP_PURPOSE });
     expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "called", cost_usd: 0.02 });
     expect(lookupReserveUsd(0)).toBe(0.001);
   });
@@ -90,7 +93,7 @@ describe("Phase 5: unknown charges count, never 0", () => {
     ["an unreachable source", { ok: false, httpStatus: 503, tregCallId: "", costMicro: 0, latencyMs: 5, data: null, error: "network_failure", isRouteMaxCost: false, isPlatformBalanceLow: false }],
   ])("%s keeps the reservation in the audit row and in the day's spend", async (_label, answer) => {
     const db = createMemoryDb();
-    const reserve = lookupReserveUsd(FIRST.estimateUsd);
+    const reserve = HOLD;
     const out = await runLookupAttempt({ client: db, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call: async () => answer as any, now: NOW });
     expect(out.ok && out.attempt).toMatchObject({ outcome: "failed", costUsd: reserve });
     expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "failed", cost_usd: reserve });
@@ -99,7 +102,7 @@ describe("Phase 5: unknown charges count, never 0", () => {
   it("a call that THROWS keeps its reservation too", async () => {
     const db = createMemoryDb();
     await expect(runLookupAttempt({ client: db, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call: async () => { throw new Error("socket hang up"); }, now: NOW })).rejects.toThrow();
-    expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "failed", cost_usd: lookupReserveUsd(FIRST.estimateUsd) });
+    expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "failed", cost_usd: HOLD });
   });
 
   it("an answered call with a reported cost records that cost (a refused HTTP answer at its own reported 0)", async () => {
@@ -112,7 +115,7 @@ describe("Phase 5: unknown charges count, never 0", () => {
     const db = createMemoryDb();
     const wrapped: any = { ...db, from: (t: string) => { const b = db.from(t); return { ...b, update: () => ({ eq: async () => { throw new Error("lost"); } }), select: b.select, insert: b.insert }; } };
     await runLookupAttempt({ client: wrapped, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call: async () => ok(person, 20_000), now: NOW });
-    expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "pending", cost_usd: lookupReserveUsd(FIRST.estimateUsd) });
+    expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "pending", cost_usd: HOLD });
   });
 });
 

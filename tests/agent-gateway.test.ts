@@ -1,3 +1,4 @@
+import { callMoneyCapUsd } from "../src/lib/server/callBudget";
 import { describe, expect, it, vi } from "vitest";
 import { parseCatalog, loadTregCatalog } from "../src/lib/treg/catalog";
 import { COMMENTS_ENDPOINT, POSTS_ENDPOINT, SENSITIVE_ENDPOINT, WRITE_ENDPOINT, makeHarness, postsPage, tregResult } from "./helpers/agentHarness";
@@ -139,10 +140,12 @@ describe("treg_call records and digests", () => {
     expect(h.providerCosts[0]).toMatchObject({ status: "failed", committedUsd: 0 });
   });
 
-  it("a call that never answered keeps its estimate counted in the budget", async () => {
+  it("a call that never answered keeps what was RESERVED for it counted in the budget (DT-20261119-11, D-0138: at most max(0.05, 20 x its estimate), never more than the money left)", async () => {
     const h = makeHarness({ responses: [tregResult(null, 0, { ok: false, httpStatus: 0, timedOut: true, error: "timeout" })] });
     await h.gateway.tregCall({ endpoint_id: POSTS_ENDPOINT, params: { query: "q", max_results: 4 } });
-    expect(h.budget.spentUsd()).toBeCloseTo(0.02, 6); // 4 posts at 0.005
+    // 4 posts at 0.005 = an estimate of 0.02: the reservation is capped at 20 x 0.02 and by the harness's whole budget
+    expect(h.budget.spentUsd()).toBeGreaterThanOrEqual(0.02 - 1e-9);
+    expect(h.budget.spentUsd()).toBeCloseTo(Math.min(callMoneyCapUsd(0.02), h.budget.ceilingUsd ?? Infinity), 6);
   });
 
   it("never returns a price of the mission to the model", async () => {

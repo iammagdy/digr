@@ -59,6 +59,7 @@ describe("rounding: remaining money is whole micro-dollars rounded DOWN (D2)", (
   });
   it("callMoney splits the money over the requests the call can make, or makes ONE request when it does not stretch", () => {
     expect(callMoney(0.4, 0.02, 4)).toEqual({ perRequestUsd: 0.1, attempts: 4, holdUsd: 0.4 });
+    expect(callMoney(5, 0.0198, 1)).toEqual({ perRequestUsd: 0.396, attempts: 1, holdUsd: 0.396 }); // D-0138: at most 20 x the estimate, never the whole 5
     expect(callMoney(0.05, 0.02, 4)).toEqual({ perRequestUsd: 0.05, attempts: 1, holdUsd: 0.05 });
     expect(callMoney(0.01, 0.02, 4)).toBeNull();
   });
@@ -255,5 +256,50 @@ describe("the real client: a budget-held header (stageCall, exploration, admin),
     expect(calls[0]["X-Treg-Route-Max-Cost"]).toBe("0.1");
     expect(budget.spentUsd()).toBeCloseTo(0.0198, 6);
     vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
+  });
+});
+
+describe("D-0138 (Megz): H = min(max(0.05, 20 x the call's own estimate bound), the money left); an unknown charge keeps at most H", () => {
+  const timeoutAnswer = async (): Promise<TregCallResult> => ({ ok: false, httpStatus: 0, tregCallId: "", costMicro: 0, latencyMs: 1, data: null, error: "timeout", timedOut: true, isRouteMaxCost: false, isPlatformBalanceLow: false });
+  it("(1) the engine-mission-types replay: one unknown-charge call on 0.638 of money holds at most H (0.396), the job's next call is NOT refused over_budget", async () => {
+    let n = 0;
+    const w = world({ budgetUsd: 0.638, call: async (o) => (n++ === 0 ? timeoutAnswer() : provider(0.0198)(o)) });
+    const first = await ask(w, 1);
+    expect(first).toMatchObject({ ok: false, failed: true });
+    expect(Number((w.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBe(0.396);
+    expect(w.budget.spentUsd()).toBe(0.396); // at most H is kept, never the whole 0.638
+    const next = await ask(w, 1);
+    expect(next.ok).toBe(true);
+    expect(next).not.toMatchObject({ refused: "over_budget" });
+  });
+  it("(2) one planning timeout does not exhaust the planning budget; the next planning call goes out", async () => {
+    let n = 0;
+    const w = world({ phase: "planning", budgetUsd: 0.2, stageBudget: { stages: 2, budgetUsd: 0.2, reservesUsd: [0.03, 0.03] }, call: async (o) => (n++ === 0 ? timeoutAnswer() : provider(0.005)(o)) });
+    const aviato = () => w.gateway.tregCall({ endpoint_id: "aviato.companies.employees", params: { website: "acme.example", perPage: 5, page: 0 } });
+    expect(await aviato()).toMatchObject({ ok: false, failed: true });
+    expect(w.budget.spentUsd()).toBeLessThanOrEqual(0.1 + 1e-9); // H = max(0.05, 20 x 0.005) = 0.1
+    expect(w.budget.leftUsd(0)!).toBeGreaterThan(0.05);
+    const second = await w.gateway.tregCall({ endpoint_id: "aviato.companies.employees", params: { website: "other.example", perPage: 5, page: 0 } });
+    expect(second).not.toMatchObject({ refused: expect.anything() });
+  });
+  it("(3) findymail count 3 and blitz max_results 10 pass under the normal approved money of (a) 2 companies + 1 manager and (b) 5 companies + 2 managers", async () => {
+    for (const money of [0.145454, 0.1775, 0.3069, 1.0422]) {
+      const f = world({ budgetUsd: money, call: provider(0.0594) });
+      expect((await ask(f, 3)).ok, `findymail @${money}`).toBe(true);
+      const b = world({ budgetUsd: money, call: provider(0.01) });
+      const r = await b.gateway.tregCall({ endpoint_id: "blitzapi.people.employee-finder", params: { company_linkedin_url: "https://www.linkedin.com/company/acme", max_results: 10 } });
+      expect(r.ok, `blitz @${money}`).toBe(true);
+      expect(Number((b.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBeGreaterThanOrEqual(0.01);
+    }
+  });
+  it("(4) a call whose real price is ABOVE H gets the provider's 402 as an ordinary failed source: known zero, no spend, the next call still goes out", async () => {
+    const w = world({ budgetUsd: 5, call: provider(25) });
+    const r = await ask(w, 1);
+    expect(r).toMatchObject({ ok: false, failed: true, http_status: 402 });
+    expect((r as { charge_usd?: number | null }).charge_usd).toBe(0);
+    expect(Number((w.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd)).toBe(0.396); // 20 x the estimate bound 0.0198, not the 5 USD of money
+    expect(w.budget.spentUsd()).toBe(0);
+    expect((await ask(w, 1)).ok).toBe(false); // same provider (real 25): refused again, never a budget stop
+    expect(w.call).toHaveBeenCalledTimes(2);
   });
 });

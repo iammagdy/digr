@@ -42,12 +42,21 @@ export interface CallMoney {
 }
 
 /**
- * THE MONEY OF ONE CALL (DT-20261119-11 D1/D2): all the money that is left, split over the requests the call can make. When the money does not stretch to the call's own estimate for each request, the call makes ONE request with all of it (an explicit
- * one-attempt path). Null when no positive amount that covers the estimate is left: no request is made.
+ * THE MOST ONE CALL MAY HOLD (Megz, D-0138): the larger of 0.05 USD and 20 times the call's own estimate bound (the estimate floored at 0.001). A stale stored price up to 20 times too low still passes; a call whose real price is above it gets the provider's 402 as an
+ * ordinary failed source; and a call whose charge is UNKNOWN keeps at most this amount, never the whole job.
  */
-export function callMoney(leftUsd: number, estimateUsd: number, maxAttempts: number): CallMoney | null {
-  const left = floorMicroUsd(leftUsd);
+export const callMoneyCapUsd = (estimateUsd: number): number => Math.max(0.05, 20 * Math.max(Number(estimateUsd) || 0, 0.001));
+
+/**
+ * THE MONEY OF ONE CALL (DT-20261119-11 D1/D2, D-0138): the money that is left, but never more than `callMoneyCapUsd`, split over the requests the call can make. `maxShare` (a path with very little money in all, the legacy exploration) keeps back the rest, so one
+ * call that cannot be reckoned cannot take it all. When the money does not stretch to the call's own estimate for each request, the call makes ONE request with all of it (an explicit one-attempt path). Null when no positive amount that covers the estimate is
+ * left: no request is made.
+ */
+export function callMoney(leftUsd: number, estimateUsd: number, maxAttempts: number, options: { maxShare?: number } = {}): CallMoney | null {
+  const share = options.maxShare !== undefined && options.maxShare > 0 && options.maxShare < 1 ? options.maxShare : 1;
   const need = floorMicroUsd(estimateUsd);
+  // the share never takes the call below its own estimate when the money covers it (a call that lands exactly on the money left is made)
+  const left = floorMicroUsd(Math.min(Math.max(Number(leftUsd) * share, Math.min(Number(leftUsd), need)), callMoneyCapUsd(estimateUsd)));
   let attempts = Math.max(1, Math.floor(maxAttempts) || 1);
   let per = floorMicroUsd(left / attempts);
   if (per < need && attempts > 1) { attempts = 1; per = left; }

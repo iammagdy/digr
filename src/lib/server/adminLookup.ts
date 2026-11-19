@@ -253,7 +253,7 @@ export async function runLookupAttempt(input: {
   // THE MONEY OF THIS ATTEMPT (DT-20261119-11 D4): the day's money that is left, never above the amount the admin CONFIRMED for a paid phone endpoint (a higher amount needs a new confirmation), split over the requests the call can make. It is the header
   // AND the amount the audit row reserves before the call, so the day's cap holds across concurrent requests; no positive amount that covers the endpoint's price, no request.
   const dayLeft = capUsd - spent;
-  const money = callMoney(entry.state === "confirm" ? Math.min(Math.max(0, Number(input.confirmedUsd) || 0), dayLeft) : dayLeft, entry.usd, maxTregAttempts({}));
+  const money = callMoney(entry.state === "confirm" ? Math.min(Math.max(0, Number(input.confirmedUsd) || 0), dayLeft) : dayLeft, Math.max(entry.usd, 0.001), maxTregAttempts({}));
   if (!money) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
   const reserveUsd = money.holdUsd;
 

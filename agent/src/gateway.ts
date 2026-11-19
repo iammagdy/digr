@@ -303,7 +303,8 @@ export function createGateway(deps: GatewayDeps) {
       const capabilityId = tregCapabilityIdOf({ endpointId });
       // CAMPAIGN SCOPE: with the worker's own token passed EXPLICITLY the TREG client makes one attempt and never moves to another key of the pool (tregClient.ts executeWithKeyPool), so a call is ONE billable attempt by construction.
       const noKeyPool = deps.spendGate?.noKeyPool === true && Boolean(deps.token);
-      const maxAttempts = noKeyPool ? 1 : maxTregAttempts({});
+      // the attempts the client can make (key-pool hops), or the worker's own count for a gated mission (spendGate.tregAttempts), whichever is more
+      const maxAttempts = noKeyPool ? 1 : Math.max(maxTregAttempts({}), deps.spendGate?.tregAttempts ?? 1);
       const gateOn = Boolean(deps.spendGate && deps.spendGate.mode !== "off");
       const stageLimitUsd = Number.isFinite(Number(input.spend_limit_usd)) ? Number(input.spend_limit_usd) : null;
       const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd].filter((v): v is number => v !== null);
@@ -315,13 +316,16 @@ export function createGateway(deps: GatewayDeps) {
       // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
       const money = callMoney(poolUsd, estimate, maxAttempts);
       if (!money) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
-      const attempts = money.attempts;
-      // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount; a ledger that has no room for one amount is asked for the next
-      const candidates: number[] = [];
-      for (let h = money.perRequestUsd; h > 0; h = floorMicroUsd(h / 4)) { candidates.push(h); if (h <= minBound || candidates.length >= 6) break; }
-      let chosen: { perRequest: number; aggregate: number; reservation: Awaited<ReturnType<typeof deps.recorder.reserve>>; gated: GateBefore | null } | null = null;
+      // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
+      // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.
+      const candidates: Array<{ perRequest: number; attempts: number }> = [];
+      for (let h = money.perRequestUsd; h > 0 && candidates.length < 6; h = Math.max(floorMicroUsd(h / 4), Math.min(minBound, money.perRequestUsd))) { candidates.push({ perRequest: h, attempts: money.attempts }); if (h <= minBound) break; }
+      if (money.attempts > 1) candidates.push({ perRequest: Math.min(minBound, floorMicroUsd(poolUsd)), attempts: 1 });
+      let chosen: { perRequest: number; attempts: number; aggregate: number; reservation: Awaited<ReturnType<typeof deps.recorder.reserve>>; gated: GateBefore | null } | null = null;
+      // ONE key for the call: the amounts tried for it share the key (a refused amount leaves no reservation behind); the next call gets its own
+      const reservationKey = spendReservationKey("treg", deps.missionId, id);
       let lastRefusal: { code: RefusalCode; detail: string } = { code: "over_budget", detail: `${deps.phase}` };
-      for (const perRequest of candidates) {
+      for (const { perRequest, attempts } of candidates) {
         const aggregate = Number((perRequest * attempts).toFixed(6));
         // the job's money (and the planning stages' kept share): replace this call's hold in ONE step
         if (!deps.budget.rehold(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
@@ -341,19 +345,23 @@ export function createGateway(deps: GatewayDeps) {
           const op = `treg:${endpointId}`.slice(0, 200);
           const bound = providerCallBound({ provider: "treg", op: "call", boundUsd: perRequest, ...(attempts > 1 ? { attempts } : {}) });
           gated = await gateBefore(deps.spendGate, bound.ok
-            ? { key: spendReservationKey("treg", deps.missionId, id), kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
+            ? { key: reservationKey, kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
             : { refuse: "no_safe_bound", detail: bound.detail, op });
-          if (!gated.proceed) {
+          const roomReason = (r: string | undefined): boolean => r === "over_ceiling" || r === "over_op_max" || r === "over_mission_ceiling" || r === "no_safe_bound";
+          // OBSERVE mode forwards a refused reservation without one: while a smaller amount is left to try, ask for it so the call goes out reserved
+          const observedNoRoom = gated.proceed && gated.reservationId === null && roomReason(gated.observedRefusal) && candidates.some((c) => c.attempts * c.perRequest < perRequest * attempts);
+          if (!gated.proceed || observedNoRoom) {
             // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
             await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
             deps.budget.rehold(held, was); held = was;
+            const reason = gated.proceed ? gated.observedRefusal : gated.reason;
             // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
-            if (gated.reason === "over_ceiling" || gated.reason === "over_op_max" || gated.reason === "over_mission_ceiling" || gated.reason === "no_safe_bound") { lastRefusal = { code: "spend_gate", detail: gated.reason }; continue; }
+            if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }
             deps.budget.settle(held, 0);
-            return refuse(id, endpointId, trace, "spend_gate", gated.reason);
+            return refuse(id, endpointId, trace, "spend_gate", String(reason));
           }
         }
-        chosen = { perRequest, aggregate, reservation, gated };
+        chosen = { perRequest, attempts, aggregate, reservation, gated };
         break;
       }
       if (!chosen) { deps.budget.settle(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
@@ -387,7 +395,7 @@ export function createGateway(deps: GatewayDeps) {
         try {
           res = await call({
             endpointId, method: endpoint.method === "GET" ? "GET" : "POST", params, allowedParamKeys: [...known], userId: deps.userId, jobId: deps.jobId ?? `agent_${deps.missionId}`,
-            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: headerUsd, ...(attempts === 1 && maxAttempts > 1 ? { singleAttempt: true } : {}), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
+            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: headerUsd, ...(chosen.attempts === 1 && maxAttempts > 1 ? { singleAttempt: true } : {}), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
             endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? (noKeyPool ? { token: deps.token } : { legacyToken: deps.token }) : {}),
           });
         } catch {

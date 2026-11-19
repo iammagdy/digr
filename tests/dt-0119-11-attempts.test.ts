@@ -31,13 +31,13 @@ function run(o: { budgetUsd: number; withGate?: boolean }) {
 const ask = (g: ReturnType<typeof run>) => g.gateway.tregCall({ endpoint_id: "findymail.search.employees", params: { website: "acme.example", job_titles: ["CEO"], count: 1 } });
 
 describe("key-pool hops: attempts x header is reserved on EVERY ledger, or the call makes one request (R3)", () => {
-  it("0.4 of money, 4 possible requests: the header is 0.1 and 0.4 is held on the job, the daily ledger and the owner's grant before the request", async () => {
+  it("0.4 of money, 4 possible requests: H is capped at 20 x the estimate (0.396), the header is 0.099 and 0.396 is held on the job, the daily ledger and the owner's grant before the request", async () => {
     const r = run({ budgetUsd: 0.4, withGate: true });
     expect((await ask(r)).ok).toBe(true);
-    expect(Number(r.seen[0].opts.routeMaxCostUsd)).toBe(0.1);
-    expect(r.seen[0].held).toBe(0); // all of it held while the call runs
-    expect(r.seen[0].daily).toBe(0.4);
-    expect(r.reserves).toEqual([0.4]);
+    expect(Number(r.seen[0].opts.routeMaxCostUsd)).toBe(0.099);
+    expect(r.seen[0].held).toBeCloseTo(0.004, 6); // 0.396 of the 0.4 is held while the call runs
+    expect(r.seen[0].daily).toBe(0.396);
+    expect(r.reserves).toEqual([0.396]);
     expect(r.seen[0].opts.singleAttempt).toBeUndefined();
   });
   it("money that does not stretch to every request for the call's own estimate: ONE request with all of it, and the client is told not to hop", async () => {

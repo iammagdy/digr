@@ -289,7 +289,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
   }
 
   // THE MONEY OF THIS CALL (D1/D2): all the exploration money left, split over the requests the call can make, reserved on the SHARED ledger before the request and sent as the header
-  const money = callMoney(allowed, estimate, maxTregAttempts({}));
+  const money = callMoney(allowed, estimate, maxTregAttempts({}), { maxShare: 0.5 });
   const held = money ? await holdExploration(deps, money.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
   if (!money || !held) {
     const a = attempt({ outcome: "over_budget", detail: "this call does not fit the exploration budget left for this request" });
@@ -355,7 +355,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     const after = await readExplorationSpend(deps);
     const left = Math.min(capUsd - after.request, EXPLORATION_DAY_CAP_USD - after.day);
     const time = deps.deadlineAtMs !== undefined ? Math.min(SAMPLE_CALL_TIMEOUT_MS, deps.deadlineAtMs - Date.now() - PLANNER_MIN_TURN_MS) : SAMPLE_CALL_TIMEOUT_MS;
-    const money2 = estimate <= left + 1e-12 && time >= 3_000 ? callMoney(left, estimate, maxTregAttempts({})) : null;
+    const money2 = estimate <= left + 1e-12 && time >= 3_000 ? callMoney(left, estimate, maxTregAttempts({}), { maxShare: 0.5 }) : null;
     const held2 = money2 ? await holdExploration(deps, money2.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
     if (money2 && held2) {
       const second = await call({
