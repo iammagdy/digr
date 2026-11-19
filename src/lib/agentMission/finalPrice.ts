@@ -1,5 +1,5 @@
 import { type MissionPricingSettings } from "../missionPricing";
-import { priceMissionByCode } from "./price";
+import { carriedRevision, priceMissionByCode } from "./price";
 import { stagePriceInputs, type PricedPlan } from "./plan";
 
 /**
@@ -12,7 +12,7 @@ export interface PriceDrift { rowsBefore: number; rowsAfter: number; reserveBefo
 /** `settings` are the pricing settings (markup, admin minimum) the worker read for this mission; the plan's own stored settings are used only when none are given. */
 export function sealFinalPrice(plan: PricedPlan, settings?: MissionPricingSettings): { plan: PricedPlan; drift: PriceDrift | null } {
   if (plan.price.rule !== 2) return { plan, drift: null };
-  const final = priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: settings ?? plan.price.settings });
+  const final = priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: settings ?? plan.price.settings, ...carriedRevision(plan.price) });
   const same = final.unitPricePoints === plan.price.unitPricePoints && final.reservePoints === plan.price.reservePoints && final.deliveredRows === plan.price.deliveredRows && final.maxChargePoints === plan.price.maxChargePoints;
   if (same) return { plan, drift: null };
   return { plan: { ...plan, price: final }, drift: { rowsBefore: plan.price.deliveredRows, rowsAfter: final.deliveredRows, reserveBefore: plan.price.reservePoints, reserveAfter: final.reservePoints } };
