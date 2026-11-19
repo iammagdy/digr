@@ -177,7 +177,7 @@ export interface PlanLookup {
   /** The catalog sources that can carry out a step the request asks per parent (the people of a company), cheapest first: a plan may not call such a step «unserved» while one of them was never tried. */
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
   /** THE REQUEST'S STRUCTURE as the planning model understood it (a people step under a companies step), read from its understanding, never from the words: the people of the companies are asked for whatever the customer's wording, so the check below treats them as a step. */
-  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> };
+  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone">; companies?: number };
   /**
    * DT-20261119-01: present ONLY when code proved, from the calls of this planning, that a people source ANSWERED EMPTY for the companies, no people source gave a row, and the estimate table (peopleEstimate.ts) has a source left: a delivered
    * people stage under the companies' stage that cites no measured call is then priced by `costPerPersonUsd` (its `estimated` flag set), on one of `endpointIds`. Absent: a stage must cite a measured call with rows, as always.
@@ -475,7 +475,13 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const accountValuesOf = (st: unknown): number => (isRecord(st) && Array.isArray(st.filters) ? st.filters.filter((f) => isRecord(f) && f.kind === "account" && f.enabled !== false && Array.isArray(f.values)).reduce((n, f) => Math.max(n, (f as { values: unknown[] }).values.length), 0) : 0);
   const perSourceAsk = quantityText && !bound0 ? perSourceQuantities(quantityText)[0] : undefined;
   const perSourceStage = perSourceAsk ? stagesIn.findIndex((st, index) => isRecord(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === "") && accountValuesOf(st) > 0 && ownTitleWords(String(st.title_ar ?? "")).some((w) => sameNounStem(w, perSourceAsk.noun!)) && index >= 0) : -1;
-  const bound = bound0 ?? (perSourceAsk && perSourceStage >= 0 ? { index: perSourceStage, value: perSourceAsk.value * accountValuesOf(stagesIn[perSourceStage]), named: true } : null);
+  // DT-20261119-05 (F1): when the customer's words say a companies count that the word reader cannot parse (e.g. the dual «شركتين»),
+  // the count the planner understood travels with the people hand-over and binds the companies stage (the root with children, else first root).
+  // A count read directly from the customer's words (bound0 or per-source) always wins.
+  const handed = lookup.understoodPeople?.companies ?? null;
+  const rootIndexes = stagesIn.flatMap((st, i) => (isRecord(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === "") ? [i] : []));
+  const handedStage = handed === null ? -1 : (rootIndexes.find((i) => stagesIn.some((c) => isRecord(c) && c.parent_key === (stagesIn[i] as Record<string, unknown>).key)) ?? rootIndexes[0] ?? -1);
+  const bound = bound0 ?? (perSourceAsk && perSourceStage >= 0 ? { index: perSourceStage, value: perSourceAsk.value * accountValuesOf(stagesIn[perSourceStage]), named: true } : null) ?? (handedStage >= 0 ? { index: handedStage, value: handed!, named: false } : null);
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, { impliedPerParent: impliedCount });
@@ -821,6 +827,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       const what = `${q.noun} لكل ${parentNoun}`;
       const g = isRecord(given[i]) ? given[i] : null;
       const reason = g && g.reason_ar !== undefined ? checkCustomerText(g.reason_ar, { maxChars: 200 }) : null;
+      if (reason && lookup.peopleEstimate !== undefined && isPeopleNoun(q.noun ?? "")) {
+        issues.push(`the step «${what}» is priced by an ESTIMATE and cannot be declared unserved: the people sources you sampled answered empty and the catalog still has sources for it. Add the people stage (parent_key = the companies' stage, deliver true, per_parent_rows ${q.value}) with measured_by [] and no sample_rows, endpoint_id one of ${lookup.peopleEstimate.endpointIds.slice(0, 6).join(", ")}, and drop unserved_steps for it`);
+        return;
+      }
       // A STEP THE CATALOG CAN SERVE IS NOT «UNSERVED»: the model's «no source gives it» is accepted only after it really tried the sources the catalog has for that step and none gave rows (live: the managers of a company were declared unserved
       // while four people sources take a company's website)
       const serving = lookup.childStepSources?.(q.noun!) ?? [];

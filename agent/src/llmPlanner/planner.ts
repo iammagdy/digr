@@ -11,7 +11,7 @@ import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, withoutUnwrit
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
-import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
+import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import type { GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -76,7 +76,7 @@ export interface UnderstoodStep {
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
 }
 export interface Understanding {
-  decision: "plan" | "ask" | "cannot"; understanding_ar: string; /** the essential inputs an «ask» says are missing (DT-20261119-03); only the valid kinds */ missing?: string[]; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; steps: UnderstoodStep[];
+  decision: "plan" | "ask" | "cannot"; understanding_ar: string; /** the essential inputs an «ask» says are missing (DT-20261119-03); only the valid kinds */ missing?: string[]; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; /** the companies' count the customer's own words support, set by code (withCheckedCompaniesCount); never the model's total */ companies_count?: number; steps: UnderstoodStep[];
 }
 
 export type LlmPlanResult =
@@ -492,10 +492,11 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
   // the model asked again although it had no «ask» to give: the customer is NOT asked; the earlier path runs with this understanding (and may not ask either)
-  if (checked && !checked.ok && refusedAsk !== null && checked.error === "ask_refused") return { ok: false, error: "ask_refused", understanding: refusedAsk };
-  if (checked && !checked.ok && refusedAsk !== null && cost.refused !== true) return { ok: false, error: "ask_refused", understanding: refusedAsk };
+  const said = customerSaidOf(input);
+  if (checked && !checked.ok && refusedAsk !== null && checked.error === "ask_refused") return { ok: false, error: "ask_refused", understanding: withCheckedCompaniesCount(refusedAsk, said) };
+  if (checked && !checked.ok && refusedAsk !== null && cost.refused !== true) return { ok: false, error: "ask_refused", understanding: withCheckedCompaniesCount(refusedAsk, said) };
   if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
-  if (checked?.ok) return { ok: true, value: withCheckedPerCompany(withKeptPeopleAsk(checked.value, refusedAsk), customerSaidOf(input)) };
+  if (checked?.ok) return { ok: true, value: withCheckedCompaniesCount(withCheckedPerCompany(withKeptPeopleAsk(checked.value, refusedAsk), said), said) };
   return checked ?? { ok: false, error: "no answer" };
 }
 
@@ -541,6 +542,30 @@ export function withCheckedPerCompany(u: Understanding, said: ReadonlyArray<stri
     return { ...s, count: { ...s.count, per_parent: kept } };
   });
   return changed ? { ...u, steps, ...(ask ? { people_of_companies: { ...ask, per_company: per } } : {}) } : u;
+}
+
+/**
+ * THE COUNT OF COMPANIES THE CUSTOMER'S OWN WORDS SUPPORT (DT-20261119-05, F1):
+ * The planner's companies count is kept only when the words the model cites for it (companies_text)
+ * are in what the customer said, say that number, contain a noun word (>=4 letters, not a number word),
+ * and count a noun that is NOT the people's. The model's total is never used directly as it can copy
+ * a year, '3M', a phone number, or a per-company count.
+ */
+export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<string>): Understanding {
+  const ask = u.people_of_companies;
+  const peopleStep = u.steps.find((s) => s.parent !== null && isPeopleOfCompanyStep(s));
+  if (ask?.asked !== true && !peopleStep) return u;
+  const cited = ask?.companies_text ?? "";
+  const title = ask?.title_ar || peopleStep?.title_ar || "";
+  if (cited === "" || title === "") return u;
+  const message = said.join("\n");
+  const n = countWrittenIn(message, cited);
+  if (n === null || n < 1) return u;
+  if (!tokensOf(cited).some((t) => /^\p{L}{4,}$/u.test(t) && wordNumbersIn(t, 1).length === 0)) return u;
+  if (!isCountOfOtherNoun(message, cited, n, title)) return u;
+  const per = ask && ask.per_company !== null ? ask.per_company : (peopleStep?.count.per_parent ?? null);
+  if (per !== null && n === per && !writtenElsewhere(message, ask?.per_company_text ?? "", n)) return u;
+  return { ...u, companies_count: n };
 }
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
