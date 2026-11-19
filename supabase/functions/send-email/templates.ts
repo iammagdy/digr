@@ -79,7 +79,7 @@ interface LayoutOptions {
   note?: string;
 }
 
-const PRELUDE_PAD = "&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;";
+const PRELUDE_PAD = "&#8199;&#65279;&#847;".repeat(40);
 const LABEL_STYLE = `padding:11px 0;border-bottom:1px solid ${LINE};font-family:${FONT};font-size:13px;line-height:20px;color:${MUTED};text-align:right`;
 const VALUE_STYLE = `padding:11px 0;border-bottom:1px solid ${LINE};font-family:${FONT};font-size:14px;line-height:20px;font-weight:700;color:${INK}`;
 const factRow = ({ label, value, ltr = false }: Fact) =>
