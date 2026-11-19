@@ -1,6 +1,9 @@
 import { isTestAccount } from "./testAccounts";
 import { adminCapabilityLabelAr } from "./adminJobLabels";
 import { jobIdForQuote } from "./missionStatus";
+import { jobViewWithMission } from "../jobs/requestStatus";
+import { MISSION_TABLE } from "../agentMission/constants";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../agentMission/addonMarker";
 import { MODEL_PLAN_REQUEST_PARAM } from "../modelPlanner/constants";
 import { EXPLORATION_TABLE, PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT } from "../modelPlanner/exploration";
 
@@ -111,8 +114,13 @@ export function serviceOfEndpoint(endpointId: string): string {
 export interface JobRow { id: string; user_id: string | null; status: string; endpoint_id?: string | null; target_volume_max?: number | null; delivered_units?: number | null; error_message?: string | null; accumulated_cost_usd?: number | null; created_at?: string | null; updated_at?: string | null }
 export interface ExplorationRow { request_id: string; user_id: string | null; endpoint_id: string; http_status?: number | null; rows_returned?: number | null; cost_usd?: number | null; refused_reason?: string | null; params_digest?: any; created_at: string }
 
+/** What the board reads of the mission a job belongs to (its own delivered count and status). */
+export interface MissionOfJob { status?: string | null; delivered_units?: number | null }
+
 export interface BoardInput {
   jobs: ReadonlyArray<JobRow>;
+  /** The mission of each job (by job id), when it has one. */
+  missionOfJob?: ReadonlyMap<string, MissionOfJob>;
   /** The customer's words of each job (by job id), from its quote. */
   requestTextByJob: ReadonlyMap<string, string>;
   exploration: ReadonlyArray<ExplorationRow>;
@@ -123,14 +131,17 @@ export interface BoardInput {
 
 const jobServiceAr = (job: JobRow): string => (job.endpoint_id ? adminCapabilityLabelAr(job.endpoint_id)?.replace(/\s*\(TREG\)$/, "") ?? serviceOfEndpoint(job.endpoint_id) : "غير معروف");
 
-function jobFailure(job: JobRow): { kind: FailureKind; reasonAr: string } | null {
-  const delivered = Math.max(0, Number(job.delivered_units) || 0);
+function jobFailure(job: JobRow, mission?: MissionOfJob | null): { kind: FailureKind; reasonAr: string } | null {
+  // a job of a mission is read through the MISSION's delivered count and status: the job's count is what was charged (a person with none of the asked contacts is delivered, not charged) and a delivery with nothing to charge releases the job (D-0117, jobViewWithMission)
+  const view = jobViewWithMission(job, mission);
+  const delivered = Math.max(0, view.delivered);
   const wanted = Math.max(0, Number(job.target_volume_max) || 0);
-  if (job.status === "failed" || job.status === "refused") {
+  const status = view.status;
+  if (status === "failed" || status === "refused") {
     const own = typeof job.error_message === "string" && /[؀-ۿ]/.test(job.error_message) ? job.error_message.slice(0, 200) : "";
     return { kind: delivered > 0 ? "job_partial" : "job_failed", reasonAr: own || "فشل التنفيذ دون سبب مسجّل" };
   }
-  if (job.status === "completed" || job.status === "done") {
+  if (status === "completed" || status === "done") {
     if (delivered === 0) return { kind: "job_empty", reasonAr: "اكتملت المهمة دون أن يصل أي صف" };
     if (wanted > 0 && delivered < wanted) return { kind: "job_partial", reasonAr: `وصل ${delivered} من ${wanted} صفًا مطلوبًا` };
   }
@@ -150,7 +161,7 @@ export function buildBoard(input: BoardInput): { rows: BoardRow[]; summary: Boar
   for (const job of input.jobs) {
     const at = job.updated_at || job.created_at || "";
     if (!(Date.parse(at) >= since)) continue;
-    const failure = jobFailure(job);
+    const failure = jobFailure(job, input.missionOfJob?.get(job.id));
     if (!failure) continue;
     const o = owner(job.user_id);
     const text = input.requestTextByJob.get(job.id) ?? "";
@@ -218,6 +229,15 @@ export async function loadFailureBoard(admin: any, opts: { now?: number; hideTes
     const { data } = await admin.from("jobs").select("id, user_id, status, endpoint_id, target_volume_max, delivered_units, error_message, accumulated_cost_usd, created_at, updated_at").gte("updated_at", sinceIso).order("updated_at", { ascending: false }).limit(1000);
     jobs = Array.isArray(data) ? data : [];
   } catch { partial.push("jobs"); }
+  const missionOfJob = new Map<string, MissionOfJob>();
+  try {
+    const jobIds = jobs.map((j) => j.id);
+    for (let i = 0; i < jobIds.length; i += 200) {
+      const { data } = await admin.from(MISSION_TABLE).select(`job_id, status, delivered_units, ${ADDON_MARKER_COLUMN}`).in("job_id", jobIds.slice(i, i + 200));
+      // an add-on (review / edit) row is never the subject of a research request: its job stays as the job reads (money7e fence)
+      for (const m of Array.isArray(data) ? data : []) if (m?.job_id && !hasAddonMarker(m)) missionOfJob.set(String(m.job_id), { status: m.status ?? null, delivered_units: typeof m.delivered_units === "number" ? m.delivered_units : null });
+    }
+  } catch { partial.push("missions"); }
   let exploration: ExplorationRow[] = [];
   try {
     const { data } = await admin.from(EXPLORATION_TABLE).select("request_id, user_id, endpoint_id, http_status, rows_returned, cost_usd, refused_reason, params_digest, created_at").gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(3000);
@@ -240,5 +260,5 @@ export async function loadFailureBoard(admin: any, opts: { now?: number; hideTes
       for (const p of Array.isArray(data) ? data : []) if (p?.id) owners.set(String(p.id), { email: p.email || null });
     }
   } catch { partial.push("profiles"); }
-  return { ...buildBoard({ jobs, requestTextByJob, exploration, owners, now, hideTest: opts.hideTest }), partial };
+  return { ...buildBoard({ jobs, missionOfJob, requestTextByJob, exploration, owners, now, hideTest: opts.hideTest }), partial };
 }

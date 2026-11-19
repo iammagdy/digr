@@ -21,6 +21,7 @@ import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../sr
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission, type SettleResult } from "../../src/lib/agentMission/lifecycle";
 import { estimatedGroupKeys, stageCountsOf, stageUnitsOf } from "../../src/lib/agentMission/stageUnits";
+import { billedUnits, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../../src/lib/agentMission/billableRows";
 import { planningJudge, topicVariants } from "./researchJudge";
 import { executionSpecFor, readJudged, researchSpecFor, type ResearchSpec } from "./researchSpec";
 import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
@@ -1195,10 +1196,17 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // A mission whose people stage was priced by an ESTIMATE is settled per stage, from the plan the customer APPROVED (stageUnits.ts); one that has such a stage but no units is never settled by the one-unit function. Everything is computed BEFORE the ownership check, so the check is the line right before the settlement call (the worker's money guard: a worker that lost the lease never settles)
   const hasEstimate = estimatedGroupKeys(approvedPlan.stages).size > 0;
   const stageUnits = hasEstimate ? stageUnitsOf(approvedPlan) : null;
-  const stageCounts = stageUnits ? stageCountsOf(approvedPlan.stages, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])), stageUnits, delivered) : null;
+  const stageCountsToday = stageUnits ? stageCountsOf(approvedPlan.stages, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])), stageUnits, delivered) : null;
+  // D-0117 (DT-20261119-06 PART B): a delivered person who carries none of the contact kinds the customer asked for is delivered but NOT charged; the settlement gets the BILLABLE count (the job's delivered_units), the hold and the file are unchanged (billableRows.ts)
+  const unbilled = peopleWithoutRequestedContact(approvedPlan, rowsByStage, fileByStage);
+  const groupKeys = estimatedGroupKeys(approvedPlan.stages);
+  const unbilledInGroup = Object.entries(unbilled.byStage).reduce((n, [k, v]) => n + (groupKeys.has(k) ? v : 0), 0);
+  const billed = billedUnits({ delivered, unbilledTotal: unbilled.total, unbilledInGroup, stageCounts: stageCountsToday });
+  const stageCounts = billed.counts ? { ...billed.counts, deliveredUnits: billed.deliveredUnits } : null;
+  const nothingBillable = delivered > 0 && billed.deliveredUnits === 0;
   const stageUnavailable: SettleResult | null = hasEstimate && !stageUnits ? { ok: false, code: "stage_units_unavailable", detail: "the approved plan has an estimated people stage but no per-stage units" } : null;
   await ensureOwned(deps, mission.id);
-  const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا.", ...(stageUnits && stageCounts ? { stage: { units: stageUnits, counts: { base: stageCounts.base, estimated: stageCounts.estimated } } } : {}) });
+  const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : billed.deliveredUnits, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: nothingBillable ? noBillableReasonAr(unbilled.kinds) : "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا.", ...(stageUnits && stageCounts ? { stage: { units: stageUnits, counts: { base: stageCounts.base, estimated: stageCounts.estimated } } } : {}) });
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
   await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   if (!settled.ok) {
@@ -1212,6 +1220,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // only a mission an admin created can be one (a customer's own mission is never looked up)
   // MULTI-OBJECTIVE RESEARCH (capability_discovery_v1 plans only): every objective of the approved plan gets its own explicit outcome, counted from the file (never claimed complete when one objective fell short)
   if (qualityLine && delivered > 0) await store.addEvent(mission.id, { kind: "result", message_ar: qualityLine });
+  // D-0117: what was delivered but not charged, said once, before the final summary (also when nothing is charged and the hold returns whole)
+  if (billed.reduced > 0) {
+    flags.push("people_without_contact_unbilled");
+    await store.addEvent(mission.id, { kind: "result", message_ar: unbilledLineAr(billed.reduced, unbilled.kinds) });
+    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أشخاص بلا إيميل أو تليفون لم يُحتسبوا.", counts: { adm_flag: 1, adm_unbilled: billed.reduced } });
+  }
   if (approvedPlan.capability_selection) {
     const line = objectiveOutcomesLineAr(approvedPlan, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])));
     if (line) await store.addEvent(mission.id, { kind: "result", message_ar: line });

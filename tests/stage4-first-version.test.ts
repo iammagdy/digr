@@ -154,8 +154,8 @@ describe("where the call sits in the worker", () => {
     const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
     const calls = [...src.matchAll(/storeFirstVersion\(/g)].map((m) => m.index!);
     expect(calls).toHaveLength(1);
-    // (DT-20261119-01: the normal settlement call may carry the per-stage counts of a plan with an estimated people stage; it is still THE settlement call of the normal path)
-    const settle = src.indexOf("await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : delivered");
+    // (DT-20261119-01: the normal settlement call may carry the per-stage counts of a plan with an estimated people stage; it is still THE settlement call of the normal path; DT-20261119-06 B: its one-unit count is the BILLABLE count, `billed.deliveredUnits`)
+    const settle = src.indexOf("await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : billed.deliveredUnits");
     expect(settle).toBeGreaterThan(0);
     expect(calls[0]).toBeGreaterThan(src.indexOf("await tell(deps, mission, jobId, noticeKind"));
     expect(calls[0]).toBeGreaterThan(settle);

@@ -80,7 +80,8 @@ async function run(firstAttempt?: { assumptions_ar: string[] }) {
 }
 
 describe("A1 replay: a person with a name and a job title is delivered with empty e-mail and phone cells (live: 31 read, 31 excluded, 0 delivered)", () => {
-  it("delivered: 5 companies + 2 decision makers of each (10 people), charged for 15 by the one unit price", async () => {
+  // D-0117 CHANGED (DT-20261119-06 PART B): the 10 people are still DELIVERED (the file, the delivered count 15), but a person is charged only if a contact the customer asked for reached the file: here no finder found anything, so the charge is for the 5 companies by the one unit price
+  it("delivered: 5 companies + 2 decision makers of each (10 people); charged for the 5 companies only (no person carries a contact) by the one unit price", async () => {
     const r = await run();
     const snap = await readSnapshot(r.store, r.missionId);
     // the source's people are never excluded for lacking a verified contact
@@ -88,7 +89,7 @@ describe("A1 replay: a person with a name and a job title is delivered with empt
     expect(snap.counts("people").accepted).toBe(10);
     assertReplayInvariants(r, { expectDelivered: 15 });
     const unit = r.plannedPlan.price.unitPricePoints;
-    expect(Number(r.mission.charged_points)).toBe(settlementCharge({ deliveredUnits: 15, unitPricePoints: unit, reservedPoints: r.plannedPlan.price.reservePoints }).chargedPoints);
+    expect(Number(r.mission.charged_points)).toBe(settlementCharge({ deliveredUnits: 5, unitPricePoints: unit, reservedPoints: r.plannedPlan.price.reservePoints }).chargedPoints);
   });
 
   it("the people are the DECISION MAKERS first (the source gave engineers before the chiefs), two per company", async () => {

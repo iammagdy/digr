@@ -93,7 +93,8 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     // decision-maker titles first: every chief executive / general manager is looked up before an accountant is
     // money: the delivered count and the charge do not depend on what the finders found; the spend stays inside what the reserve allows
     expect(r.mission.delivered_units).toBe(none.mission.delivered_units);
-    expect(r.mission.charged_points).toBe(none.mission.charged_points);
+    // D-0117 CHANGED (DT-20261119-06 PART B): the charge DOES depend on what the finders found: people with a requested contact are charged, people with none are delivered but not (this run found contacts; the run where nothing is found charges only the companies)
+    expect(Number(r.mission.charged_points)).toBeGreaterThan(Number(none.mission.charged_points));
     expect(Number(r.mission.charged_points)).toBeLessThanOrEqual(Number(r.mission.reserved_points));
     expect(Number(r.mission.execution_treg_usd)).toBeLessThanOrEqual(executionBudgetUsd(Number(r.mission.reserved_points)) + 1e-9);
     // the finders ran as the plan said: the primary chain plus published alternates is finite for each person and kind

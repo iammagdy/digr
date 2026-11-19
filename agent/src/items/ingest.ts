@@ -2,6 +2,7 @@ import { CONTACT_STATUS_UNVERIFIED_AR, SOURCE_PROFILE_KEY, statusKeyOf } from ".
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../../src/lib/agentMission/foundation/topicChoice";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
+import { contactShape, phoneShape } from "../../../src/lib/agentMission/contactShape";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
@@ -272,9 +273,10 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     let verifiedAny = false;
     for (const c of contactColumns) {
       const original = String(raw[c.key] ?? "").trim();
-      const verified = verifyContactValue(c.kind!, raw[c.key]);
+      // THE SHAPE FIRST (contactShape.ts, the rule settlement uses too): a native phone cell that is a date, a labelled id or any text that is not written as a phone is never turned into one by digit-stripping (DT-20261119-06 PART B)
+      const verified = c.kind === "work_email" || phoneShape(original) ? verifyContactValue(c.kind!, raw[c.key]) : null;
       // A VALUE THE SOURCE GAVE IS DELIVERED even when the check does not verify it (owner direction 2026-11-01): it is kept as written and the status cell beside it says «غير موثّق»; a masked value (stars) is no value. Empty only when nothing was found.
-      const looksLikeValue = c.kind === "work_email" ? /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(original) : !original.includes("*") && original.replace(/\D/g, "").length >= 7;
+      const looksLikeValue = contactShape(c.kind === "work_email" ? "email" : "phone", original);
       const kept = verified ?? (looksLikeValue ? original : "");
       row[c.key] = kept;
       // «موثّق» is never written here: a code check says an address or a number is well formed, not that a mailbox exists or a line is live and local. The contact step sends every kept value through a verifier or a validator and writes «موثّق» only on its answer (emailVerification.ts, phoneValidation.ts)

@@ -228,7 +228,11 @@ export function assertReplayInvariants(r: ReplayResult, options: { expectDeliver
   const delivered = Number(m.delivered_units);
   if (options.expectDelivered !== undefined) expect(delivered).toBe(options.expectDelivered);
   expect(delivered).toBeLessThanOrEqual(price.deliveredRows);
-  const expectedCharge = Math.min(Math.ceil(Math.round(delivered * price.unitPricePoints * 1e6) / 1e6 - 1e-9), price.reservePoints);
+  // D-0117 (DT-20261119-06 PART B): the settlement charges the BILLABLE rows (a person with none of the asked contacts is delivered but not charged); the count recorded for the job is the last complete_chunk's. It is never above the delivered rows
+  const completed = [...r.money.calls].reverse().find((c) => c.name === "complete_chunk");
+  const billable = completed ? Number((completed.args as Record<string, unknown>).p_new_delivered_units) : delivered;
+  expect(billable).toBeLessThanOrEqual(delivered);
+  const expectedCharge = Math.min(Math.ceil(Math.round(billable * price.unitPricePoints * 1e6) / 1e6 - 1e-9), price.reservePoints);
   expect(m.charged_points).toBe(expectedCharge);
   expect(r.money.balance()).toBe(r.initialBalance - expectedCharge);
   expect(r.money.ledger.filter((l) => l.type === "reserve")).toHaveLength(1);

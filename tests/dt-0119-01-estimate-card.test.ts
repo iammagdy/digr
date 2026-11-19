@@ -14,7 +14,8 @@ import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 import { approveMission } from "../src/lib/agentMission/lifecycle";
 import { fakeMoneyClient } from "./helpers/agentMoney";
-import { stageUnitsOf } from "../src/lib/agentMission/stageUnits";
+import { settlementChargeByStage, stageUnitsOf } from "../src/lib/agentMission/stageUnits";
+import { unbilledLineAr } from "../src/lib/agentMission/billableRows";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { PEOPLE_OF_COMPANY_CAPABILITIES, peopleSourcesForCompanies } from "../src/lib/agentMission/childSources";
@@ -62,11 +63,21 @@ function planFlow(peopleEndpoint: string = ALT, peopleCalls: "empty" | "rows" = 
 }
 const person = (slug: (typeof SLUGS)[number], j: number) => personOf(slug, j, "Managing Director");
 /** The provider's answers: the people source of the sample answers EMPTY; the source the estimated stage reads gives `counts[i]` people for company i; everything else as in the g1 world. */
-const answers = (counts: number[] = [2, 2, 2, 2, 2]) => Array.from({ length: 300 }, () => {
+let finderSeq = 0;
+const firstSeen = new Map<string, string>();
+const answers = (counts: number[] = [2, 2, 2, 2, 2], hasContact: (slug: string, first: boolean) => boolean = () => true) => Array.from({ length: 300 }, () => {
   const base = dispatcher({});
   return (o: TregCallOptions) => {
     if (o.endpointId === PEOPLE) return tregResult({ results: [] }, 0.0005);
     if (o.endpointId === ALT) { const i = SLUGS.findIndex((x) => JSON.stringify(o.params ?? {}).includes(x)); return tregResult({ results: Array.from({ length: i >= 0 ? counts[i] : 0 }, (_, j) => person(SLUGS[i], j)) }, 0.0005); }
+    // D-0117 (DT-20261119-06 B): a person is CHARGED only if a contact the customer asked for reached the file. These worlds test the per-stage settlement arithmetic, so every person's e-mail finder answers with ONE distinct address (nothing in the assertions below changes)
+    const capability = catalog.byId.get(o.endpointId)?.capability ?? "";
+    if (capability === "people.email.find") {
+      const at = /in\/([a-z]+-em)-(\d)/.exec(JSON.stringify(o.params ?? {}));
+      if (at && !firstSeen.has(at[1])) firstSeen.set(at[1], at[2]);
+      if (!at || !hasContact(at[1], firstSeen.get(at[1]) === at[2])) return base(o);
+      return tregResult({ email: `person${(finderSeq += 1)}@orascom-em.com.eg` }, 0);
+    }
     return base(o);
   };
 });
@@ -206,6 +217,22 @@ describe("the money end to end: approve -> a model-carried run -> settle per sta
     const r = await world([2, 2, 0, 0, 0]);
     expect(r.mission).toMatchObject({ status: "completed", delivered_units: 9, charged_points: 1112 });
     expect(r.money.balance()).toBe(r.initialBalance - 1112);
+  }, 120_000);
+  // D-0117 (DT-20261119-06 PART B): the people WITHOUT a requested contact are delivered but not charged, on the per-stage path too: the estimated group's count loses them, the companies' count is untouched, the charge is the lower-of of the billable counts (never above today's)
+  it("(e) D-0117: all 10 people delivered, only the first person of three companies carries a contact: the per-stage function settles 5 companies + 3 people (not 10), the charge is the lower-of of those counts, the file keeps every person, the customer is told 7 were not charged", async () => {
+    firstSeen.clear();
+    const r = await replay({ request, planning: planFlow(), execution: execution(), answers: answers([2, 2, 2, 2, 2], (slug, first) => first && ["orascom-em", "nile-em", "delta-em"].includes(slug)) as any, deps: withUnderstanding });
+    const m: any = r.mission;
+    const units = stageUnitsOf(planOf(r))!;
+    const expected = settlementChargeByStage({ base: 5, estimated: 3 }, units, 148.002371, 2554);
+    expect(expected).toBeLessThan(2221);
+    expect(m).toMatchObject({ status: "completed", delivered_units: 15, charged_points: expected, reserved_points: 2554 });
+    const settle = [...r.money.calls].reverse().find((c) => c.name === "settle_job_by_stage_atomic")!;
+    expect((settle.args as any).p_units).toEqual({ base: 5, estimated: 3 });
+    expect(money(r).names).not.toContain("settle_job_atomic");
+    expect(r.money.balance()).toBe(r.initialBalance - expected);
+    expect(JSON.parse((await r.store.getFile(r.missionId, "rows/people.json"))!)).toHaveLength(10);
+    expect(r.store.events.some((e) => e.kind === "result" && e.message_ar === unbilledLineAr(7, ["email", "phone"]))).toBe(true);
   }, 120_000);
   it("the units come from the plan the customer APPROVED even when the run widens a stage (an open people stage: the run's own copy of the plan raises its planned rows to what the job may deliver): the charge of 5 companies + 4 people stays 1,112", async () => {
     const r = await replay({ request, planning: planFlow(), execution: execution(), answers: answers([2, 2, 0, 0, 0]) as any, deps: withUnderstanding,
