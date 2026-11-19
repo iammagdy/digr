@@ -11,6 +11,9 @@ import { PEOPLE_ESTIMATE_MAX_USD, PEOPLE_ESTIMATE_NOTE_AR, peopleAnswersOf, peop
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { validateAndPricePlan } from "../src/lib/agentMission/plan";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
+import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
+import { approveMission } from "../src/lib/agentMission/lifecycle";
+import { fakeMoneyClient } from "./helpers/agentMoney";
 import { stageUnitsOf } from "../src/lib/agentMission/stageUnits";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -225,5 +228,35 @@ describe("the money end to end: approve -> a model-carried run -> settle per sta
     // after the run the stored plan's people rows are what was delivered (0), so units from THAT plan would not exist; the charge above was settled per stage all the same
     expect(money(r).names.filter((n) => n === "settle_job_by_stage_atomic").length).toBe(2);
     expect((r.mission as any).charged_points).toBe(373);
+  }, 120_000);
+});
+
+describe("the plan editor on an estimated plan (Gate 1 P2-1): the flag stays, both prices follow the new counts, the approval of the edited card works", () => {
+  it("fewer people per company, then fewer companies: still estimated, units re-derived by code (the people's unit follows the new number of people), the edited plan approves and settles per stage", async () => {
+    const r = await replay({ request, planning: planFlow(), execution: () => [], answers: answers() as any, deps: withUnderstanding });
+    const plan = planOf(r);
+    const perParent = applyPlanEdits(plan, { stages: [{ key: "people", per_parent: 1 }] });
+    expect(perParent.ok).toBe(true);
+    if (!perParent.ok) return;
+    const p1 = perParent.plan as any;
+    expect(p1.stages.find((x: any) => x.key === "people")).toMatchObject({ estimated: true, planned_rows: 5, per_parent_rows: 1 });
+    const u1 = stageUnitsOf(p1)!;
+    expect(u1.rows).toEqual({ base: 5, estimated: 5 });
+    expect(u1.base).toBe(stageUnitsOf(plan)!.base); // the companies' own unit does not move when the people's number does
+    // fewer companies: both groups shrink together, the flag survives
+    const fewer = applyPlanEdits(p1, { count: 3 });
+    expect(fewer.ok).toBe(true);
+    if (!fewer.ok) return;
+    const p2 = fewer.plan as any;
+    expect(p2.stages.find((x: any) => x.key === "people").estimated).toBe(true);
+    expect(stageUnitsOf(p2)!.rows).toEqual({ base: 3, estimated: 3 });
+    for (const edited of [p1, p2]) {
+      const bank = fakeMoneyClient({ balance: 100_000 });
+      const approved = await approveMission(bank.client, { id: "m_edit", user_id: "u1", plan: edited });
+      expect(approved.ok).toBe(true);
+      const item = bank.calls.find((c) => c.name === "create_quote_atomic")!.args.p_items[0];
+      expect(item.stageRowsPlanned).toEqual(stageUnitsOf(edited)!.rows);
+      expect(item.stageUnitsPoints).toEqual({ base: stageUnitsOf(edited)!.base, estimated: stageUnitsOf(edited)!.estimated });
+    }
   }, 120_000);
 });
