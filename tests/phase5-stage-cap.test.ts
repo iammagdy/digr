@@ -211,7 +211,7 @@ describe("the verified maximum of a TREG call is the route cap the gateway reall
   const requiredParams = (id: string): Record<string, unknown> => Object.fromEntries(catalog.byId.get(id).inputs.filter((i: any) => i.required).map((i: any) => [i.name, i.type === "number" || i.type === "integer" ? 5 : "orascom-em.com.eg"]));
 
   it("for catalog ids with and without a page size, with unknown parameters the gateway drops: the bound equals X-Treg-Route-Max-Cost of the real call, to the micro-dollar", async () => {
-    const ids = [TREG_ID, TREG_ID_2, "tomba.people.phone.find", "anyapi.linkedin.email.work.find", "blitzapi.people.waterfall-icp"].filter((id) => catalog.byId.has(id));
+    const ids = [TREG_ID, TREG_ID_2, "tomba.people.phone.find", "anyapi.linkedin.email.work.find", "blitzapi.people.waterfall-icp", "aiark.people.search"].filter((id) => catalog.byId.has(id));
     expect(ids.length).toBeGreaterThanOrEqual(3);
     for (const id of ids) {
       for (const extra of [{}, { limit: 50 }, { size: 1 }, { not_a_param: 999, limit: "x" }]) {

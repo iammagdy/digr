@@ -52,7 +52,12 @@ export function classifyFailure(call: Pick<RecordedCallFact, "status" | "refused
   const http = Number(call.http_status ?? 0);
   const text = String(call.params_digest?._failure ?? "");
   // a 402 that the key pool checked against the key's own balance (healthy) is THIS source refusing payment: it is demoted, never skipped; a bare 402 or a price cap says nothing about the source
-  if (http === 402 && /^endpoint_payment_refused/.test(text)) return "payment";
+  // DT-20261119-09: a 402 is classified at the source of the call (the client's own verdict, written with the row): a PRICE CAP is the call's cap, never a verdict on the source; an ENDPOINT's payment refusal is a `payment` failure (demoted, never skipped)
+  const kind = String(call.params_digest?._failure_kind ?? "");
+  if (http === 402 && kind === "price_cap") return "none";
+  if (http === 402 && kind === "endpoint_payment") return "payment";
+  // a row recorded BEFORE the client could tell the two apart has no kind: its text carries the label, and the clipped cap fields mark a price cap that was labelled «endpoint_payment_refused»
+  if (http === 402 && /^endpoint_payment_refused/.test(text) && !/route_max_cost|max_cost_mi|estimated_cost_mi/i.test(text)) return "payment";
   if (/route_max_cost|over_budget|budget/i.test(text) || http === 402) return "none"; // the price cap of the call, not the source
   if (http === 401 || http === 403 || /not configured|no api key|missing (api )?key|unauthori[sz]ed|forbidden|credential/i.test(text)) return "config";
   if (http === 400 || http === 404 || http === 422 || /not allowed|not a valid|invalid|is required|must be|unsupported|unknown (parameter|value)|bad request/i.test(text)) return "validation";
