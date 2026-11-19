@@ -185,6 +185,8 @@ export interface PlanLookup {
   peopleEstimate?: PeopleEstimate;
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
+  /** Saved successful calls with positive rows per endpoint, so an unserved-step repair can name exact saved call IDs. */
+  savedCallsByEndpoint?(): ReadonlyMap<string, ReadonlyArray<{ callId: string; rows: number }>>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
   contactFinders?(kind: FinderKind): FinderInfo[];
   /** The helpers of the finder steps besides the finders (the e-mail verifiers), ranked and priced from the catalog. */
@@ -485,7 +487,22 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, { impliedPerParent: impliedCount });
-  if (lookup.understoodPeople && !perParentAsks.some((q) => isPeopleNoun(q.noun ?? "") || isPeopleNoun(q.of ?? ""))) { const u = lookup.understoodPeople; perParentAsks.push({ value: u.per_parent ?? impliedCount, noun: u.noun_ar, digits: false, perEach: true, of: null, parent: u.parent_ar, ...(u.per_parent === null ? { implied: true } : {}) }); }
+  if (lookup.understoodPeople) {
+    const u = lookup.understoodPeople;
+    const peopleIdx = perParentAsks.findIndex((q) => isPeopleNoun(q.noun ?? "") || isPeopleNoun(q.of ?? ""));
+    const existing = peopleIdx >= 0 ? perParentAsks[peopleIdx] : null;
+    const handedAsk: (typeof perParentAsks)[number] = {
+      value: u.per_parent ?? impliedCount,
+      noun: existing?.noun ?? u.noun_ar,
+      digits: false,
+      perEach: true,
+      of: existing?.of ?? null,
+      parent: existing?.parent ?? u.parent_ar,
+      ...(u.per_parent === null ? { implied: true } : {}),
+    };
+    if (peopleIdx < 0) perParentAsks.push(handedAsk);
+    else if (u.per_parent !== null && existing?.implied === true) perParentAsks[peopleIdx] = handedAsk;
+  }
   /** The implied ask (people of the companies, no number) a child stage of this plan serves: its count is code's default and the card says so. */
   let impliedUsed: { noun: string; parent: string } | null = null;
   // THE STAGES WHOSE ITEMS THE CUSTOMER ASKED FOR (the counted noun and every per-parent noun) ARE DELIVERED, whatever the model marked: only items nobody asked for may be an intermediate stage (checked again below, on the finished plan)
@@ -837,8 +854,23 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (reason && serving.length > 0) {
         const called = lookup.endpointsCalled?.() ?? new Map<string, { rows: number }>();
         const tried = serving.filter((s) => called.has(s.id));
-        const works = tried.some((s) => (called.get(s.id)?.rows ?? 0) > 0);
-        if (works || tried.length < Math.min(2, serving.length)) {
+        const working = tried.filter((s) => (called.get(s.id)?.rows ?? 0) > 0);
+        if (working.length > 0) {
+          const savedByEp = lookup.savedCallsByEndpoint?.();
+          const savedEntries = working.flatMap((s) => {
+            const rowsForEp = savedByEp?.get(s.id);
+            if (rowsForEp && rowsForEp.length > 0) return rowsForEp.map((c) => `${c.callId} (${s.id}, ${c.rows} rows)`);
+            return [`${s.id} (${called.get(s.id)?.rows ?? 0} rows)`];
+          });
+          const firstSaved = working.flatMap((s) => savedByEp?.get(s.id) ?? [])[0]?.callId;
+          const rootStage = priced.find((st) => st.parent_key === null) ?? priced[0];
+          const parentKey = typeof rootStage?.key === "string" && rootStage.key ? rootStage.key : "companies";
+          issues.push(
+            `the step «${what}» CANNOT be declared in unserved_steps because saved people call(s) ALREADY returned rows: ${savedEntries.join(", ")}. Do NOT repeat paid sample calls, lower validation, or invent rows. Inspect the saved page with run_code${firstSaved ? ` (files: ["${firstSaved}"])` : ""}, return a bare JSON array mapping each real person object (with id, full_name, job_title, company, linkedin) for yield_from, add the child stage (key "people", parent_key "${parentKey}", deliver true, per_parent_rows ${q.value}, endpoint_id "${working[0].id}", measured_by [${firstSaved ? `"${firstSaved}"` : `"${working[0].id}"`}]), and drop unserved_steps. If those saved rows are incompatible with the companies or request, do not fabricate a match`,
+          );
+          return;
+        }
+        if (tried.length < Math.min(2, serving.length)) {
           issues.push(`the step «${what}» CAN be served: the catalog has ${serving.slice(0, 4).map((s) => `${s.id} (takes the company's ${s.accepts.join(" / ")})`).join(", ")}. Sample one of them with a company of your first sample (its website, link or name as that source's input), add the stage (parent_key = the companies' stage, per_parent_rows ${q.value}) and drop unserved_steps for it. If the companies' source gives none of those fields, choose a companies source that gives the website. unserved_steps for this step is accepted only after at least two of these sources were really tried and gave no rows`);
           return;
         }

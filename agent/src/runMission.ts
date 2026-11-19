@@ -888,11 +888,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
     const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}), ...(understoodPeople ? { peopleAsked: true, peopleEndpointIds: new Set(deps.catalog.endpoints.filter((e) => e.capability && PEOPLE_OF_COMPANY_CAPABILITIES.has(e.capability)).map((e) => e.id)) } : {}) });
-    deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason}`);
+    const issueCategories = state.planRejections?.lastCategories ?? [];
+    deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason}${issueCategories.length ? ` issues=${issueCategories.join(",")}` : ""}`);
     if (verdict.cls === "internal") {
       // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours
+      const issueCounts = Object.fromEntries(
+        Object.entries(state.planRejections?.categories ?? {})
+          .filter(([k, v]) => /^[a-z_]{1,40}$/.test(k) && typeof v === "number" && v > 0)
+          .map(([k, v]) => [`issue_${k}`, v]),
+      );
       await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: noCardSentenceAr(verdict), error: `admin: planning_failed class=internal reason=${verdict.reason}${output.error ? ` detail=${output.error}` : ""}`.slice(0, 300) });
-      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة للمشرف: تعذّر التخطيط من جانبنا.", counts: { adm_flag: 1 } });
+      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة للمشرف: تعذّر التخطيط من جانبنا.", counts: { adm_flag: 1, ...issueCounts } });
       await store.addEvent(mission.id, { kind: "result", message_ar: noCardSentenceAr(verdict) });
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
     } else {

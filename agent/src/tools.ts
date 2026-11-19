@@ -13,7 +13,7 @@ import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
-import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
+import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
@@ -94,7 +94,9 @@ export interface RunState {
   /** What each web search / page read gave in this run, by its input (round 56): Firecrawl is used for an input only after Context.dev gave nothing for it. */
   webOutcomes: Map<string, Array<{ rows: number; key: string }>>;
   /** Plans propose_plan refused, and what the last refusal was about («data»: no sampled row matches the stage's rule; else «formal»). Read when the planning ends without a card (refusal.ts). */
-  planRejections?: { count: number; last: "formal" | "data" };
+  planRejections?: { count: number; last: "formal" | "data"; categories?: Record<string, number>; lastCategories?: string[] };
+  /** Consecutive/repeated refusals for declaring the people stage unserved while saved rows or an estimate exist (bounded repair limit). */
+  unservedPeopleRejections?: number;
   /** Where the rows of each answered sample are, as code (`rows_in_code` of its answer), by call id: an EMPTY run_code result over such a page is told where its rows are (round 52). */
   rowsAt?: Map<string, { rows: number; expr: string }>;
 }
@@ -172,11 +174,71 @@ export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
+
+/**
+ * Generic schema-driven preflight for endpoint input shapes (c2): validates declared array and nested object-field array
+ * expectations from catalog metadata before dispatching to the gateway, leaving valid arrays and string inputs untouched.
+ */
+export function validateInputShape(endpoint: CatalogEndpoint | undefined, params: unknown): string | null {
+  if (!endpoint || !isObject(params)) return null;
+  for (const inp of endpoint.inputs) {
+    const val = params[inp.name];
+    if (val === undefined) continue;
+    if (inp.type && /^array(?:\[|$)/i.test(inp.type) && !Array.isArray(val)) {
+      return `invalid input shape for «${inp.name}»: expected ${inp.type} (an array), got ${val === null ? "null" : typeof val}${inp.example !== null && inp.example !== undefined ? ` (example: ${JSON.stringify(inp.example)})` : ""}. Pass an array and retry.`;
+    }
+    if (inp.fields && isObject(val)) {
+      for (const [subKey, spec] of Object.entries(inp.fields)) {
+        const subVal = val[subKey];
+        if (subVal === undefined || !/^array(?:\[|$)/i.test(spec.type)) continue;
+        if (!Array.isArray(subVal)) {
+          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (an array), got ${subVal === null ? "null" : typeof subVal}${spec.example !== undefined ? ` (example: ${JSON.stringify(spec.example)})` : ""}. Pass an array of strings and retry.`;
+        }
+        if (/^array\[string\]$/i.test(spec.type) && subVal.some((x) => typeof x !== "string" || x.trim() === "")) {
+          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (array of non-empty strings).`;
+        }
+      }
+    }
+  }
+  return null;
+}
 /** A refusal that is about the DATA (no sampled row matches the stage's own rule), not about the plan's form. */
 const DATA_REJECTION = /none of the \d+ rows of the sample matches your relevance rule/;
-/** propose_plan refuses a plan: the issues go back to the planner, and the run remembers the refusal and its kind (refusal.ts classifies an ending without a card from it). */
+const UNSERVED_PEOPLE_REPAIR_MAX = 1;
+const SAFE_ISSUE_CATEGORY_RULES: Array<[RegExp, string]> = [
+  [/priced by an ESTIMATE and cannot be declared unserved|answered empty: a PEOPLE stage may be given/i, "people_estimate_unserved"],
+  [/CANNOT be declared in unserved_steps because saved .* already returned rows/i, "people_saved_unserved"],
+  [/CAN be served: the catalog has|catalog HAS sources for this step/i, "child_step_unserved"],
+  [/measured_by must cite|no measured call/i, "missing_measured_call"],
+  [/sample_rows|sampleRowsDiagnosis/i, "missing_sample_rows"],
+  [/yield_from/i, "invalid_yield_from"],
+  [/column «|mapping does not give|must give every row|missing field/i, "missing_column_or_mapping"],
+  [DATA_REJECTION, "relevance_zero_match"],
+  [/parent «|expected_rows|place|another country/i, "stage_or_filter_invalid"],
+];
+function classifyPlanIssue(issue: string): string {
+  for (const [re, cat] of SAFE_ISSUE_CATEGORY_RULES) if (re.test(issue)) return cat;
+  return "plan_validation_error";
+}
+/** propose_plan refuses a plan: the issues go back to the planner, and the run remembers the refusal and its kind (refusal.ts classifies an ending without a card from it). Bounded repair stops repeated unserved-people loops after one repair. */
 function rejectPlan(state: RunState, message: string, issues: ReadonlyArray<string>): ReturnType<typeof err> {
-  state.planRejections = { count: (state.planRejections?.count ?? 0) + 1, last: issues.some((i) => DATA_REJECTION.test(i)) ? "data" : "formal" };
+  const cats = [...new Set(issues.map(classifyPlanIssue))];
+  const counts: Record<string, number> = { ...(state.planRejections?.categories ?? {}) };
+  for (const c of cats) counts[c] = (counts[c] ?? 0) + 1;
+  state.planRejections = {
+    count: (state.planRejections?.count ?? 0) + 1,
+    last: issues.some((i) => DATA_REJECTION.test(i)) ? "data" : "formal",
+    categories: counts,
+    lastCategories: cats,
+  };
+  if (cats.includes("people_estimate_unserved") || cats.includes("people_saved_unserved")) {
+    state.unservedPeopleRejections = (state.unservedPeopleRejections ?? 0) + 1;
+    if (state.unservedPeopleRejections > UNSERVED_PEOPLE_REPAIR_MAX) {
+      state.finish = { outcome: "cannot_serve", summary_ar: "", kind: "unsupported" };
+      state.terminal = true;
+      return err("bounded repair limit reached for unserved people step; stop now", { issues: issues.slice(0, 12) });
+    }
+  }
   return err(message, { issues: issues.slice(0, 12) });
 }
 
@@ -475,7 +537,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const sameJob = cheaperSameJobMessage(ctx, id, a.why, a.skip);
         if (sameJob.refusal) return { ok: false, refused: "choose_cheapest", message: sameJob.refusal };
         // the model's own request carries the customer's Cairo days (live finding B), never its day-only operators
-        const sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, ctx.catalog.byId.get(id), a.params) : a.params;
+        const endpoint = ctx.catalog.byId.get(id);
+        const sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, endpoint, a.params) : a.params;
+        const shapeIssue = validateInputShape(endpoint, sent);
+        if (shapeIssue) return { ok: false, refused: "invalid_params", message: shapeIssue };
         const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: sent, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(sent) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...(sent as Record<string, unknown>) });
@@ -492,7 +557,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
         const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
-        return unsuitable ? { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" } : { ...result };
+        if (!unsuitable) return { ...result };
+        const msg422 = "failed" in result && (result as { http_status?: unknown }).http_status === 422 ? /\b([a-zA-Z_][a-zA-Z0-9_.]*)\s*:\s*Expected an array,\s*got a string/i.exec(String((result as { message?: unknown }).message ?? "")) : null;
+        if (msg422) {
+          return { ...result, next_sources: untriedSources(state, id), next_step: `input «${msg422[1]}» expects an array of strings, not a scalar string; wrap the value in [...] and retry this source or sample the next untried source` };
+        }
+        return { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" };
       },
     },
     ...(ctx.web ? webTools(ctx) : []),
@@ -660,14 +730,14 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
     },
     {
       name: "propose_plan",
-      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles, readable ones only: names, texts, links, numbers, dates; an id is NOT a column of the file, but your run_code mapping MUST give every row an `id` field: the source's own id of that item, or its link; every column you list must be a field your mapping gives, and code checks it on the measured page), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix.",
+      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles, readable ones only: names, texts, links, numbers, dates; an id is NOT a column of the file, but your run_code mapping MUST give every row an `id` field: the source's own id of that item, or its link; every column you list must be a field your mapping gives, and code checks it on the measured page), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by; or [] with no sample_rows ONLY when a people-of-companies stage is priced by an estimate after empty people samples). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix — apply that correction once without repeating the rejected proposal.",
       phases: ["planning"],
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، الأحدث أولًا». A language, a period, a place or «replies left out» written here is a PROMISE: write it only when the stage has that filter (code refuses it otherwise). The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones for COMPANIES (no people stage in the plan): ONE Arabic sentence saying honestly why. When the plan has a people stage, the e-mail and phone finder steps are added to it by code: never write that they may not be filled", optional: true },
-        unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it: [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step, do not pass this.", optional: true },
-        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver (true for every stage whose rows the customer receives: at least one; false only for a helper stage whose rows are not in the file), columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from), measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
+        unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it (and neither saved people rows nor an estimate apply): [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step (including an estimated people stage), do not pass this.", optional: true },
+        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver (true for every stage whose rows the customer receives: at least one; false only for a helper stage whose rows are not in the file), columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from or uses an estimate), measured_by:[call ids, or [] for an estimated people stage], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
@@ -725,6 +795,20 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("email", ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
           },
           endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
+          savedCallsByEndpoint: () => {
+            const m = new Map<string, Array<{ callId: string; rows: number }>>();
+            const prefix = `${mission.id}:`;
+            for (const c of calls) {
+              if (c.status !== "ok") continue;
+              const rows = Number(c.rows_returned) || 0;
+              if (rows <= 0) continue;
+              const callId = c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id;
+              const list = m.get(c.endpoint_id) ?? [];
+              list.push({ callId, rows });
+              m.set(c.endpoint_id, list);
+            }
+            return m;
+          },
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return rejectPlan(state, "the plan was not accepted; fix these and propose again", checked.issues);

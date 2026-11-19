@@ -178,3 +178,35 @@ export function isCountOfOtherNoun(message: string, cited: string, n: number, pe
   });
   return seen > 0 && counting === seen;
 }
+
+const PER_EACH_DISTRIBUTIVE = new Set(["كل", "لكل", "بكل", "وكل", "فكل"]);
+
+/**
+ * Pure Arabic morphology check (no keyword or service list): returns true when `cited` is an indefinite singular noun
+ * (or short phrase ending in one) that stands in a distributive per-parent clause (`كل` / `لكل <parent> <singular>`)
+ * inside `message`, e.g. «من كل شركة مدير» -> 1 per parent. Plural/dual/definite forms («المديرين», «مديرين») return false.
+ */
+export function isSingularPerParentCitation(message: string, cited: string | null | undefined): boolean {
+  const raw = normalizeWords(cited ?? "");
+  if (raw.length < 2 || /\d/.test(raw) || wordNumbersIn(raw, 1).length > 0) return false;
+  const cTokens = tokensOf(raw);
+  if (cTokens.length === 0) return false;
+  const noun = cTokens[cTokens.length - 1];
+  if (!/^\p{L}{3,}$/u.test(noun)) return false;
+  if (/^(?:[وفبكل]*)?ال|^لل/.test(noun)) return false;
+  if (/(?:ون|ين|ان|ات|اء)$/.test(noun)) return false;
+  if (cTokens.some((t) => wordNumbersIn(t, 1).length > 0 || /\d/.test(t))) return false;
+  const mTokens = tokensOf(message);
+  for (let i = 0; i <= mTokens.length - cTokens.length; i += 1) {
+    if (!cTokens.every((t, k) => mTokens[i + k] === t)) continue;
+    const endIdx = i + cTokens.length - 1;
+    // Check distributive token (`كل`/`لكل`/...) 1..3 tokens before the singular noun with at least one parent token in between.
+    if (
+      (endIdx >= 2 && PER_EACH_DISTRIBUTIVE.has(mTokens[endIdx - 2])) ||
+      (endIdx >= 3 && PER_EACH_DISTRIBUTIVE.has(mTokens[endIdx - 3]))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
