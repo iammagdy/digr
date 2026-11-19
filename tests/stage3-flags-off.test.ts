@@ -12,6 +12,7 @@ import { dispatcher, planFlow, SECTOR_WORLD } from "./helpers/g1World";
  * The request words of msn_4969a50fed8c45b37d8f are not in the repo, so it has no world of its own here (docs/STAGE-3.md section 11).
  */
 const LIVE_7539 = "عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار";
+// D-0117 CHANGED (DT-20261119-06 PART B, Megz's decision: a delivered person is charged only if a contact the customer asked for reached the file): the fixture was re-written on the PART B branch: the ONLY strings that moved are the three `status` values «completed:15:2234:» -> «completed:15:745:» (the finders of these worlds find nothing, so the 10 people are delivered but not charged); plan, rows and file digests are unchanged.
 const DIGESTS = new URL("./fixtures/stage3-flags-off.json", import.meta.url);
 const sha = (v: unknown): string => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 16);
 /**

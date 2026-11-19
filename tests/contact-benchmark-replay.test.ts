@@ -88,11 +88,12 @@ describe("the benchmark shapes, through a whole mission", () => {
     expect(log.filter((l) => l.capability === "people.email.verify").length).toBe(8);
   });
 
-  it("the same people, the same delivered count and the same charge as a run where nothing is found; the spend stays inside the approved reserve", async () => {
+  it("the same people and the same delivered count as a run where nothing is found, and a HIGHER charge (the people with a contact are charged); the spend stays inside the approved reserve", async () => {
     const none = (await run("nothing")).r;
     const { r } = await run("benchmark");
     expect(r.mission.delivered_units).toBe(none.mission.delivered_units);
-    expect(r.mission.charged_points).toBe(none.mission.charged_points);
+    // D-0117 CHANGED (DT-20261119-06 PART B): the charge DOES depend on what the finders found: people with a requested contact are charged, people with none are delivered but not (this run found contacts; the run where nothing is found charges only the companies)
+    expect(Number(r.mission.charged_points)).toBeGreaterThan(Number(none.mission.charged_points));
     expect(Number(r.mission.charged_points)).toBeLessThanOrEqual(Number(r.mission.reserved_points));
     expect(Number(r.mission.execution_treg_usd)).toBeLessThanOrEqual(executionBudgetUsd(Number(r.mission.reserved_points)) + 1e-9);
   });

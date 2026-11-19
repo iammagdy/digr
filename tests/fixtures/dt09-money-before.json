@@ -1,7 +1,7 @@
 {
  "flags_off_g1": {
   "mission.delivered": 15,
-  "mission.charged": 2234,
+  "mission.charged": 745,
   "mission.reserved": 2569,
   "mission.unit": 148.918671,
   "plan.price.rule": 2,
@@ -51,14 +51,14 @@
   "money[2].args.p_expected_step": 0,
   "money[2].args.p_lease_seconds": 21600,
   "money[3].args.p_expected_step": 0,
-  "money[3].args.p_new_delivered_units": 15,
+  "money[3].args.p_new_delivered_units": 5,
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5
  },
  "flags_off_g2": {
   "mission.delivered": 15,
-  "mission.charged": 2234,
+  "mission.charged": 745,
   "mission.reserved": 2569,
   "mission.unit": 148.918671,
   "plan.price.rule": 2,
@@ -108,14 +108,14 @@
   "money[2].args.p_expected_step": 0,
   "money[2].args.p_lease_seconds": 21600,
   "money[3].args.p_expected_step": 0,
-  "money[3].args.p_new_delivered_units": 15,
+  "money[3].args.p_new_delivered_units": 5,
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5
  },
  "stage3_g1": {
   "mission.delivered": 15,
-  "mission.charged": 2234,
+  "mission.charged": 745,
   "mission.reserved": 2569,
   "mission.unit": 148.918671,
   "plan.price.rule": 2,
@@ -165,14 +165,14 @@
   "money[2].args.p_expected_step": 0,
   "money[2].args.p_lease_seconds": 21600,
   "money[3].args.p_expected_step": 0,
-  "money[3].args.p_new_delivered_units": 15,
+  "money[3].args.p_new_delivered_units": 5,
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5
  },
  "stage3_g2": {
   "mission.delivered": 15,
-  "mission.charged": 2234,
+  "mission.charged": 745,
   "mission.reserved": 2569,
   "mission.unit": 148.918671,
   "plan.price.rule": 2,
@@ -222,14 +222,14 @@
   "money[2].args.p_expected_step": 0,
   "money[2].args.p_lease_seconds": 21600,
   "money[3].args.p_expected_step": 0,
-  "money[3].args.p_new_delivered_units": 15,
+  "money[3].args.p_new_delivered_units": 5,
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5
  },
  "stage3_live_7539": {
   "mission.delivered": 15,
-  "mission.charged": 2234,
+  "mission.charged": 745,
   "mission.reserved": 2569,
   "mission.unit": 148.918671,
   "plan.price.rule": 2,
@@ -279,7 +279,7 @@
   "money[2].args.p_expected_step": 0,
   "money[2].args.p_lease_seconds": 21600,
   "money[3].args.p_expected_step": 0,
-  "money[3].args.p_new_delivered_units": 15,
+  "money[3].args.p_new_delivered_units": 5,
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5

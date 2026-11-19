@@ -12,6 +12,7 @@ import { g1 } from "./helpers/g1World";
  * A change of any amount, in any of the worlds, fails the test with the paths that moved.
  * LIMITS (Gate 2 r2 P2): the real settlement SQL (settle_job_atomic) is NOT exercised here (the worlds run on the money fake), and a pricing branch these worlds never reach (the legacy price function's reserve margin, the settlement's min()) is not covered by this proof.
  */
+// D-0117 CHANGED (DT-20261119-06 PART B, Megz's decision: a delivered person is charged only if a contact the customer asked for reached the file): in the five company worlds the finders find nothing, so the 10 people are delivered but not charged. The fixture was re-written on the PART B branch: the ONLY numbers that moved are `mission.charged` 2,234 -> 745 and `money[3].args.p_new_delivered_units` 15 -> 5 in each of the five worlds (git diff of the fixture shows exactly these 10 lines); every price, hold, reserve, unit and the plan price are unchanged.
 const FIXTURE = new URL("./fixtures/dt09-money-before.json", import.meta.url);
 const LIVE_7539 = "عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار";
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-05T13:21:11Z"), shouldAdvanceTime: true }); });
