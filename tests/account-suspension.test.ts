@@ -33,7 +33,7 @@ vi.mock("../src/lib/server/adminAuth", () => ({ authenticateAdmin: vi.fn(async (
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => adminClient(), createServerSideClient: vi.fn() }));
 
 import { POST, GET } from "../src/app/api/admin/users/[id]/suspend/route";
-import { BAN_DURATION, SUSPENDED_AR, forgetSuspension, isAccountSuspended, parseSuspendInput } from "../src/lib/server/accountSuspension";
+import { BAN_DURATION, SUSPENDED_AR, SUSPENSION_UNKNOWN_AR, forgetSuspension, isAccountSuspended, isSensitiveMethod, parseSuspendInput, suspensionBlock, suspensionVerdict } from "../src/lib/server/accountSuspension";
 import { AUTH_FAILURE_AR, authFailureMessageAr, classifyAuthFailure } from "../src/lib/authHelp";
 
 const post = (id: string, body: unknown) => POST(new NextRequest(`http://localhost/api/admin/users/${id}/suspend`, { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
@@ -107,7 +107,14 @@ describe("isAccountSuspended: the sign-in service's word, briefly remembered", (
     expect(await isAccountSuspended(adminClient as never, USER_ID)).toBe(true);
     expect(await isAccountSuspended(adminClient as never, USER_ID, { banned_until: new Date(Date.now() - 60_000).toISOString() }, Date.now() + 40 * 86_400_000)).toBe(false);
   });
-  it("a user object that already carries a future ban answers without a call; a service outage never locks a customer out", async () => {
+  it("the memory lasts 30 seconds, no longer: a ban set by ANOTHER instance is seen after 30 s (a warm instance must not trust an old «not suspended»)", async () => {
+    const t0 = Date.now();
+    expect(await isAccountSuspended(adminClient as never, USER_ID, null, t0)).toBe(false);
+    state.users[USER_ID] = { ...state.users[USER_ID], banned_until: new Date(t0 + 3_600_000).toISOString() }; // set elsewhere: this instance's cache is not cleared
+    expect(await isAccountSuspended(adminClient as never, USER_ID, null, t0 + 29_000)).toBe(false);
+    expect(await isAccountSuspended(adminClient as never, USER_ID, null, t0 + 31_000)).toBe(true);
+  });
+  it("a user object that already carries a future ban answers without a call; for a READ a service outage never locks a customer out", async () => {
     expect(await isAccountSuspended(adminClient as never, USER_ID, { banned_until: new Date(Date.now() + 3_600_000).toISOString() })).toBe(true);
     expect(state.calls).toEqual([]);
     state.failGet = true;
@@ -142,3 +149,46 @@ describe("Gate 1 P2: no caching of a failed lookup; the sentence stays true for 
   });
 });
 
+
+// QA FAIL at 6af74613 (fix push): a suspension must hold for every action that spends points or changes data, even when the ban cannot be read from the token or the memory is stale
+describe("sensitive actions: a FRESH lookup, and the guard FAILS CLOSED", () => {
+  const outage = (kind: "throw" | "error" | "nouser") => () => ({ auth: { admin: { getUserById: async () => { if (kind === "throw") throw new Error("service down"); return kind === "error" ? { data: { user: null }, error: { message: "service unavailable" } } : { data: { user: null }, error: null }; } } } }) as never;
+  it("an outage of the sign-in service (error answer, thrown error, no user) is «unknown», never «active»", async () => {
+    for (const kind of ["throw", "error", "nouser"] as const) expect(await suspensionVerdict(outage(kind), USER_ID, null, { fresh: true })).toBe("unknown");
+    expect(await suspensionVerdict(adminClient as never, USER_ID, null, { fresh: true })).toBe("active");
+    state.users[USER_ID] = { ...state.users[USER_ID], banned_until: new Date(Date.now() + 3_600_000).toISOString() };
+    expect(await suspensionVerdict(adminClient as never, USER_ID, null, { fresh: true })).toBe("suspended");
+  });
+  it("suspensionBlock: an active account passes (null); a suspended one is 403 with the suspended sentence", async () => {
+    expect(await suspensionBlock(adminClient as never, { id: USER_ID })).toBeNull();
+    state.users[USER_ID] = { ...state.users[USER_ID], banned_until: new Date(Date.now() + 3_600_000).toISOString() };
+    const res = await suspensionBlock(adminClient as never, { id: USER_ID }, { requestId: "r1" });
+    expect(res?.status).toBe(403);
+    expect(await res?.json()).toEqual({ success: false, requestId: "r1", error: SUSPENDED_AR, suspended: true });
+  });
+  it.each(["throw", "error", "nouser"] as const)("suspensionBlock when the ban cannot be established (%s): a retryable 503 with its own sentence, never the suspended one, and nothing passes", async (kind) => {
+    const res = await suspensionBlock(outage(kind), { id: USER_ID });
+    expect(res?.status).toBe(503);
+    expect(res?.headers.get("retry-after")).toBe("5");
+    const body = await res?.json();
+    expect(body).toMatchObject({ success: false, retryable: true, error: SUSPENSION_UNKNOWN_AR });
+    expect(body.suspended).toBeUndefined();
+    expect(SUSPENSION_UNKNOWN_AR).not.toBe(SUSPENDED_AR);
+    expect(checkCustomerText(SUSPENSION_UNKNOWN_AR, {}).issues).toEqual([]);
+  });
+  it("a sensitive action never trusts the memory: an «active» answer remembered earlier does not hide a ban set meanwhile (another instance's suspension)", async () => {
+    expect(await isAccountSuspended(adminClient as never, USER_ID)).toBe(false); // the memory now says «active» for 30 s
+    state.users[USER_ID] = { ...state.users[USER_ID], banned_until: new Date(Date.now() + 3_600_000).toISOString() }; // suspended by another instance: this memory is not cleared
+    expect(await isAccountSuspended(adminClient as never, USER_ID)).toBe(false); // a read may still use it
+    expect((await suspensionBlock(adminClient as never, { id: USER_ID }))?.status).toBe(403); // an action may not
+  });
+  it("an unknown answer is not remembered: the next sensitive call asks again and the ban is seen", async () => {
+    expect((await suspensionBlock(outage("error"), { id: USER_ID }))?.status).toBe(503);
+    state.users[USER_ID] = { ...state.users[USER_ID], banned_until: new Date(Date.now() + 3_600_000).toISOString() };
+    expect((await suspensionBlock(adminClient as never, { id: USER_ID }))?.status).toBe(403);
+  });
+  it("a request that changes something is sensitive; a read is not", () => {
+    for (const m of ["POST", "PUT", "PATCH", "DELETE", "post"]) expect(isSensitiveMethod(m)).toBe(true);
+    for (const m of ["GET", "HEAD", "OPTIONS", "get"]) expect(isSensitiveMethod(m)).toBe(false);
+  });
+});

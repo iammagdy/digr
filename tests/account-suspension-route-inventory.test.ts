@@ -19,7 +19,13 @@ const ALLOWED_OPEN: Record<string, string> = {
 };
 const SKIP = /^src\/app\/api\/(admin|cron|internal)\//;
 const MUTATING = /export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)\b|export\s+const\s+(POST|PUT|PATCH|DELETE)\s*=/;
-const GUARDED = /isAccountSuspended\(|authenticateUser\(|resolveMissionViewer\(/;
+// fix push (QA FAIL at 6af74613): a changing route uses suspensionBlock (fresh lookup, fails closed) or one of the two helpers (they ask fresh and fail closed for POST, PUT, PATCH and DELETE); the cached
+// read answer (isAccountSuspended) alone is not a guard for an action that changes something
+const GUARDED = /suspensionBlock\(|authenticateUser\(|resolveMissionViewer\(/;
+/** The only routes that may ask the helper for the read answer on a changing request, and why. */
+const READ_ANSWER_OK: Record<string, string> = {
+  "src/app/api/analytics/collect/route.ts": "telemetry beacons: a login or signup beacon only reads who the visitor is; refusing it for a lookup outage would lose visits, and it changes no customer data and spends nothing",
+};
 
 function routes(dir: string): string[] {
   const out: string[] = [];
@@ -39,6 +45,21 @@ describe("every customer route that changes something checks the suspension, or 
   it.each(all)("%s", (file) => {
     const guarded = GUARDED.test(readFileSync(file, "utf8"));
     if (!guarded) expect(ALLOWED_OPEN[file], `${file}: add the suspension check, or a named reason in ALLOWED_OPEN`).toBeTruthy();
+  });
+  it("no changing route asks the cached read answer (isAccountSuspended) alone, and none passes { sensitive: false } without a named reason", () => {
+    for (const file of all) {
+      const src = readFileSync(file, "utf8");
+      if (/isAccountSuspended\(/.test(src)) expect(src, `${file}: a changing route needs suspensionBlock( beside the cached read answer`).toMatch(/suspensionBlock\(/);
+      if (/sensitive:\s*false/.test(src)) expect(READ_ANSWER_OK[file], `${file}: name the reason in READ_ANSWER_OK`).toBeTruthy();
+    }
+    for (const file of Object.keys(READ_ANSWER_OK)) expect(readFileSync(file, "utf8"), file).toMatch(/sensitive:\s*false/);
+  });
+  it("the two shared helpers branch on the method of the request: a change asks fresh and fails closed", () => {
+    for (const file of ["src/lib/server/userAuth.ts", "src/lib/server/missionViewer.ts"]) {
+      const src = readFileSync(file, "utf8");
+      expect(src, file).toMatch(/isSensitiveMethod\(/);
+      expect(src, file).toMatch(/await suspensionBlock\(/);
+    }
   });
   it("the allow-list names only routes that exist and are not guarded (no stale entry)", () => {
     for (const file of Object.keys(ALLOWED_OPEN)) {
