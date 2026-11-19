@@ -16,6 +16,12 @@ import { PAUSED_PROVIDERS } from "./blockList";
  * `shapeReader.ts` never trusts one hint alone.
  */
 
+export interface CatalogNestedField {
+  type: string;
+  example?: unknown;
+  note?: string;
+}
+
 export interface CatalogInput {
   name: string;
   in: string | null;
@@ -27,6 +33,7 @@ export interface CatalogInput {
   default: unknown;
   example: unknown;
   note: string | null;
+  fields?: Record<string, CatalogNestedField>;
 }
 
 export interface CatalogCost {
@@ -113,11 +120,44 @@ export const DECLARED_EXTRA_INPUTS: Readonly<Record<string, ReadonlyArray<Catalo
   ],
 };
 
+/**
+ * Nested object-field schemas omitted by the pinned catalog snapshot (D-0086):
+ *  - Source of truth: data/treg/treg_catalog_sellable.json (describe pass 2026-10-27) marks `company` as `type: "object"`
+ *    ("use a LinkedIn company URL to target a specific employer") without nested key types, and the file is SHA-256-pinned
+ *    (tests/treg-catalog-data.test.ts) so it is never edited.
+ *  - `company.fields.linkedin_url` (`array[string]`) comes from the provider's API validation contract / live upstream 422
+ *    error (`company.linkedin_url: Expected an array, got a string`). Declared here as pure catalog metadata alongside
+ *    DECLARED_EXTRA_INPUTS so toolDescribeEndpoint and validateInputShape remain 100% endpoint- and provider-agnostic.
+ */
+export const DECLARED_INPUT_SHAPES: Readonly<Record<string, Readonly<Record<string, { example?: unknown; fields?: Record<string, CatalogNestedField> }>>>> = {
+  "blitzapi.people.search": {
+    company: {
+      example: { linkedin_url: ["https://www.linkedin.com/company/example"] },
+      fields: {
+        linkedin_url: { type: "array[string]", example: ["https://www.linkedin.com/company/example"] },
+      },
+    },
+  },
+};
+
 function declareExtraInputs(catalog: TregCatalog): void {
   for (const [id, inputs] of Object.entries(DECLARED_EXTRA_INPUTS)) {
     const endpoint = catalog.byId.get(id);
     if (!endpoint) continue;
     for (const input of inputs) if (!endpoint.inputs.some((i) => i.name === input.name)) endpoint.inputs = [...endpoint.inputs, { ...input }].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+  for (const [id, shapes] of Object.entries(DECLARED_INPUT_SHAPES)) {
+    const endpoint = catalog.byId.get(id);
+    if (!endpoint) continue;
+    endpoint.inputs = endpoint.inputs.map((inp) => {
+      const patch = shapes[inp.name];
+      if (!patch) return inp;
+      return {
+        ...inp,
+        ...(inp.example === null && patch.example !== undefined ? { example: patch.example } : {}),
+        ...(patch.fields ? { fields: { ...(inp.fields ?? {}), ...patch.fields } } : {}),
+      };
+    });
   }
 }
 

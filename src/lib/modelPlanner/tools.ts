@@ -117,7 +117,7 @@ export function toolDescribeEndpoint(input: { id?: string }, access: AccountAcce
     endpoint: {
       id: e.id, name: clip(e.name, 120), platform: e.platform, capability: e.capability, summary: clip(e.summary, 300), method: e.method, kind: e.kind,
       price: costLabel(e, catalog), billingNote: clip(e.cost?.billing_note, 200),
-      inputs: e.inputs.map((i) => ({ name: i.name, type: i.type, required: i.required, enum: i.enum ?? undefined, minimum: i.minimum ?? undefined, maximum: i.maximum ?? undefined, default: i.default ?? undefined, note: clip(i.note, 140) })),
+      inputs: e.inputs.map((i) => ({ name: i.name, type: i.type, required: i.required, enum: i.enum ?? undefined, minimum: i.minimum ?? undefined, maximum: i.maximum ?? undefined, default: i.default ?? undefined, ...(i.example !== null && i.example !== undefined ? { example: i.example } : {}), ...(i.fields ? { fields: i.fields } : {}), note: clip(i.note, 140) })),
       pagination: e.pagination,
       listPath: e.list_path, cursorPath: e.cursor_path,
       itemFields: e.item_fields ? Object.fromEntries(Object.entries(e.item_fields).slice(0, 40).map(([k, v]) => [k, v.type])) : null,

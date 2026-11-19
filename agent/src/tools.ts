@@ -13,7 +13,7 @@ import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
-import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
+import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
@@ -174,6 +174,34 @@ export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
+
+/**
+ * Generic schema-driven preflight for endpoint input shapes (c2): validates declared array and nested object-field array
+ * expectations from catalog metadata before dispatching to the gateway, leaving valid arrays and string inputs untouched.
+ */
+export function validateInputShape(endpoint: CatalogEndpoint | undefined, params: unknown): string | null {
+  if (!endpoint || !isObject(params)) return null;
+  for (const inp of endpoint.inputs) {
+    const val = params[inp.name];
+    if (val === undefined) continue;
+    if (inp.type && /^array(?:\[|$)/i.test(inp.type) && !Array.isArray(val)) {
+      return `invalid input shape for «${inp.name}»: expected ${inp.type} (an array), got ${val === null ? "null" : typeof val}${inp.example !== null && inp.example !== undefined ? ` (example: ${JSON.stringify(inp.example)})` : ""}. Pass an array and retry.`;
+    }
+    if (inp.fields && isObject(val)) {
+      for (const [subKey, spec] of Object.entries(inp.fields)) {
+        const subVal = val[subKey];
+        if (subVal === undefined || !/^array(?:\[|$)/i.test(spec.type)) continue;
+        if (!Array.isArray(subVal)) {
+          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (an array), got ${subVal === null ? "null" : typeof subVal}${spec.example !== undefined ? ` (example: ${JSON.stringify(spec.example)})` : ""}. Pass an array of strings and retry.`;
+        }
+        if (/^array\[string\]$/i.test(spec.type) && subVal.some((x) => typeof x !== "string" || x.trim() === "")) {
+          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (array of non-empty strings).`;
+        }
+      }
+    }
+  }
+  return null;
+}
 /** A refusal that is about the DATA (no sampled row matches the stage's own rule), not about the plan's form. */
 const DATA_REJECTION = /none of the \d+ rows of the sample matches your relevance rule/;
 const UNSERVED_PEOPLE_REPAIR_MAX = 1;
@@ -509,7 +537,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const sameJob = cheaperSameJobMessage(ctx, id, a.why, a.skip);
         if (sameJob.refusal) return { ok: false, refused: "choose_cheapest", message: sameJob.refusal };
         // the model's own request carries the customer's Cairo days (live finding B), never its day-only operators
-        const sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, ctx.catalog.byId.get(id), a.params) : a.params;
+        const endpoint = ctx.catalog.byId.get(id);
+        const sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, endpoint, a.params) : a.params;
+        const shapeIssue = validateInputShape(endpoint, sent);
+        if (shapeIssue) return { ok: false, refused: "invalid_params", message: shapeIssue };
         const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: sent, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(sent) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...(sent as Record<string, unknown>) });
@@ -526,7 +557,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
         const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
-        return unsuitable ? { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" } : { ...result };
+        if (!unsuitable) return { ...result };
+        const msg422 = "failed" in result && (result as { http_status?: unknown }).http_status === 422 ? /\b([a-zA-Z_][a-zA-Z0-9_.]*)\s*:\s*Expected an array,\s*got a string/i.exec(String((result as { message?: unknown }).message ?? "")) : null;
+        if (msg422) {
+          return { ...result, next_sources: untriedSources(state, id), next_step: `input «${msg422[1]}» expects an array of strings, not a scalar string; wrap the value in [...] and retry this source or sample the next untried source` };
+        }
+        return { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" };
       },
     },
     ...(ctx.web ? webTools(ctx) : []),
