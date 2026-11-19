@@ -5,12 +5,11 @@
  * A phone is digits with only the separators a phone is written with: a leading «+» or «(», then digits, spaces and «().-», 7 to 15 digits, and not a date (2021-03-12, 2021 - 03 - 12, 12/03/2021), a decimal (3.14, +3.14159265), an address (10.0.0.1) or a placeholder (0000000000, one digit repeated). A label, a word or a masked value («*») is not a phone.
  * Plain digits in a phone COLUMN are a phone by that column's own provenance (local, international, office and fax numbers all count).
  */
-// A DATE, with or without spaces around its separators: year-first (2021-03-12, 2021 - 03 - 12, 2021.3.12) or day/month-first with a 4-digit year (12/03/2021, 12 - 05 - 2024). The day and month are RANGES (1-31, 1-12 or 1-31), so a phone written in groups
-// («010-12-3456») is not taken for a date.
+// A DATE, with or without spaces around its separators. YEAR FIRST: a 19xx/20xx year, then a 1-2 digit month and a 1-2 digit day (2021-03-12, 2021 - 03 - 12, 2024.5.7) is date-shaped EVEN WHEN the month or day is out of range (2021-13-45 is a malformed date, never a phone: Gate 2 r3).
+// DAY FIRST (or month first): a day and a month in range (1-31) and a 4-digit year (12/03/2021, 12 - 05 - 2024); the ranges keep a phone written in groups («010-12-3456», «55-77-2024») from being taken for a date.
 const SEP = "\\s*[-/.]\\s*";
 const DAY = "(?:0?[1-9]|[12]\\d|3[01])";
-const MONTH = "(?:0?[1-9]|1[0-2])";
-const DATE = new RegExp(`^(?:(?:19|20)\\d{2}${SEP}${MONTH}${SEP}${DAY}|${DAY}${SEP}${DAY}${SEP}(?:19|20)\\d{2})$`);
+const DATE = new RegExp(`^(?:(?:19|20)\\d{2}${SEP}\\d{1,2}${SEP}\\d{1,2}|${DAY}${SEP}${DAY}${SEP}(?:19|20)\\d{2})$`);
 // A DECIMAL NUMBER, signed or not («3.14159265», «+3.14159265»), or a dotted-quad id (10.0.0.1). The one exception is the international «+CC.number» form with a real country code (+1 or +7, or 2 to 3 digits: «+44.2071234567»): «+3.14159265» has no country code «3».
 const DECIMAL = /^[+-]?\d+[.]\d+$|^(?:\d{1,3}[.]){3}\d{1,3}$/;
 const COUNTRY_DOT = /^\+(?:1|7|[1-9]\d{1,2})[.]\d+$/;
