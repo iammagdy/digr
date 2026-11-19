@@ -5,6 +5,7 @@ import { summarizeTopups } from "@/lib/server/userStats";
 import { fetchTypedLedger, withRunningBalance } from "@/lib/server/typedLedger";
 import { CREDIT_KIND_LABEL_AR } from "@/lib/creditKinds";
 import { getAuthAccount } from "@/lib/server/authAccount";
+import { countUserMissions } from "@/lib/server/adminUserMissions";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +20,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   let u: any;
   try { u = await users.get({ userId: id }); } catch { return NextResponse.json({ error: "المستخدم غير موجود" }, { status: 404 }); }
 
-  const [account, topups, jobs, lastJob, ledgerRows, promo] = await Promise.all([
+  // the customer's requests are counted in `missions` (add-on rows not counted): the old `jobs` table never sees a request that waited, failed or was refused before approval
+  const [account, topups, requests, ledgerRows, promo] = await Promise.all([
     getAuthAccount(client, id),
     listAll(tables, "topups", [Query.equal("userId", id), Query.orderDesc("createdAt")], 200),
-    tables.listRows({ databaseId: "digr", tableId: "jobs", queries: [Query.equal("userId", id), Query.limit(1)] }),
-    tables.listRows({ databaseId: "digr", tableId: "jobs", queries: [Query.equal("userId", id), Query.orderDesc("createdAt"), Query.limit(1)] }),
+    countUserMissions(client, id),
     fetchTypedLedger(client, { userId: id }, 5000).catch(() => null),
     client.from("promo_redemptions").select("code,redeemed_at").eq("user_id", id).order("redeemed_at", { ascending: false }),
   ]);
@@ -51,8 +52,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     balance,
     totalTopupsEgp: sum.total,
     lastTopupAt: sum.last,
-    jobs: jobs.total,
-    lastJobAt: lastJob.rows?.[0]?.createdAt || null,
+    // the names stay (the profile reads them); the numbers are the customer's requests in `missions`
+    jobs: requests.count,
+    lastJobAt: requests.lastAt,
     promo: {
       used: !promo.error && (promo.data || []).length > 0,
       codes: promo.error ? [] : (promo.data || []).map((r: any) => ({ code: r.code, redeemedAt: r.redeemed_at })),

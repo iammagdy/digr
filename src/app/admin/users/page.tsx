@@ -7,19 +7,22 @@ import { formatAr } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { UserSheet } from "@/components/admin/UserSheet";
 import { ADMIN_IC, AIcon } from "@/components/admin/icons";
+import { SegmentChips, StatusBadge } from "@/components/admin/ui";
 import { EGP, agoAr, dateTimeAr, initials, tint } from "@/components/admin/format";
+import { USER_SEGMENTS, USER_SORTS, USERS_PAGE_SIZE, USERS_PAGE_SIZE_PHONE, USERS_SCAN_LIMITED_AR, type UserSegment, type UserSort } from "@/lib/adminUsers";
 
-interface Row { id: string; name: string; email: string; registration: string; lastLogin: string | null; balance: number; totalTopupsEgp: number; lastTopupAt: string | null; jobs: number; isNew: boolean; recent: boolean }
-interface Resp { users: Row[]; total: number; page: number; pageSize: number; counts: Record<string, number>; stats: { total: number; active30: number; newWeek: number; payers: number } }
+interface Row { id: string; name: string; email: string; registration: string; lastLogin: string | null; balance: number; totalTopupsEgp: number; lastTopupAt: string | null; missions: number; suspended: boolean; isNew: boolean; recent: boolean }
+interface Resp { users: Row[]; total: number; page: number; pageSize: number; scanLimited?: boolean; counts: Partial<Record<UserSegment, number>>; stats: { total: number; active30: number; active7?: number; newWeek: number; payers: number } }
 
-const FILTERS: Array<["all" | "active" | "new" | "zero", string]> = [["all", "الكل"], ["active", "نشط"], ["new", "جديد"], ["zero", "بلا شحن"]];
 const COLS = "minmax(0,2.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.6fr)";
 
 export default function AdminUsersPage() {
   const { isMobile, toast } = useAdmin();
   const [q, setQ] = useState("");
   const [applied, setApplied] = useState("");
-  const [filter, setFilter] = useState<"all" | "active" | "new" | "zero">("all");
+  // the search, the chip and the sort live here, outside the profile sheet: closing a profile keeps them
+  const [filter, setFilter] = useState<UserSegment>("all");
+  const [sort, setSort] = useState<UserSort>("access");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Resp | null>(null);
   const [error, setError] = useState("");
@@ -33,10 +36,10 @@ export default function AdminUsersPage() {
 
   const load = useCallback(async () => {
     try {
-      setData(await adminFetch<Resp>(`/api/admin/users?filter=${filter}&page=${page}&q=${encodeURIComponent(applied)}`));
+      setData(await adminFetch<Resp>(`/api/admin/users?filter=${filter}&sort=${sort}&page=${page}&pageSize=${isMobile ? USERS_PAGE_SIZE_PHONE : USERS_PAGE_SIZE}&q=${encodeURIComponent(applied)}`));
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "تعذّر تحميل المستخدمين"); }
-  }, [filter, page, applied]);
+  }, [filter, sort, page, applied, isMobile]);
   useEffect(() => { void load(); }, [load]);
 
   const exportCsv = async () => {
@@ -62,7 +65,7 @@ export default function AdminUsersPage() {
   const Avatar = ({ u, size }: { u: Row; size: number }) => (
     <span className="relative flex shrink-0 items-center justify-center rounded-full bg-sf2 font-semibold text-ink2" style={{ width: size, height: size, fontSize: size > 38 ? 13 : 12 }}>
       {initials(u.name)}
-      <span className="absolute bottom-0 left-0 rounded-full border-2 border-sf" style={{ width: size > 38 ? 11 : 10, height: size > 38 ? 11 : 10, background: u.recent ? "var(--ok)" : "var(--ln2)" }} />
+      <span className="absolute bottom-0 end-0 rounded-full border-2 border-sf" style={{ width: size > 38 ? 11 : 10, height: size > 38 ? 11 : 10, background: u.recent ? "var(--ok)" : "var(--ln2)" }} />
     </span>
   );
 
@@ -79,31 +82,33 @@ export default function AdminUsersPage() {
           <AIcon d={ADMIN_IC.search} size={16} stroke={1.8} />
           <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="الاسم أو البريد الإلكتروني" aria-label="بحث في المستخدمين" className="min-w-0 flex-1 border-0 bg-transparent text-base text-ink outline-none" />
         </label>
-        <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-[14px] bg-sf2 p-1" role="tablist">
-          {FILTERS.map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={filter === id} onClick={() => { setFilter(id); setPage(1); }} className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-[10px] border-0 px-3 text-xs font-semibold" style={{ background: filter === id ? "var(--sf)" : "transparent", color: filter === id ? "var(--ink)" : "var(--mut)", boxShadow: filter === id ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>
-              {label} <span className="opacity-60">{data ? formatAr(data.counts[id]) : ""}</span>
-            </button>
-          ))}
-        </div>
+        <label className="flex min-h-[46px] items-center gap-2 rounded-[14px] border border-ln2 bg-sf px-3.5 text-[13px] text-mut">
+          <span className="whitespace-nowrap">ترتيب حسب:</span>
+          <select value={sort} onChange={(e) => { setSort(e.target.value as UserSort); setPage(1); }} aria-label="ترتيب حسب" className="min-h-11 cursor-pointer border-0 bg-transparent text-[13px] font-semibold text-ink outline-none">
+            {USER_SORTS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        </label>
         <button type="button" onClick={exportCsv} className="min-h-[46px] cursor-pointer whitespace-nowrap rounded-[14px] border border-ln2 bg-sf px-3.5 text-[13px] text-ink">تصدير CSV</button>
       </div>
+
+      <SegmentChips label="شرائح المستخدمين" items={USER_SEGMENTS} value={filter} counts={data?.counts} onChange={(id) => { setFilter(id); setPage(1); }} />
+      {data?.scanLimited && <p className="m-0 text-xs text-mut">{USERS_SCAN_LIMITED_AR}</p>}
 
       {error && <p role="alert" className="m-0 text-[13px] text-bad">{error}</p>}
 
       {!isMobile && (
         <div className="overflow-hidden rounded-[20px] border border-ln bg-sf">
           <div className="grid gap-3 bg-sf2 px-[18px] py-3 text-[11px] font-semibold text-mut" style={{ gridTemplateColumns: COLS }}>
-            <span>المستخدم</span><span>تاريخ التسجيل</span><span>آخر دخول</span><span>الرصيد</span><span>إجمالي الشحن</span><span>آخر شحن</span><span>الأبحاث</span>
+            <span>المستخدم</span><span>تاريخ التسجيل</span><span>آخر دخول</span><span>الرصيد</span><span>إجمالي الشحن</span><span>آخر شحن</span><span>المهام</span>
           </div>
           {!data && [0, 1, 2, 3].map((i) => <div key={i} className="h-[60px] border-t border-ln bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />)}
           {rows.map((u) => (
-            <button key={u.id} type="button" onClick={() => setOpen(u.id)} className="grid min-h-14 w-full cursor-pointer items-center gap-3 border-0 border-t border-ln bg-transparent px-[18px] py-3 text-right text-[13px] text-ink2 hover:bg-sf2" style={{ gridTemplateColumns: COLS }}>
+            <button key={u.id} type="button" onClick={() => setOpen(u.id)} className="grid min-h-14 w-full cursor-pointer items-center gap-3 border-0 border-t border-ln bg-transparent px-[18px] py-3 text-start text-[13px] text-ink2 hover:bg-sf2" style={{ gridTemplateColumns: COLS }}>
               <span className="flex min-w-0 items-center gap-2.5">
                 <Avatar u={u} size={36} />
                 <span className="min-w-0">
-                  <span className="flex items-center gap-1.5"><span className="truncate font-semibold text-ink">{u.name || "—"}</span>{u.isNew && <span className="rounded-full px-[7px] py-px text-[10px] font-semibold text-info" style={{ background: tint("var(--info)", 14) }}>جديد</span>}</span>
-                  <span dir="ltr" className="block truncate text-right text-[11px] text-fnt">{u.email}</span>
+                  <span className="flex items-center gap-1.5"><span className="truncate font-semibold text-ink">{u.name || "—"}</span>{u.isNew && <span className="rounded-full px-[7px] py-px text-[10px] font-semibold text-info" style={{ background: tint("var(--info)", 14) }}>جديد</span>}{u.suspended && <StatusBadge tone="bad">موقوف</StatusBadge>}</span>
+                  <bdi dir="ltr" className="block truncate text-end text-[11px] text-fnt">{u.email}</bdi>
                 </span>
               </span>
               <span className="text-mut">{dateTimeAr(u.registration).split("،")[0]}</span>
@@ -111,7 +116,7 @@ export default function AdminUsersPage() {
               <span className="font-semibold text-ink">{formatAr(u.balance)}</span>
               <span>{u.totalTopupsEgp ? EGP(u.totalTopupsEgp) : "—"}</span>
               <span className="text-mut">{u.lastTopupAt ? agoAr(u.lastTopupAt) : "—"}</span>
-              <span>{formatAr(u.jobs)}</span>
+              <span>{formatAr(u.missions)}</span>
             </button>
           ))}
           {data && rows.length === 0 && <p className="m-0 p-10 text-center text-[13px] text-fnt">لا يوجد مستخدمون مطابقون للبحث.</p>}
@@ -121,10 +126,10 @@ export default function AdminUsersPage() {
       {isMobile && (
         <div className="flex flex-col gap-2">
           {rows.map((u) => (
-            <button key={u.id} type="button" onClick={() => setOpen(u.id)} className="flex w-full cursor-pointer flex-col gap-2.5 rounded-[18px] border border-ln bg-sf p-3.5 text-right">
+            <button key={u.id} type="button" onClick={() => setOpen(u.id)} className="flex min-h-11 w-full cursor-pointer flex-col gap-2.5 rounded-[18px] border border-ln bg-sf p-3.5 text-start">
               <span className="flex items-center gap-2.5">
                 <Avatar u={u} size={40} />
-                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{u.name || "—"}</span><span dir="ltr" className="block truncate text-right text-xs text-fnt">{u.email}</span></span>
+                <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold text-ink" title={u.name}>{u.name || "—"}</span>{u.suspended && <StatusBadge tone="bad">موقوف</StatusBadge>}</span><bdi dir="ltr" className="block truncate text-end text-xs text-fnt">{u.email}</bdi></span>
                 <span className="whitespace-nowrap font-display text-2xl text-ink">{formatAr(u.balance)}</span>
               </span>
               <span className="grid grid-cols-3 gap-1.5 text-[11px] text-mut">

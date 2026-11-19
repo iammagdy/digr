@@ -34,7 +34,7 @@ export function resendWaitAr(seconds: number): string {
 /** Said under the e-mail box once the message is late: a busy network delays it, and what to check meanwhile. */
 export const LATE_EMAIL_HINT_AR = "الرسالة قد تتأخر بضع دقائق عندما تزدحم الشبكة. افحص مجلد الرسائل غير المرغوب فيها، وتأكد من كتابة البريد بلا خطأ، ثم اضغط «إعادة إرسال الرسالة» مرة واحدة فقط.";
 
-export type AuthFailure = "rate_limited" | "email_rate_limited" | "offline" | "exists" | "invalid_credentials" | "unknown";
+export type AuthFailure = "rate_limited" | "email_rate_limited" | "offline" | "exists" | "invalid_credentials" | "suspended" | "unknown";
 
 /** Which plain failure an error from the sign-in service is, read from its code, its status and its words. */
 export function classifyAuthFailure(err: unknown): AuthFailure {
@@ -46,6 +46,8 @@ export function classifyAuthFailure(err: unknown): AuthFailure {
   if (status === 429 || code === "over_request_rate_limit" || msg.includes("rate limit") || msg.includes("too many")) return "rate_limited";
   if (msg.includes("failed to fetch") || msg.includes("networkerror") || msg.includes("network request failed") || e?.name === "TypeError" && msg.includes("fetch")) return "offline";
   if (status === 409 || code === "user_already_exists" || e?.type === "user_already_exists" || msg.includes("already registered") || msg.includes("already exists")) return "exists";
+  // a SUSPENDED account (DT-20261118-06 phase 1C): the sign-in service answers «user_banned»; said before «wrong password», which it is not
+  if (code === "user_banned" || msg.includes("user is banned") || msg.includes("user_banned")) return "suspended";
   if (status === 401 || code === "invalid_credentials" || code === "invalid_grant" || e?.type === "user_invalid_credentials" || msg.includes("invalid login credentials")) return "invalid_credentials";
   return "unknown";
 }
@@ -56,6 +58,7 @@ export const AUTH_FAILURE_AR: Record<AuthFailure, string | null> = {
   offline: "تعذّر الاتصال بالخدمة. تأكد من الإنترنت وأعد المحاولة بعد لحظات.",
   exists: "هذا البريد مسجّل بالفعل — جرّب تسجيل الدخول.",
   invalid_credentials: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+  suspended: "تم إيقاف هذا الحساب. للاستفسار تواصل مع الدعم.",
   unknown: null,
 };
 

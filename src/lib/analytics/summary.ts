@@ -7,8 +7,11 @@
  *  - logins / sign-ups: the «login» / «signup» rows the sign-in and sign-up forms reported;
  *  - funnel: visitors who viewed a page -> of them, those who signed up -> of them, those whose account (linked at their login) has a submitted request.
  */
-export type VisitRange = "today" | "7d" | "all";
-export const VISIT_RANGES: readonly VisitRange[] = ["today", "7d", "all"];
+/** «14d»: the overview's 14-day visits chart (Cairo midnight 13 days before today). */
+export type VisitRange = "today" | "7d" | "14d" | "all";
+export const VISIT_RANGES: readonly VisitRange[] = ["today", "7d", "14d", "all"];
+/** How many Cairo days `daily` holds (the overview chart). */
+export const DAILY_DAYS = 14;
 /** The most rows one summary reads; a bigger range says so instead of pretending to be complete. */
 export const SUMMARY_ROW_LIMIT = 20_000;
 const MAX_VISIT_SECONDS = 4 * 3600;
@@ -39,12 +42,15 @@ export interface VisitorSummary {
   devices: { mobile: number; desktop: number; tablet: number };
   countries: Array<{ code: string | null; visits: number }>;
   funnel: { visited: number; signedUp: number; requested: number };
+  /** The last DAILY_DAYS Cairo days, oldest first, every day present (0 when nothing happened). A visit counts on the Cairo day of its first view; a unique visitor on every Cairo day with one of their views. */
+  daily: Array<{ day: string; visits: number; uniqueVisitors: number }>;
 }
 
 /** The start of «today» in Cairo (the owner's day), and of the last seven days; null for «all». */
 export function rangeStart(range: VisitRange, now: Date = new Date()): Date | null {
   if (range === "all") return null;
   if (range === "7d") return new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+  if (range === "14d") return rangeStart("today", new Date(now.getTime() - (DAILY_DAYS - 1) * 24 * 3600 * 1000));
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(now);
   const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
   const localAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
@@ -52,21 +58,39 @@ export function rangeStart(range: VisitRange, now: Date = new Date()): Date | nu
   return new Date(Date.UTC(get("year"), get("month") - 1, get("day")) - offset);
 }
 
+const CAIRO_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit" });
+/** «2026-11-18»: the Cairo calendar day of an instant. */
+export const cairoDay = (date: Date): string => CAIRO_DAY.format(date);
+
+/** The last `days` Cairo days ending today, oldest first. */
+export function lastCairoDays(now: Date, days: number = DAILY_DAYS): string[] {
+  const [y, m, d] = cairoDay(now).split("-").map(Number);
+  return Array.from({ length: days }, (_, i) => new Date(Date.UTC(y, m - 1, d - (days - 1 - i))).toISOString().slice(0, 10));
+}
+
 export const parseRange = (value: unknown): VisitRange => (VISIT_RANGES as readonly string[]).includes(String(value)) ? (String(value) as VisitRange) : "today";
 
 export function summarizeVisits(
   rows: ReadonlyArray<VisitEventRow>,
-  options: { range: VisitRange; since: Date | null; truncated?: boolean; firstRequestByUser?: ReadonlyMap<string, string> },
+  options: { range: VisitRange; since: Date | null; truncated?: boolean; firstRequestByUser?: ReadonlyMap<string, string>; now?: Date },
 ): VisitorSummary {
   const views = rows.filter((row) => row.kind === "view");
-  const sessions = new Map<string, { device: VisitEventRow["device_class"]; country: string | null; seconds: number; hasLeave: boolean }>();
+  const sessions = new Map<string, { device: VisitEventRow["device_class"]; country: string | null; seconds: number; hasLeave: boolean; day: string }>();
+  const dayBuckets = new Map(lastCairoDays(options.now ?? new Date()).map((day) => [day, { visits: 0, visitors: new Set<string>() }]));
   const visitors = new Set<string>();
   const pages = new Map<string, { views: number; visitors: Set<string> }>();
   // views arrive newest first or in any order: the FIRST view of a session decides its device and country
   const ordered = [...views].sort((a, b) => a.started_at.localeCompare(b.started_at));
   for (const view of ordered) {
     visitors.add(view.visitor_id);
-    if (!sessions.has(view.session_id)) sessions.set(view.session_id, { device: view.device_class, country: view.country, seconds: 0, hasLeave: false });
+    const at = new Date(view.started_at);
+    const day = Number.isFinite(at.getTime()) ? cairoDay(at) : "";
+    if (!sessions.has(view.session_id)) {
+      sessions.set(view.session_id, { device: view.device_class, country: view.country, seconds: 0, hasLeave: false, day });
+      const bucket = dayBuckets.get(day);
+      if (bucket) bucket.visits += 1;
+    }
+    dayBuckets.get(day)?.visitors.add(view.visitor_id);
     const page = pages.get(view.path) ?? { views: 0, visitors: new Set<string>() };
     page.views += 1;
     page.visitors.add(view.visitor_id);
@@ -120,6 +144,7 @@ export function summarizeVisits(
     devices,
     countries: [...countryCounts.entries()].map(([code, visits]) => ({ code, visits })).sort((a, b) => b.visits - a.visits || String(a.code).localeCompare(String(b.code))).slice(0, 10),
     funnel: { visited: visitors.size, signedUp: signedUpVisitors.size, requested },
+    daily: [...dayBuckets.entries()].map(([day, bucket]) => ({ day, visits: bucket.visits, uniqueVisitors: bucket.visitors.size })),
   };
 }
 

@@ -10,7 +10,7 @@ import { cleanMutants, loadMutant } from "./helpers/mutants";
 const state = vi.hoisted(() => ({ user: null as any }));
 vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: async () => ({ auth: { getUser: async () => ({ data: { user: state.user }, error: null }) } }),
-  createAdminClient: () => ({ auth: { admin: { getUserById: async () => ({ data: { user: null } }) } } }),
+  createAdminClient: () => ({ auth: { admin: { getUserById: async (id: string) => ({ data: { user: { id } }, error: null }) } } }),
 }));
 afterAll(cleanMutants);
 const TRUSTED = "src/lib/server/trustedEmailVerification.ts";

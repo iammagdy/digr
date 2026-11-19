@@ -16,8 +16,9 @@ const state = vi.hoisted(() => ({
   table: [] as any[],
   tableMissing: false,
   pagesRead: 0,
-  counts: { profiles: 7 as number | null, jobs: 4 as number | null },
-  jobsRows: [] as any[],
+  counts: { profiles: 7 as number | null, missions: 4 as number | null },
+  missionRows: [] as any[],
+  addonFilters: [] as string[],
   headCounts: [] as string[],
 }));
 
@@ -46,15 +47,19 @@ vi.mock("../src/lib/supabase/server", () => ({
         };
         return builder;
       }
-      if (name === "jobs" || name === "profiles") {
+      if (name === "missions" || name === "profiles") {
         const builder: any = {
           select: (_c: string, options?: { head?: boolean }) => {
-            if (options?.head) { state.headCounts.push(name); return { gte: () => Promise.resolve({ count: state.counts[name as "jobs"], error: null }), then: (resolve: any) => resolve({ count: state.counts[name as "jobs"], error: null }) }; }
+            if (options?.head) {
+              state.headCounts.push(name);
+              const head: any = { gte: () => head, is: (col: string, v: unknown) => { state.addonFilters.push(`${name}:${col}:${String(v)}`); return head; }, then: (resolve: any) => resolve({ count: state.counts[name as "missions"], error: null }) };
+              return head;
+            }
             return builder;
           },
           in: () => builder,
           order: () => builder,
-          limit: () => Promise.resolve({ data: state.jobsRows, error: null }),
+          limit: () => Promise.resolve({ data: state.missionRows, error: null }),
         };
         return builder;
       }
@@ -453,7 +458,7 @@ describe("the admin route and the admin screen", () => {
   const ADMIN = { id: "admin-1", email: "owner@example.test", app_metadata: { role: "admin" }, user_metadata: { name: "المدير" } };
   const get = (query = "") => visitorsGet(new NextRequest(`http://127.0.0.1:3000/api/admin/visitors${query}`));
   const event = (i: number): VisitEventRow => ({ visitor_id: "a".repeat(32), session_id: "1".repeat(24), kind: "view", path: "/", country: "EG", device_class: "mobile", started_at: new Date(Date.UTC(2026, 9, 24, 0, 0, 0) + i * 1000).toISOString(), duration_seconds: null, user_id: null });
-  beforeEach(() => { state.user = null; state.table = []; state.tableMissing = false; state.pagesRead = 0; state.counts = { profiles: 7, jobs: 4 }; state.jobsRows = []; state.headCounts = []; });
+  beforeEach(() => { state.user = null; state.table = []; state.tableMissing = false; state.pagesRead = 0; state.counts = { profiles: 7, missions: 4 }; state.missionRows = []; state.headCounts = []; state.addonFilters = []; });
 
   it("only an admin reads it: a signed-out visitor and a customer get nothing and no table is read", async () => {
     expect((await get()).status).toBe(401);
@@ -465,13 +470,23 @@ describe("the admin route and the admin screen", () => {
   it("the admin gets the summary and the two counts; the accounts and requests come from head counts, not rows", async () => {
     state.user = ADMIN;
     state.table = [event(0), event(1), { ...event(2), kind: "login", user_id: "11111111-1111-4111-8111-111111111111" }, { ...event(3), kind: "signup" }];
-    state.jobsRows = [{ user_id: "11111111-1111-4111-8111-111111111111", created_at: "2026-10-24T05:00:00Z" }];
+    // CHANGED (DT-20261118-06 phase 1A): requests are read from `missions` (customer requests are inserted there only); an add-on row is not a request
+    state.missionRows = [{ user_id: "11111111-1111-4111-8111-111111111111", created_at: "2026-10-24T05:00:00Z", addon: null }];
     const body = await (await get("?range=7d")).json();
     expect(body.available).toBe(true);
     expect(body.summary).toMatchObject({ range: "7d", visits: 1, pageViews: 2, uniqueVisitors: 1, truncated: false, funnel: { visited: 1, signedUp: 1, requested: 1 } });
     expect(body.newAccounts).toBe(7);
     expect(body.submittedRequests).toBe(4);
-    expect(state.headCounts.sort()).toEqual(["jobs", "profiles"]);
+    expect(state.headCounts.sort()).toEqual(["missions", "profiles"]);
+    expect(state.addonFilters).toEqual(["missions:plan->addon:null"]);
+  });
+
+  it("an add-on row of missions (a paid review or fix) is not a first request: the funnel's last step stays empty (DT-20261118-06 phase 1A)", async () => {
+    state.user = ADMIN;
+    state.table = [event(0), { ...event(2), kind: "login", user_id: "11111111-1111-4111-8111-111111111111" }, { ...event(3), kind: "signup" }];
+    state.missionRows = [{ user_id: "11111111-1111-4111-8111-111111111111", created_at: "2026-10-24T05:00:00Z", addon: { of: "msn_x" } }];
+    const body = await (await get("?range=7d")).json();
+    expect(body.summary.funnel).toEqual({ visited: 1, signedUp: 1, requested: 0 });
   });
 
   it("the read is bounded: at most 20 pages of 1,000 rows, and the screen is told the range is larger", async () => {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, createServerSideClient } from "../supabase/server";
 import { resolveTrustedEmailVerified } from "./trustedEmailVerification";
 import { ownGuestAccountId } from "./guestIdentity";
+import { isAccountSuspended, isSensitiveMethod, suspendedResponse, suspensionBlock } from "./accountSuspension";
 
 /**
  * Who is looking at a mission: the signed-in customer (bearer token or session cookie), or the guest of the chat (the `guest_session_id` cookie the chat route set, checked against a real
@@ -20,6 +21,12 @@ export async function resolveMissionViewer(req: NextRequest): Promise<{ ok: true
     const result = token ? await supabase.auth.getUser(token) : await supabase.auth.getUser();
     const user = result.data?.user;
     if (user && !user.user_metadata?.is_guest) {
+      // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Tier A): asked of the sign-in service, not read from the token (a token issued before the ban is still readable until it expires).
+      // A request that changes something asks fresh and fails closed (403, or a retryable 503 when the ban cannot be established); a read keeps the 30 s memory and an outage lets it pass.
+      if (isSensitiveMethod(req.method)) {
+        const blocked = await suspensionBlock(() => createAdminClient(), user as { id: string; banned_until?: string | null });
+        if (blocked) return { ok: false, response: blocked };
+      } else if (await isAccountSuspended(() => createAdminClient(), user.id, user as { banned_until?: string | null })) return { ok: false, response: suspendedResponse() };
       // Only the sign-in service's own confirmation counts: `user_metadata` is writable by the customer and is never read here.
       return { ok: true, viewer: { userId: user.id, isGuest: false, emailVerified: await resolveTrustedEmailVerified(supabase, user, token) } };
     }

@@ -146,7 +146,8 @@ export async function runSchedule(makers: Maker[], choices: number[], opts: Sche
       from: (t: string) => builder(t),
       storage,
       rpc: (name: string, args: any) => exec(() => (failing(`rpc:${name}`) ? Promise.resolve({ error: down }) : money.client.rpc(name, args))),
-      auth: { admin: { getUserById: async () => ({ data: { user: null } }) } },
+      // an account with no ban (the guard of a customer action asks the sign-in service fresh and fails closed: DT-20261118-06 fix push); it is not an admin
+      auth: { admin: { getUserById: async (id: string) => ({ data: { user: { id } }, error: null }) } },
     };
   };
 

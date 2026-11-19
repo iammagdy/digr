@@ -3,7 +3,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { ADMIN_PAGES, adminHref } from "../src/components/admin/icons";
+import { ADMIN_IC, ADMIN_PAGES, adminHref } from "../src/components/admin/icons";
 import { ADMIN_GROUPS, ADMIN_LEGACY_ROUTES, ADMIN_PAGE_INFO, BOTTOM_BAR_PAGES, adminGroupOf } from "../src/components/admin/nav";
 import { parseProvidersQuery, providerViews, providersQuery } from "../src/components/admin/providerViews";
 import { TregKeyPool, shownLabel } from "../src/components/admin/TregKeyPool";
@@ -25,7 +25,9 @@ const OLD_ROUTES = [
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ];
 /** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
-const NEW_ROUTES = ["/admin/invoices"];
+// CHANGED (DT-20261118-06 phase 2A, the page folder src/app/admin/messages lands: «الرسائل والحملات» moves from MENU_ONLY_ROUTES into NEW_ROUTES)
+const NEW_ROUTES = ["/admin/invoices", "/admin/messages"];
+const MENU_ONLY_ROUTES: string[] = [];
 
 describe("every old admin address still opens its page", () => {
   it("each old address has its page file with a default export, at the same path as before", () => {
@@ -44,9 +46,10 @@ describe("every old admin address still opens its page", () => {
   });
 
   it("the menu list produces exactly the old addresses and nothing was lost from it", () => {
-    expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES].sort());
+    // CHANGED (DT-20261118-06, the menu gains «الرسائل والحملات»: 21 -> 22 pages; every old address is still required)
+    expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES, ...MENU_ONLY_ROUTES].sort());
     expect([...ADMIN_LEGACY_ROUTES].sort()).toEqual([...OLD_ROUTES].sort()); // the legacy list itself never changes
-    expect(ADMIN_PAGES).toHaveLength(21);
+    expect(ADMIN_PAGES).toHaveLength(22);
   });
 
   it("no redirect was added that could send an old address somewhere else", () => {
@@ -76,11 +79,25 @@ describe("the menu is a few clear sections", () => {
   });
 
   it("the phone's bottom bar keeps its four pages; the rest are under «المزيد»", () => {
-    expect(BOTTOM_BAR_PAGES).toEqual(["overview", "users", "topups", "providers"]);
+    // CHANGED (DT-20261118-06 spec §2, the bar is «الرئيسية» · «المستخدمون» · «الرسائل» · «الشحن» · «المزيد»; providers move under «المزيد»)
+    expect(BOTTOM_BAR_PAGES).toEqual(["overview", "users", "messages", "topups"]);
     const shell = readFileSync("src/components/admin/AdminShell.tsx", "utf8");
+    expect(shell).toContain('["overview", "الرئيسية"], ["users", "المستخدمون"], ["messages", "الرسائل"], ["topups", "الشحن"], ["more", "المزيد"]');
     expect(shell).toContain("NavGroups");
     expect(shell).toContain('!BOTTOM_BAR_PAGES.includes(page)');
     expect(shell).toContain('data-testid="admin-page-intro"');
+  });
+});
+
+describe("«الرسائل والحملات» (DT-20261118-06)", () => {
+  it("is one menu page with its address, icon, sentence and section; the shell's moved edges use logical properties", () => {
+    expect(ADMIN_PAGES.find(([id]) => id === "messages")?.[1]).toBe("الرسائل والحملات");
+    expect(adminHref("messages")).toBe("/admin/messages");
+    expect(ADMIN_IC.messages).toMatch(/^M/);
+    expect(adminGroupOf("messages").id).toBe("customers");
+    expect(ADMIN_PAGE_INFO.messages).toMatch(/[؀-ۿ]/);
+    const shell = readFileSync("src/components/admin/AdminShell.tsx", "utf8");
+    expect(shell).not.toMatch(/right: -14|left: mobile \? 14 : 24|bottom-0 right-0 top-0/);
   });
 });
 

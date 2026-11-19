@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { suspensionBlock } from "@/lib/server/accountSuspension";
 import { generateMethodologyText, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 import { buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
@@ -112,6 +113,8 @@ export async function POST(
     if (!user) {
       return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
     }
+    // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Gate 1 P1-1): the methodology purchase spends points, so the ban is asked of the sign-in service before anything is charged
+    { const blocked = await suspensionBlock(() => createAdminClient(), user as { id: string; banned_until?: string | null }); if (blocked) return blocked; }
 
     const verifiedUserId = user.id;
     const adminClient = createAdminClient();

@@ -145,8 +145,13 @@ describe("admin screens", () => {
     expect(page).not.toMatch(/TREG_LIVE=true|TREG_TOKEN/);
   });
 
+  // CHANGED (DT-20261118-06 phase 1A, spec §7.2): on the admin home the banner's warnings moved into the first card, «يحتاج انتباهك» (AttentionCard), with the key warnings in the same words
   it("the admin home has a visible low-balance banner", () => {
-    expect(read("src/app/admin/page.tsx")).toContain("<ProviderAlertBanner />");
+    expect(read("src/app/admin/page.tsx")).toContain("<OverviewView");
+    expect(read("src/components/admin/OverviewCards.tsx")).toContain("<AttentionCard ");
+    const attention = read("src/components/admin/AttentionCard.tsx");
+    expect(attention).toContain("رصيد مزود البيانات منخفض");
+    expect(attention).toContain("مزود البيانات رفض مفتاح الوصول");
     const banner = read("src/components/admin/ProviderAlertBanner.tsx");
     expect(banner).toMatch(/role="alert"/);
     expect(banner).toContain("رصيدك لدى مزود البيانات منخفض");

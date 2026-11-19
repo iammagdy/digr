@@ -186,7 +186,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const tregShort = !providers ? "…" : providers.treg.health ? (providers.treg.health.ok ? (providers.treg.lowBalance ? "رصيد منخفض" : "متصل فعليًا") : "لا يستجيب") : "…";
 
   const bottom: Array<{ id: string; label: string; icon: string; on: boolean; badge: number; go: () => void }> = [
-    ["overview", "الرئيسية"], ["users", "المستخدمون"], ["topups", "الشحن"], ["providers", "المزودون"], ["more", "المزيد"],
+    ["overview", "الرئيسية"], ["users", "المستخدمون"], ["messages", "الرسائل"], ["topups", "الشحن"], ["more", "المزيد"],
   ].map(([id, label]) => ({
     id, label, icon: ADMIN_IC[id as keyof typeof ADMIN_IC],
     on: page === id || (id === "more" && !BOTTOM_BAR_PAGES.includes(page)),
@@ -203,7 +203,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       <AIcon d={n.icon} />
       <span className="flex-1">{n.label}</span>
       {n.badge > 0 && <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-gold px-[7px] text-[11px] font-bold text-white">{formatAr(n.badge)}</span>}
-      {!big && <span className="absolute bottom-2.5 top-2.5 w-[3px] rounded-[3px] bg-gold" style={{ right: -14, opacity: n.on ? 1 : 0 }} />}
+      {!big && <span className="absolute bottom-2.5 top-2.5 w-[3px] rounded-[3px] bg-gold" style={{ insetInlineStart: -14, opacity: n.on ? 1 : 0 }} />}
     </Link>
   );
 
@@ -292,7 +292,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               {bell && (
                 <>
                   <div onClick={() => setBell(false)} className="fixed inset-0 z-[44]" />
-                  <div role="dialog" aria-label="تنبيهات الإدارة" className="absolute z-[45] overflow-hidden rounded-[20px] border border-ln bg-sf" style={{ top: "calc(100% + 6px)", left: mobile ? 14 : 24, width: "min(380px,calc(100% - 28px))", boxShadow: "var(--admin-shadow)", animation: "up .2s both" }}>
+                  <div role="dialog" aria-label="تنبيهات الإدارة" className="absolute z-[45] overflow-hidden rounded-[20px] border border-ln bg-sf" style={{ top: "calc(100% + 6px)", insetInlineEnd: mobile ? 14 : 24, width: "min(380px,calc(100% - 28px))", boxShadow: "var(--admin-shadow)", animation: "up .2s both" }}>
                     <div className="flex items-center justify-between border-b border-ln px-4 py-3"><span className="text-sm font-semibold text-ink">التنبيهات</span><span className="text-[11px] text-fnt">تصلك أيضًا على البريد</span></div>
                     <div className="max-h-[420px] overflow-y-auto">
                       {bellItems.length === 0 && <p className="m-0 px-4 py-8 text-center text-[13px] text-fnt">لا توجد تنبيهات.</p>}
@@ -335,7 +335,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 {bottom.map((b) => (
                   <button key={b.id} type="button" onClick={b.go} className="relative flex min-h-[54px] cursor-pointer flex-col items-center justify-center gap-[3px] rounded-[14px] border-0 bg-transparent text-[10px] font-semibold" style={{ color: b.on ? "var(--ink)" : "var(--fnt)" }}>
                     <AIcon d={b.icon} size={20} stroke={1.8} />{b.label}
-                    {b.badge > 0 && <span className="absolute top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gold px-[5px] text-[10px] text-white" style={{ left: "calc(50% - 20px)" }}>{formatAr(b.badge)}</span>}
+                    {b.badge > 0 && <span className="absolute top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gold px-[5px] text-[10px] text-white" style={{ insetInlineEnd: "calc(50% - 20px)" }}>{formatAr(b.badge)}</span>}
                   </button>
                 ))}
               </nav>
@@ -346,7 +346,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         {mobile && drawer && (
           <>
             <div onClick={() => setDrawer(false)} className="fixed inset-0 z-[60]" style={{ background: "rgba(8,10,10,.45)", animation: "fade .2s both" }} />
-            <aside className="fixed bottom-0 right-0 top-0 z-[61] flex flex-col gap-0.5 bg-sf px-3.5 py-[18px]" style={{ width: "min(86%,320px)", animation: "drawer .35s cubic-bezier(.2,.7,.2,1) both" }}>
+            <aside className="fixed bottom-0 start-0 top-0 z-[61] flex flex-col gap-0.5 bg-sf px-3.5 py-[18px]" style={{ width: "min(86%,320px)", animation: "drawer .35s cubic-bezier(.2,.7,.2,1) both" }}>
               <div className="flex items-center justify-between px-1.5 pb-4">
                 <Logo height={26} />
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق" className="h-11 w-11 cursor-pointer border-0 bg-transparent text-xl text-mut">×</button>

@@ -9,7 +9,7 @@ export interface AdminGroup { id: string; label: string; pages: AdminPageId[] }
 
 export const ADMIN_GROUPS: AdminGroup[] = [
   { id: "overview", label: "نظرة عامة", pages: ["overview", "operations", "conference", "visitors"] },
-  { id: "customers", label: "العملاء والطلبات", pages: ["users", "jobs", "support", "requests"] },
+  { id: "customers", label: "العملاء والطلبات", pages: ["users", "messages", "jobs", "support", "requests"] },
   { id: "money", label: "الفلوس والشحن", pages: ["topups", "finance", "invoices", "promo-codes"] },
   { id: "providers", label: "المزودون والمفاتيح", pages: ["providers", "calls-log"] },
   { id: "agent", label: "الوكيل والجودة", pages: ["agent", "failures", "planner-selftest", "reverse-lookup"] },
@@ -23,6 +23,7 @@ export const ADMIN_PAGE_INFO: Record<AdminPageId, string> = {
   conference: "لوحة حيّة تتجدد كل عشر ثوانٍ: التسجيلات والمحادثات النشطة والمزود وطلبات الشحن.",
   visitors: "زيارات الموقع: عددها وأجهزة الزوّار وبلدانهم.",
   users: "كل العملاء وأرصدتهم وحساباتهم.",
+  messages: "رسالة بريد إلى عميل واحد أو حملة إلى فئة من العملاء، بمعاينة ونسخة تجريبية قبل أي إرسال.",
   jobs: "عمليات البحث التي طلبها العملاء وحالة كل واحدة.",
   support: "الرسائل التي أرسلها العملاء إلى الدعم.",
   requests: "ما طلبه العملاء ولا نبيعه حاليًا.",
@@ -43,8 +44,8 @@ export const ADMIN_PAGE_INFO: Record<AdminPageId, string> = {
 
 export const adminGroupOf = (id: AdminPageId): AdminGroup => ADMIN_GROUPS.find((g) => g.pages.includes(id)) ?? ADMIN_GROUPS[0];
 
-/** The four pages on the phone's bottom bar; every other page is one tap away under «المزيد». */
-export const BOTTOM_BAR_PAGES: AdminPageId[] = ["overview", "users", "topups", "providers"];
+/** The four pages on the phone's bottom bar (DT-20261118-06 §2); every other page, providers included, is one tap away under «المزيد». */
+export const BOTTOM_BAR_PAGES: AdminPageId[] = ["overview", "users", "messages", "topups"];
 
 /** Every admin address that existed before the reorganisation. A page must keep answering at its old address. */
 export const ADMIN_LEGACY_ROUTES = [

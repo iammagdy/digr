@@ -25,7 +25,10 @@ describe("the migration file", () => {
     expect(FILE).toHaveLength(1);
     expect(FILE[0]).toMatch(/^\d{14}_one_open_addon_per_file\.sql$/);
     const all = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
-    expect(all[all.length - 1]).toBe(FILE[0]);
+    // it sorts after EVERY migration that existed when it was written (the last one before it is the quote-and-settle migration); a migration added LATER (DT-20261118-06 admin_campaigns,
+    // D-0094 point 2) may follow it, but no later migration may name the missions table, so nothing applied after it can touch the index or the rows it guards
+    expect(all.indexOf(FILE[0])).toBe(all.indexOf("20261104222000_record_production_quote_and_settle.sql") + 1);
+    for (const later of all.slice(all.indexOf(FILE[0]) + 1)) expect(readFileSync(path.join(MIGRATIONS, later), "utf8").replace(/--[^\n]*/g, ""), later).not.toMatch(/missions/i);
   });
   it("it creates ONE unique partial index on the key plan->addon->>of, with the key and the deny-list of the four ENDED statuses in the predicate, if not exists", () => {
     const c = code().replace(/\s+/g, " ");

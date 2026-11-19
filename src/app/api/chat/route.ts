@@ -16,6 +16,7 @@ import {
   validateStructuredClarificationAnswers,
 } from "../../../functions/shared/clarification";
 import { createServerSideClient, createAdminClient } from "../../../lib/supabase/server";
+import { suspensionBlock } from "../../../lib/server/accountSuspension";
 import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
 import { sanitizeCustomerErrorMessage } from "../../../functions/shared/catalogClient";
 import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../functions/shared/chatErrors";
@@ -117,6 +118,8 @@ export async function POST(req: NextRequest) {
         const { data, error } = await supabase.auth.getUser();
         if (!error) user = data?.user;
       }
+      // A SUSPENDED ACCOUNT (DT-20261118-06 phase 1C, Tier A): asked of the sign-in service, not read from the token (a token issued before the ban is still readable until it expires)
+      if (user) { const blocked = await suspensionBlock(() => createAdminClient(), user as { id: string; banned_until?: string | null }, { requestId }); if (blocked) return blocked; }
       if (user) {
         verifiedUserId = user.id;
         emailVerified = await resolveTrustedEmailVerified(supabase, user, bearer ?? undefined);

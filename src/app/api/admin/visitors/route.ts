@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { SUMMARY_ROW_LIMIT, parseRange, rangeStart, summarizeVisits, type VisitEventRow } from "@/lib/analytics/summary";
+import { MISSION_TABLE } from "@/lib/agentMission/constants";
+import { ADDON_MARKER_COLUMN, withoutAddonRows } from "@/lib/agentMission/addonMarker";
+import { ADDON_PLAN_PATH } from "@/lib/server/adminOverview";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +13,7 @@ const COLUMNS = "visitor_id,session_id,kind,path,country,device_class,started_at
 
 /**
  * The admin «الزوّار» numbers. READ ONLY and admin only. Bounded on purpose: at most SUMMARY_ROW_LIMIT visit rows are read (in pages of 1,000, newest first), and the
- * screen is told when a range is larger than that. The sign-ups and the submitted requests are counted from the accounts and jobs tables themselves
+ * screen is told when a range is larger than that. The sign-ups and the submitted requests are counted from the accounts and missions tables themselves
  * (head counts, no rows), and the funnel's last step is a read-only look at the first request of the accounts that logged in. Before the table exists
  * (its SQL is a proposal until the owner applies it) the answer is `available: false`, never an error.
  */
@@ -40,13 +43,15 @@ export async function GET(req: NextRequest) {
     const userIds = [...new Set(rows.filter((row) => row.kind === "login" && row.user_id).map((row) => String(row.user_id)))].slice(0, 500);
     const firstRequestByUser = new Map<string, string>();
     if (userIds.length > 0) {
-      const { data: jobs } = await admin.from("jobs").select("user_id,created_at").in("user_id", userIds).order("created_at", { ascending: true }).limit(2000);
-      for (const job of (jobs ?? []) as Array<{ user_id: string; created_at: string }>) if (!firstRequestByUser.has(job.user_id)) firstRequestByUser.set(job.user_id, job.created_at);
+      // DT-20261118-06: a customer request is inserted in `missions` only (customerActions.ts); an add-on row (a paid review or fix) is not a request. 1,000 rows: the API's own page size.
+      const { data: missions } = await admin.from(MISSION_TABLE).select(`user_id,created_at,${ADDON_MARKER_COLUMN}`).in("user_id", userIds).order("created_at", { ascending: true }).limit(1000);
+      for (const mission of withoutAddonRows((missions ?? []) as Array<{ user_id: string; created_at: string; addon?: unknown }>)) if (!firstRequestByUser.has(mission.user_id)) firstRequestByUser.set(mission.user_id, mission.created_at);
     }
 
-    const countSince = async (table: "profiles" | "jobs"): Promise<number | null> => {
+    const countSince = async (table: "profiles" | typeof MISSION_TABLE): Promise<number | null> => {
       try {
         let query = admin.from(table).select("id", { count: "exact", head: true });
+        if (table === MISSION_TABLE) query = query.is(ADDON_PLAN_PATH, null);
         if (since) query = query.gte("created_at", since.toISOString());
         const { count, error } = await query;
         return error ? null : count ?? 0;
@@ -54,7 +59,7 @@ export async function GET(req: NextRequest) {
         return null;
       }
     };
-    const [accounts, requests] = await Promise.all([countSince("profiles"), countSince("jobs")]);
+    const [accounts, requests] = await Promise.all([countSince("profiles"), countSince(MISSION_TABLE)]);
 
     return NextResponse.json({
       available: true,
