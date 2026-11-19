@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billedUnits, hasContact, minChargeOf, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../src/lib/agentMission/billableRows";
+import { billedUnits, hasContact, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../src/lib/agentMission/billableRows";
 import { settlementCharge } from "../src/lib/agentMission/price";
 import { settlementChargeByStage } from "../src/lib/agentMission/stageUnits";
 import { checkCustomerText } from "../src/lib/agentMission/text";
@@ -8,7 +8,7 @@ import { buildBoard, type JobRow } from "../src/lib/server/failureBoard";
 
 /**
  * DT-20261119-06 PART B (owner decision D-0117): a delivered person is CHARGED only if a cell of a contact kind the customer asked for holds a real value. The row is delivered either way.
- * These tests pin the pure rule (which people are unbilled), the arithmetic (never above today's charge, the card minimum, nothing billable → nothing charged), the charge table the PR shows the owner,
+ * These tests pin the pure rule (which people are unbilled), the arithmetic (never above today's charge, never padded to a minimum, nothing billable → nothing charged), the charge table the PR shows the owner,
  * the customer's lines, and the screens that read the job row (the job's delivered count is now the billable one).
  */
 const people = (n: number, fill: (i: number) => Record<string, unknown>) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, full_name: `Person ${i}`, email: "", phone: "", ...fill(i) }));
@@ -67,7 +67,7 @@ describe("peopleWithoutRequestedContact: which delivered people carry none of th
   });
 });
 
-describe("billedUnits: never above today's charge; the card minimum; nothing billable -> nothing charged", () => {
+describe("billedUnits: never above today's charge; never padded to a minimum; nothing billable -> nothing charged", () => {
   const UNIT = 211.6;
   const HOLD = 3651;
   const blended = (units: number) => settlementCharge({ deliveredUnits: units, unitPricePoints: UNIT, reservedPoints: HOLD }).chargedPoints;
@@ -75,7 +75,7 @@ describe("billedUnits: never above today's charge; the card minimum; nothing bil
   it("the charge table of the live job 6dac53c6 (5 companies + 10 people, unit 211.6, hold 3,651): people with a contact -> charge", () => {
     const table: Array<[number, number]> = [[10, 3174], [7, 2540], [5, 2116], [3, 1693], [1, 1270], [0, 1058]];
     for (const [withContact, charge] of table) {
-      const billed = billedUnits({ delivered: 15, unbilledTotal: 10 - withContact, unbilledInGroup: 0, stageCounts: null, minChargePoints: 200, chargeOf: chargeOfBlended });
+      const billed = billedUnits({ delivered: 15, unbilledTotal: 10 - withContact, unbilledInGroup: 0, stageCounts: null });
       expect(billed.deliveredUnits, `${withContact} with a contact`).toBe(5 + withContact);
       expect(billed.counts).toBeNull();
       expect(blended(billed.deliveredUnits)).toBe(charge);
@@ -84,18 +84,27 @@ describe("billedUnits: never above today's charge; the card minimum; nothing bil
     }
   });
   it("nothing billable (a people-only delivery, nobody has a contact): 0 units, nothing is charged, the whole hold is released", () => {
-    const billed = billedUnits({ delivered: 10, unbilledTotal: 10, unbilledInGroup: 0, stageCounts: null, minChargePoints: 200, chargeOf: chargeOfBlended });
+    const billed = billedUnits({ delivered: 10, unbilledTotal: 10, unbilledInGroup: 0, stageCounts: null });
     expect(billed).toEqual({ deliveredUnits: 0, counts: null, reduced: 10 });
     expect(blended(billed.deliveredUnits)).toBe(0);
   });
-  it("the card minimum: with at least one billable row the charge is never below it (rows are added back); 2 rows sold at 100 points, 1 billable -> 200 as today", () => {
-    const at100 = (c: { base: number; estimated: number }) => settlementCharge({ deliveredUnits: c.base + c.estimated, unitPricePoints: 100, reservedPoints: 1000 }).chargedPoints;
-    expect(billedUnits({ delivered: 2, unbilledTotal: 1, unbilledInGroup: 0, stageCounts: null, minChargePoints: 200, chargeOf: at100 }).deliveredUnits).toBe(2);
-    expect(billedUnits({ delivered: 10, unbilledTotal: 8, unbilledInGroup: 0, stageCounts: null, minChargePoints: 200, chargeOf: (c) => settlementCharge({ deliveredUnits: c.base + c.estimated, unitPricePoints: 50, reservedPoints: 1000 }).chargedPoints }).deliveredUnits).toBe(4);
-    // no minimum reached when the hold itself is lower (the hold caps the charge, never raised): all the rows are asked for and the charge is the hold's
-    expect(billedUnits({ delivered: 3, unbilledTotal: 2, unbilledInGroup: 0, stageCounts: null, minChargePoints: 200, chargeOf: (c) => Math.min(settlementCharge({ deliveredUnits: c.base + c.estimated, unitPricePoints: 10, reservedPoints: 25 }).chargedPoints, 25) }).deliveredUnits).toBe(3);
-    expect(minChargeOf(undefined)).toBe(200);
-    expect(minChargeOf({ minChargePoints: 350 })).toBe(350);
+  it("D-0126: NO minimum padding. A card of 2 rows sold at 100 points: 2 delivered with 1 billable -> 1 unit, 100 points, reduced 1; 1 delivered and billable -> 100; the settlement function is the existing one", () => {
+    const at100 = (units: number) => settlementCharge({ deliveredUnits: units, unitPricePoints: 100, reservedPoints: 200 }).chargedPoints;
+    const twoOneBillable = billedUnits({ delivered: 2, unbilledTotal: 1, unbilledInGroup: 0, stageCounts: null });
+    expect(twoOneBillable).toEqual({ deliveredUnits: 1, counts: null, reduced: 1 });
+    expect(at100(twoOneBillable.deliveredUnits)).toBe(100);
+    const oneDelivered = billedUnits({ delivered: 1, unbilledTotal: 0, unbilledInGroup: 0, stageCounts: null });
+    expect(oneDelivered).toEqual({ deliveredUnits: 1, counts: null, reduced: 0 });
+    expect(at100(oneDelivered.deliveredUnits)).toBe(100);
+    // the property: the units are exactly delivered − unbilled (capped at delivered), the charge never above today's, never below 0, never above the hold
+    for (let delivered = 0; delivered <= 12; delivered += 1) for (let unbilled = 0; unbilled <= 14; unbilled += 1) {
+      const b = billedUnits({ delivered, unbilledTotal: unbilled, unbilledInGroup: 0, stageCounts: null });
+      expect(b.deliveredUnits).toBe(delivered - Math.min(unbilled, delivered));
+      expect(b.reduced).toBe(delivered - b.deliveredUnits);
+      expect(at100(b.deliveredUnits)).toBeLessThanOrEqual(at100(delivered));
+      expect(at100(b.deliveredUnits)).toBeGreaterThanOrEqual(0);
+      expect(at100(b.deliveredUnits)).toBeLessThanOrEqual(200);
+    }
   });
   it("the per-stage path (DT-01): the unbilled people leave the estimated group first, the others the base; the sum is the delivered units; the property over every number of people with a contact", () => {
     const units = { base: 100, estimated: 60 };
@@ -104,19 +113,19 @@ describe("billedUnits: never above today's charge; the card minimum; nothing bil
     const chargeOf = (c: { base: number; estimated: number }) => settlementChargeByStage(c, units, BLEND, HOLD2);
     const today = { base: 5, estimated: 10 };
     for (let withContact = 0; withContact <= 10; withContact += 1) {
-      const billed = billedUnits({ delivered: 15, unbilledTotal: 10 - withContact, unbilledInGroup: 10 - withContact, stageCounts: today, minChargePoints: 0, chargeOf });
+      const billed = billedUnits({ delivered: 15, unbilledTotal: 10 - withContact, unbilledInGroup: 10 - withContact, stageCounts: today });
       expect(billed.counts).toEqual({ base: 5, estimated: withContact });
       expect(billed.deliveredUnits).toBe(5 + withContact);
       expect(chargeOf(billed.counts!)).toBeLessThanOrEqual(chargeOf(today));
       if (withContact === 10) expect(chargeOf(billed.counts!)).toBe(chargeOf(today));
     }
     // unbilled people OUTSIDE the estimated group reduce the base; the group count is untouched
-    expect(billedUnits({ delivered: 15, unbilledTotal: 2, unbilledInGroup: 0, stageCounts: today, minChargePoints: 0, chargeOf }).counts).toEqual({ base: 3, estimated: 10 });
+    expect(billedUnits({ delivered: 15, unbilledTotal: 2, unbilledInGroup: 0, stageCounts: today }).counts).toEqual({ base: 3, estimated: 10 });
     // nothing billable on the per-stage path: 0 and no counts to hand over
-    expect(billedUnits({ delivered: 10, unbilledTotal: 10, unbilledInGroup: 10, stageCounts: { base: 0, estimated: 10 }, minChargePoints: 200, chargeOf }).deliveredUnits).toBe(0);
-    // the minimum on the per-stage path: people are added back first
-    const small = billedUnits({ delivered: 4, unbilledTotal: 2, unbilledInGroup: 2, stageCounts: { base: 2, estimated: 2 }, minChargePoints: 400, chargeOf });
-    expect(small.counts).toEqual({ base: 2, estimated: 2 });
+    expect(billedUnits({ delivered: 10, unbilledTotal: 10, unbilledInGroup: 10, stageCounts: { base: 0, estimated: 10 } }).deliveredUnits).toBe(0);
+    // D-0126 on the per-stage path too: nothing is added back, the stage counts are exactly the billable ones and their sum is the units
+    const small = billedUnits({ delivered: 4, unbilledTotal: 2, unbilledInGroup: 2, stageCounts: { base: 2, estimated: 2 } });
+    expect(small).toEqual({ deliveredUnits: 2, counts: { base: 2, estimated: 0 }, reduced: 2 });
   });
 });
 

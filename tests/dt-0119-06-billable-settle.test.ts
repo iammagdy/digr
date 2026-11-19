@@ -78,7 +78,7 @@ describe("D-0117 end to end: the whole file is delivered, only the rows with a r
     expect(r.store.events.some((e) => e.kind === "result" && /لم يُحتسب عليك/.test(e.message_ar))).toBe(false);
   }, 120_000);
 
-  it("no person carries a contact: the 5 companies are charged (at least the card minimum), the 10 people are delivered and not charged", async () => {
+  it("no person carries a contact: the 5 companies are charged, the 10 people are delivered and not charged", async () => {
     const r = await run(NONE);
     const m: any = r.mission;
     expect(m.delivered_units).toBe(15);

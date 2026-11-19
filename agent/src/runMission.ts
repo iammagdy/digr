@@ -12,7 +12,7 @@ import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_NUDGES_MAX, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS, AGENT_SOURCE_MEASURE_WINDOW_MS,
 } from "../../src/lib/agentMission/constants";
-import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor, settlementCharge } from "../../src/lib/agentMission/price";
+import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
 import { planningBudgetFacts } from "../../src/lib/agentMission/planningBudget";
 import { sourceHealth, statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
@@ -20,8 +20,8 @@ import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib
 import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission, type SettleResult } from "../../src/lib/agentMission/lifecycle";
-import { estimatedGroupKeys, settlementChargeByStage, stageCountsOf, stageUnitsOf } from "../../src/lib/agentMission/stageUnits";
-import { billedUnits, minChargeOf, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../../src/lib/agentMission/billableRows";
+import { estimatedGroupKeys, stageCountsOf, stageUnitsOf } from "../../src/lib/agentMission/stageUnits";
+import { billedUnits, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../../src/lib/agentMission/billableRows";
 import { planningJudge, topicVariants } from "./researchJudge";
 import { executionSpecFor, readJudged, researchSpecFor, type ResearchSpec } from "./researchSpec";
 import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
@@ -1201,10 +1201,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const unbilled = peopleWithoutRequestedContact(approvedPlan, rowsByStage, fileByStage);
   const groupKeys = estimatedGroupKeys(approvedPlan.stages);
   const unbilledInGroup = Object.entries(unbilled.byStage).reduce((n, [k, v]) => n + (groupKeys.has(k) ? v : 0), 0);
-  const billed = billedUnits({
-    delivered, unbilledTotal: unbilled.total, unbilledInGroup, stageCounts: stageCountsToday, minChargePoints: minChargeOf(approvedPlan.price),
-    chargeOf: (c) => (stageUnits && stageCountsToday ? settlementChargeByStage(c, stageUnits, unit, reserve) : settlementCharge({ deliveredUnits: c.base + c.estimated, unitPricePoints: unit, reservedPoints: reserve }).chargedPoints),
-  });
+  const billed = billedUnits({ delivered, unbilledTotal: unbilled.total, unbilledInGroup, stageCounts: stageCountsToday });
   const stageCounts = billed.counts ? { ...billed.counts, deliveredUnits: billed.deliveredUnits } : null;
   const nothingBillable = delivered > 0 && billed.deliveredUnits === 0;
   const stageUnavailable: SettleResult | null = hasEstimate && !stageUnits ? { ok: false, code: "stage_units_unavailable", detail: "the approved plan has an estimated people stage but no per-stage units" } : null;

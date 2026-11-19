@@ -1,6 +1,7 @@
 import type { CatalogEndpoint, TregCatalog } from "../treg/catalog";
 import { EMAIL_FINDER_CAPABILITIES } from "./contactSampling";
 import { requestWantsContacts, verifyContactValue, type ContactKind } from "./contacts";
+import { phoneShape } from "./contactShape"; // ONE shape rule for a phone cell: the same function the ingest and the settlement use (DT-20261119-06 PART B)
 import { isPeopleStage, nameKeysOf } from "./people";
 import { PHONE_CAPABILITIES } from "./peopleCheck";
 import { unitCost } from "../modelPlanner/pricing";
@@ -434,15 +435,10 @@ export interface ContactDetail {
 
 const PHONE_SCAN_KEY = /(^|_)(phones?|tel|telephones?|mobiles?|cell|gsm|whatsapp|msisdn)(_|$)/i;
 const NON_CONTACT_KEY = /(^|_)(ids?|uuid|zip|postal|postcode|date|time|timestamp|year|price|amount|score|count|created|updated|registration|tracking|reference|ein|sku|longitude|latitude|ip)(_|$)|_at$/i;
-const DATE_OR_DECIMAL = /^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$|^\d+[.]\d+$|^(?:\d{1,3}[.]){3}\d{1,3}$/;
 const FALLBACK_PHONE = /^(\+\d|0\d)[\d\s().-]{6,17}$/;
 const normalizeKey = (key: string): string => key.replace(/([A-Z])([A-Z][a-z])/g, "$1_$2").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
 const nonPersonalKey = (key: string): boolean => NOT_PERSONAL_KEY.test(key) || /(^|_)(home|business)(_|$)/i.test(key);
 const phoneRank = (label: string): number => /^(mobile|cell|direct|work|business)$/i.test(label) ? 0 : /^(home|other)$/i.test(label) ? 2 : 1;
-const phoneShape = (raw: string, minimum = 7): boolean => {
-  const digits = raw.replace(/\D/g, "");
-  return /^[+\d(][\d\s().-]*$/.test(raw) && !DATE_OR_DECIMAL.test(raw) && digits.length >= minimum && digits.length <= 15;
-};
 
 interface PhonePath { container: boolean; recognised: boolean; phoneKey: boolean; office: boolean; fax: boolean; rank: number }
 

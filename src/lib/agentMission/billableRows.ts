@@ -1,6 +1,6 @@
-import { DEFAULT_MISSION_PRICING_SETTINGS } from "../missionPricing";
 import { countAr, type ItemNoun } from "./itemNoun";
 import { isEmailColumn, type ContactStep } from "./contactFinders";
+import { contactShape } from "./contactShape";
 import type { StageCounts } from "./stageUnits";
 
 /**
@@ -10,19 +10,17 @@ import type { StageCounts } from "./stageUnits";
  * counts for the CHARGE only if a cell of an asked kind holds a real value. The row is still DELIVERED (file, delivered count and hold are unchanged: «verification decides a cell, never a person»).
  * Nothing is asked → every named person is charged as today. Pure: the runner computes the numbers before the ownership check and hands the lower count to the existing settlement functions (no SQL, no price rule).
  *
- * A cell holds a value when it has the SHAPE a finder's answer must have (an address with «@» and no «*»; a phone of 7 digits or more and no «*») and (the placeholders code writes, «غير متوفر» and «لم يكتمل البحث», have no such shape).
- * A value a finder returned but that is «غير موثّق» or labelled (a private mailbox, the company's line) still counts: it is delivered.
+ * A cell holds a value when it has the SHAPE of one (contactShape.ts: the same rule the ingest applies before it normalises a native cell: an address, or a phone written with phone characters, 7 to 15 digits, not a date or a labelled id), and
+ * (the placeholders code writes, «غير متوفر» and «لم يكتمل البحث», have no such shape). A value a finder returned but that is «غير موثّق» or labelled (a private mailbox, the company's line) still counts: it is delivered.
+ * D-0126: the customer pays ONLY for the billable rows, through the existing settlement functions, and never for a padded minimum.
  */
 export type ContactKindAsked = "email" | "phone";
 
 const KIND_OF: Record<ContactKindAsked, "work_email" | "phone"> = { email: "work_email", phone: "phone" };
 
-/** Whether a cell is a contact of this kind: by shape, never by a word list. */
+/** Whether a cell is a contact of this kind: by shape (contactShape.ts), never by a word list. */
 export function hasContact(kind: ContactKindAsked, value: unknown): boolean {
-  const t = String(value ?? "").trim();
-  // the placeholders code writes («غير متوفر»، «لم يكتمل البحث») have neither an «@» nor 7 digits: the shape alone refuses them
-  if (t === "" || t.includes("*")) return false;
-  return kind === "email" ? t.includes("@") : t.replace(/\D/g, "").length >= 7;
+  return contactShape(kind, value);
 }
 
 export interface BillablePlanLike {
@@ -78,14 +76,10 @@ export interface BilledInput {
   unbilledInGroup: number;
   /** Today's delivered rows per group on the per-stage path (DT-01); null on the one-unit path. */
   stageCounts: StageCounts | null;
-  /** The card's minimum charge (points). Applies only when at least one billable row is delivered. */
-  minChargePoints: number;
-  /** The charge of a delivery of these counts through the settlement function in use (the one-unit path passes `{ base: units, estimated: 0 }`). */
-  chargeOf: (counts: StageCounts) => number;
 }
 
 export interface Billed {
-  /** The number handed to the settlement as the delivered units (the job's `delivered_units`): the BILLABLE rows. */
+  /** The number handed to the settlement as the delivered units (the job's `delivered_units`): the BILLABLE rows, nothing added. */
   deliveredUnits: number;
   /** The per-stage counts handed to the per-stage settlement; null on the one-unit path. */
   counts: StageCounts | null;
@@ -94,32 +88,23 @@ export interface Billed {
 }
 
 /**
- * The count the settlement charges. The charge is monotone in the count, so it is never above today's. D-0117: no billable row → nothing is charged (the hold is released whole, the file stays);
- * with at least one billable row the charge is never below the card's minimum (rows are added back, people first, until the minimum is reached or none is left).
+ * The count the settlement charges: the billable rows and no others (Megz D-0126: no minimum padding, a card of 2 rows at 100 points with 1 billable row delivered charges 100). The charge is monotone in the count, so it is never above today's;
+ * no billable row → 0 units → nothing is charged and the hold is released whole (the file stays).
  */
 export function billedUnits(input: BilledInput): Billed {
   const delivered = Math.max(0, Math.floor(input.delivered));
   const total = Math.max(0, Math.floor(input.unbilledTotal));
   if (!input.stageCounts) {
-    let units = delivered - Math.min(total, delivered);
-    if (units > 0) while (units < delivered && input.chargeOf({ base: units, estimated: 0 }) < input.minChargePoints) units += 1;
+    const units = delivered - Math.min(total, delivered);
     return { deliveredUnits: units, counts: null, reduced: delivered - units };
   }
   const today = input.stageCounts;
   const inGroup = Math.min(Math.max(0, Math.floor(input.unbilledInGroup)), today.estimated);
   const outside = Math.min(Math.max(0, total - Math.max(0, Math.floor(input.unbilledInGroup))), today.base);
-  let est = today.estimated - inGroup;
-  let base = today.base - outside;
-  if (est + base > 0) {
-    while ((est < today.estimated || base < today.base) && input.chargeOf({ base, estimated: est }) < input.minChargePoints) {
-      if (est < today.estimated) est += 1; else base += 1;
-    }
-  }
+  const est = today.estimated - inGroup;
+  const base = today.base - outside;
   return { deliveredUnits: base + est, counts: { base, estimated: est }, reduced: today.base + today.estimated - (base + est) };
 }
-
-/** The minimum charge a plan carries (the setting the owner edits; 200 by default). */
-export const minChargeOf = (price: { minChargePoints?: number } | undefined): number => (typeof price?.minChargePoints === "number" ? price.minChargePoints : DEFAULT_MISSION_PRICING_SETTINGS.minChargePoints);
 
 const PEOPLE_NOUN: ItemNoun = { key: "person", singular: "شخص", dual: "شخصان", dualGen: "شخصين", plural: "أشخاص", tamyiz: "شخصًا", feminine: false };
 const kindsPhraseAr = (kinds: ReadonlyArray<ContactKindAsked>, both: string): string => (kinds.length > 1 ? both : kinds[0] === "email" ? "إيميل" : "تليفون");
@@ -136,4 +121,3 @@ export function unbilledLineAr(n: number, kinds: ReadonlyArray<ContactKindAsked>
 export function noBillableReasonAr(kinds: ReadonlyArray<ContactKindAsked>): string {
   return `لم يظهر لأي شخص ما طلبته من ${kindsPhraseAr(kinds, "إيميل أو تليفون")}، فلم يُخصم شيء وعاد الحجز كاملًا.`;
 }
-
