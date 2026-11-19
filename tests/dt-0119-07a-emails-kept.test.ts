@@ -277,6 +277,22 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
     });
   });
 
+  it("e2. a company address and a personal mailbox in the same answer keep the personal mailbox on the person", async () => {
+    const company = "info@orascom-em.com.eg";
+    const personal = "person1.private@gmail.com";
+    const w = await world({
+      companyEmail: company,
+      answers: (ep) => (ep === EMAIL_A.id ? { emails: [company, personal] } : null),
+    });
+    await w.run();
+    expect(cellsOf(w.items, "p1")).toMatchObject({
+      email: personal,
+      email_status: "غير موثّق — إيميل شخصي",
+    });
+    expect(companyCellsOf(w.items, "c1").company_email).toBe(company);
+    expect(w.calls.map((c) => c.endpoint)).toEqual([EMAIL_A.id, EMAIL_B.id]);
+  });
+
   // Case f
   it("f. shared address: two people of one company keep it with «مشترك»; final «موثّق» keep «موثّق — مشترك»; stopped run still labels", async () => {
     const SHARED = "team@orascom-em.com.eg";
@@ -440,6 +456,19 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
       company_email_status: "غير موثّق",
     });
 
+    // The company has no domain, so the lister cannot be asked and no address can be matched.
+    const noDomain = await world({
+      companyWebsite: "",
+      steps: [step],
+      answers: () => ({ emails: ["general.worker@orascom-em.com.eg"] }),
+    });
+    await noDomain.run();
+    expect(noDomain.calls).toEqual([]);
+    expect(companyCellsOf(noDomain.items, "c1")).toEqual({
+      company_email: "غير متوفر",
+      company_email_status: "",
+    });
+
     // h4: fromPeople case
     const w4 = await world({
       steps: [step],
@@ -513,7 +542,31 @@ describe("DT-20261119-07 PR-A: e-mails kept and labelled", () => {
       answers: (ep) => (ep === EMAIL_A.id ? { email: "person1.private@gmail.com" } : null),
     });
     await w4.run();
-    expect(w4.calls.some((c) => c.endpoint === "phone.by.email")).toBe(false);
+    expect(w4.calls.filter((c) => c.endpoint === PHONE_BY_EMAIL.id)).toEqual([]);
+    await w4.run();
+    expect(cellsOf(w4.items, "p1").email).toBe("person1.private@gmail.com");
+    expect(w4.calls.filter((c) => c.endpoint === PHONE_BY_EMAIL.id)).toEqual([]);
+
+    const work = "person1@orascom-em.com.eg";
+    const w5 = await world({
+      steps: [emailStep, phoneStep],
+      answers: (ep) => (ep === EMAIL_A.id ? { email: work } : null),
+    });
+    await w5.run();
+    await w5.run();
+    expect(w5.calls.filter((c) => c.endpoint === PHONE_BY_EMAIL.id).map((c) => c.params.email))
+      .toEqual([work, work]);
+
+    const company = "info@orascom-em.com.eg";
+    const w6 = await world({
+      companyEmail: company,
+      steps: [emailStep, phoneStep],
+      answers: (ep) => (ep === EMAIL_A.id ? { email: company } : null),
+    });
+    await w6.run();
+    await w6.run();
+    expect(cellsOf(w6.items, "p1").email).toBe(company);
+    expect(w6.calls.filter((c) => c.endpoint === PHONE_BY_EMAIL.id)).toEqual([]);
   });
 
   // Case j (pure)

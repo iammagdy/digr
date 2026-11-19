@@ -352,14 +352,14 @@ const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "
 const bareDomain = (v: unknown): string | null => { const t = text(v); if (!t || /linkedin\./i.test(t)) return null; const d = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]; return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d) ? d.toLowerCase() : null; };
 
 /** The facts of a person row (and of its company's row): decided by code from the values, not from the planner's key names alone. */
-export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArray<{ key: string; title_ar?: string; kind?: string }>, parent: Record<string, unknown> | null): PersonFacts {
+export function personFactsOf(row: Record<string, unknown>, columns: ReadonlyArray<{ key: string; title_ar?: string; kind?: string }>, parent: Record<string, unknown> | null, allowEmail: (address: string) => boolean = () => true): PersonFacts {
   const profile = Object.values(row).map(text).find((v) => LINKEDIN_PERSON.test(v)) ?? null;
   const linkedin = profile === null ? null : /^https?:\/\//i.test(profile) ? profile : `https://${profile}`;
   const name = nameKeysOf(columns).map((k) => text(row[k])).filter(Boolean).join(" ").trim() || null;
   const parts = name ? name.split(/\s+/) : [];
   const domainKey = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/(website|domain|site|url)/i.test(k)) { const d = bareDomain(v); if (d) return d; } return null; };
   const companyOf = (r: Record<string, unknown> | null): string | null => { if (!r) return null; for (const [k, v] of Object.entries(r)) if (/^(company|company_name|name)$/i.test(k) && text(v)) return text(v); return null; };
-  const email = columns.filter((c) => isEmailColumn(c)).map((c) => text(row[c.key]).replace(/^mailto:/i, "").toLowerCase()).find((v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) ?? null;
+  const email = columns.filter((c) => isEmailColumn(c)).map((c) => text(row[c.key]).replace(/^mailto:/i, "").toLowerCase()).find((v) => emailValueTypeOf(v) === "professional" && allowEmail(v)) ?? null;
   return { linkedin, name, first: parts.length > 1 ? parts[0] : null, last: parts.length > 1 ? parts.slice(1).join(" ") : null, domain: domainKey(row) ?? domainKey(parent), company: text(row.company) || companyOf(parent), ...(email ? { email } : {}) };
 }
 

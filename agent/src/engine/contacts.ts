@@ -494,9 +494,11 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       // a value that already has its final status (an earlier run of this step) is not looked up or verified again
       if (existing !== "" && (step.kind === "email" ? statusHead(existingStatus) === EMAIL_STATUS_VERIFIED_AR || statusHead(existingStatus) === EMAIL_STATUS_OTHER_COMPANY_AR : statusHead(existingStatus) === PHONE_STATUS_VERIFIED_AR || statusHead(existingStatus) === PHONE_STATUS_OTHER_COUNTRY_AR)) return null;
       const parentId = String(row.parent_id ?? "");
-      const given = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
+      const isOwnWorkEmail = (address: string): boolean => emailValueTypeOf(address) === "professional" && !companyAddresses(parentId).has(addressOf(address));
+      const given = personFactsOf(row, stage.columns, parents.get(parentId) ?? null, isOwnWorkEmail);
       const known = learned.get(String(row.id));
-      let facts: PersonFacts = { ...given, linkedin: given.linkedin ?? known?.linkedin ?? null, ...(given.email || known?.email ? { email: given.email ?? known?.email ?? null } : {}) };
+      const workEmail = given.email ?? (known?.email && isOwnWorkEmail(known.email) ? known.email : null);
+      let facts: PersonFacts = { ...given, linkedin: given.linkedin ?? known?.linkedin ?? null, ...(workEmail ? { email: workEmail } : {}) };
       let typeAr: string | null = null;
       let asked = false;
       let value = existing;
@@ -561,7 +563,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             if (!keptCompany) keptCompany = { value: hit.value, finderId: finder.id, callId: a.callId };
             keptNow = true;
             hit = null;
-          } else if (step.kind === "email" && detail.personalAlso) {
+          }
+          if (step.kind === "email" && detail.personalAlso) {
             out.withheld.personal_email += 1;
             if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
           }
