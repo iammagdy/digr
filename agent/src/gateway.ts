@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { executeTregCall, type TregCallOptions, type TregCallResult, maxTregAttempts } from "../../src/functions/shared/tregClient";
 import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
-import { commitTregSpend, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
+import { commitTregSpend, commitTregSpendAcknowledged, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
 import type { JobCallBudget } from "../../src/lib/server/callBudget";
 import { runSensitiveCall, sensitiveRefusalAr, type SensitiveRefusal } from "../../src/lib/server/sensitiveAccess";
 import { digestValue, buildShapeDigest } from "../../src/lib/modelPlanner/digest";
@@ -88,7 +88,8 @@ export interface GatewayDeps {
   catalog: TregCatalog;
   budget: JobCallBudget;
   recorder: CallRecorder;
-  commit?: typeof commitTregSpend;
+  /** Commits a cost row; a real commit resolves true/false (F5: an unacknowledged release stops the amount ladder), a fake may resolve to nothing (taken as acknowledged). */
+  commit?: (...args: Parameters<typeof commitTregSpend>) => Promise<boolean | void>;
   call?: (options: TregCallOptions) => Promise<TregCallResult>;
   /** The worker's own TREG key (TREG_TOKEN): used while the TREG key pool's switch is OFF or the pool cannot be read (then it is the main key); with the switch ON the pool's active key is used. */
   token?: string;
@@ -173,7 +174,7 @@ const FINDER_CAPABILITIES: Record<ContactFinderKind, ReadonlySet<string>> = { em
 
 export function createGateway(deps: GatewayDeps) {
   const call = deps.call ?? executeTregCall;
-  const commit = deps.commit ?? commitTregSpend;
+  const commit = deps.commit ?? commitTregSpendAcknowledged;
   const spendField = deps.phase === "planning" ? "planning_treg_usd" : "execution_treg_usd";
   /** Real calls per source that gave rows, in this run of the gateway (planning only). */
   const samplesWithRows = new Map<string, number>();

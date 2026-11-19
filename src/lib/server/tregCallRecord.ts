@@ -21,11 +21,11 @@ export function tregCallStatusOf(result: { ok: boolean; rows?: unknown[] | null 
   return Array.isArray(result.rows) && result.rows.length > 0 ? "success" : "empty";
 }
 
-export async function commitTregSpend(
+/** DT-20261119-11 F5: commits a cost row and says whether it was REALLY committed (by the v2 function or the old one): a caller that must know the release was acknowledged reads it. */
+export async function commitTregSpendAcknowledged(
   client: any,
   args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: CallStatus; durationMs: number; jobId: string | null; keyRef?: CallRecord["keyRef"] },
 ): Promise<boolean> {
-  // DT-20261119-11 F5: returns true only when the cost row was really committed (by the v2 function or by the old one); a caller that must know the release was acknowledged reads it. Every existing caller may ignore it.
   if (args.costId === null || args.costId === undefined) return true;
   const units = Math.max(0, Math.floor(Number(args.units) || 0));
   const costUsd = Math.max(0, Number(args.costUsd) || 0);
@@ -53,4 +53,9 @@ export async function commitTregSpend(
     console.warn("[worker:provider_commit_failed]", String(e?.message || "").slice(0, 120));
     return false;
   }
+}
+
+/** The commit every existing caller uses: unchanged contract (it resolves to nothing; its failure is logged and never changes the job's outcome). */
+export async function commitTregSpend(client: any, args: Parameters<typeof commitTregSpendAcknowledged>[1]): Promise<void> {
+  await commitTregSpendAcknowledged(client, args);
 }
