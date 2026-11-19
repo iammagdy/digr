@@ -1,6 +1,6 @@
 -- DT-20261119-02 (D-0105) · RECORD the repo migrations that production already has, in supabase_migrations.schema_migrations. Run it ONLY AFTER 01_verify_readonly.sql showed `present` for the migrations below.
--- It writes ONE kind of row: a row (version, name, statements = empty list) in supabase_migrations.schema_migrations for each of the 14 group-B repo migrations whose STRUCTURAL checks (the same checks as 01_verify_readonly.sql) are ALL true
--- right now, and that is not recorded yet. It runs no migration, creates no table, changes no schema, no data, no function, no grant. A migration with any missing object is skipped (nothing is inserted for it): compare the rows returned with the 14 names, and run 01_verify_readonly.sql again to see why a name is missing. Safe to run twice (a recorded version is never inserted again). Group A (8 files with another version in production) needs NO row: the repo files are RENAMED to production's versions instead.
+-- It writes ONE kind of row: a row (version, name, statements = empty list) in supabase_migrations.schema_migrations for each of the 13 group-B repo migrations (the 14 less welcome_email_on_confirm, which is skipped BY NAME: production never installed it, D-0105 follow-up) whose STRUCTURAL checks (the same checks as 01_verify_readonly.sql) are ALL true
+-- right now, and that is not recorded yet. It runs no migration, creates no table, changes no schema, no data, no function, no grant. A migration with any missing object is skipped (nothing is inserted for it): compare the rows returned with the 13 names, and run 01_verify_readonly.sql again to see why a name is missing. Safe to run twice (a recorded version is never inserted again). Group A (8 files with another version in production) needs NO row: the repo files are RENAMED to production's versions instead.
 -- Result: the rows inserted (RETURNING). NOT run by the team: the owner (Megz) runs it in the Supabase SQL editor. Never `supabase db push` or `supabase migration repair`.
 WITH checks(migration, kind, item, ok) AS (
   SELECT 'fix_provider_spend_scope'::text, 'S'::text, 'function reserve_provider_spend_atomic(text,text,numeric,numeric)'::text, coalesce((to_regprocedure('public.reserve_provider_spend_atomic(text,text,numeric,numeric)') is not null),false)
@@ -75,7 +75,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'extension pg_net'::text, coalesce((exists(select 1 from pg_extension where extname='pg_net')),false)
   UNION ALL
-  SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'extension vault'::text, coalesce((exists(select 1 from pg_extension where extname='vault')),false)
+  SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'Vault (extension supabase_vault or vault, or the vault.decrypted_secrets view)'::text, coalesce((exists(select 1 from pg_extension where extname in ('supabase_vault','vault')) or to_regclass('vault.decrypted_secrets') is not null),false)
   UNION ALL
   SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'function send_welcome_email()'::text, coalesce((to_regprocedure('public.send_welcome_email()') is not null),false)
   UNION ALL
@@ -83,7 +83,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'welcome_email_on_confirm'::text, 'B'::text, 'body of send_welcome_email() holds «send-email-service-role-key»'::text, coalesce((coalesce(position('send-email-service-role-key' in pg_get_functiondef(to_regprocedure('public.send_welcome_email()')))>0,false)),false)
   UNION ALL
-  SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'trigger on_email_confirmed_send_welcome on auth.users'::text, coalesce((exists(select 1 from pg_trigger where tgname='on_email_confirmed_send_welcome' and tgrelid=to_regclass('auth.users') and not tgisinternal)),false)
+  SELECT 'welcome_email_on_confirm'::text, 'S'::text, 'trigger on_email_confirmed_send_welcome on auth.users (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='on_email_confirmed_send_welcome' and tgrelid=to_regclass('auth.users') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
   SELECT 'prevent_claim_after_collection_complete'::text, 'S'::text, 'function claim_job_chunk(text,integer,integer)'::text, coalesce((to_regprocedure('public.claim_job_chunk(text,integer,integer)') is not null),false)
   UNION ALL
@@ -109,7 +109,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'credit_ledger_kinds'::text, 'S'::text, 'function block_credit_kind_mutation()'::text, coalesce((to_regprocedure('public.block_credit_kind_mutation()') is not null),false)
   UNION ALL
-  SELECT 'credit_ledger_kinds'::text, 'S'::text, 'trigger trg_block_credit_kind_mutation on public.credit_ledger_kinds'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_credit_kind_mutation' and tgrelid=to_regclass('public.credit_ledger_kinds') and not tgisinternal)),false)
+  SELECT 'credit_ledger_kinds'::text, 'S'::text, 'trigger trg_block_credit_kind_mutation on public.credit_ledger_kinds (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_credit_kind_mutation' and tgrelid=to_regclass('public.credit_ledger_kinds') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
   SELECT 'credit_ledger_kinds'::text, 'S'::text, 'view credit_ledger_typed with security_invoker'::text, coalesce((coalesce((select 'security_invoker=true' = any(reloptions) from pg_class where oid=to_regclass('public.credit_ledger_typed')),false)),false)
   UNION ALL
@@ -257,7 +257,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'provider_api_keys_tables'::text, 'S'::text, 'function block_provider_key_audit_mutation()'::text, coalesce((to_regprocedure('public.block_provider_key_audit_mutation()') is not null),false)
   UNION ALL
-  SELECT 'provider_api_keys_tables'::text, 'S'::text, 'trigger trg_block_provider_key_audit_mutation on public.provider_key_audit'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_provider_key_audit_mutation' and tgrelid=to_regclass('public.provider_key_audit') and not tgisinternal)),false)
+  SELECT 'provider_api_keys_tables'::text, 'S'::text, 'trigger trg_block_provider_key_audit_mutation on public.provider_key_audit (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_provider_key_audit_mutation' and tgrelid=to_regclass('public.provider_key_audit') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
   SELECT 'provider_api_keys_functions'::text, 'S'::text, 'function admin_set_provider_key_atomic(uuid,text,text,text)'::text, coalesce((to_regprocedure('public.admin_set_provider_key_atomic(uuid,text,text,text)') is not null),false)
   UNION ALL
@@ -291,7 +291,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'provider_limits'::text, 'S'::text, 'function block_provider_limits_audit_mutation()'::text, coalesce((to_regprocedure('public.block_provider_limits_audit_mutation()') is not null),false)
   UNION ALL
-  SELECT 'provider_limits'::text, 'S'::text, 'trigger trg_block_provider_limits_audit_mutation on public.provider_limits_audit'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_provider_limits_audit_mutation' and tgrelid=to_regclass('public.provider_limits_audit') and not tgisinternal)),false)
+  SELECT 'provider_limits'::text, 'S'::text, 'trigger trg_block_provider_limits_audit_mutation on public.provider_limits_audit (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='trg_block_provider_limits_audit_mutation' and tgrelid=to_regclass('public.provider_limits_audit') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
   SELECT 'provider_limits'::text, 'S'::text, 'function admin_set_provider_limits_atomic(uuid,jsonb)'::text, coalesce((to_regprocedure('public.admin_set_provider_limits_atomic(uuid,jsonb)') is not null),false)
   UNION ALL
@@ -359,25 +359,25 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'admin_invoices'::text, 'S'::text, 'index invoice_status_events_doc_idx'::text, coalesce((exists(select 1 from pg_indexes where schemaname='public' and indexname='invoice_status_events_doc_idx')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_number on public.invoice_documents'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_number' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_number on public.invoice_documents (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_number' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_guard_t on public.invoice_documents'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_guard_t' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_guard_t on public.invoice_documents (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_guard_t' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_no_delete on public.invoice_documents'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_no_delete' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_no_delete on public.invoice_documents (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_no_delete' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_no_truncate on public.invoice_documents'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_no_truncate' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_documents_no_truncate on public.invoice_documents (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_documents_no_truncate' and tgrelid=to_regclass('public.invoice_documents') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_counters_no_delete on public.invoice_number_counters'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_counters_no_delete' and tgrelid=to_regclass('public.invoice_number_counters') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_counters_no_delete on public.invoice_number_counters (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_counters_no_delete' and tgrelid=to_regclass('public.invoice_number_counters') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_counters_no_truncate on public.invoice_number_counters'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_counters_no_truncate' and tgrelid=to_regclass('public.invoice_number_counters') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_counters_no_truncate on public.invoice_number_counters (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_counters_no_truncate' and tgrelid=to_regclass('public.invoice_number_counters') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_lines_guard on public.invoice_lines'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_lines_guard' and tgrelid=to_regclass('public.invoice_lines') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_lines_guard on public.invoice_lines (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_lines_guard' and tgrelid=to_regclass('public.invoice_lines') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_batches_guard on public.invoice_batches'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_batches_guard' and tgrelid=to_regclass('public.invoice_batches') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_batches_guard on public.invoice_batches (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_batches_guard' and tgrelid=to_regclass('public.invoice_batches') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_events_no_change on public.invoice_status_events'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_events_no_change' and tgrelid=to_regclass('public.invoice_status_events') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_events_no_change on public.invoice_status_events (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_events_no_change' and tgrelid=to_regclass('public.invoice_status_events') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
-  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_events_no_truncate on public.invoice_status_events'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_events_no_truncate' and tgrelid=to_regclass('public.invoice_status_events') and not tgisinternal)),false)
+  SELECT 'admin_invoices'::text, 'S'::text, 'trigger invoice_events_no_truncate on public.invoice_status_events (enabled)'::text, coalesce((exists(select 1 from pg_trigger where tgname='invoice_events_no_truncate' and tgrelid=to_regclass('public.invoice_status_events') and not tgisinternal and tgenabled='O')),false)
   UNION ALL
   SELECT 'admin_invoices'::text, 'S'::text, 'function invoice_create_document(uuid,text,jsonb,uuid,uuid)'::text, coalesce((to_regprocedure('public.invoice_create_document(uuid,text,jsonb,uuid,uuid)') is not null),false)
   UNION ALL
@@ -473,7 +473,7 @@ WITH checks(migration, kind, item, ok) AS (
   UNION ALL
   SELECT 'one_open_addon_per_file'::text, 'S'::text, 'index missions_one_open_addon_per_file'::text, coalesce((exists(select 1 from pg_indexes where schemaname='public' and indexname='missions_one_open_addon_per_file')),false)
   UNION ALL
-  SELECT 'one_open_addon_per_file'::text, 'S'::text, 'the index is unique, partial, on plan->addon->>of, and excludes the four ending statuses'::text, coalesce((coalesce((select pg_get_indexdef(indexrelid) like '%UNIQUE%' and pg_get_indexdef(indexrelid) like '%addon%' and pg_get_indexdef(indexrelid) like '%completed%' and pg_get_indexdef(indexrelid) like '%cancelled%' from pg_index where indexrelid=to_regclass('public.missions_one_open_addon_per_file')),false)),false)
+  SELECT 'one_open_addon_per_file'::text, 'S'::text, 'the index is unique, partial, on plan->addon->>of, and excludes ALL FOUR ending statuses (completed, failed, unserved, cancelled)'::text, coalesce((coalesce((select pg_get_indexdef(indexrelid) like '%UNIQUE%' and pg_get_indexdef(indexrelid) like '%addon%' and pg_get_indexdef(indexrelid) like '%completed%' and pg_get_indexdef(indexrelid) like '%failed%' and pg_get_indexdef(indexrelid) like '%unserved%' and pg_get_indexdef(indexrelid) like '%cancelled%' from pg_index where indexrelid=to_regclass('public.missions_one_open_addon_per_file')),false)),false)
   UNION ALL
   SELECT 'admin_campaigns'::text, 'S'::text, 'table admin_campaigns'::text, coalesce((to_regclass('public.admin_campaigns') is not null),false)
   UNION ALL
@@ -542,6 +542,18 @@ WITH checks(migration, kind, item, ok) AS (
   SELECT 'admin_campaigns'::text, 'S'::text, 'service_role cannot DELETE admin_campaigns'::text, coalesce((coalesce(not has_table_privilege('service_role',to_regclass('public.admin_campaigns'),'DELETE'),false)),false)
   UNION ALL
   SELECT 'admin_campaigns'::text, 'S'::text, 'service_role cannot DELETE admin_campaign_sends'::text, coalesce((coalesce(not has_table_privilege('service_role',to_regclass('public.admin_campaign_sends'),'DELETE'),false)),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'primary key of admin_campaigns'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaigns') and contype='p')),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'primary key of admin_campaign_sends'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaign_sends') and contype='p')),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'foreign key of admin_campaign_sends'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaign_sends') and contype='f')),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'check on admin_campaigns with «news_opt_in»'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaigns') and contype='c' and pg_get_constraintdef(oid) like '%news_opt_in%')),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'check on admin_campaigns with «cancelled»'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaigns') and contype='c' and pg_get_constraintdef(oid) like '%cancelled%')),false)
+  UNION ALL
+  SELECT 'admin_campaigns'::text, 'S'::text, 'check on admin_campaign_sends with «uncertain»'::text, coalesce((exists(select 1 from pg_constraint where conrelid=to_regclass('public.admin_campaign_sends') and contype='c' and pg_get_constraintdef(oid) like '%uncertain%')),false)
 ),
 meta(migration, group_, repo_version, prod_version) AS (
   VALUES
@@ -553,7 +565,7 @@ meta(migration, group_, repo_version, prod_version) AS (
   ('create_quote_atomic','A','20261017180000','20261017181346'::text),
   ('approve_topup_atomic_privileges','A','20261017180500','20261017181352'::text),
   ('settle_decision_maker_fields','A','20261017181000','20261017184147'::text),
-  ('welcome_email_on_confirm','B','20261013170000',NULL::text),
+  ('welcome_email_on_confirm','W','20261013170000',NULL::text),
   ('prevent_claim_after_collection_complete','B','20261015185600',NULL::text),
   ('seed_company_and_people_capabilities','B','20261016011500',NULL::text),
   ('credit_ledger_kinds','B','20261018140000',NULL::text),
