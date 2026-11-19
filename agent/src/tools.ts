@@ -115,7 +115,7 @@ export interface ToolContext {
   /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
   peopleOfCompanies?: boolean;
   /** The people step the planner understood, with its own title and count (DT-20261118-05): the plan check treats it as a step the customer asked for, whatever the wording. */
-  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> };
+  understoodPeople?: { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone">; companies?: number };
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */

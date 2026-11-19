@@ -102,18 +102,25 @@ export const COMPANIES_LABEL_AR = "الشركات";
 // FIX2 (QA-2): a title the model wrote is NEVER shown in the card's count line («لم تحدد عدد {noun} لكل …»). FIX1 let any title through that checkCustomerText accepted; that guard knows a finite list of source
 // names, so a source name written in Arabic letters passed (QA probe of FIX1). Nothing in code can know every name a source goes by, and the Arabic of a title inflects («مسؤولي»/«مسؤولو»), so a «built only of the
 // customer's own words» test would reject honest titles as often as it caught a name: the line uses the two fixed labels, always. The customer's own words still decide the count (planner.ts withCheckedPerCompany).
-export interface UnderstoodPeople { noun_ar: string; parent_ar: string; per_parent: number | null; contact_kinds?: Array<"email" | "phone"> }
+export interface UnderstoodPeople {
+  noun_ar: string;
+  parent_ar: string;
+  per_parent: number | null;
+  contact_kinds?: Array<"email" | "phone">;
+  /** the companies' count the planner understood and the customer's words support (DT-20261119-05); absent when none */
+  companies?: number;
+}
 /** The people of the companies as the planner understood them: the people step it wrote, else its required answer (the parent is then the first top-level step it wrote). The answer's count and contacts complete a step that has none. */
-export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>, ask?: PeopleOfCompaniesAsk | null): UnderstoodPeople | null {
+export function understoodPeopleOf(steps: ReadonlyArray<{ key: string; title_ar: string; parent: string | null; platform: string; capability?: string | null; count: { per_parent: number | null } }>, ask?: PeopleOfCompaniesAsk | null, companies?: number | null): UnderstoodPeople | null {
   const extra = ask?.asked ? { contact_kinds: ask.contact_kinds } : {};
   for (const s of steps) {
     const parent = s.parent !== null && isPeopleOfCompanyStep(s) ? steps.find((p) => p.key === s.parent) : undefined;
     // the parent of a people step is the companies step by structure; its own platform key is not read (a companies step may be a map search or a business directory)
-    if (parent) return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: s.count.per_parent ?? (ask?.asked ? ask.per_company : null), ...extra };
+    if (parent) return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: s.count.per_parent ?? (ask?.asked ? ask.per_company : null), ...extra, ...(typeof companies === "number" && Number.isInteger(companies) && companies >= 1 ? { companies } : {}) };
   }
   if (!ask?.asked) return null;
   // FIX1 (Gate 2 P1-1, QA): a «cannot» answer has no steps at all; the people of the companies are still the request's structure, under the fixed label of its parent
-  return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: ask.per_company, ...extra };
+  return { noun_ar: PEOPLE_LABEL_AR, parent_ar: COMPANIES_LABEL_AR, per_parent: ask.per_company, ...extra, ...(typeof companies === "number" && Number.isInteger(companies) && companies >= 1 ? { companies } : {}) };
 }
 
 /** What a person row of a source gives the e-mail and phone finders: a professional page (a LinkedIn profile), a name, a domain. Read from the catalog's own field names and example answer (values like «linkedin.com/in/…»), never from the request. */
