@@ -414,6 +414,32 @@ describe("T1: companies count reaches the planner and hand-over", () => {
         const compControl = planControl.stages.find((s: any) => s.key === "companies");
         expect(compControl.planned_rows).toBe(5);
       });
+
+      // FIX2 (فزاع Gate 2 r2, P0): the managers per company («٨ مديرين») must never become the number of COMPANIES, whatever the model wrote in its titles: the span of the per-company citation is never evidence, and the cited noun must be the root entity's own (not a people noun, not a later word of a mixed root title)
+      const mixedDeps = (cited: string, per: number, perText: string) => {
+        const under = {
+          decision: "plan",
+          understanding_ar: "شركات كهروميكانيكا ومعها مديروها.",
+          accepts_available: false,
+          steps: [{ key: "companies", title_ar: "شركات الكهروميكانيكا وبيانات المديرين", platform: "companies", capability: COMPANIES_CAP, parent: null, deliver: true, count: { total: 5, all: false }, search_terms: ["electromechanical"] }],
+          people_of_companies: { asked: true, title_ar: "الأشخاص", per_company: per, per_company_text: perText, companies_text: cited, contact_kinds: ["email", "phone"] },
+        };
+        const plannerModel: PlannerModel = async ({ tool }) => (tool.name === UNDERSTAND_TOOL ? { input: JSON.parse(JSON.stringify(under)), costUsd: 0.001 } : null);
+        return (base: any) => ({ ...base, plannerModel });
+      };
+      const moneyOf = (r: any) => {
+        const plan = r.mission.plan as any;
+        return { companies: plan.stages.find((s: any) => s.key === "companies").planned_rows, hold: r.mission.reserved_points, max: plan.price.maxChargePoints, charged: r.mission.charged_points };
+      };
+      it.each([[8], [3]])("P0: a false company citation «%i مديرين» (the per-company span, a mixed root title) leaves the company target, the hold, the max charge and the settled charge EXACTLY as with an empty citation", async (per) => {
+        const request = `عايز شركات مصرية في قطاع الكهروميكانيكا ومن كل شركة ${per === 8 ? "٨" : "٣"} مديرين`;
+        const text = `${per === 8 ? "٨" : "٣"} مديرين`;
+        const run = (cited: string) => replay({ request, planning: planFlowWithRows(5), execution: execution(), answers: answers([2, 2, 2, 2, 2]) as any, deps: mixedDeps(cited, per, text) });
+        const withFalseCite = moneyOf(await run(text));
+        const control = moneyOf(await run(""));
+        expect(control.companies).toBe(5);
+        expect(withFalseCite).toEqual(control);
+      }, 180_000);
     });
   });
 });
@@ -495,4 +521,36 @@ describe("FIX1 (QA must-pass): one people source answered with no row, another F
     expect(plan.stages).toHaveLength(1);
     expect(JSON.stringify(r.planView)).toMatch(/لم تُضَف إلى الخطة/);
   }, 120_000);
+});
+
+describe("FIX2 (P0): the per-company citation is never evidence for the companies' count; the cited noun identifies the root entity", () => {
+  const mixedRoot = { ...companiesStep, title_ar: "شركات الكهروميكانيكا وبيانات المديرين", count: { total: 5, per_parent: null, all: false } };
+  it.each([
+    ["٨ مديرين", 8, "عايز شركات مصرية في قطاع الكهروميكانيكا ومن كل شركة ٨ مديرين"],
+    ["٣ مديرين", 3, "عايز شركات مصرية في قطاع الكهروميكانيكا ومن كل شركة ٣ مديرين"],
+  ])("mixed root title, people title «الأشخاص», cited «%s» (also the per-company span) -> no companies_count", (cited, per, message) => {
+    const u = U([mixedRoot], peopleAsk(true, cited, "الأشخاص", { per_company: per, per_company_text: cited }));
+    expect(withCheckedCompaniesCount(u, [message]).companies_count).toBeUndefined();
+    // (b) alone: the per-company span is not even written in the citation field of the people count
+    const u2 = U([mixedRoot], peopleAsk(true, cited, "الأشخاص"));
+    expect(withCheckedCompaniesCount(u2, [message]).companies_count).toBeUndefined();
+  });
+  it("(a) the per-company span is never evidence, even when it names the companies' noun («٣ شركات» written as the per-company text)", () => {
+    const u = U([companiesStep], peopleAsk(true, "٣ شركات", "الأشخاص", { per_company: 3, per_company_text: "٣ شركات" }));
+    expect(withCheckedCompaniesCount(u, ["عايز ٣ شركات ومن كل شركة مدير"]).companies_count).toBeUndefined();
+  });
+  it("(b) the cited noun matches the HEAD of the root title, not a later word: «٣ محافظات» with the title «شركات المحافظات الجنوبية» does not bind (it counts governorates)", () => {
+    const u = U([{ ...companiesStep, title_ar: "شركات المحافظات الجنوبية" }], peopleAsk(true, "٣ محافظات", "الأشخاص"));
+    expect(withCheckedCompaniesCount(u, ["عايز شركات في ٣ محافظات ومن كل شركة المديرين"]).companies_count).toBeUndefined();
+  });
+  it("(b) a root title that starts with a people noun: the cited people noun never binds, the companies' own noun still does through the fixed label", () => {
+    const peopleFirst = { ...companiesStep, title_ar: "المديرين وشركاتهم" };
+    expect(withCheckedCompaniesCount(U([peopleFirst], peopleAsk(true, "٨ مديرين", "الأشخاص")), ["عايز شركات ومن كل شركة ٨ مديرين"]).companies_count).toBeUndefined();
+    expect(withCheckedCompaniesCount(U([peopleFirst], peopleAsk(true, "شركتين", "الأشخاص")), [LIVE]).companies_count).toBe(2);
+  });
+  it("counters: distinct spans «٣ شركات ومن كل شركة ٣ مديرين» -> 3; «شركتين» with «أسوان» in the request -> 2 (M4 stays killed); the mixed root title does not stop the real «شركتين»", () => {
+    expect(withCheckedCompaniesCount(U([companiesStep], peopleAsk(true, "٣ شركات", "الأشخاص", { per_company: 3, per_company_text: "٣ مديرين" })), ["عايز ٣ شركات ومن كل شركة ٣ مديرين"]).companies_count).toBe(3);
+    expect(withCheckedCompaniesCount(U([companiesStep], peopleAsk(true, "شركتين", "المديرين", { per_company: 2, per_company_text: "اتنين" })), ["عايز شركتين في أسوان ومن كل شركة المديرين"]).companies_count).toBe(2);
+    expect(withCheckedCompaniesCount(U([mixedRoot], peopleAsk(true, "شركتين", "الأشخاص")), [LIVE]).companies_count).toBe(2);
+  });
 });
