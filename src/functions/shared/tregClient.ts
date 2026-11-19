@@ -3,6 +3,7 @@ import { POOL_MAX_HOPS, getTregKeyPool, type KeyChoice } from "../../lib/server/
 import { blockedEndpointReason } from "../../lib/treg/blockList";
 import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, callMoney, type JobCallBudget } from "../../lib/server/callBudget";
+import { classifyTregCharge } from "../../lib/server/tregCharge";
 import type { RawCapture } from "../../lib/server/rawCapture";
 export interface TregCallOptions {
   baseUrl?: string;
@@ -267,9 +268,9 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   }
   if (budget) {
     // A cut or unreachable call may have been billed after we stopped waiting: its estimate stays counted. Any answer carries its own cost (0 for a refusal).
-    // (DT-20261119-11) a refusal the provider ANSWERED (4xx/5xx) costs nothing: only an answered success with no charge in it is unknown
-    const unknown = result.timedOut === true || result.error === "network_failure" || (result.ok && (result.costIsEstimate === true || result.costUnreported === true));
-    budget.settle(estimate, unknown ? null : Math.max(0, result.costMicro || 0) / 1_000_000);
+    // (DT-20261119-11 F3) one shared reading of the charge: a reported charge wins (also on a failure), a documented free refusal is zero, anything uncertain keeps the reservation
+    const charge = classifyTregCharge(result);
+    budget.settle(estimate, charge.known ? charge.usd : null);
   }
   return result;
 }
@@ -290,6 +291,9 @@ async function executeWithKeyPool(options: TregCallOptions): Promise<TregCallRes
   for (let hop = 0; hop < (options.singleAttempt ? 0 : POOL_MAX_HOPS); hop++) {
     const next = await pool.afterCall(choice, result, { forceMain: hop === POOL_MAX_HOPS - 1, endpointId: options.endpointId });
     if (!next) break;
+    // DT-20261119-11 F3: a hop is made ONLY after a VERIFIED zero, so the last answer is the whole charge of the call; an earlier attempt that charged, or whose charge is not known, is never dropped (no hop: the call ends here and keeps its hold)
+    const earlier = classifyTregCharge(result);
+    if (!earlier.known || earlier.usd > 0) break;
     choice = next;
     result = await attempt(choice);
   }

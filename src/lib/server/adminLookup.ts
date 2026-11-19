@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { executeTregCall, maxTregAttempts, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
 import { callMoney, createJobCallBudget } from "./callBudget";
+import { classifyTregCharge } from "./tregCharge";
 import { runSensitiveCall } from "./sensitiveAccess";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyRuleOf } from "../treg/dataPolicy";
@@ -262,6 +263,7 @@ export async function runLookupAttempt(input: {
   const budget = createJobCallBudget({ ceilingUsd: Math.max(0, capUsd - spent), spentUsd: 0 });
   const value = parsed.value;
   let unknownCharge = false;
+  let knownUsd = 0;
   /**
    * THE HARD CAP, across processes and concurrent requests (Phase 5): the pending audit row is written WITH the reservation (`reserveUsd`), then the day's sum is read again. That sum
    * holds this row and every reservation or cost written before the read; if it passes the cap the row is marked refused and nothing is called. Of two requests racing, at least one
@@ -280,8 +282,11 @@ export async function runLookupAttempt(input: {
         routeMaxCostUsd: money.perRequestUsd, ...(money.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: money.holdUsd, sensitiveAccess: { allowed: true },
         ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) ? { routeWaterfall: false } : {}) });
       // A CUT OR UNREACHABLE CALL may have been billed after we stopped waiting: its charge is unknown and counts at the reservation, never 0
-      unknownCharge = r.timedOut === true || r.error === "network_failure" || (r.ok && (r.costIsEstimate === true || r.costUnreported === true));
-      return { result: r, costUsd: unknownCharge ? null : Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
+      // DT-20261119-11 F3: the shared reading of the charge (tregCharge.ts)
+      const charge = classifyTregCharge(r);
+      unknownCharge = !charge.known;
+      knownUsd = charge.known ? charge.usd : 0;
+      return { result: r, costUsd: charge.known ? charge.usd : null, ok: r.ok };
     },
   });
   if (!out.ok) {
@@ -290,7 +295,7 @@ export async function runLookupAttempt(input: {
     return { ok: false, reason: "refused", attempt: skippedAttempt("failed", `refused: ${String(out.refused)}`), spentTodayUsd: spent, capUsd };
   }
   const result = out.result;
-  const costUsd = unknownCharge ? reserveUsd : Math.max(0, result.costMicro || 0) / 1_000_000;
+  const costUsd = unknownCharge ? reserveUsd : knownUsd;
   const spentAfter = spent + costUsd;
   if (!result.ok) {
     const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : unknownCharge ? "no answer: the charge is unknown and is counted at its cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` };

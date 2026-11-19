@@ -21,6 +21,7 @@ import type { AgentStore, CallPhase, CallRow } from "./types";
 import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../src/lib/server/spendGate/gate";
 import { MAX_SINGLE_OPERATION_USD, providerCallBound, tregCallBoundUsd } from "../../src/lib/server/spendGate/bounds";
 import { callMoney, floorMicroUsd } from "../../src/lib/server/callBudget";
+import { classifyTregCharge } from "../../src/lib/server/tregCharge";
 import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
 
 /**
@@ -379,17 +380,10 @@ export function createGateway(deps: GatewayDeps) {
       let actualUsd = 0;
       // THIS call's own charge: a number when TREG reported one (zero stays zero), null when it is not known (never a reported zero)
       const knownChargeUsd = (): number | null => {
-        const r = res as TregCallResult | null;
-        if (thrown || !r || r.timedOut === true || r.error === "network_failure") return null;
-        if (r.blocked) return 0;
-        // a refusal the provider ANSWERED (4xx/5xx, a price-cap 402 included) costs nothing (TREG's integrate.md): known zero, never an unknown charge
-        if (!r.ok && r.httpStatus >= 400 && r.httpStatus < 600) return 0;
-        if (r.costIsEstimate === true) return null;
-        // TREG's answer carried no charge at all (tregClient puts a placeholder 0 in costMicro): an answered call may still have billed, so it is UNKNOWN, never a reported zero
-        if (r.costUnreported === true) return null;
-        // a charge that is not a number is UNKNOWN, never zero
-        if (typeof r.costMicro !== "number" || !Number.isFinite(r.costMicro)) return null;
-        return Math.max(0, r.costMicro) / 1_000_000;
+        if (thrown) return null;
+        // DT-20261119-11 F3: the ONE shared reading (tregCharge.ts): a reported charge wins (a 500 that reports 0.04 is 0.04), a documented free refusal is a known zero, anything uncertain is UNKNOWN
+        const c = classifyTregCharge(res as TregCallResult | null);
+        return c.known ? c.usd : null;
       };
       const perform = async () => {
         performed = true;

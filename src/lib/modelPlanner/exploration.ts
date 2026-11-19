@@ -3,6 +3,7 @@ import { blockedEndpointReason } from "../treg/blockList";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyVerdict, type AccountAccess } from "../treg/dataPolicy";
 import { callMoney, createJobCallBudget, floorMicroUsd, type CallMoney } from "../server/callBudget";
+import { classifyTregCharge } from "../server/tregCharge";
 import { createFirstPageCapture } from "../server/rawCapture";
 import { checkParams, type StepSample } from "./validate";
 import { resolvedParamValue } from "./paramRules";
@@ -321,9 +322,10 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     return { ok: false, attempt: a };
   }
   const durationMs = Date.now() - started;
-  const costUsd = Math.max(0, result.costMicro || 0) / 1_000_000;
-  // an answered refusal (4xx/5xx) costs nothing; a cut call, or an answered success with no charge in it, is NOT known: the reserved amount stays counted
-  const chargeKnown = !(result.timedOut === true || result.error === "network_failure" || (result.ok && (result.costIsEstimate === true || result.costUnreported === true)));
+  // DT-20261119-11 F3: the shared reading of the charge (tregCharge.ts): a reported charge wins, a documented free refusal is zero, anything uncertain keeps the reserved amount
+  const charged = classifyTregCharge(result);
+  const chargeKnown = charged.known;
+  const costUsd = charged.known ? charged.usd : 0;
   console.info(JSON.stringify({ tag: "planner_sample", endpointId: id, ok: result.ok, httpStatus: result.httpStatus, durationMs, costUsd, timedOut: Boolean(result.timedOut), budgetStopped: Boolean(result.budgetStopped), error: result.error ? clip(result.error, 60) : undefined }));
   if (result.budgetStopped) {
     const a = attempt({ outcome: "over_budget", durationMs, detail: "the call would pass the exploration budget" });
@@ -363,8 +365,9 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
         stepId: `explore_${n}_p2`, page: 2, routeMaxCostUsd: money2.perRequestUsd, ...(money2.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs: time, callBudget: createJobCallBudget({ ceilingUsd: Math.min(capUsd, after.request + left), spentUsd: after.request }), callEstimateUsd: money2.holdUsd, endpointScope: endpoint.scope,
       }).catch(() => null);
       stats.madeCalls += 1;
-      const known2 = second !== null && !(second.timedOut === true || second.error === "network_failure" || (second.ok && (second.costIsEstimate === true || second.costUnreported === true)));
-      const secondCost = known2 && second ? Math.max(0, second.costMicro || 0) / 1_000_000 : money2.holdUsd;
+      const charged2 = classifyTregCharge(second);
+      const known2 = charged2.known;
+      const secondCost = charged2.known ? charged2.usd : money2.holdUsd;
       const r2 = second && second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
       const a2 = attempt({ outcome: second && second.ok && r2 > 0 ? "ok" : second && second.ok ? "empty" : "http_error", httpStatus: second?.httpStatus ?? 0, rows: r2, costUsd: secondCost, durationMs: 0, detail: `second page, to measure the rows one call returns${known2 ? "" : " (the charge is not known: the reserved amount stays counted)"}` });
       await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd }, { tag: held2.tag, holdUsd: money2.holdUsd });
