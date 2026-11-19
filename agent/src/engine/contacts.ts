@@ -1,5 +1,27 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { FINDERS_PER_STEP, companyMailboxIn, contactStatusAr, emailValueTypeOf, finderParamsFor, foundContactIn, missingInputsFor, personFactsOf, profileUrlIn, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact, type PersonFacts } from "../../../src/lib/agentMission/contactFinders";
+import {
+  FINDERS_PER_STEP,
+  companyDomainAddressIn,
+  companyMailboxIn,
+  contactStatusAr,
+  emailValueTypeOf,
+  finderParamsFor,
+  foundContactDetailIn,
+  labelledStatus,
+  missingInputsFor,
+  personFactsOf,
+  profileUrlIn,
+  statusHead,
+  verifierParamsFor,
+  EMAIL_LABEL_PERSONAL_AR,
+  EMAIL_LABEL_COMPANY_AR,
+  EMAIL_LABEL_SHARED_AR,
+  EMAIL_LABEL_DOMAIN_AR,
+  type ContactStep,
+  type FinderInfo,
+  type FoundContact,
+  type PersonFacts,
+} from "../../../src/lib/agentMission/contactFinders";
 import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
 import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
@@ -35,7 +57,7 @@ export interface ContactEnrichmentOutcome {
   companies: { email: number; phone: number; notAvailable: number };
   /** What the e-mail verifiers answered (counts only; audit F3): for the admin page, never an address. */
   verifier: VerifierTally;
-  /** PHASE 5: values a finder returned that were NOT written because they are private contact data (a person's private mailbox on gmail.com, outlook.com …), counts only. */
+  /** Personal mailboxes seen (kept and labelled per D-0118), counts only. */
   withheld: { personal_email: number };
 }
 export interface VerifierTally { calls: number; deliverable: number; catch_all: number; undeliverable: number; unknown: number; failed: number; second_opinion: number }
@@ -227,10 +249,18 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
       if (emailStep) {
         const own = String(row[emailStep.column_key] ?? "").trim();
         const ownStatus = String(row[emailStep.status_key] ?? "").trim();
-        const final = own !== "" && own !== NOT_AVAILABLE_AR && (ownStatus === EMAIL_STATUS_VERIFIED_AR || ownStatus === EMAIL_STATUS_OTHER_COMPANY_AR);
+        const final = own !== "" && own !== NOT_AVAILABLE_AR && (statusHead(ownStatus) === EMAIL_STATUS_VERIFIED_AR || statusHead(ownStatus) === EMAIL_STATUS_OTHER_COMPANY_AR);
         if (!final) {
+          let domainOnly = false;
           let value = own !== "" && own !== NOT_AVAILABLE_AR && own.includes("@") ? own.toLowerCase() : "";
           if (value === "") value = companyMailboxIn({ emails: fromPeople.get(id) ?? [] }, domain) ?? "";
+          if (value === "" && domain) {
+            const domAddr = companyDomainAddressIn({ emails: fromPeople.get(id) ?? [] }, domain);
+            if (domAddr) {
+              value = domAddr;
+              domainOnly = true;
+            }
+          }
           let asked = false;
           let origin: { endpointId: string; callId: string } | null = null;
           if (value === "" && domain) {
@@ -245,6 +275,13 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
               if (a.t === "failed") { note(finder.id, "failed"); continue; }
               asked = true;
               value = companyMailboxIn(a.page, domain) ?? "";
+              if (value === "") {
+                const domAddr = companyDomainAddressIn(a.page, domain);
+                if (domAddr) {
+                  value = domAddr;
+                  domainOnly = true;
+                }
+              }
               if (value !== "") origin = { endpointId: finder.id, callId: a.callId };
               note(finder.id, value !== "" ? "value" : "empty", value !== "" ? value : undefined);
               if (value !== "") break;
@@ -256,7 +293,9 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier the status is «غير موثّق» and the cell is still written
             try { verdict = await emailStatusFor(emailStep.verifiers ?? [], emailApi, value, domain, out.verifier); } catch { verdict = { status: "unverified", stop: null }; }
             cells[emailStep.column_key] = value;
-            cells[emailStep.status_key] = emailStatusAr(verdict.status);
+            cells[emailStep.status_key] = domainOnly
+              ? labelledStatus(emailStatusAr(verdict.status), EMAIL_LABEL_DOMAIN_AR)
+              : emailStatusAr(verdict.status);
             if (origin && deps.provenance) Object.assign(cells, provenanceOf(emailStep.column_key, origin.endpointId, origin.callId));
             emailFound += 1;
             if (verdict.stop) stopped = verdict.stop;
@@ -376,8 +415,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const companyAddresses = (parentId: string): Set<string> => new Set(Object.values(items.acceptedRows(stage.parent_key ?? "").find((r) => String(r.id) === parentId) ?? {}).map(addressOf).filter(isAddress));
   const isCompanyAddress = (parentId: string, v: unknown): boolean => step.kind === "email" && stage.parent_key !== null && companyAddresses(parentId).has(addressOf(v));
-  /** The people whose address THIS run found and counted (the count drops back when the address turns out to be shared); who shares an address is read from the stage's rows at the end of the step. */
-  const foundIds = new Set<string>();
+  /** The company addresses of this stage. */
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
@@ -446,19 +484,29 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let stopRun: ContactStop | null = null;
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
-      // an address the people source already gave that is the company's own is cleared before anything else (QA FAIL #571: a «final» status let it through)
-      if (existing !== "" && isCompanyAddress(String(row.parent_id ?? ""), existing)) { pending.push({ t: "clear", stage: step.stage_key, id: String(row.id), keys: [step.column_key, step.status_key] }); existing = ""; existingStatus = ""; }
+      let givenCompany: string | null = null;
+      // an address the people source already gave that is the company's own is kept as company address before anything else (D-0118)
+      if (existing !== "" && isCompanyAddress(String(row.parent_id ?? ""), existing)) {
+        givenCompany = existing;
+        existing = "";
+        existingStatus = "";
+      }
       // a value that already has its final status (an earlier run of this step) is not looked up or verified again
-      if (existing !== "" && (step.kind === "email" ? existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR : existingStatus === PHONE_STATUS_VERIFIED_AR || existingStatus === PHONE_STATUS_OTHER_COUNTRY_AR)) return null;
+      if (existing !== "" && (step.kind === "email" ? statusHead(existingStatus) === EMAIL_STATUS_VERIFIED_AR || statusHead(existingStatus) === EMAIL_STATUS_OTHER_COMPANY_AR : statusHead(existingStatus) === PHONE_STATUS_VERIFIED_AR || statusHead(existingStatus) === PHONE_STATUS_OTHER_COUNTRY_AR)) return null;
       const parentId = String(row.parent_id ?? "");
-      const given = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
+      const isOwnWorkEmail = (address: string): boolean => emailValueTypeOf(address) === "professional" && !companyAddresses(parentId).has(addressOf(address));
+      const given = personFactsOf(row, stage.columns, parents.get(parentId) ?? null, isOwnWorkEmail);
       const known = learned.get(String(row.id));
-      let facts: PersonFacts = { ...given, linkedin: given.linkedin ?? known?.linkedin ?? null, ...(given.email || known?.email ? { email: given.email ?? known?.email ?? null } : {}) };
+      const workEmail = given.email ?? (known?.email && isOwnWorkEmail(known.email) ? known.email : null);
+      let facts: PersonFacts = { ...given, linkedin: given.linkedin ?? known?.linkedin ?? null, ...(workEmail ? { email: workEmail } : {}) };
       let typeAr: string | null = null;
       let asked = false;
       let value = existing;
       let statusAr: string | null = null;
+      let labelAr: string | null = null;
       let hit: FoundContact | null = null;
+      let keptPersonal: { value: string; finderId: string; callId: string } | null = null;
+      let keptCompany: { value: string; finderId?: string; callId?: string } | null = givenCompany ? { value: givenCompany } : null;
       let origin: { endpointId: string; callId: string } | null = null;
       if (value === "") {
         // the attempts file counts every outcome per finder; a finder not tried says why (the input the person lacked, or the person's share of the price)
@@ -501,18 +549,44 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
           asked = true;
           if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
-          hit = foundContactIn(step.kind, a.page);
+          const detail = foundContactDetailIn(step.kind, a.page);
+          hit = detail.found;
           spent(finder, hit !== null);
-          // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is never written in the work-email cell, whatever the finder said; the next finder is asked
-          if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") { out.withheld.personal_email += 1; hit = null; }
-          // THE COMPANY'S OWN ADDRESS IS NOT A PERSON'S E-MAIL (DT-20261118-03 PR-3, D-0086: by structure, no word list): an address on the person's company row is withheld and the next finder is asked
-          if (hit && step.kind === "email" && isCompanyAddress(parentId, hit.value)) hit = null;
-          note(finder.id, hit ? "value" : "empty", hit ? hit.value : undefined);
+          let keptNow = false;
+          // A PRIVATE MAILBOX IS NOT A WORK E-MAIL (Phase 5): an address on gmail.com, outlook.com … is kept as personal mailbox (D-0118)
+          if (hit && step.kind === "email" && emailValueTypeOf(hit.value) === "personal_mailbox") {
+            out.withheld.personal_email += 1;
+            if (!keptPersonal) keptPersonal = { value: hit.value, finderId: finder.id, callId: a.callId };
+            keptNow = true;
+            hit = null;
+          } else if (hit && step.kind === "email" && isCompanyAddress(parentId, hit.value)) {
+            if (!keptCompany) keptCompany = { value: hit.value, finderId: finder.id, callId: a.callId };
+            keptNow = true;
+            hit = null;
+          }
+          if (step.kind === "email" && detail.personalAlso) {
+            out.withheld.personal_email += 1;
+            if (!keptPersonal) keptPersonal = { value: detail.personalAlso, finderId: finder.id, callId: a.callId };
+          }
+          note(finder.id, (hit || keptNow) ? "value" : "empty", hit ? hit.value : undefined);
           if (!hit) continue;
           origin = { endpointId: finder.id, callId: a.callId };
           value = hit.value;
           if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;
           break;
+        }
+        if (value === "") {
+          if (keptPersonal) {
+            value = keptPersonal.value;
+            hit = { value, status: "unverified" };
+            origin = { endpointId: keptPersonal.finderId, callId: keptPersonal.callId };
+            labelAr = EMAIL_LABEL_PERSONAL_AR;
+          } else if (keptCompany) {
+            value = keptCompany.value;
+            hit = { value, status: "unverified" };
+            if (keptCompany.finderId && keptCompany.callId) origin = { endpointId: keptCompany.finderId, callId: keptCompany.callId };
+            labelAr = EMAIL_LABEL_COMPANY_AR;
+          }
         }
         // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
         // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
@@ -526,10 +600,14 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         if (step.kind === "email") {
           // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier (rate limit, failure, a thrown error, the budget) the verdict is «غير موثّق» and the cells below are still written (a verifier only ever improves the status)
           let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
-          try { verdict = await emailStatusOf(value, facts.domain); } catch { verdict = { status: "unverified", stop: null }; }
+          try { verdict = await emailStatusOf(value, labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain); } catch { verdict = { status: "unverified", stop: null }; }
           if (verdict.stop) stopRun = verdict.stop;
           if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
           statusAr = emailStatusAr(verdict.status);
+          if (labelAr) statusAr = labelledStatus(statusAr, labelAr);
+          else if (keptPersonal && hit && emailValueTypeOf(hit.value) === "professional") {
+            statusAr = labelledStatus(statusAr, `${EMAIL_LABEL_PERSONAL_AR}: ${keptPersonal.value}`);
+          }
           if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
           else if (verdict.status === "verified") out.filled.verified += 1;
         } else {
@@ -542,12 +620,14 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           statusAr = phoneStatusAr(status);
           if (status === "verified") out.filled.verified += 1; else if (hit || typeAr === PHONE_TYPE_COMPANY_AR) out.filled.unverified += 1;
         }
+        if (givenCompany) {
+          pending.push({ t: "clear", stage: step.stage_key, id: String(row.id), keys: [step.column_key, step.status_key] });
+        }
         const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
         if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
-        if (step.kind === "email" && hit) foundIds.add(String(row.id));
         // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
-        if (step.kind === "email" && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
+        if (step.kind === "email" && !labelAr && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
       }
       if (stopRun) stoppedBy = stopRun;
       if (asked) out.looked += 1; else out.skipped += 1;
@@ -555,7 +635,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       return stopRun;
     },
     async finish(stop: ContactStop | null = null): Promise<void> {
-      // one address held by 2+ people of the same company is the company's, nobody's own: cleared from every one of them
+      // one address held by 2+ people of the same company is kept and labelled «مشترك» (D-0118)
       // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
       await flush();
       if (step.kind === "email" && stage.parent_key !== null) {
@@ -568,7 +648,22 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         }
         for (const ids of byAddress.values()) {
           if (ids.length < 2) continue;
-          for (const id of ids) { pending.push({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key] }); if (foundIds.has(id)) { found -= 1; out.filled.email -= 1; } }
+          for (const id of ids) {
+            const currentRow = items.acceptedRows(step.stage_key).find((r) => String(r.id) === id);
+            const currentStatus = String(currentRow?.[step.status_key] ?? "");
+            pending.push({
+              t: "clear",
+              stage: step.stage_key,
+              id,
+              keys: [step.status_key],
+            });
+            pending.push({
+              t: "cells",
+              stage: step.stage_key,
+              id,
+              cells: { [step.status_key]: labelledStatus(currentStatus, EMAIL_LABEL_SHARED_AR) },
+            });
+          }
         }
       }
       await flush();

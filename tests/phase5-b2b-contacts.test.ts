@@ -104,9 +104,15 @@ describe("Phase 5 B2B: a private mailbox is not a work e-mail", () => {
       return null;
     });
     const out = await w.run();
-    expect(w.row("p1")).toMatchObject({ email: "person1@orascom-em.com.eg", [contactSrcKey("email")]: EMAIL_B.id });
-    expect(w.row("p2")).toMatchObject({ email: "", email_status: "" });
-    expect(JSON.stringify(w.items.acceptedRows("people"))).not.toMatch(/gmail\.com|outlook\.com/);
+    expect(w.row("p1")).toMatchObject({
+      email: "person1@orascom-em.com.eg",
+      email_status: "غير موثّق — إيميل شخصي: person1.private@gmail.com",
+      [contactSrcKey("email")]: EMAIL_B.id,
+    });
+    expect(w.row("p2")).toMatchObject({
+      email: "p2@outlook.com",
+      email_status: "غير موثّق — إيميل شخصي",
+    });
     expect(out.withheld.personal_email).toBe(2);
     expect(w.items.acceptedRows("people")).toHaveLength(PEOPLE.length);
   });
