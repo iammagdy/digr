@@ -17,6 +17,7 @@
     --text-main: #f8fafc;
     --text-dim: #94a3b8;
     --office-height: 100vh;
+    --office-growth: calc((100vmin - 768px) * 0.03);
   }
   @supports (height: 100dvh) { :root { --office-height: 100dvh; } }
 
@@ -73,7 +74,7 @@
   }
 
   .brand-title {
-    font-size: 15px;
+    font-size: clamp(15px, calc(15px + var(--office-growth)), 28px);
     font-weight: 800;
     color: #fff;
     display: flex;
@@ -89,9 +90,9 @@
   }
 
   .filter-btn {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 700;
-    padding: 4px 10px;
+    padding: clamp(4px, calc(4px + var(--office-growth) / 3), 8px) clamp(10px, calc(10px + var(--office-growth) / 3), 14px);
     border-radius: 5px;
     border: 1px solid #334155;
     background: #151d2e;
@@ -120,8 +121,8 @@
     background: #1e293b;
     border: 1px solid #334155;
     color: #f8fafc;
-    font-size: 12px;
-    padding: 4px 9px;
+    font-size: clamp(12px, calc(12px + var(--office-growth)), 25px);
+    padding: clamp(4px, calc(4px + var(--office-growth) / 3), 8px) clamp(9px, calc(9px + var(--office-growth) / 3), 13px);
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -132,7 +133,7 @@
 
   .live-clock {
     font-family: monospace, sans-serif;
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: #38bdf8;
     background: #060911;
     padding: 4px 9px;
@@ -176,7 +177,7 @@
     border-radius: 6px;
     padding: 4px 8px;
     color: #fff;
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(0,0,0,0.8);
     transform: translate(-50%, -100%);
@@ -209,7 +210,7 @@
   /* Room Tags Overlay */
   .room-tag {
     position: absolute;
-    font-size: 9px;
+    font-size: clamp(9px, calc(9px + var(--office-growth)), 22px);
     font-weight: 800;
     color: rgba(255,255,255,0.7);
     background: rgba(11, 16, 27, 0.85);
@@ -218,6 +219,8 @@
     border-radius: 4px;
     pointer-events: none;
     z-index: 10;
+    max-width: calc(50% - var(--tag-inset) - 4px);
+    overflow-wrap: anywhere;
   }
 
   /* Team Quick Dock */
@@ -231,7 +234,7 @@
     overflow-x: auto;
   }
   .dock-label {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 800;
     color: var(--text-dim);
     white-space: nowrap;
@@ -253,7 +256,7 @@
     border-radius: 6px;
     padding: 4px 9px;
     color: #e2e8f0;
-    font-size: 11.5px;
+    font-size: clamp(11.5px, calc(11.5px + var(--office-growth)), 24.5px);
     font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
@@ -317,9 +320,10 @@
     border: 3px solid #38bdf8;
     border-radius: 10px;
     width: 100%;
-    max-width: 380px;
+    max-width: clamp(380px, calc(380px + var(--office-growth) * 20), 640px);
     box-shadow: 0 16px 36px rgba(0,0,0,0.9), 0 0 20px rgba(56, 189, 248, 0.2);
-    overflow: hidden;
+    max-height: 100%;
+    overflow: auto;
     animation: popModal 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
@@ -335,12 +339,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
 
   .card-profile {
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .card-avatar-wrap {
@@ -351,6 +360,7 @@
     box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
     overflow: hidden;
     background: #1e293b;
+    flex: none;
   }
 
   .card-avatar-wrap img {
@@ -360,14 +370,19 @@
     display: block;
   }
 
+  .card-titles {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   .card-titles h3 {
-    font-size: 16px;
+    font-size: clamp(16px, calc(16px + var(--office-growth)), 29px);
     font-weight: 800;
     color: #fff;
   }
 
   .card-titles p {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: var(--text-dim);
     margin-top: 2px;
   }
@@ -376,16 +391,17 @@
     background: #1e293b;
     border: 1px solid #334155;
     color: #cbd5e1;
-    width: 28px;
-    height: 28px;
+    width: clamp(28px, calc(28px + var(--office-growth)), 41px);
+    height: clamp(28px, calc(28px + var(--office-growth)), 41px);
     border-radius: 6px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: clamp(14px, calc(14px + var(--office-growth)), 27px);
     font-weight: bold;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.15s ease;
+    flex: none;
   }
   .card-close-btn:hover {
     background: #ef4444;
@@ -405,9 +421,10 @@
     align-items: center;
     justify-content: space-between;
   }
+  #card-progress-text { font-size: clamp(12px, calc(12px + var(--office-growth)), 25px); }
 
   .status-pill {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 800;
     padding: 3px 10px;
     border-radius: 999px;
@@ -424,18 +441,21 @@
     border: 1px solid #1e293b;
     border-radius: 8px;
     padding: 10px;
+    overflow-wrap: anywhere;
   }
 
   .task-meta {
     display: flex;
     justify-content: space-between;
-    font-size: 10.5px;
+    font-size: clamp(10.5px, calc(10.5px + var(--office-growth)), 23.5px);
     color: var(--text-dim);
     margin-bottom: 6px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
   }
 
   .task-title {
-    font-size: 12.5px;
+    font-size: clamp(12.5px, calc(12.5px + var(--office-growth)), 25.5px);
     font-weight: 700;
     color: #f1f5f9;
     margin-bottom: 8px;
@@ -456,7 +476,7 @@
   }
 
   .recent-box h4 {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 800;
     color: var(--text-dim);
     margin-bottom: 6px;
@@ -470,7 +490,7 @@
   }
 
   .recent-box li {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: #e2e8f0;
     background: #090d16;
     padding: 6px 8px;
@@ -479,12 +499,13 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    overflow-wrap: anywhere;
   }
 
   .recent-check {
     color: #10b981;
     font-weight: bold;
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
   }
 
   .card-footer-actions {
@@ -499,7 +520,7 @@
     border: 1px solid #38bdf8;
     color: #fff;
     font-weight: 800;
-    font-size: 12px;
+    font-size: clamp(12px, calc(12px + var(--office-growth)), 25px);
     padding: 9px;
     border-radius: 6px;
     cursor: pointer;
@@ -520,7 +541,7 @@
     background: #1e293b;
     border: 1px solid #334155;
     color: #cbd5e1;
-    font-size: 12px;
+    font-size: clamp(12px, calc(12px + var(--office-growth)), 25px);
     padding: 8px 12px;
     border-radius: 6px;
     cursor: pointer;
@@ -539,7 +560,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: var(--text-dim);
     flex-wrap: wrap;
     gap: 6px;
@@ -554,7 +575,7 @@
   }
 
   .feed-status {
-    font-size: 10.5px;
+    font-size: clamp(10.5px, calc(10.5px + var(--office-growth)), 23.5px);
     font-weight: 700;
     padding: 4px 8px;
     border-radius: 5px;
@@ -569,7 +590,7 @@
     background: #080c15;
     border-top: 1px solid #1e293b;
     padding: 5px 12px;
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: #cbd5e1;
     display: flex;
     align-items: center;
@@ -583,17 +604,17 @@
     border: 1px solid #223049;
     border-radius: 4px;
     padding: 2px 7px;
-    font-size: 10.5px;
+    font-size: clamp(10.5px, calc(10.5px + var(--office-growth)), 23.5px);
     color: #7dd3fc;
   }
   .task-step {
-    font-size: 11px;
+    font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     color: #94a3b8;
     margin-bottom: 6px;
     line-height: 1.4;
   }
   .task-next {
-    font-size: 10.5px;
+    font-size: clamp(10.5px, calc(10.5px + var(--office-growth)), 23.5px);
     color: #38bdf8;
     margin-top: 7px;
     line-height: 1.4;
@@ -638,6 +659,22 @@
   .feed-status, .dock-btn { white-space: normal; }
   .team-dock { overflow: auto; }
   .dock-scroll { flex: none; overflow: visible; }
+
+  .canvas-stage {
+    --tag-top: 9.259259%;
+    --tag-bottom: 2.222222%;
+    --tag-left: 5.625%;
+    --tag-right: 3.5%;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 480px) {
+  .canvas-stage {
+    --tag-top: 9.259259%;
+    --tag-bottom: 2.222222%;
+    --tag-left: 5.625%;
+    --tag-right: 3.5%;
+  }
 }
 
 @media (min-width: 1000px) {
@@ -677,10 +714,10 @@
       <div class="bots-hotspots-wrap" id="bots-hotspots"></div>
 
       <!-- Room Labels Overlay -->
-      <div class="room-tag" style="top: 50px; right: 28px; border-color: #f59e0b; color: #fbbf24;">👑 غرفة المدير «الكبير»</div>
-      <div class="room-tag" style="top: 50px; left: 45px; border-color: #38bdf8; color: #38bdf8;">💻 صالة التطوير الرئيسية</div>
-      <div class="room-tag" style="bottom: 12px; right: 28px; border-color: #d97706; color: #f59e0b;">☕ ركن القهوة والمطبخ</div>
-      <div class="room-tag" style="bottom: 12px; left: 45px; border-color: #14b8a6; color: #2dd4bf;">🛋️ ركن الاستراحة والألعاب</div>
+      <div class="room-tag" style="top: var(--tag-top, 50px); right: var(--tag-right, 28px); --tag-inset: var(--tag-right, 28px); border-color: #f59e0b; color: #fbbf24;">👑 غرفة المدير «الكبير»</div>
+      <div class="room-tag" style="top: var(--tag-top, 50px); left: var(--tag-left, 45px); --tag-inset: var(--tag-left, 45px); border-color: #38bdf8; color: #38bdf8;">💻 صالة التطوير الرئيسية</div>
+      <div class="room-tag" style="bottom: var(--tag-bottom, 12px); right: var(--tag-right, 28px); --tag-inset: var(--tag-right, 28px); border-color: #d97706; color: #f59e0b;">☕ ركن القهوة والمطبخ</div>
+      <div class="room-tag" style="bottom: var(--tag-bottom, 12px); left: var(--tag-left, 45px); --tag-inset: var(--tag-left, 45px); border-color: #14b8a6; color: #2dd4bf;">🛋️ ركن الاستراحة والألعاب</div>
     </div>
   </div>
 
@@ -702,7 +739,7 @@
       <div class="card-body">
         <div class="status-row">
           <span class="status-pill" id="card-status-pill">🟢 شغال بنشاط</span>
-          <span id="card-progress-text" style="font-size:12px;font-weight:800;color:#38bdf8;">0%</span>
+          <span id="card-progress-text" style="font-weight:800;color:#38bdf8;">0%</span>
         </div>
 
         <div class="task-card">
