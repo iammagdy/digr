@@ -864,12 +864,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
 
   let forceClassifyFromCalls = false;
-  const shouldRecoverSdkStop = !state.proposedPlan && !state.question && !state.finish && !compiled && ((state.planRejections?.count ?? 0) !== 1 || output.stop !== "end");
+  const singleRejectionEnd = (state.planRejections?.count ?? 0) === 1 && output.stop === "end" && !state.finish;
+  const shouldRecoverSdkStop = !state.proposedPlan && !state.question && !compiled && (!state.finish || state.finishOrigin === "code_forced_cap");
   if (shouldRecoverSdkStop) {
     const existing = await store.getMission(mission.id).catch(() => null);
     if (!existing || (existing.status !== "plan_ready" && !existing.plan && (!existing.worker_id || existing.worker_id === mission.worker_id))) {
       const recovered = await recoverCompanyPeoplePlan(ctx, deps.log);
-      if (recovered.kind === "sources_unavailable" || recovered.kind === "own_limit") forceClassifyFromCalls = true;
+      if (!singleRejectionEnd && (recovered.kind === "sources_unavailable" || recovered.kind === "own_limit")) forceClassifyFromCalls = true;
     }
   }
 

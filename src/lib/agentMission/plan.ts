@@ -178,8 +178,10 @@ export interface PlanLookup {
   endpointAllowed(endpointId: string): boolean;
   /** The customer's own words: when they ask for work e-mails or phones the plan must have a contact stage (or say honestly why not). */
   requestText?: string;
-  /** The customer's answer to the agent's one question, when it asked one: a quantity in it wins over the one in the request. */
+  /** Customer's answer to the agent's one question, when it asked one: a quantity in it wins over the one in the request. */
   answerText?: string;
+  /** Trusted metadata from the mission/question state: true ONLY when the planner's last question asked for item count, allowing a bare numeric reply (no phrase/noun) to override. */
+  answerForQuantityQuestion?: boolean;
   /** Is this source one whose rows are contacts (a b2b_contact endpoint, the e-mail / phone parser)? */
   isContactSource?(endpointId: string): boolean;
   /** The markup and the minimum charge in force (the admin's settings); the defaults when absent. */
@@ -461,6 +463,54 @@ const PRICED_FILTER_KINDS: ReadonlyArray<StageFilter["kind"]> = ["place", "media
 export const languageOffLineAr = (lang: "ar" | "en"): string =>
   `لم نقصر النتائج على اللغة ${lang === "ar" ? "العربية" : "الإنجليزية"}: العينة التي قرأناها من المصدر عن موضوعك كانت بلغة أخرى، فلو قصرناها لما بقي شيء. يمكنك تفعيل خيار اللغة من الخطة إن أردتها وحدها.`;
 
+const EXPLICIT_ANSWER_QUANTITY =
+  /^(?:نبدأ\s*ب[ـ\s]*|نبدا\s*ب[ـ\s]*|خلّ?يهم\s*|خلّ?يها\s*|خلّ?ينا\s*|عدد\s*|العدد\s*[:\s]*)([1-9][0-9]{0,2}(?:[,٬][0-9]{3})*|[1-9][0-9]{0,4})(?:\s+(?:فقط|بس))?$/;
+
+const BARE_ANSWER_INTEGER = /^([1-9][0-9]{0,4})$/;
+
+const HAS_ASCII_OR_ARABIC_DECIMAL =
+  /[0-9٠-٩۰-۹][.٫][0-9٠-٩۰-۹]|(?<=[0-9٠-٩۰-۹])[,،٬](?![0-9٠-٩۰-۹]{3}(?![0-9٠-٩۰-۹]))[0-9٠-٩۰-۹]/;
+
+/**
+ * FINAL count rule for `answerText` when not noun-bound:
+ * A. Overrides only via an explicit quantity phrase («نبدأ بـ N», «خليهم N», «عدد N»), allowing trailing «.» «؟» «!» «،» (never decimals).
+ * B. A bare number NEVER overrides inside a multi-part reply.
+ * C. A whole-reply bare number overrides only when `allowBare === true` (trusted quantity-question flag).
+ */
+function answerScalarCount(answerText: unknown, allowBare = false): number | null {
+  if (typeof answerText !== "string" || !answerText.trim()) return null;
+  if (HAS_ASCII_OR_ARABIC_DECIMAL.test(answerText)) return null;
+
+  const ascii = answerText
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+  const segments = ascii
+    .split(/(?<![0-9])[-–—](?![0-9])|(?<![0-9])[,،٬]+|[,،٬]+(?![0-9])|[\r\n]+/)
+    .map((s) => s.replace(/[.؟!،]+$/, "").trim())
+    .filter(Boolean);
+  if (segments.length === 0) return null;
+
+  const explicitMatches: number[] = [];
+  for (const seg of segments) {
+    const m = EXPLICIT_ANSWER_QUANTITY.exec(seg);
+    if (!m) continue;
+    const n = Number(m[1].replace(/[,٬]/g, ""));
+    if (!Number.isInteger(n) || n < 1 || n > AGENT_MAX_DELIVERED_ROWS) return null;
+    explicitMatches.push(n);
+  }
+  if (explicitMatches.length === 1) return explicitMatches[0];
+  if (explicitMatches.length > 1) return null;
+
+  if (segments.length === 1 && allowBare) {
+    const m = BARE_ANSWER_INTEGER.exec(segments[0]);
+    if (m) {
+      const n = Number(m[1]);
+      return Number.isInteger(n) && n >= 1 && n <= AGENT_MAX_DELIVERED_ROWS ? n : null;
+    }
+  }
+  return null;
+}
+
 function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCount: number): PlanCheck {
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
@@ -481,8 +531,11 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const refs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", deliver: isRecord(st) && st.deliver === true }));
   // ROUND 58: a REVISED request («… تعديل العميل على نفس الطلب: عايز ٣٢ شركة») counts by its latest change that names a quantity, never by the first number of the request it revises (live risk: «٢٠ شركة … خليها ٣٢ شركة» was planned at 20)
   const changedQuantityText = revisionChangesLatestFirst(lookup.requestText).find((c) => bindQuantity(c, refs) !== null);
-  const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : changedQuantityText ?? lookup.requestText ?? "";
-  const bound0 = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
+  const nounBoundAnswer = Boolean(lookup.answerText && !HAS_ASCII_OR_ARABIC_DECIMAL.test(lookup.answerText) && bindQuantity(lookup.answerText, refs));
+  const answerBoundCount = lookup.answerText && !nounBoundAnswer ? answerScalarCount(lookup.answerText, lookup.answerForQuantityQuestion === true) : null;
+  const quantityText = nounBoundAnswer ? lookup.answerText! : changedQuantityText ?? lookup.requestText ?? "";
+  const rawBound0 = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
+  const bound0 = answerBoundCount !== null && rawBound0 ? { ...rawBound0, value: answerBoundCount } : rawBound0;
   // «٥ فيديوهات من كل قناة» with three named channels: no total in the words, a count PER NAMED SOURCE; the stage that counts that noun has its sources' count x that number as its target (read by code from the stage's own account filter)
   const accountValuesOf = (st: unknown): number => (isRecord(st) && Array.isArray(st.filters) ? st.filters.filter((f) => isRecord(f) && f.kind === "account" && f.enabled !== false && Array.isArray(f.values)).reduce((n, f) => Math.max(n, (f as { values: unknown[] }).values.length), 0) : 0);
   const perSourceAsk = quantityText && !bound0 ? perSourceQuantities(quantityText)[0] : undefined;
