@@ -34,6 +34,12 @@ cd /srv/diger-team/architect/scratch/pgproof && node proof.mjs <path>/supabase/m
 ## الاختبار
 `tests/dt-0119-02b-welcome-email-migration.test.ts` (٨ اختبارات static): اسم الإضافة `supabase_vault` ومفيش `vault`، كل `create extension` فيها `if not exists`، الـ `exception when others` حوالين كل حاجة، السر بالاسم، الـ idempotencyKey، الانتقال بس، re-run safe والـ grants، ومفيش سر. على الملف القديم: ٥ من ٨ بيفشلوا (`fail-first-old-file.log`)؛ على الجديد ٨ من ٨. وكمان `tests/email-base-layout.test.ts` (٨٥ اختبار، بيقرا الملف ده) بيعدّي. `tsc --noEmit` نضيف.
 
+## إضافة O1a: سطور نص الـ welcome (حزلقوم + قرار COMMANDER)
+في `supabase/functions/send-email/templates.ts` (الـ welcome بس): (١) العنوان `أهلًا {{ .Name }}، حسابك على ديجر جاهز` (فاصلة بدل «—»، عشان اتجاه النص لو الاسم handle إيميل)؛ (٢) الفقرة `ديجر يحوّل طلبك إلى ملفات بيانات جاهزة للتحليل. هكذا تبدأ:`؛ (٣) الملاحظة `النقطة الواحدة = ٠٫١٠ ج.م.` (اتشال كلام الحجز لأن الحجز بيتاخد عند الموافقة، والخطوة ٣ بتقول «وتدفع على المسلَّم فقط» أصلًا). الخطوة ٣ من غير تغيير.
+- **تغيير عقد متعمَّد:** `tests/email-base-layout.test.ts` — الـ welcome اتشال من قايمة «القوالب اللي بتتكلم عن حجز مؤقت مُحرَّر» (بقت `["refund","job-done"]`)؛ اختبار الكلمات الممنوعة لسه بيشتغل على الـ welcome. واتضاف اختبار بيثبّت السطور التلاتة الجديدة (بيفشل على النص القديم: `fail-first-copy.log`).
+- **انحراف عن الأمر:** `tests/email-templates.test.ts:46` ما اتغيّرش: الاختبار ده بيرندر النسخة القديمة `src/functions/shared/emailTemplates.ts` (اللي الأمر مخرجها من النطاق)، وسطرها لسه فيه «—» فتحديثه كان هيفشل. لو عايزين النسخة القديمة تتحدّث كمان، ده تغيير منفصل.
+- **بعد الـ merge:** COMMANDER بيعمل redeploy لـ `send-email` (D-0146) عشان النص الجديد يشتغل.
+
 ## ما لم يتم التحقق منه
 - التطبيق على Supabase نفسه (A) وعلى الإنتاج: فحص «Supabase Preview» وبعد الـ merge.
 - `pg_net` و`supabase_vault` الحقيقيين (في PGlite stubs)، وصلاحية الـ `service_role` الحقيقية، وإن السر `send-email-service-role-key` موجود في Vault الإنتاج (COMMANDER بيعمله قبل الـ merge، D-0147).
