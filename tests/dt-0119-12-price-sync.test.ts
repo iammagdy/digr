@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -121,19 +121,71 @@ it("refuses a mismatched revision even when the candidate's bytes are rehashed",
   expect(priceSyncRevisionMatches(data, CATALOG_PRICE_REV + 1)).toBe(false);
 });
 
+it("allows an archived price in a dry report but rejects applying it over a newer rate", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "dt12-price-replay-"));
+  try {
+    const data = path.join(dir, "data/treg");
+    const registry = path.join(dir, "data/capabilities/registry.json");
+    const overlay = path.join(data, "price_sync.json");
+    mkdirSync(data, { recursive: true });
+    mkdirSync(path.dirname(registry), { recursive: true });
+    for (const name of ["treg_catalog_sellable.json", "treg_write_actions.json"]) {
+      symlinkSync(path.join(catalogDir, name), path.join(data, name));
+    }
+    const endpointId = "blitzapi.companies.search";
+    const newer: PriceSyncFile = { revision: 3, entries: [{
+      id: endpointId,
+      was: { unit: "record", usd: 0.000495 },
+      now: { unit: "record", usd: 0.0012 },
+      since: "2026-11-23",
+    }] };
+    writeFileSync(overlay, JSON.stringify(newer));
+    copyFileSync(path.join(root, "data/capabilities/registry.json"), registry);
+    const overlayBefore = readFileSync(overlay);
+    const registryBefore = readFileSync(registry);
+    const args = [
+      "--import", "tsx", "scripts/capabilities/sync-prices.ts",
+      "--dir", data, "--scope", endpointId, "--date", "2026-11-27",
+      "--offline", "tests/fixtures/dt-0119-12",
+    ];
+
+    const dryRun = spawnSync(process.execPath, args, { encoding: "utf8", timeout: 30_000 });
+    expect(dryRun.status).toBe(0);
+    expect(dryRun.stdout).toContain("0.0012 → 0.001");
+    expect(readFileSync(overlay)).toEqual(overlayBefore);
+    expect(readFileSync(registry)).toEqual(registryBefore);
+
+    const rejected = spawnSync(process.execPath, [...args, "--apply"], { encoding: "utf8", timeout: 30_000 });
+    expect({
+      rejected: rejected.status === 1,
+      clearError: /--offline.*--apply/.test(rejected.stderr),
+      overlayUnchanged: readFileSync(overlay).equals(overlayBefore),
+      registryUnchanged: readFileSync(registry).equals(registryBefore),
+    }).toEqual({ rejected: true, clearError: true, overlayUnchanged: true, registryUnchanged: true });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it("checks the full file in a fresh process and preserves corrupt target bytes on apply", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "dt12-price-sync-"));
   try {
     for (const name of ["treg_catalog_sellable.json", "treg_write_actions.json"]) symlinkSync(path.join(catalogDir, name), path.join(dir, name));
     const target = path.join(dir, "price_sync.json");
-    const base = loadTregPriceBaseline({ dir });
-    const endpoint = base.byId.get("blitzapi.companies.search")!;
-    const first = buildPriceSync(base, empty, new Map([[endpoint.id, { kind: "live", endpoint: JSON.parse(readFileSync(`tests/fixtures/dt-0119-12/${endpoint.id}.json`, "utf8")).endpoint }]]), new Set(), date).file;
-    writeFileSync(target, JSON.stringify(first));
+    const endpointId = "blitzapi.companies.search";
+    const observation = readFileSync(`tests/fixtures/dt-0119-12/${endpointId}.json`, "utf8");
+    writeFileSync(target, JSON.stringify(empty));
+    await expect(main([
+      "--dir", dir, "--date", date, "--scope", endpointId, "--apply", "--out", path.join(dir, "report.md"),
+    ], async (url) => ({
+      ok: true, status: 200, text: url.endsWith("/meta") ? '{"treg_version":"test"}' : observation,
+    }))).resolves.toBe(0);
+    const first: PriceSyncFile = JSON.parse(readFileSync(target, "utf8"));
+    expect(first.revision).toBe(2);
     const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/capabilities/check-price-sync.ts", dir], { encoding: "utf8" });
     expect(child.stderr).toBe("");
     expect(child.status).toBe(0);
-    expect(loadTregCatalog({ dir, syncFile: target }).byId.get(endpoint.id)?.cost?.usd).toBe(0.001);
+    expect(loadTregCatalog({ dir, syncFile: target }).byId.get(endpointId)?.cost?.usd).toBe(0.001);
     const corrupt = JSON.stringify({ ...first, entries: [{ ...first.entries[0], now: { unit: "record", usd: 1e-12 } }] });
     writeFileSync(target, corrupt);
     const rejected = spawnSync(process.execPath, ["--import", "tsx", "scripts/capabilities/check-price-sync.ts", dir], { encoding: "utf8" });

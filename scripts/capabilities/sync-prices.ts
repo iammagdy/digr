@@ -137,6 +137,7 @@ export async function main(argv: string[], fetchOverride?: Fetcher): Promise<num
     apply: { type: "boolean" },
   } });
   const { date, apply, offline, out } = values;
+  if (offline !== undefined && apply) throw new Error("--offline is for dry reports only and cannot be combined with --apply");
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("provide --date YYYY-MM-DD");
   const dir = path.resolve(values.dir);
   const target = path.join(dir, "price_sync.json");
