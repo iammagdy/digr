@@ -1,6 +1,8 @@
-import { AGENT_COLLECT_MAX_PAGES, AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
-import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
-import { missionPageOf, pageInputValue } from "../../../src/lib/treg/shapeReader";
+import { AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
+import { stagePriceInputs, type EngineSpec, type PricedPlan } from "../../../src/lib/agentMission/plan";
+import { BARREN_PAGES, enginePageCapFor, executionFundingSchedule } from "../../../src/lib/agentMission/price";
+export { ENGINE_MAX_PAGES_PER_STAGE, enginePageCapFor } from "../../../src/lib/agentMission/price";
+import { missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
@@ -29,17 +31,8 @@ import { isDirectWebSource, providerOf } from "./sourceGateway";
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Pages one stage may read in all (a safety net above the call budget, which is what normally ends a long read). */
-export const ENGINE_MAX_PAGES_PER_STAGE = Math.max(AGENT_COLLECT_MAX_PAGES, 400);
-/**
- * The pages one stage may read: the safety net above, or twice the items the stage is sold when that is more (a source that gives five items a page needs a thousand pages for five thousand items: a mission of that size must not stop at the net). What really ends a
- * long read is still the call budget, the time, the source's end and the pages that add nothing; this only stops a read that never ends.
- */
-export const enginePageCapFor = (plannedRows: number): number => Math.max(ENGINE_MAX_PAGES_PER_STAGE, Math.max(0, Math.floor(plannedRows)) * 2);
 /** Pages in a row with no new item accepted, once the review has no budget left and items are waiting: the stage stops with the review limit as its reason instead of buying pages it cannot use. */
 const REVIEW_STALL_PAGES = 3;
-/** Pages in a row that give no new item at all (the source repeats itself). */
-const BARREN_PAGES = 2;
 /** P0 (15 Nov 2026): consecutive pages of a research topic that add no accepted row before the read stops. */
 export const JUDGED_DRY_PAGES = 5;
 /** Windows one stage may walk back through (a safety net: every window ends at least a day earlier than the one before, and a source that gives nothing more ends the walk). */
@@ -62,6 +55,8 @@ export interface EngineDeps {
   /** Absolute time (ms) after which no new page is read. */
   deadlineMs: number;
   maxPagesPerStage?: number;
+  /** The approved schedule bounds every dispatch, including paid failures. */
+  fundedCallLimit?: number;
   /** Asked before every page: a reason (the worker's memory guard) stops the run so the mission can be put back in the queue with everything it saved. */
   shouldStop?: () => string | null;
   /** The stages that run the REDESIGNED engine behaviour (S1 items 1.1, 1.3, 1.9): the type's flag is active for the account AND the stage's recipe was built by code. Absent or not listed: the engine behaves as it always did. */
@@ -97,11 +92,15 @@ const refusalStop = (code: string): StopReason => (code === "over_budget" ? "bud
 export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
   const { items, plan } = deps;
   const stops: Record<string, StopReason> = {};
+  const schedule = plan.price.listedRate ? executionFundingSchedule(stagePriceInputs(plan.stages)) : null;
   for (const stage of plan.stages) {
     if (deps.onlyStages && !deps.onlyStages.has(stage.key)) continue;
     const spec = stage.engine;
     if (!spec) throw new Error(`stage ${stage.key} has no engine recipe`);
-    const outcome = await runStage(deps, stage, spec);
+    const stageFunding = schedule?.get(stage.key);
+    const outcome = plan.price.listedRate && !stageFunding
+      ? { reason: "need_new_plan" as const, aborted: null }
+      : await runStage(stageFunding ? { ...deps, fundedCallLimit: stageFunding.calls } : deps, stage, spec);
     if (outcome.aborted) return { stops, aborted: outcome.aborted };
     // items the review could not reach are asked once more at the end of the stage (a late good item is never lost)
     await drainPending(deps, stage);
@@ -580,6 +579,10 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
     if (cursor !== null && nextInput === null) return { reason: "source_exhausted", aborted: null };
     const callParams = cursor && spec.cursor_param ? { ...params, [spec.cursor_param]: nextInput } : params;
+    if (deps.fundedCallLimit !== undefined) {
+      if (items.stage(stage.key).fundedCalls >= deps.fundedCallLimit) return { reason: "page_limit", aborted: null };
+      await items.commit([{ t: "funded_call", stage: stage.key }]);
+    }
     const result = deps.sources ? await deps.sources.call({ stageKey: stage.key, endpoint_id: spec.endpoint_id, params: callParams }) : await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
     if (!result.ok) {
       if ("refused" in result) return { reason: refusalStop(result.refused), aborted: null };
@@ -596,7 +599,12 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     let page: unknown = null;
     try { page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
     if (page === null) return { reason: "failed", aborted: null };
-    const mapped = await deps.sandbox(spec.map_code, { [spec.map_file_id]: page });
+    const reading = paging ? readShape(page, { missionPage: paging }) : null;
+    const rowsInPage = reading ? reading.rows.length : result.rows_in_page;
+    const hasMore = reading ? reading.hasMore : result.has_more;
+    const mapped = reading && rowsInPage === 0
+      ? { ok: true as const, resultJson: "[]" }
+      : await deps.sandbox(spec.map_code, { [spec.map_file_id]: page });
     // the mapping is OURS: a mapping that fails on a page the source gave is our failure (an internal one while nothing has been stored yet), never «the source failed»
     const mapFailed = (): { reason: StopReason; aborted: null } => ({ reason: items.counts(stage.key).new === 0 ? "internal_error" : "failed", aborted: null });
     if (!mapped.ok || mapped.resultJson === null) { deps.log?.(`engine_map_failed ${deps.missionId} ${mapped.ok ? "no result" : mapped.error.slice(0, 80)}`); return mapFailed(); }
@@ -610,10 +618,12 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const profiled = parentId !== null && isPeopleStage(stage) ? withSourceProfiles(page, confirmed, nameKeysOf(stage.columns)) : confirmed;
     const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(profiled, stage.role_preference.role).rows : profiled;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
-    const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
+    const nextCursor = reading ? reading.nextCursor : pageMode
+      ? (rowsInPage > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null)
+      : result.next_cursor ?? null;
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
     const guaranteeCount = deps.redesignStages?.has(stage.key) === true || isCatalogPaging;
-    let ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
+    let ended = pageMode && !reading ? rowsInPage === 0 : !nextCursor || (rowsInPage === 0 && !guaranteeCount) || hasMore === false || !spec.cursor_param;
     if (isCatalogPaging && nextCursor) {
       if (nextCursor === cursor || state?.visitedPositions?.has(nextCursor)) {
         ended = true;
@@ -625,12 +635,12 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: hasMore, ended, rows_in_page: rowsInPage, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
     // EVERY REPLY, WITHOUT A PAID PAGE FOR NOTHING (live finding C): the replies of a comment read to the end have the comment's own counter as their signal (a real page keeps a next-page value after its last row). When the replies read have reached the counter, the page was
     // not a full one (fewer rows than a call usually gives) and the counter was not exceeded, the comment is done; a counter that was understated shows itself (more rows than it said, or a full page), and the read goes on to the source's end
     if (counterStop !== null && parentId !== null && counterStop > 0) {
       const haveNow = items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length;
-      if (haveNow === counterStop && result.rows_in_page < AGENT_REPLIES_ROWS_PER_CALL_ASSUMED) return { reason: "source_exhausted", aborted: null };
+      if (haveNow === counterStop && rowsInPage < AGENT_REPLIES_ROWS_PER_CALL_ASSUMED) return { reason: "source_exhausted", aborted: null };
     }
     // a decision maker read on this page takes the place of a lower title accepted from an earlier page of the same company
     if (parentId !== null && depthPages > 1) await upgradeDecisionMakers(deps, stage, parentId);

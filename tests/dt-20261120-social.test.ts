@@ -5,11 +5,10 @@ import { customerPlanView, stagePriceInputs, type EngineSpec, type PricedPlan } 
 import { executionBudgetUsd, priceMissionByCode, type StagePriceInput } from "../src/lib/agentMission/price";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { buildPriceRows } from "../src/lib/pricingPage";
-import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { fakeMoneyClient } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
 import { catalogPage } from "./helpers/discoveryWorld";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -36,8 +35,12 @@ import {
   type ToolOption,
 } from "../agent/src/llmPlanner/planner";
 import { ItemStore, foldSegments } from "../agent/src/items/itemStore";
-import { tregResult } from "./helpers/agentHarness";
-import { replay, readWorkbook } from "./helpers/agentReplay";
+import { fakeRecorder, NOT_ADMIN, tregResult } from "./helpers/agentHarness";
+import { REPLAY_USER, replay, replayClient, readWorkbook } from "./helpers/agentReplay";
+import { createMemoryDb } from "./helpers/memoryDb";
+import { createMemoryStore, newMission } from "../agent/src/memoryStore";
+import { createFakeDriver } from "../agent/src/fakeDriver";
+import { runPlanning } from "../agent/src/runMission";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
 
 const ROOT = process.cwd();
@@ -547,20 +550,6 @@ function thinCommentPricing(): FundedStageInput[] {
   ];
 }
 
-function affordableCommentCalls(reserve: number): number {
-  const budget = createJobCallBudget({ ceilingUsd: executionBudgetUsd(reserve), spentUsd: 0 });
-  for (let i = 0; i < 7; i += 1) {
-    if (!budget.reserve(0.002)) throw new Error("listing did not fit");
-    budget.settle(0.002, 0.002);
-  }
-  let calls = 0;
-  while (calls < 120 && budget.reserve(0.00188)) {
-    budget.settle(0.00188, 0.00188);
-    calls += 1;
-  }
-  return calls;
-}
-
 function fundedCommentPlan(): PricedPlan {
   const plan = pricedTwoStagePlan();
   const [posts, comments] = plan.stages;
@@ -589,16 +578,17 @@ function fundedCommentPlan(): PricedPlan {
 }
 
 describe("DT-20261120-social listed rates and funding", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", "1000"));
+  afterEach(() => vi.unstubAllEnvs());
   it("funds the thin-page replay while keeping the listed charge", () => {
     const stages = thinCommentPricing();
     const price = priceMissionByCode(stages);
-    expect(affordableCommentCalls(238)).toBe(84);
     expect(price).toMatchObject({
-      ruleUnitPoints: 1.034, reservePoints: 327, maxChargePoints: 207, executionFundingApplied: true, overCap: false,
+      ruleUnitPoints: 1.034, reservePoints: 752, maxChargePoints: 207, executionFundingApplied: true, overCap: false,
     });
-    expect(affordableCommentCalls(price.reservePoints)).toBe(119);
-    expect(affordableCommentCalls(price.reservePoints - 1)).toBe(118);
-    expect(priceMissionByCode(stages, { capPoints: 326 }).overCap).toBe(true);
+    const fullScheduleCost = 14 * 0.002 + 276 * 0.00188;
+    expect(executionBudgetUsd(price.reservePoints)).toBeGreaterThanOrEqual(fullScheduleCost);
+    expect(priceMissionByCode(stages, { capPoints: 751 }).overCap).toBe(true);
   });
 
   it.each([
@@ -608,16 +598,16 @@ describe("DT-20261120-social listed rates and funding", () => {
     const money = fakeMoneyClient();
     const card = customerPlanView(plan);
     const approval = await approveMission(money.client, { id: "msn_social_funding", user_id: "synthetic", plan });
-    expect(approval).toMatchObject({ ok: true, reservePoints: 327, unitPricePoints: 1.034 });
+    expect(approval).toMatchObject({ ok: true, reservePoints: 752, unitPricePoints: 1.034 });
     if (!approval.ok) throw new Error(approval.code);
     expect(card.price).toMatchObject({
       listed_rate: { unit_points: 1.034, noun_ar: "تعليق" },
-      execution_funding_applied: true, reserve_points: 327, max_charge_points: 207,
+      execution_funding_applied: true, reserve_points: 752, max_charge_points: 207,
     });
     const facts = priceFactsOf(card);
     expect(facts.facts[0]).toEqual({ labelAr: "سعر الوحدة قبل الحد الأدنى", valueAr: "حوالي ١٠٣٫٤ نقطة لكل ١٠٠ تعليق" });
     const explain = priceExplainOf(card);
-    expect(explain).toContain("الحجز المؤقت ٣٢٧ نقطة لتغطية جمع العدد المخطط. أقصى سعر للتسليم الكامل ٢٠٧ نقطة، ويُحرَّر ما لا يُستخدم من الحجز.");
+    expect(explain).toContain("الحجز المؤقت ٧٥٢ نقطة لتغطية جمع العدد المخطط. أقصى سعر للتسليم الكامل ٢٠٧ نقطة، ويُحرَّر ما لا يُستخدم من الحجز.");
     for (const text of [...facts.facts.flatMap(({ labelAr, valueAr }) => [labelAr, valueAr]), ...explain]) {
       expect(checkCustomerText(text).issues, text).toEqual([]);
     }
@@ -626,7 +616,7 @@ describe("DT-20261120-social listed rates and funding", () => {
       deliveredUnits: delivered, costUsd: 0.014 + Math.ceil(delivered / 2) * 0.00188,
       resultPath: delivered ? "synthetic/social.xlsx" : null,
     });
-    expect(settled).toMatchObject({ ok: true, chargedPoints: charged, releasedPoints: 327 - charged });
+    expect(settled).toMatchObject({ ok: true, chargedPoints: charged, releasedPoints: 752 - charged });
     expect(money.balance()).toBe(100_000 - charged);
   });
 
@@ -636,7 +626,7 @@ describe("DT-20261120-social listed rates and funding", () => {
     expect(edited.ok).toBe(true);
     if (!edited.ok) throw new Error(edited.errorAr);
     expect(edited.plan.stages.map((stage) => stage.planned_rows)).toEqual([20, 201]);
-    expect(edited.plan.price).toMatchObject({ ruleUnitPoints: 1.034, reservePoints: 330, maxChargePoints: 208 });
+    expect(edited.plan.price).toMatchObject({ ruleUnitPoints: 1.034, reservePoints: 758, maxChargePoints: 208 });
     expect(repriceStoredPlan(edited.plan)).toEqual(edited.plan.price);
   });
 
@@ -688,7 +678,7 @@ describe("DT-20261120-social listed rates and funding", () => {
       url: `https://www.youtube.com/watch?v=video${String(i).padStart(6, "0")}`,
     })));
     const answer = tregResult(page, 0.002);
-    const result = await replay({ request, planning: [], execution: () => [], answers: [answer, answer], deps: (base) => ({ ...base, plannerModel }) });
+    const result = await replay({ request, planning: [], execution: () => [], answers: [answer, answer], beforeChat: seedFullWallet, deps: (base) => ({ ...base, plannerModel }) });
     const publicRate = buildPriceRows().find((row) => row.id === "youtube-videos")!.unitPricePoints;
     expect(result.plannedPlan.price).toMatchObject({
       ruleUnitPoints: publicRate, unitPricePoints: 10, reservePoints: 200, maxChargePoints: 200,
@@ -698,57 +688,73 @@ describe("DT-20261120-social listed rates and funding", () => {
     expect((await readWorkbook(result)).getWorksheet("الفيديوهات")?.actualRowCount).toBe(21);
   });
 
-  it("delivers 200 comments from 100 thin pages through the approved execution budget", async () => {
-    const { posts, comments, request, plannerModel, page } = thinCommentWorld();
+  it.each([
+    { scenario: "productive pages", paidTails: false, totalCalls: 100 },
+    { scenario: "paid empty parent tails", paidTails: true, totalCalls: 138 },
+  ])("delivers 200 comments at the approved hold with $scenario", async ({ paidTails, totalCalls }) => {
+    const { posts, comments, request, plannerModel, page } = thinCommentWorld(paidTails);
     const result = await replay({
-      request, planning: [], execution: () => [], answers: Array.from({ length: 130 }, () => page),
+      request, planning: [], execution: () => [], answers: Array.from({ length: 160 }, () => page),
+      beforeChat: seedFullWallet,
       deps: (base) => ({ ...base, plannerModel }),
     });
-    expect(result.plannedPlan.price).toMatchObject({ ruleUnitPoints: 1.034, reservePoints: 327, maxChargePoints: 207 });
+    expect(result.plannedPlan.price).toMatchObject({ ruleUnitPoints: 1.034, reservePoints: 752, maxChargePoints: 207 });
     expect(result.mission).toMatchObject({ status: "completed", delivered_units: 200, charged_points: 207 });
     const execution = (await result.store.listCalls(result.missionId)).filter((call) => call.phase === "execution");
     expect(execution.filter((call) => call.endpoint_id === posts)).toHaveLength(7);
     const childCalls = execution.filter((call) => call.endpoint_id === comments);
-    expect(childCalls).toHaveLength(100);
-    expect(new Set(childCalls.map(({ params_digest }) => JSON.stringify([params_digest.url, params_digest.cursor]))).size).toBe(100);
+    expect(childCalls).toHaveLength(totalCalls);
+    expect(result.money.ledger.filter((row) => row.type !== "topup").map(({ type, delta }) => [type, delta]))
+      .toEqual([["reserve", -752], ["release", 752], ["charge", -207]]);
+    expect(result.money.balance()).toBe(result.initialBalance - 207);
+    expect(new Set(childCalls.map(({ params_digest }) => JSON.stringify([params_digest.url, params_digest.cursor]))).size).toBe(totalCalls);
     expect((await readWorkbook(result)).getWorksheet("التعليقات")?.actualRowCount).toBe(201);
   });
 
   it.each([
-    { cap: 300, option: ["جهّز ١٧٨"], phrase: "حتى ١٧٨ بحجز مؤقت ٢٩٩ نقطة" },
-    { cap: 199, option: [], phrase: "اكتب عددًا أقل لنحسب لك الحجز المؤقت." },
-  ])("asks before approval when the $cap-point cap cannot fund the full plan", async ({ cap, option, phrase }) => {
+    { limit: "wallet", cap: 1000, wallet: 327, option: ["جهّز ٣٦"], phrase: "حتى ٣٦ بحجز مؤقت ٣٢٣ نقطة" },
+    { limit: "job cap", cap: 300, wallet: 1000, option: ["جهّز ٣١"], phrase: "حتى ٣١ بحجز مؤقت ٢٩٧ نقطة" },
+    { limit: "minimum", cap: 199, wallet: 1000, option: [], phrase: "اكتب عددًا أقل لنحسب لك الحجز المؤقت." },
+  ])("asks before placing a hold when the $limit cannot fund the schedule", async ({ cap, wallet, option, phrase }) => {
     vi.stubEnv("JOB_MAX_POINTS_CAP", String(cap));
-    try {
-      const { request, plannerModel, page } = thinCommentWorld();
-      const liveCatalog = loadTregCatalog();
-      const replies = new Map<string, unknown>();
-      const result = await planWithLlm({ request, words: [request] }, {
-        catalog: liveCatalog, access: null, model: plannerModel, today: "2026-11-20",
-        probe: async (endpointId, params) => {
-          const response = page({ endpointId, params });
-          const id = `test-page-${replies.size}`;
-          replies.set(id, response.data);
-          const { reading } = buildShapeDigest(response.data, liveCatalog.byId.get(endpointId)!);
-          return {
-            ok: true, call_id: id, http_status: 200, rows_in_page: reading.rows.length,
-            has_more: reading.hasMore, next_cursor: reading.nextCursor, shape: null,
-            first_rows: [], warnings: reading.warnings, saved: id, charge_usd: (response.costMicro ?? 0) / 1_000_000,
-          };
-        },
-        readPage: async (id) => replies.get(id) ?? null,
-      });
-      expect(result.kind).toBe("question");
-      if (result.kind !== "question") throw new Error(result.kind);
-      expect(result.question_ar).toContain(phrase);
-      expect(result.options_ar).toEqual(option);
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    const { request, plannerModel, page } = thinCommentWorld();
+    const mission = newMission({ id: "msn_social_affordability", user_id: REPLAY_USER, request_text: request, status: "planning" });
+    const store = createMemoryStore([mission]);
+    const db = createMemoryDb();
+    const money = fakeMoneyClient({ balance: wallet });
+    db.seed("credit_ledger", [{ user_id: REPLAY_USER, delta: wallet }]);
+    const { client } = replayClient(db, money);
+    const { recorder, commit } = fakeRecorder({ dailyCapUsd: 5 });
+    await runPlanning({
+      store, client, recorder, commit, catalog: loadTregCatalog(), call: async (args) => page(args),
+      plannerModel, driver: createFakeDriver([]), resolveAccess: async () => NOT_ADMIN,
+      models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" },
+    }, mission);
+    const current = await store.getMission(mission.id);
+    expect(current).toMatchObject({ status: "needs_input", plan_public: { question_options: option }, job_id: null });
+    expect(current?.question_ar).toContain(phrase);
+    expect(money.ledger.map((row) => row.type)).toEqual(["topup"]);
+    expect(money.calls).toEqual([]);
+    expect(money.balance()).toBe(wallet);
+  });
+
+  it("rechecks the funded schedule and balance before a hold", async () => {
+    const plan = fundedCommentPlan();
+    const money = fakeMoneyClient({ balance: 327 });
+    const stale = { ...plan, price: { ...plan.price, reservePoints: 327 } };
+    const mission = { id: "msn_social_stale_hold", user_id: REPLAY_USER };
+    expect(await approveMission(money.client, { ...mission, plan: stale })).toMatchObject({ ok: false, code: "plan_changed" });
+    expect(money.calls).toEqual([]);
+    expect(await approveMission(money.client, { ...mission, plan })).toMatchObject({ ok: false, code: "insufficient_balance" });
+    expect(money.ledger.map((row) => row.type)).toEqual(["topup"]);
   });
 });
 
-function thinCommentWorld() {
+function seedFullWallet(db: ReturnType<typeof createMemoryDb>): void {
+  db.seed("credit_ledger", [{ user_id: REPLAY_USER, delta: 100_000 }]);
+}
+
+function thinCommentWorld(paidTails = false) {
   const posts = "anyapi.facebook.user.posts";
   const comments = "scrapecreators.x.v1-facebook-post-comments";
   const source = "https://www.facebook.com/synthetic-page";
@@ -785,9 +791,13 @@ function thinCommentWorld() {
     }
     expect(endpointId).toBe(comments);
     const parent = String(params?.url).split("/").at(-1);
+    if (paidTails && parent !== "19" && position > 0) {
+      return tregResult({ comments: [], cursor: String(position + 2), has_next_page: position === 2 }, 0.00188);
+    }
+    const end = paidTails && parent === "19" ? 162 : 10;
     return tregResult({
       comments: [0, 1].map((i) => ({ id: `comment${parent}-${position + i}`, text: "تعليق تجريبي" })),
-      cursor: String(position + 2), has_next_page: position + 2 < 10,
+      cursor: String(position + 2), has_next_page: position + 2 < end,
     }, 0.00188);
   };
   return { posts, comments, request, plannerModel, page };

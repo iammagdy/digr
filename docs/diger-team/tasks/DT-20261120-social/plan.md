@@ -12,7 +12,7 @@ New eligible single-delivery plans use the same listed-rate function as the publ
 | 20 YouTube videos | 5 | 200 | 200 |
 | 300 TikTok comments | 0.275 | 200 | 200 |
 
-In the two-comment-page replay, seven listing pages and 100 child pages cost $0.202. The funding forecast includes 19 parent-tail calls, totaling $0.23772. An execution budget from 238 points admitted 84 child calls after those listing pages. A 327-point hold admits 119, with a 207-point charge for 200 comments, 91 for 88, and zero for zero.
+D-0162 funds each stage's full call schedule. The schedule accounts for partial pages split between parents, barren pages before productive pages, and barren pages at the end of parents that fail to fill the target. The worker checks the same limit before every dispatch and persists the count across restarts. Planning checks both the wallet and the job cap before showing a card. Repricing and approval use the same schedule, and atomic approval checks the wallet again. In the synthetic replay, 14 listing calls and 276 comment calls are budgeted, which requires a 752-point hold. The paid-tail replay uses seven listing and 138 comment calls, delivers 200 comments, charges 207 points, and releases the remaining 545 points. The positive control uses 100 comment calls and settles at the same 207 points.
 
 ## Reviewed scope
 

@@ -4,7 +4,7 @@ import { effectiveJobPointsCap } from "../jobPointsCap";
 import { holdValueUsd } from "../server/callBudget";
 import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import {
-  AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
+  AGENT_COLLECT_MAX_PAGES, AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
   AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
 } from "./constants";
 
@@ -50,6 +50,7 @@ export interface StagePriceInput {
   listedRate?: ListedMissionRate;
   stageKey?: string;
   parentKey?: string | null;
+  maxPages?: number;
   executionFunding?: readonly ExecutionFundingRoute[];
 }
 
@@ -151,29 +152,60 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
 /** The revision to carry through a re-pricing that reuses the saved costs of `price` (F2). */
 export const carriedRevision = (price: { pricedUnder?: number } | null | undefined): { pricedUnder: number | null } => ({ pricedUnder: typeof price?.pricedUnder === "number" ? price.pricedUnder : null });
 
-/** Calls that the sealed page evidence can fund for a target. Alternates book their own calls. */
-export function executionCallsForFunding(route: ExecutionFundingRoute, rows: number, parents: number, primary: boolean): number | null {
+/** Round a checked call's cost upward, ignoring only sub-micro floating-point noise. */
+export function fundingCallUsdMicro(usd: number): number {
+  const micro = usd * 1_000_000;
+  if (!Number.isFinite(micro)) return 0;
+  const nearest = Math.round(micro);
+  return Math.abs(micro - nearest) < 1e-6 ? nearest : Math.ceil(micro);
+}
+
+/** Shared safety limits for paged execution and funded quotes. */
+export const ENGINE_MAX_PAGES_PER_STAGE = Math.max(AGENT_COLLECT_MAX_PAGES, 400);
+export const enginePageCapFor = (rows: number): number => Math.max(ENGINE_MAX_PAGES_PER_STAGE, Math.floor(rows) * 2);
+export const BARREN_PAGES = 2;
+
+function executionCallsForFunding(route: ExecutionFundingRoute, rows: number, parents: number, primary: boolean): number | null {
   if (!Number.isSafeInteger(route.rowsPerPage) || route.rowsPerPage < 1 ||
-      !Number.isSafeInteger(route.callUsdMicro) || route.callUsdMicro < 0 ||
-      !Number.isSafeInteger(rows) || rows < 1 || !Number.isSafeInteger(parents) || parents < 1) return null;
-  if (route.mode === "paged") return Math.ceil(rows / route.rowsPerPage) + parents - 1;
+      !Number.isSafeInteger(route.callUsdMicro) || route.callUsdMicro <= 0) return null;
+  if (route.mode === "paged") {
+    // Each parent can use a partial productive page. Before each productive page
+    // there can be one paid barren page. Each unfinished parent can also end with two.
+    const productive = Math.min(rows, Math.ceil(rows / route.rowsPerPage) + parents - 1);
+    return BARREN_PAGES * (productive + parents - 1);
+  }
   if (route.mode !== "one_shot" || (primary && Math.ceil(rows / parents) > route.rowsPerPage)) return null;
   return parents;
 }
 
-function fundingReservePoints(stages: ReadonlyArray<StagePriceInput>, capPoints: number): number | null {
+/** The calls the worker is allowed to dispatch, and the price of the most expensive allowed call. */
+export function executionFundingSchedule(stages: ReadonlyArray<StagePriceInput>): Map<string, { calls: number; costUsdMicro: number }> | null {
   const rowsByStage = new Map(stages.map(({ stageKey, rows }) => [stageKey, rows]));
-  let forecastMicro = 0;
+  const schedule = new Map<string, { calls: number; costUsdMicro: number }>();
   for (const stage of stages) {
     if (!stage.stageKey || stage.parentKey === undefined || !stage.executionFunding?.length) return null;
     const parents = stage.parentKey === null ? 1 : rowsByStage.get(stage.parentKey);
-    if (parents === undefined) return null;
+    if (parents === undefined || !Number.isSafeInteger(parents) || parents < 1 ||
+        !Number.isSafeInteger(stage.rows) || stage.rows < 1) return null;
+    let calls = 0;
+    let maxCallUsdMicro = 0;
     for (const [index, route] of stage.executionFunding.entries()) {
-      const calls = executionCallsForFunding(route, stage.rows, parents, index === 0);
-      if (calls === null) return null;
-      forecastMicro += calls * route.callUsdMicro;
+      const count = executionCallsForFunding(route, stage.rows, parents, index === 0);
+      if (count === null) return null;
+      calls += count;
+      maxCallUsdMicro = Math.max(maxCallUsdMicro, route.callUsdMicro);
     }
+    const costUsdMicro = calls * maxCallUsdMicro;
+    if (!Number.isSafeInteger(costUsdMicro) || calls > Math.min(stage.maxPages ?? Infinity, enginePageCapFor(stage.rows))) return null;
+    schedule.set(stage.stageKey, { calls, costUsdMicro });
   }
+  return schedule;
+}
+
+function fundingReservePoints(stages: ReadonlyArray<StagePriceInput>, capPoints: number): number | null {
+  const schedule = executionFundingSchedule(stages);
+  if (!schedule) return null;
+  const forecastMicro = [...schedule.values()].reduce((sum, stage) => sum + stage.costUsdMicro, 0);
   if (!Number.isSafeInteger(forecastMicro)) return null;
   const forecast = forecastMicro / 1_000_000;
   if (executionBudgetUsd(capPoints) < forecast) return null;

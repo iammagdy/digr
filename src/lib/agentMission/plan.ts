@@ -365,7 +365,7 @@ export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: Rea
   reviewShare: s.review_share,
   ...(s.replies_of !== undefined ? { codeOnly: true } : {}),
   ...(s.listed_rate ? { listedRate: s.listed_rate } : {}),
-  ...(s.execution_funding ? { stageKey: s.key, parentKey: s.parent_key, executionFunding: s.execution_funding } : {}),
+  ...(s.execution_funding ? { stageKey: s.key, parentKey: s.parent_key, maxPages: s.max_pages, executionFunding: s.execution_funding } : {}),
 }));
 /** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
 export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";

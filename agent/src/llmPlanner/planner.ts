@@ -1,16 +1,14 @@
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
-import { missionPageOf, pageInputValue } from "../../../src/lib/treg/shapeReader";
+import { hintsOf, missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
 import { buildShapeDigest, digestValue } from "../../../src/lib/modelPlanner/digest";
-import { executionCallsForFunding, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate } from "../../../src/lib/agentMission/price";
+import { fundingCallUsdMicro, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate } from "../../../src/lib/agentMission/price";
 import { normalizeMissionPricingSettings, type MissionPricingSettings } from "../../../src/lib/missionPricing";
 import { AGENT_MAX_DELIVERED_ROWS } from "../../../src/lib/agentMission/constants";
 import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 import { APPROVED_CAPABILITY_CATALOG } from "../../../src/functions/shared/capabilityRegistry";
 import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../../src/functions/shared/quotes";
-import { ceilToMicroUsd } from "../../../src/lib/server/spendGate/bounds";
 import { pointsAr } from "../../../src/lib/pointsFormat";
-import { enginePageCapFor } from "../engine/run";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
@@ -52,6 +50,8 @@ export interface LlmPlannerDeps {
   /** The full raw page a successful probe saved. */
   readPage: (callId: string) => Promise<unknown | null>;
   pricingSettings?: unknown;
+  /** Read immediately before offering a funded quote. Null means the wallet could not be checked. */
+  availablePoints?: () => Promise<number | null>;
   /** Today, for the model's dates (Cairo calendar day, YYYY-MM-DD). */
   today: string;
   /** What the customer reads while the plan is prepared (one short Arabic line per phase). Absent: nothing is said. */
@@ -674,8 +674,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
     const trace = { empties: 0, failures: 0, uncertain: false };
-    const probeBudget = { left: MAX_PROBES_PER_STEP };
-    const got = await probeStep(step, options, parent, deps, probeBudget, trace);
+    const got = await probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace);
     // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
     // (a tool that answered empty on its searches is evidence even when another option of the step failed to answer at all: live 16 Nov, the second option was refused)
     if (!got && !step.parent && trace.empties > 0 && !trace.uncertain) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
@@ -705,7 +704,9 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         && (!configuredChild || (o.endpoint.capability === step.capability && parent?.sampleRows.some((row) => filled(row[o.parent!.from])))))
       : undefined;
     if (next) {
-      const got2 = await probeStep(step, [next], parent, deps, configuredChild ? probeBudget : { left: MAX_PROBES_PER_STEP });
+      const got2 = configuredChild
+        ? await probeStep(step, [next], parent, deps, { left: MAX_PROBES_PER_STEP - got.callIds.length })
+        : await probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP });
       if (got2) {
         const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
         if (map2) {
@@ -829,20 +830,19 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   const listed = unserved.length === 0 ? listedQuoteOf(original, deps.pricingSettings) : undefined;
   const quoted = listed ? checkedFundingSteps(bound) : bound;
   const plan = assemblePlan(u, quoted, unserved, deps.pricingSettings, said, listed && { ...listed, catalog: deps.catalog });
-  if (!listed || fundedPlanFits(plan.stages, plan.price)) return { kind: "plan", plan, understanding: u, costUsd };
+  if (!listed) return { kind: "plan", plan, understanding: u, costUsd };
+  const balance = deps.availablePoints ? await deps.availablePoints() : undefined;
+  const available = balance === undefined ? Infinity : balance ?? 0;
+  if (fundedPlanFits(plan.stages, plan.price) && plan.price.reservePoints <= available) return { kind: "plan", plan, understanding: u, costUsd };
 
   // Try an independently measured route on its own before offering a smaller total.
   for (const step of quoted) {
     if (!step.second) continue;
     const alternate = { ...step, ...step.second, rowsPerPage: step.second.sample!.rowsPerPage, second: undefined, variantSamples: undefined };
     const candidate = assemblePlan(u, quoted.map((b) => b === step ? alternate : b), unserved, deps.pricingSettings, said, { ...listed, catalog: deps.catalog });
-    if (fundedPlanFits(candidate.stages, candidate.price)) return { kind: "plan", plan: candidate, understanding: u, costUsd };
+    if (fundedPlanFits(candidate.stages, candidate.price) && candidate.price.reservePoints <= available) return { kind: "plan", plan: candidate, understanding: u, costUsd };
   }
-  const requested = original.find((b) => b.step.key === listed.stageKey)?.step.count;
-  const smaller = requested && !requested.all && requested.per_parent === null ? smallerFundedTarget(plan, listed.stageKey) : null;
-  if (!smaller) return { kind: "question", question_ar: "اكتب عددًا أقل لنحسب لك الحجز المؤقت.", options_ar: [], understanding: u, costUsd };
-  const countAr = toArabicDigits(smaller.rows);
-  return { kind: "question", question_ar: `الحجز المطلوب لهذا العدد يتجاوز الحد المتاح. نقدر نجهّز حتى ${countAr} بحجز مؤقت ${pointsAr(smaller.hold)}. تحب نجهّز العدد ده؟`, options_ar: [`جهّز ${countAr}`], understanding: u, costUsd };
+  return { ...fundedCountQuestion(plan, u, balance === undefined ? undefined : available), understanding: u, costUsd };
 }
 
 /** The model's map with the standard columns it left out filled from the common names (a thin map, id and link only, made a file a researcher cannot use: live TikTok, 15 Nov 2026). */
@@ -914,7 +914,9 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       if (!reviewed && r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
       const page = await deps.readPage(r.call_id);
       if (page === null) { if (trace) trace.failures += 1; continue; }
-      const { reading } = buildShapeDigest(page, option.endpoint);
+      const reading = reviewed
+        ? readShape(page, { ...hintsOf(option.endpoint), missionPage: reviewed })
+        : buildShapeDigest(page, option.endpoint).reading;
       if (reviewed && (reading.listStrategy === "declared_missing" || (reading.warnings.length > 0 && reading.rows.length === 0))) {
         if (trace) { trace.failures += 1; trace.uncertain = true; }
         continue;
@@ -1013,7 +1015,7 @@ function sealedFunding(
     if (bound === null) return null;
     const usd = Math.max(bound, estimateCallUsd(endpoint, sample.checkedParams, catalog), sample.chargedUsd);
     if (!Number.isFinite(usd) || usd <= 0) return null;
-    return { rowsPerPage: sample.rowsPerPage, callUsdMicro: Math.round(ceilToMicroUsd(usd) * 1_000_000), mode: cursor ? "paged" : "one_shot" };
+    return { rowsPerPage: sample.rowsPerPage, callUsdMicro: fundingCallUsdMicro(usd), mode: cursor ? "paged" : "one_shot" };
   };
   const primary = fundingFor(step.option.endpoint.id, step.option.cursor, step.sample);
   if (!primary) return undefined;
@@ -1028,30 +1030,29 @@ function sealedFunding(
 }
 
 function fundedPlanFits(stages: ReadonlyArray<PricedStage>, price: PricedPlan["price"]): boolean {
-  if (!price.listedRate || price.overCap || price.deliveredRows > AGENT_MAX_DELIVERED_ROWS) return false;
-  return stages.every((stage) => {
-    const parents = stage.parent_key === null ? 1 : stages.find((s) => s.key === stage.parent_key)?.planned_rows;
-    if (parents === undefined || (stage.parent_key !== null && !stage.engine?.parent_binding) || !stage.execution_funding?.length) return false;
-    let calls = 0;
-    for (const [index, route] of stage.execution_funding.entries()) {
-      const count = executionCallsForFunding(route, stage.planned_rows, parents, index === 0);
-      if (count === null) return false;
-      calls += count;
-    }
-    return calls <= Math.min(stage.max_pages ?? Infinity, enginePageCapFor(stage.planned_rows));
-  });
+  return Boolean(price.listedRate && !price.overCap && price.deliveredRows <= AGENT_MAX_DELIVERED_ROWS &&
+    stages.every((stage) => stage.parent_key === null || Boolean(stage.engine?.parent_binding)));
 }
 
-function smallerFundedTarget(plan: PricedPlan, stageKey: string): { rows: number; hold: number } | null {
-  const stage = plan.stages.find((s) => s.key === stageKey);
-  if (!stage) return null;
+function fundedCountQuestion(plan: PricedPlan, understanding: Understanding, capPoints?: number): {
+  kind: "question"; question_ar: string; options_ar: string[];
+} {
+  const stage = plan.stages.find((s) => s.deliver);
+  const requested = understanding.steps.find((s) => s.key === stage?.key)?.count;
+  const smaller = stage && requested && !requested.all && requested.per_parent === null ? smallerFundedTarget(plan, stage, capPoints) : null;
+  if (!smaller) return { kind: "question", question_ar: "اكتب عددًا أقل لنحسب لك الحجز المؤقت.", options_ar: [] };
+  const countAr = toArabicDigits(smaller.rows);
+  return { kind: "question", question_ar: `الحجز المطلوب لهذا العدد يتجاوز الحد المتاح. نقدر نجهّز حتى ${countAr} بحجز مؤقت ${pointsAr(smaller.hold)}. تحب نجهّز العدد ده؟`, options_ar: [`جهّز ${countAr}`] };
+}
+
+function smallerFundedTarget(plan: PricedPlan, stage: PricedStage, capPoints?: number): { rows: number; hold: number } | null {
   let low = 1;
   let high = Math.min(stage.planned_rows - 1, AGENT_MAX_DELIVERED_ROWS);
   let best = null;
   while (low <= high) {
     const rows = Math.floor((low + high) / 2);
     const stages = plan.stages.map((s) => s === stage ? { ...s, planned_rows: rows, expected_rows: rows } : s);
-    const price = priceMissionByCode(stagePriceInputs(stages), { settings: plan.price.settings });
+    const price = priceMissionByCode(stagePriceInputs(stages), { settings: plan.price.settings, capPoints });
     if (fundedPlanFits(stages, price)) {
       best = { rows, hold: price.reservePoints };
       low = rows + 1;
@@ -1084,12 +1085,15 @@ export async function scoutYield(
     const r = await deps.probe(a.option.endpoint.id, params);
     sets += 1;
     if (!r.ok) return { ok: false };
-    if (reviewed && r.has_more === true && !r.next_cursor) return { ok: false };
-    const next = (!reviewed || r.has_more !== false) && typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null;
-    if (r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: reviewed ? next : null }; }
+    const legacyNext = typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null;
+    if (!reviewed && r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: null }; }
     const page = await deps.readPage(r.call_id);
     if (page === null) return { ok: false };
+    const reading = reviewed ? readShape(page, { ...hintsOf(a.option.endpoint), missionPage: reviewed }) : null;
+    if (reading && (reading.listStrategy === "declared_missing" || (reading.hasMore === true && !reading.nextCursor))) return { ok: false };
+    const next = reading ? reading.nextCursor : legacyNext;
     measured += 1;
+    if (reading && reading.rows.length === 0) return { ok: true, rows: [], next };
     const rows = runMap(a.mapCode, page);
     a.onSample?.(firstParams, rows, r.charge_usd ?? 0);
     return { ok: true, rows, next };

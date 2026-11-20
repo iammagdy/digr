@@ -75,17 +75,13 @@ export interface ShapeReading {
   warnings: string[];
 }
 
-export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string }): ShapeHints => {
-  const missionPage = endpoint.id ? missionPageOf(endpoint.id) : undefined;
-  return {
-    id: endpoint.id,
-    ...(missionPage ? { missionPage } : {}),
-    listPath: missionPage?.listPath ?? endpoint.list_path,
-    cursorPath: missionPage?.nextPath ?? endpoint.cursor_path,
-    example: endpoint.example_response_trimmed,
-    itemFields: endpoint.item_fields,
-  };
-};
+export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string }): ShapeHints => ({
+  id: endpoint.id,
+  listPath: endpoint.list_path,
+  cursorPath: endpoint.cursor_path,
+  example: endpoint.example_response_trimmed,
+  itemFields: endpoint.item_fields,
+});
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -397,16 +393,14 @@ export function coerceRow(row: Obj, itemFields: Record<string, { type: string }>
 export const readEpochMs = toEpochMs;
 
 export function readShape(body: unknown, hints: ShapeHints = {}): ShapeReading {
-  const missionPage = hints.missionPage ?? (hints.id ? missionPageOf(hints.id) : undefined);
-  const resolvedHints = missionPage && !hints.missionPage ? { ...hints, missionPage } : hints;
-  const list = readList(body, resolvedHints);
-  let cursor = readCursor(body, resolvedHints);
+  const list = readList(body, hints);
+  let cursor = readCursor(body, hints);
   if (list.strategy === "declared_missing") {
     cursor = { found: null, strategy: "none", hasMore: cursor.hasMore };
   }
   const coercions: Record<string, number> = {};
   const unreadable: Record<string, number> = {};
-  const rows = list.rows.map((row) => coerceRow(row, resolvedHints.itemFields, coercions, unreadable));
+  const rows = list.rows.map((row) => coerceRow(row, hints.itemFields, coercions, unreadable));
   return {
     rows,
     listPath: list.path,

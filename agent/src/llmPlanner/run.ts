@@ -66,6 +66,7 @@ export interface RunLlmPlanningInput {
   model: PlannerModel;
   words: StoredCustomerWords | null;
   pricingSettings?: unknown;
+  availablePoints?: () => Promise<number | null>;
   now: number;
   log?: (line: string) => void;
 }
@@ -98,6 +99,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       ...(input.web && input.webAvailable ? { webTools: directWebEndpoints(input.webAvailable) } : {}),
       readPage: async (callId) => { const raw = await store.getFile(mission.id, RAW_PATH(callId)); if (raw === null) return null; try { return JSON.parse(raw) as unknown; } catch { return null; } },
       pricingSettings: input.pricingSettings,
+      availablePoints: input.availablePoints,
       today: cairoDayOf(input.now),
       onProgress: async (lineAr) => { await store.addEvent(mission.id, { kind: "progress", message_ar: lineAr }); },
       accept: acceptOf(input.catalog, input.access),

@@ -49,6 +49,7 @@ export interface StoredItem {
 }
 
 export type Op =
+  | { t: "funded_call"; stage: string }
   | { t: "page"; stage: string; stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** Pages this record stands for (default 1: a source read by collect_pages writes one record for a whole call). */ pages?: number; /** The oldest moment (ms since 1970) among the source rows of this page, read from the stage's period field: where a read that walks back through date windows has got to. */ oldest_ms?: number; /** The keys of the raw rows this record added to the stream (collect_pages: a later call returns only new rows). */ keys?: string[] }
   | { t: "item"; stage: string; id: string; state: ItemState; by?: "rule" | "model" | "legacy"; basis?: RuleBasis; reason?: ItemReason; row: Row | null }
   | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason; /** P0 (15 Nov 2026): cells the decision writes on an accepted row (the research verdict's topic mark). Absent in older logs. */ marks?: Record<string, string> }
@@ -67,6 +68,7 @@ export interface StreamState { cursor: string | null; ended: boolean; pages: num
 
 export interface StageLog {
   items: Map<string, StoredItem>;
+  fundedCalls: number;
   duplicates: number;
   pages: number;
   /** Rows of every source page read (with or without an id): what the source returned. */
@@ -75,7 +77,7 @@ export interface StageLog {
   streams: Map<string, StreamState>;
   stop: StopReason | null;
 }
-const newStageLog = (): StageLog => ({ items: new Map(), duplicates: 0, pages: 0, sourceRows: 0, excludedRowsKept: 0, streams: new Map(), stop: null });
+const newStageLog = (): StageLog => ({ items: new Map(), fundedCalls: 0, duplicates: 0, pages: 0, sourceRows: 0, excludedRowsKept: 0, streams: new Map(), stop: null });
 
 export interface StageCounts {
   found: number;
@@ -104,6 +106,7 @@ const RELEVANCE_REASONS: ReadonlyArray<string> = [...RELEVANCE_REASON_LIST, ...F
 function applyOp(logs: Map<string, StageLog>, op: Op): void {
   const log = logs.get(op.stage) ?? (logs.set(op.stage, newStageLog()), logs.get(op.stage)!);
   switch (op.t) {
+    case "funded_call": log.fundedCalls += 1; return;
     case "page": {
       const n = op.pages === undefined ? 1 : Math.max(0, Math.floor(op.pages) || 0);
       log.pages += n;
