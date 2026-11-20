@@ -821,21 +821,34 @@ for (const key of BOT_KEYS) {
 
 // Canvas Setup
 const canvas = document.getElementById('office-canvas');
+const stage = document.getElementById("stage-wrapper");
+const stageSpace = document.getElementById("stage-space");
 const ctx = canvas.getContext('2d');
 const BASE_W = 800;
 const BASE_H = 540;
+let fittedStageWidth = 0;
 
 // High-DPI Resolution Scaler (Capped at DPR 2)
 function setupCanvasDPR() {
-  const rect = canvas.getBoundingClientRect();
+  const { width, height } = stageSpace.getBoundingClientRect();
+  const fitWidth = Math.min(width, height * BASE_W / BASE_H);
+  if (fitWidth <= 0) return false;
+
+  if (fitWidth !== fittedStageWidth) {
+    fittedStageWidth = fitWidth;
+    stage.style.width = fitWidth + 'px';
+  }
+
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const targetW = Math.max(320, Math.round((rect.width || BASE_W) * dpr));
-  const targetH = Math.max(216, Math.round((rect.height || BASE_H) * dpr));
+  const units = Math.min(96, Math.max(1, Math.ceil(fitWidth * dpr / 40)));
+  const targetW = units * 40;
+  const targetH = units * 27;
 
   if (canvas.width !== targetW || canvas.height !== targetH) {
     canvas.width = targetW;
     canvas.height = targetH;
   }
+  return true;
 }
 
 // State
@@ -1861,11 +1874,12 @@ function gameLoop(time) {
   const dt = Math.min((time - lastFrameTime) / 1000, 0.1);
   lastFrameTime = time;
 
-  setupCanvasDPR();
+  if (!setupCanvasDPR()) { requestAnimationFrame(gameLoop); return; }
 
   // Clear and scale
   ctx.save();
-  ctx.setTransform(canvas.width / BASE_W, 0, 0, canvas.height / BASE_H, 0, 0);
+  const scale = canvas.width / BASE_W;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.clearRect(0, 0, BASE_W, BASE_H);
 
   // 1. Pixel Art Flooring
