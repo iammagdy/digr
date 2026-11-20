@@ -3,7 +3,8 @@ import { constantTimeEqual, handleWelcomeRequest, type WelcomeDeps, type Welcome
 
 /**
  * DT-20261119-02b O4: the welcome-only path of send-email. The database trigger sends ONLY the dedicated x-welcome-key and {welcomeUserId}; the function checks the key,
- * looks the user up itself, and welcomes that confirmed user once. Fakes only: no network, no Resend, no database.
+ * looks the user up itself, and welcomes that confirmed user once. After the key (401) and body (400) checks EVERY outcome answers the same 202 {"ok":true} (O6: the key holder learns nothing about any account).
+ * Fakes only: no network, no Resend, no database.
  */
 const KEY = "dedicated-welcome-key-for-tests";
 const SERVICE = "function-own-service-key";
@@ -12,7 +13,7 @@ const ID = "0b9c1c1e-2d4a-4b6e-9a58-3f6f2d1f7a11";
 const env: WelcomeEnv = { welcomeKey: KEY, supabaseUrl: BASE, serviceKey: SERVICE };
 
 type UserFixture = { id?: string; email?: string | null; email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> } | "404" | "500";
-function world(o: { user?: UserFixture; claim?: "new" | "dup" | "fail"; send?: "ok" | "fail" | "throw" } = {}) {
+function world(o: { user?: UserFixture; claim?: "new" | "dup" | "fail"; send?: "ok" | "rejected" | "unknown" | "throw" } = {}) {
   const user: UserFixture = o.user ?? { id: ID, email: "ali@example.com", email_confirmed_at: "2026-11-20T00:00:00Z", user_metadata: { full_name: "Ali Hassan" } };
   const calls: Array<{ method: string; url: string; headers: Record<string, string>; body: unknown }> = [];
   const fetcher = vi.fn(async (url: any, init: any = {}) => {
@@ -32,12 +33,15 @@ function world(o: { user?: UserFixture; claim?: "new" | "dup" | "fail"; send?: "
   const sends: Array<{ to: string; name: string; idempotencyKey: string }> = [];
   const deps: WelcomeDeps = {
     fetcher: fetcher as any,
-    send: async (i) => { sends.push(i); if (o.send === "throw") throw new Error("boom"); return o.send === "fail" ? false : { id: "re_123" }; },
+    send: async (i) => { sends.push(i); if (o.send === "throw") throw new Error("boom"); return o.send === "rejected" ? { status: "rejected" } : o.send === "unknown" ? { status: "unknown" } : { status: "sent", id: "re_123" }; },
   };
   return { calls, sends, deps, fetcher };
 }
 const req = (body: unknown, headers: Record<string, string> = { "x-welcome-key": KEY }) => new Request(`${BASE}/functions/v1/send-email`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
 const run = async (r: Request, w = world(), e = env) => ({ res: await handleWelcomeRequest(r, e, w.deps), w });
+const SAME = '{"ok":true}';
+beforeEach(() => { vi.spyOn(console, "info").mockImplementation(() => undefined); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe("welcome path: the key", () => {
   it("a wrong key → 401, nothing looked up, nothing sent", async () => {
@@ -84,42 +88,68 @@ describe("welcome path: the body is exactly {welcomeUserId}", () => {
   });
 });
 
-describe("welcome path: only a real, confirmed, not-yet-welcomed user", () => {
-  it("not confirmed → 200 skipped, 0 sends, no claim", async () => {
+describe("welcome path: only a real, confirmed, not-yet-welcomed user (and the caller learns nothing either way)", () => {
+  it("not confirmed → 202 {ok:true}, 0 sends, no claim", async () => {
     const { res, w } = await run(req({ welcomeUserId: ID }), world({ user: { id: ID, email: "a@b.com", email_confirmed_at: null } }));
-    expect(res.status).toBe(200);
-    expect((await res.json()).skipped).toBe("not_confirmed");
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe(SAME);
     expect(w.sends).toHaveLength(0);
     expect(w.calls.some((c) => c.method === "POST")).toBe(false);
   });
-  it("no e-mail, user not found (404), or the answer is another user's id → skipped, 0 sends", async () => {
+  it("no e-mail, user not found (404), or the answer is another user's id → 202 {ok:true}, 0 sends", async () => {
     for (const user of [{ id: ID, email: "", email_confirmed_at: "2026-11-20T00:00:00Z" }, "404", { id: "00000000-0000-4000-8000-000000000000", email: "a@b.com", email_confirmed_at: "2026-11-20T00:00:00Z" }] as UserFixture[]) {
       const { res, w } = await run(req({ welcomeUserId: ID }), world({ user }));
-      expect(res.status).toBe(200);
-      expect((await res.json()).skipped).toBeTruthy();
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe(SAME);
       expect(w.sends).toHaveLength(0);
     }
   });
-  it("already in welcome_email_log (the claim inserts nothing) → 200 already_sent, 0 sends", async () => {
+  it("already in welcome_email_log (the claim inserts nothing) → 202 {ok:true}, 0 sends", async () => {
     const { res, w } = await run(req({ welcomeUserId: ID }), world({ claim: "dup" }));
-    expect(res.status).toBe(200);
-    expect((await res.json()).skipped).toBe("already_sent");
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe(SAME);
     expect(w.sends).toHaveLength(0);
   });
-  it("a failing lookup (500) or a failing claim → 502 and nothing is sent", async () => {
+  it("a failing lookup (500) or a failing claim → 202 {ok:true} and nothing is sent", async () => {
     for (const o of [{ user: "500" as const }, { claim: "fail" as const }]) {
       const { res, w } = await run(req({ welcomeUserId: ID }), world(o));
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe(SAME);
       expect(w.sends).toHaveLength(0);
     }
+  });
+  it("PRIVACY: the public answer is byte-identical (status, body, headers) for absent, no-email, unconfirmed, already-welcomed, sent, provider-rejected, unknown, lookup-failed and claim-failed", async () => {
+    const ok = { id: ID, email: "ali@example.com", email_confirmed_at: "2026-11-20T00:00:00Z", user_metadata: { full_name: "Ali Hassan" } };
+    const worlds = [
+      world({ user: "404" }), world({ user: { id: ID, email: "", email_confirmed_at: "2026-11-20T00:00:00Z" } }), world({ user: { id: ID, email: "a@b.com", email_confirmed_at: null } }),
+      world({ claim: "dup" }), world({ user: ok }), world({ send: "rejected" }), world({ send: "unknown" }), world({ send: "throw" }), world({ user: "500" }), world({ claim: "fail" }),
+    ];
+    const answers: string[] = [];
+    for (const w of worlds) {
+      const res = await handleWelcomeRequest(req({ welcomeUserId: ID }), env, w.deps);
+      answers.push(`${res.status}|${res.headers.get("content-type")}|${await res.text()}|${[...res.headers.keys()].sort().join(",")}`);
+    }
+    expect(new Set(answers).size).toBe(1);
+    expect(answers[0]).toBe(`202|application/json|${SAME}|content-type`);
+    // the 401 and 400 answers are NOT part of that set (they say nothing about an account either)
+    expect((await run(req({ welcomeUserId: ID }, { "x-welcome-key": "bad" }))).res.status).toBe(401);
+    expect((await run(req({ template: "welcome" }))).res.status).toBe(400);
+  });
+  it("the outcome goes to the SERVER log only: outcome code + user id, never an e-mail, a name or the key", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    await run(req({ welcomeUserId: ID }), world({ user: { id: ID, email: "ali@example.com", email_confirmed_at: null, user_metadata: { full_name: "Ali Hassan" } } }));
+    await run(req({ welcomeUserId: ID }));
+    const lines = info.mock.calls.map((c) => String(c[0]));
+    expect(lines.map((l) => JSON.parse(l).outcome)).toEqual(["not_confirmed", "sent"]);
+    for (const l of lines) { expect(JSON.parse(l).userId).toBe(ID); expect(l).not.toMatch(/ali@example|Ali Hassan|dedicated-welcome-key|function-own-service-key|re_123/); }
   });
 });
 
 describe("welcome path: the send", () => {
   it("success → exactly ONE send, to the user's OWN address, with the server-side name and idempotencyKey welcome-<id>; the claim row is written and the provider id stored", async () => {
     const { res, w } = await run(req({ welcomeUserId: ID }));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, sent: true });
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe(SAME);
     expect(w.sends).toEqual([{ to: "ali@example.com", name: "Ali Hassan", idempotencyKey: `welcome-${ID}` }]);
     const claim = w.calls.find((c) => c.method === "POST")!;
     expect(claim.url).toContain("/rest/v1/welcome_email_log");
@@ -142,14 +172,22 @@ describe("welcome path: the send", () => {
     await run(req({ welcomeUserId: ID }), w);
     expect(w.sends[0].name).toBe("omar.k");
   });
-  it("the provider fails (or throws) → the claim row is DELETED, 502, so a later confirmation can retry", async () => {
-    for (const send of ["fail", "throw"] as const) {
+  it("the provider's DEFINITE rejection (an HTTP 4xx/5xx answer, or nothing could be sent) → the claim row is DELETED so a later confirmation can retry; the answer is the same 202", async () => {
+    const { res, w } = await run(req({ welcomeUserId: ID }), world({ send: "rejected" }));
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe(SAME);
+    expect(w.sends).toHaveLength(1);
+    const del = w.calls.find((c) => c.method === "DELETE")!;
+    expect(del.url).toContain(`user_id=eq.${ID}`);
+    expect(w.calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+  it("an UNKNOWN delivery outcome (the send threw, timed out or the answer was unreadable) KEEPS the claim: once per user for life wins over a possibly missed welcome", async () => {
+    for (const send of ["unknown", "throw"] as const) {
       const { res, w } = await run(req({ welcomeUserId: ID }), world({ send }));
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(202);
       expect(w.sends).toHaveLength(1);
-      const del = w.calls.find((c) => c.method === "DELETE")!;
-      expect(del.url).toContain(`user_id=eq.${ID}`);
-      expect(w.calls.some((c) => c.method === "PATCH")).toBe(false);
+      expect(w.calls.some((c) => c.method === "DELETE"), send).toBe(false);
+      expect(w.calls.some((c) => c.method === "PATCH"), send).toBe(false);
     }
   });
   it("two requests for the same user in a row: the second one is skipped by the log (one welcome for life)", async () => {
@@ -189,7 +227,8 @@ describe("send-email router (index.ts)", () => {
   it("the right key + a real confirmed user → ONE Resend call, to the user's own address, the welcome template, Idempotency-Key welcome-<id>", async () => {
     const { handle } = await loadRouter();
     const res = await handle(post({ welcomeUserId: ID }, { "x-welcome-key": KEY }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe(SAME);
     const sent = resendCalls();
     expect(sent).toHaveLength(1);
     expect(sent[0].body.to).toEqual(["ali@example.com"]);
@@ -221,14 +260,43 @@ describe("send-email router (index.ts)", () => {
     expect(sent[0].headers["Idempotency-Key"]).toBe("welcome-x");
     expect((await handle(post({ template: "welcome", to: "x@y.com" }, {}))).status).toBe(401);
   });
-  it("RESEND_API_KEY missing: the welcome path reports a failure and the claim is given back; nothing is sent", async () => {
+  it("RESEND_API_KEY missing: nothing could be sent, so the claim is given back; the answer is still the same 202", async () => {
     delete ENVV.RESEND_API_KEY;
     try {
       const { handle } = await loadRouter();
       const res = await handle(post({ welcomeUserId: ID }, { "x-welcome-key": KEY }));
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(202);
       expect(resendCalls()).toHaveLength(0);
       expect(outbound.some((c) => c.method === "DELETE")).toBe(true);
     } finally { ENVV.RESEND_API_KEY = "re_test"; }
+  });
+  it("Resend answers 4xx/5xx → the claim is DELETED; Resend fetch throws or times out, or answers 200 with an unreadable body → the claim is KEPT; the public answer is the same 202 every time", async () => {
+    const { handle } = await loadRouter();
+    const base = globalThis.fetch as any;
+    const cases: Array<[string, (u: string, i: any) => Promise<Response> | null, boolean]> = [
+      ["resend 500", (u) => (u === "https://api.resend.com/emails" ? Promise.resolve(new Response("{}", { status: 500 })) : null), true],
+      ["resend 422", (u) => (u === "https://api.resend.com/emails" ? Promise.resolve(new Response("{}", { status: 422 })) : null), true],
+      ["resend throws", (u) => (u === "https://api.resend.com/emails" ? Promise.reject(new Error("network down")) : null), false],
+      ["resend timeout", (u) => (u === "https://api.resend.com/emails" ? Promise.reject(new DOMException("timed out", "TimeoutError")) : null), false],
+      ["resend 200 unreadable", (u) => (u === "https://api.resend.com/emails" ? Promise.resolve(new Response("not json", { status: 200 })) : null), false],
+    ];
+    const bodies = new Set<string>();
+    for (const [label, hook, deleted] of cases) {
+      outbound.length = 0;
+      globalThis.fetch = vi.fn(async (u: any, i: any = {}) => { outbound.push({ url: String(u), method: String(i.method ?? "GET"), headers: i.headers ?? {}, body: i.body ? JSON.parse(i.body) : null }); return (await hook(String(u), i)) ?? base(u, i); }) as any;
+      outbound.length = 0;
+      const res = await handle(post({ welcomeUserId: ID }, { "x-welcome-key": KEY }));
+      bodies.add(`${res.status}|${await res.text()}`);
+      expect(outbound.some((c) => c.method === "DELETE"), label).toBe(deleted);
+    }
+    expect([...bodies]).toEqual([`202|${SAME}`]);
+  });
+  it("the Resend call of the welcome path has a timeout signal; the service-role path is unchanged", async () => {
+    const { handle } = await loadRouter();
+    let signal: unknown = null;
+    const base = globalThis.fetch as any;
+    globalThis.fetch = vi.fn(async (u: any, i: any = {}) => { if (String(u) === "https://api.resend.com/emails") signal = i.signal; return base(u, i); }) as any;
+    await handle(post({ welcomeUserId: ID }, { "x-welcome-key": KEY }));
+    expect(signal).toBeInstanceOf(AbortSignal);
   });
 });

@@ -90,18 +90,25 @@ export async function handle(req: Request): Promise<Response> {
       { welcomeKey: Deno.env.get("WELCOME_TRIGGER_KEY") ?? "", supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "", serviceKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "" },
       {
         send: async ({ to, name, idempotencyKey }) => {
-          if (!resendKey) return false;
+          if (!resendKey) return { status: "rejected" as const }; // nothing was sent at all
+          let res: Response;
           try {
-            const res = await fetch(RESEND_URL, {
+            res = await fetch(RESEND_URL, {
               method: "POST",
               headers: buildResendHeaders(resendKey, idempotencyKey),
               body: JSON.stringify(buildResendPayload({ template: "welcome", to, vars: { Name: name } })),
+              signal: AbortSignal.timeout(10_000),
             });
-            if (!res.ok) { await res.body?.cancel().catch(() => undefined); return false; }
-            const data = (await res.json().catch(() => ({}))) as { id?: string };
-            return { id: data.id ?? null };
           } catch {
-            return false;
+            return { status: "unknown" as const }; // network error or timeout: the mail may have gone out
+          }
+          if (res.status >= 400) { await res.body?.cancel().catch(() => undefined); return { status: "rejected" as const }; } // a definite refusal was received
+          if (!res.ok) { await res.body?.cancel().catch(() => undefined); return { status: "unknown" as const }; }
+          try {
+            const data = (await res.json()) as { id?: unknown };
+            return { status: "sent" as const, id: typeof data?.id === "string" ? data.id : null };
+          } catch {
+            return { status: "unknown" as const }; // accepted-looking but unreadable: unknown
           }
         },
       },
