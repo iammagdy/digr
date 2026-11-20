@@ -47,7 +47,7 @@ import { readRunState, updateRunState, type RunState } from "./runState";
 import { MAILBOX_LISTER_CAPABILITIES, PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { buildTools, newRunState, recoverCompanyPeoplePlan, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
-import type { UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
+import { getLastRecoveryDiagnostic, type RecoveryDiagnostic, type UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
@@ -866,11 +866,24 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   let forceClassifyFromCalls = false;
   const singleRejectionEnd = (state.planRejections?.count ?? 0) === 1 && output.stop === "end" && !state.finish;
   const shouldRecoverSdkStop = !state.proposedPlan && !state.question && !compiled && (!state.finish || state.finishOrigin === "code_forced_cap");
+  let recoveryDiag: RecoveryDiagnostic | null = null;
   if (shouldRecoverSdkStop) {
     const existing = await store.getMission(mission.id).catch(() => null);
     if (!existing || (existing.status !== "plan_ready" && !existing.plan && (!existing.worker_id || existing.worker_id === mission.worker_id))) {
       const recovered = await recoverCompanyPeoplePlan(ctx, deps.log);
       if (!singleRejectionEnd && (recovered.kind === "sources_unavailable" || recovered.kind === "own_limit")) forceClassifyFromCalls = true;
+      if (recovered.kind !== "plan" && recovered.kind !== "question") {
+        recoveryDiag = recovered.diagnostic ?? getLastRecoveryDiagnostic(mission.id) ?? { reason: `recovery_${recovered.kind}`, issueCodes: [] };
+      }
+    } else if (!state.proposedPlan && !state.question) {
+      recoveryDiag = { reason: existing.status === "plan_ready" || existing.plan ? "skipped_existing_plan" : "skipped_worker_mismatch", issueCodes: [] };
+    }
+  } else if (!state.proposedPlan && !state.question && !compiled) {
+    const prevDiag = getLastRecoveryDiagnostic(mission.id);
+    if (prevDiag && prevDiag.reason !== "not_people_request") {
+      recoveryDiag = { reason: `skipped_after_${prevDiag.reason}`, issueCodes: prevDiag.issueCodes };
+    } else if (understoodPeople) {
+      recoveryDiag = { reason: `skipped_${state.finishOrigin ?? "model_finish"}`, issueCodes: [] };
     }
   }
 
@@ -937,6 +950,22 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
       await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, ...(verdict.cls === "empty_source" ? { cause: "empty" as const } : {}) });
+    }
+    if (recoveryDiag && recoveryDiag.reason !== "not_people_request") {
+      const recKey = `issue_rec_${recoveryDiag.reason}`.replace(/[^a-z0-9_]/g, "_").slice(0, 40);
+      const recIssueCounts = Object.fromEntries(
+        recoveryDiag.issueCodes
+          .map((c) => c.replace(/[^a-z0-9_]/g, "_"))
+          .filter(Boolean)
+          .slice(0, 12)
+          .map((c) => [`issue_${c}`.slice(0, 40), 1]),
+      );
+      await store.addEvent(mission.id, {
+        kind: "call",
+        message_ar: "علامة داخلية للمشرف: تعذّر أو تخطّى استرداد خطة الشركات والأشخاص.",
+        counts: { adm_flag: 1, [recKey]: 1, ...recIssueCounts },
+      }).catch(() => undefined);
+      deps.log?.(`company_people_recovery_diagnostic ${mission.id} reason=${recoveryDiag.reason}${recoveryDiag.issueCodes.length ? ` issues=${recoveryDiag.issueCodes.join(",")}` : ""}`);
     }
   }
 }
