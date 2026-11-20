@@ -208,7 +208,7 @@ describe("the inventory: every sender in the app uses a template that exists, fo
     expect([...used].sort()).toEqual(["job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected"]);
     for (const key of used) expect(IDS).toContain(key);
     expect(src("src/lib/server/topupOwnerAlert.ts")).toContain('"admin-topup-alert"');
-    // the welcome e-mail is sent by the database trigger, with the customer's name only
-    expect(readFileSync(new URL("../supabase/migrations/20261013170000_welcome_email_on_confirm.sql", import.meta.url), "utf8")).toContain("jsonb_build_object('Name', v_name)");
+    // the welcome e-mail is asked for by the database trigger (a user id only) and sent by send-email's welcome-only path, with the customer's name only (DT-20261119-02b)
+    expect(readFileSync(new URL("../supabase/functions/send-email/index.ts", import.meta.url), "utf8")).toContain('buildResendPayload({ template: "welcome", to, vars: { Name: name } })');
   });
 });

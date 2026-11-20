@@ -21,6 +21,9 @@
  *                               A caller whose key differs as a string (another valid key format) is
  *                               verified against SUPABASE_URL's admin API instead (authorize.ts).
  *   SITE_URL                  — optional override for {{ .SiteURL }}.
+ *   WELCOME_TRIGGER_KEY       — the dedicated key of the database's welcome trigger (header `x-welcome-key`, body {"welcomeUserId": "<uuid>"}): a
+ *                               welcome-only path (welcomeTrigger.ts) that looks the user up itself and sends the welcome to that confirmed
+ *                               user once. It can do nothing else and never reaches the service-role path. Missing/empty = that path says 401.
  *
  * Sender is fixed: Diger <noreply@diger.tech> (domain verified on Resend).
  * Templates are verbatim (see templates.ts). Values are HTML-escaped by the
@@ -33,6 +36,7 @@ import {
 } from "./templates.ts";
 import { buildResendHeaders } from "./resendHeaders.ts";
 import { isAuthorizedCaller } from "./authorize.ts";
+import { handleWelcomeRequest, WELCOME_KEY_HEADER } from "./welcomeTrigger.ts";
 
 const FROM = "Diger <noreply@diger.tech>";
 const RESEND_URL = "https://api.resend.com/emails";
@@ -73,9 +77,35 @@ function json(body: unknown, status: number): Response {
   });
 }
 
-async function handle(req: Request): Promise<Response> {
+export async function handle(req: Request): Promise<Response> {
   if (req.method !== "POST") {
     return json({ ok: false, error: "method_not_allowed" }, 405);
+  }
+
+  // The database trigger's welcome-only path: it carries ONLY the dedicated x-welcome-key and {welcomeUserId}; it never reaches the service-role path below.
+  if (req.headers.has(WELCOME_KEY_HEADER)) {
+    const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
+    return handleWelcomeRequest(
+      req,
+      { welcomeKey: Deno.env.get("WELCOME_TRIGGER_KEY") ?? "", supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "", serviceKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "" },
+      {
+        send: async ({ to, name, idempotencyKey }) => {
+          if (!resendKey) return false;
+          try {
+            const res = await fetch(RESEND_URL, {
+              method: "POST",
+              headers: buildResendHeaders(resendKey, idempotencyKey),
+              body: JSON.stringify(buildResendPayload({ template: "welcome", to, vars: { Name: name } })),
+            });
+            if (!res.ok) { await res.body?.cancel().catch(() => undefined); return false; }
+            const data = (await res.json().catch(() => ({}))) as { id?: string };
+            return { id: data.id ?? null };
+          } catch {
+            return false;
+          }
+        },
+      },
+    );
   }
 
   // Server-to-server only: caller must present a service-role key of this project (exact match, else verified by a real call; see authorize.ts).

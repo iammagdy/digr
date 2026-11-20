@@ -61,9 +61,19 @@ confirmation and OAuth signup):
 
 - Migration: `supabase/migrations/20261013170000_welcome_email_on_confirm.sql`
   (pg_net -> this function; silent no-op if the Vault secret is missing,
-  never breaks auth).
-- One-time owner step in the SQL Editor (never paste the key in chat):
-  `select vault.create_secret('<SERVICE_ROLE_KEY>', 'send-email-service-role-key');`
+  never breaks auth). What goes into the pg_net queue (readable by every
+  database role) is ONLY the header `x-welcome-key` and `{"welcomeUserId": "<uuid>"}`:
+  no service-role key, no e-mail address, no name.
+- The function's welcome-only path (`welcomeTrigger.ts`, chosen by the
+  `x-welcome-key` header) compares the key in constant time with the secret
+  `WELCOME_TRIGGER_KEY`, accepts only that exact body, looks the user up itself,
+  and sends the welcome only to that user's own confirmed address, once for
+  life (`public.welcome_email_log`, private: RLS on, service role only). It never
+  reaches the service-role path.
+- One-time owner step, in ONE pipeline (the key is never printed, typed into
+  chat, or put in a repo file): create a random key and store it in BOTH the Vault
+  (secret name `send-email-welcome-key`) and the function secret
+  `WELCOME_TRIGGER_KEY`; redeploy `send-email` after the merge.
 
 The other five templates are sent from API routes via this function (see the
 trigger table above).

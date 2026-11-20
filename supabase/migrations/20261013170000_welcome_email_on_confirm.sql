@@ -1,22 +1,23 @@
 -- Welcome email on email confirmation (Supabase / Resend, no Appwrite).
 --
--- Fires the send-email Edge Function (welcome template) via pg_net whenever
+-- Fires the send-email Edge Function (welcome-only path) via pg_net whenever
 -- auth.users.email_confirmed_at transitions from NULL -> set. Covers both
 -- email-link confirmation (UPDATE) and OAuth signup (INSERT with confirmed email).
 --
--- The service-role key is read from Vault BY NAME (secret name: send-email-service-role-key).
--- The owner creates that Vault secret ONCE via the SQL Editor (never paste the
--- key in chat or into any repo file):
---   select vault.create_secret('<SERVICE_ROLE_KEY>', 'send-email-service-role-key');
+-- WHAT GOES INTO THE pg_net QUEUE (net.http_request_queue is readable by every database role, so nothing wide or personal may go in):
+--   header  x-welcome-key  = a DEDICATED random key that can do nothing except ask for a welcome (Vault secret 'send-email-welcome-key')
+--   body    {"welcomeUserId": "<the user's id>"}
+-- NO service-role key, NO e-mail address, NO name. The Edge Function (send-email, header x-welcome-key) checks the key in constant time,
+-- looks the user up ITSELF, and sends only to that user's own confirmed address, once per user for life (public.welcome_email_log).
 --
--- If the Vault secret is missing or empty, the trigger silently does nothing and NEVER
--- breaks auth. EVERY failure inside the trigger (Vault read, http_post, bad metadata) is
--- swallowed the same way: the auth.users INSERT/UPDATE always commits.
+-- The dedicated key is created ONCE by the project owner, in one pipeline, into BOTH the Vault (name: send-email-welcome-key) and the
+-- Edge Function secret WELCOME_TRIGGER_KEY. It is never typed into chat, a repo file or a ticket.
 --
--- One user never gets two welcome e-mails: the payload carries idempotencyKey
--- 'welcome-' || the user's id (send-email accepts ^[A-Za-z0-9._:-]{1,256}$).
+-- If the Vault secret is missing or empty, the trigger silently does nothing and does not break auth. Every ordinary error inside the
+-- trigger (Vault read, http_post, bad metadata) is swallowed the same way (PL/pgSQL's WHEN OTHERS does not catch query cancellation or
+-- assertion failures), so the auth.users INSERT/UPDATE commits.
 --
--- Safe to run more than once (extensions are IF NOT EXISTS, the function is
+-- Safe to run more than once (extensions and the table are IF NOT EXISTS, the function is
 -- CREATE OR REPLACE, the trigger is DROP IF EXISTS + CREATE).
 
 create extension if not exists "pg_net" with schema "extensions";
@@ -41,6 +42,16 @@ begin
 end
 $$;
 
+-- One welcome per user for life. Private: RLS on, no policies, no grants except the server's own role.
+create table if not exists public.welcome_email_log (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  sent_at timestamptz not null default now(),
+  resend_id text
+);
+alter table public.welcome_email_log enable row level security;
+revoke all on table public.welcome_email_log from public, anon, authenticated;
+grant select, insert, update, delete on table public.welcome_email_log to service_role;
+
 create or replace function public.send_welcome_email()
 returns trigger
 language plpgsql
@@ -49,8 +60,6 @@ set search_path = ''
 as $$
 declare
   v_key text;
-  v_name text;
-  v_payload jsonb;
 begin
   -- The whole body is guarded: nothing in here may ever stop the auth.users write.
   begin
@@ -66,35 +75,26 @@ begin
     if coalesce(new.email, '') = '' then
       return new;
     end if;
+    -- already welcomed once (a reset and a second confirmation must not send a second one)
+    if exists (select 1 from public.welcome_email_log where user_id = new.id) then
+      return new;
+    end if;
 
     select decrypted_secret into v_key
     from vault.decrypted_secrets
-    where name = 'send-email-service-role-key';
+    where name = 'send-email-welcome-key';
 
     if v_key is null or v_key = '' then
       return new;
     end if;
 
-    v_name := coalesce(
-      nullif(new.raw_user_meta_data ->> 'full_name', ''),
-      nullif(new.raw_user_meta_data ->> 'name', ''),
-      split_part(coalesce(new.email, ''), '@', 1)
-    );
-
-    v_payload := jsonb_build_object(
-      'template', 'welcome',
-      'to', new.email,
-      'vars', jsonb_build_object('Name', v_name),
-      'idempotencyKey', 'welcome-' || new.id::text
-    );
-
     perform net.http_post(
       url := 'https://pfinlfaqwnytesedchik.supabase.co/functions/v1/send-email',
       headers := jsonb_build_object(
-        'Authorization', 'Bearer ' || v_key,
-        'Content-Type', 'application/json'
+        'Content-Type', 'application/json',
+        'x-welcome-key', v_key
       ),
-      body := v_payload
+      body := jsonb_build_object('welcomeUserId', new.id)
     );
   exception when others then
     -- Never break auth: email failures are silent here.

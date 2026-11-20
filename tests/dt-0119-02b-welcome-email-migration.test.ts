@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 /**
  * DT-20261119-02b: static guard for supabase/migrations/20261013170000_welcome_email_on_confirm.sql.
  * The real extension is supabase_vault (there is no extension called "vault"), every failure inside the trigger is swallowed, the key is read from the Vault BY NAME and never written
- * in the file, and the payload carries a per-user idempotencyKey. The behaviour (cases B-G) is proved on a real Postgres engine in docs/diger-team/tasks/DT-20261119-02b/plan.md.
+ * in the file, and the payload carries a per-user idempotencyKey. The queue carries only the dedicated welcome key and a user id (O4, فزاع Gate 2 r1). The behaviour (cases B-G) is proved on a real Postgres engine in docs/diger-team/tasks/DT-20261119-02b/plan.md.
  */
 const FILE = "supabase/migrations/20261013170000_welcome_email_on_confirm.sql";
 const sql = readFileSync(FILE, "utf8");
@@ -29,20 +29,37 @@ describe("welcome e-mail migration", () => {
     const guard = body.indexOf("begin", body.indexOf("begin") + 1);
     const handler = body.indexOf("exception when others");
     expect(guard).toBeGreaterThan(-1);
-    for (const needle of ["new.email_confirmed_at is null", "old.email_confirmed_at is not null", "from vault.decrypted_secrets", "new.raw_user_meta_data", "net.http_post"]) {
+    for (const needle of ["new.email_confirmed_at is null", "old.email_confirmed_at is not null", "from public.welcome_email_log", "from vault.decrypted_secrets", "net.http_post"]) {
       expect(body.indexOf(needle), needle).toBeGreaterThan(guard);
       expect(body.indexOf(needle), needle).toBeLessThan(handler);
     }
   });
-  it("reads the key from the Vault by name, with an empty or missing key doing nothing", () => {
-    expect(code).toMatch(/from vault\.decrypted_secrets\s+where name = 'send-email-service-role-key'/);
+  it("reads the DEDICATED welcome key from the Vault by name, with an empty or missing key doing nothing", () => {
+    expect(code).toMatch(/from vault\.decrypted_secrets\s+where name = 'send-email-welcome-key'/);
+    expect(code).not.toContain("send-email-service-role-key");
     expect(code).toMatch(/if v_key is null or v_key = '' then\s+return new;/);
   });
-  it("sends one welcome per user: idempotencyKey = 'welcome-' || the user id; all calls schema-qualified, empty search_path", () => {
-    expect(code).toMatch(/'idempotencyKey', 'welcome-' \|\| new\.id::text/);
-    expect(code).toMatch(/perform net\.http_post\(/);
+  it("the pg_net queue gets ONLY x-welcome-key and {welcomeUserId}: no Authorization, no service key, no e-mail, no name", () => {
+    const start = code.indexOf("perform net.http_post(");
+    const post = code.slice(start, code.indexOf("exception when others", start));
+    expect(post).toMatch(/'x-welcome-key', v_key/);
+    expect(post).toMatch(/body := jsonb_build_object\('welcomeUserId', new\.id\)/);
+    expect(post).not.toMatch(/authorization|bearer|service_role|new\.email|raw_user_meta_data|'to'|'vars'|'Name'|idempotencyKey/i);
+    // nothing in the whole function reads the address into a variable that is sent
+    const fn = code.slice(code.indexOf("create or replace function public.send_welcome_email"), code.indexOf("revoke execute"));
+    expect(fn).not.toMatch(/raw_user_meta_data/);
+    expect(fn.match(/new\.email\b/g) ?? []).toHaveLength(1); // only the empty-address guard
     expect(code).toMatch(/set search_path = ''/);
     expect(code).toMatch(/security definer/);
+  });
+  it("one welcome per user for life: a private log table (RLS on, no policies, service role only) and the trigger skips a logged user", () => {
+    expect(code).toMatch(/create table if not exists public\.welcome_email_log \(\s*user_id uuid primary key references auth\.users \(id\) on delete cascade,\s*sent_at timestamptz not null default now\(\),\s*resend_id text\s*\);/);
+    expect(code).toMatch(/alter table public\.welcome_email_log enable row level security;/);
+    expect(code).not.toMatch(/create policy/i);
+    expect(code).toMatch(/revoke all on table public\.welcome_email_log from public, anon, authenticated;/);
+    expect(code).toMatch(/grant select, insert, update, delete on table public\.welcome_email_log to service_role;/);
+    expect(code).not.toMatch(/grant [^;]*welcome_email_log to (anon|authenticated|public)/i);
+    expect(code).toMatch(/if exists \(select 1 from public\.welcome_email_log where user_id = new\.id\) then\s+return new;/);
   });
   it("fires only on the confirmation: INSERT confirmed or UPDATE null -> set", () => {
     expect(code).toMatch(/if new\.email_confirmed_at is null then\s+return new;/);
@@ -60,8 +77,7 @@ describe("welcome e-mail migration", () => {
     expect(sql).not.toMatch(/eyJ[A-Za-z0-9_-]{10,}/);
     expect(sql).not.toMatch(/sb_secret_/);
     expect(sql).not.toMatch(/sbp_[A-Za-z0-9]{10,}/);
-    expect(code).not.toMatch(/'Bearer [^']+'\s*\|\|\s*'/);
-    expect(code).toMatch(/'Bearer ' \|\| v_key/);
-    expect(sql).not.toMatch(/vault\.create_secret\('(?!<SERVICE_ROLE_KEY>)/);
+    expect(code).not.toMatch(/bearer/i);
+    expect(sql).not.toMatch(/vault\.create_secret/);
   });
 });
