@@ -2,7 +2,7 @@ import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../src/lib/agentMission/child
 import { isContactSource, requestWantsContacts } from "../../src/lib/agentMission/contacts";
 import { firstSentenceAr, validateAndPricePlan, type PricedPlan, type SavedEndpointCallDetail } from "../../src/lib/agentMission/plan";
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
-import { namesRoleAr, roleDefOf, roleOfNoun, titleRoleVerdict, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
+import { namesRoleAr, neutralPeopleTitleAr, roleDefOf, roleOfNoun, titleRoleVerdict, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type FieldClass, type SourceField } from "../../src/lib/agentMission/fields";
@@ -12,11 +12,31 @@ import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/li
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { RAW_PATH, rowsExpressionOf } from "./gateway";
+import { RAW_PATH, rowsExpressionOf, type Gateway } from "./gateway";
 import { codeRunPath, parentBinding, type CodeRun } from "./engine/spec";
 import type { SandboxResult } from "./sandbox";
 import { readRunState, updateRunState } from "./runState";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
+
+export const PLAIN_PEOPLE_FALLBACK_QUESTION_AR =
+  "لقينا الشركات، بس بيانات المديرين في العينة مش كفاية. تحب نكمّل بالشركات بس، ولا نحاول تاني؟";
+export const PLAIN_PEOPLE_FALLBACK_OPTIONS_AR = ["نكمّل بالشركات بس", "نحاول تاني"] as const;
+
+export const COMPANIES_ONLY_OPTION_LABELS: ReadonlySet<string> = new Set([
+  PLAIN_PEOPLE_FALLBACK_OPTIONS_AR[0],
+  "الاستمرار بالشركات فقط",
+]);
+
+export const PEOPLE_RETRY_OPTION_LABELS: ReadonlySet<string> = new Set([
+  PLAIN_PEOPLE_FALLBACK_OPTIONS_AR[1],
+  "إعادة المحاولة بمصدر آخر",
+]);
+
+export const isCompaniesOnlyChoice = (answer: unknown): boolean =>
+  typeof answer === "string" && COMPANIES_ONLY_OPTION_LABELS.has(answer.trim());
+
+export const isPeopleRetryChoice = (answer: unknown): boolean =>
+  typeof answer === "string" && PEOPLE_RETRY_OPTION_LABELS.has(answer.trim());
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
 const OWN_LIMIT_REFUSAL = /^(over_budget|daily_cap|recording_unavailable|missing_params)/;
@@ -198,6 +218,8 @@ export function extractPersonPreview(raw: Record<string, unknown>) {
     nonEmptyStr(person.lastCompanyWebsite) ||
     nonEmptyStr(raw.companyWebsite) ||
     nonEmptyStr(raw.company_website) ||
+    nonEmptyStr(raw.company_domain) ||
+    nonEmptyStr(raw.website) ||
     nonEmptyStr(compObj?.website_url) ||
     nonEmptyStr(compObj?.domain);
   const companyLinkedin =
@@ -206,6 +228,7 @@ export function extractPersonPreview(raw: Record<string, unknown>) {
     nonEmptyStr(raw.lastCompanyUrl) ||
     nonEmptyStr(person.lastCompanyUrl) ||
     nonEmptyStr(raw.companyLinkedinUrl) ||
+    nonEmptyStr(raw.companyLinkedinURL) ||
     nonEmptyStr(raw.company_linkedin_url) ||
     nonEmptyStr(compObj?.linkedin_url);
   const companyLinkedinId =
@@ -222,6 +245,7 @@ export function extractPersonPreview(raw: Record<string, unknown>) {
   const linkedin =
     nonEmptyStr(person.linkedin_url) ||
     nonEmptyStr(person.linkedinUrl) ||
+    nonEmptyStr(person.linkedinURL) ||
     nonEmptyStr(person.linkedin) ||
     nonEmptyStr(person.profile_url) ||
     nonEmptyStr(person.profileUrl) ||
@@ -229,12 +253,23 @@ export function extractPersonPreview(raw: Record<string, unknown>) {
     nonEmptyStr(urls?.linkedin) ||
     nonEmptyStr(urls?.profile) ||
     nonEmptyStr(raw.linkedin_url) ||
+    nonEmptyStr(raw.linkedinUrl) ||
+    nonEmptyStr(raw.linkedinURL) ||
     nonEmptyStr(raw.linkedin) ||
+    nonEmptyStr(raw.profile_url) ||
     nonEmptyStr(raw.profileUrl) ||
     nonEmptyStr(raw.profileURL);
   const email = nonEmptyStr(person.email) || nonEmptyStr(raw.email);
   const id = nonEmptyStr(raw.id) || nonEmptyStr(raw.personID) || nonEmptyStr(raw.person_id) || nonEmptyStr(person.id) || linkedin || email;
-  return { id, fullName, jobTitle, company, companyDomain, companyLinkedin, companyLinkedinId, linkedin };
+  const numScore = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const seniorityScore =
+    numScore(exp.seniorityScore) ??
+    numScore(exp.seniority_score) ??
+    numScore(raw.seniorityScore) ??
+    numScore(raw.seniority_score) ??
+    numScore(person.seniorityScore) ??
+    numScore(person.seniority_score);
+  return { id, fullName, jobTitle, seniorityScore, company, companyDomain, companyLinkedin, companyLinkedinId, linkedin };
 }
 
 export function extractCompanyPreview(raw: Record<string, unknown>) {
@@ -245,14 +280,34 @@ export function extractCompanyPreview(raw: Record<string, unknown>) {
   return { id, name, website, linkedin };
 }
 
-export function buildSavedPeopleMapCode(rowExpr: string, extraFields: ReadonlyArray<SourceField> = []): string {
-  const extra = extraFieldAssignments(extraFields, new Set(["id", "full_name", "job_title", "company", "linkedin", "email", "phone"]));
+export type SeniorityStatus = "senior" | "uncertain" | "non_senior";
+
+export interface PeopleMapAnnotation {
+  seniorTitles?: ReadonlyArray<string>;
+  nonSeniorTitles?: ReadonlyArray<string>;
+  withNotes?: boolean;
+}
+
+export function buildSavedPeopleMapCode(
+  rowExpr: string,
+  extraFields: ReadonlyArray<SourceField> = [],
+  annotation?: PeopleMapAnnotation,
+): string {
+  const baseKeys = new Set(["id", "full_name", "job_title", "company", "linkedin", "email", "phone", ...(annotation?.withNotes ? ["notes"] : [])]);
+  const extra = extraFieldAssignments(extraFields, baseKeys);
+  const withNotes = annotation?.withNotes === true;
+  const seniorArr = JSON.stringify(annotation?.seniorTitles ?? []);
+  const nonSeniorArr = JSON.stringify(annotation?.nonSeniorTitles ?? []);
   return [
     `const list = ${rowExpr};`,
     `if (!Array.isArray(list)) return [];`,
     `const s = (v) => typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" && Number.isFinite(v) ? String(v) : "";`,
     ...(extra.length > 0 ? [`const atPath = (obj, p) => { const v = p.split(".").reduce((c, k) => (c && typeof c === "object" ? c[k] : undefined), obj); return v === undefined || v === null || typeof v === "boolean" ? "" : s(v); };`] : []),
-    `return list.filter((r) => r && typeof r === "object").map((r) => {`,
+    ...(withNotes ? [
+      `const SENIOR_TITLES = new Set(${seniorArr});`,
+      `const NON_SENIOR_TITLES = new Set(${nonSeniorArr});`,
+    ] : []),
+    `const mapped = list.filter((r) => r && typeof r === "object").map((r, idx) => {`,
     `  const p = r.person && typeof r.person === "object" ? r.person : r;`,
     `  const exps = Array.isArray(p.experiences) ? p.experiences : Array.isArray(r.experiences) ? r.experiences : Array.isArray(r.employment_history) ? r.employment_history : Array.isArray(r.positionList) ? r.positionList : [];`,
     `  const exp = exps.find((x) => x && typeof x === "object" && !x.endDate) || exps.find((x) => x && typeof x === "object") || {};`,
@@ -261,15 +316,26 @@ export function buildSavedPeopleMapCode(rowExpr: string, extraFields: ReadonlyAr
     `  const full_name = s(p.full_name) || s(p.fullName) || s(p.name) || [s(p.first_name) || s(p.firstName) || s(p.firstname) || s(r.firstname), s(p.last_name) || s(p.lastName) || s(p.lastname) || s(r.lastname)].filter(Boolean).join(" ").trim() || s(r.full_name) || s(r.name);`,
     `  const job_title = s(p.job_title) || s(p.jobTitle) || s(p.lastJobTitle) || s(p.title) || s(p.headline) || s(p.position) || s(exp.job_title) || s(exp.jobTitle) || s(exp.title) || s(r.lastJobTitle) || s(r.job_title) || s(r.title);`,
     `  const company = (typeof p.company === "string" ? p.company.trim() : "") || s(p.company_name) || s(p.companyName) || s(p.lastCompanyName) || s(exp.company_name) || s(exp.companyName) || s(compObj.name) || s(r.lastCompanyName) || s(r.companyName) || s(r.company_name);`,
-    `  const linkedin = s(p.linkedin_url) || s(p.linkedinUrl) || s(p.linkedin) || s(p.profile_url) || s(p.profileUrl) || s(p.profileURL) || s(urls.linkedin) || s(urls.profile) || s(r.linkedin_url) || s(r.linkedin) || s(r.profileUrl) || s(r.profileURL);`,
+    `  const linkedin = s(p.linkedin_url) || s(p.linkedinUrl) || s(p.linkedinURL) || s(p.linkedin) || s(p.profile_url) || s(p.profileUrl) || s(p.profileURL) || s(urls.linkedin) || s(urls.profile) || s(r.linkedin_url) || s(r.linkedinUrl) || s(r.linkedinURL) || s(r.linkedin) || s(r.profile_url) || s(r.profileUrl) || s(r.profileURL);`,
     `  const email = s(p.email) || s(r.email) || s(p.work_email) || s(r.work_email);`,
     `  const phone = s(p.phone) || s(r.phone) || s(p.mobile) || s(r.mobile);`,
     `  const id = s(r.id) || s(r.personID) || s(r.person_id) || s(p.id) || linkedin || email;`,
+    ...(withNotes ? [
+      `  const score = typeof exp.seniorityScore === "number" ? exp.seniorityScore : (typeof exp.seniority_score === "number" ? exp.seniority_score : (typeof p.seniorityScore === "number" ? p.seniorityScore : (typeof p.seniority_score === "number" ? p.seniority_score : (typeof r.seniorityScore === "number" ? r.seniorityScore : (typeof r.seniority_score === "number" ? r.seniority_score : null)))));`,
+      `  const status = SENIOR_TITLES.has(job_title) || (score !== null && score >= 6) ? "senior" : (NON_SENIOR_TITLES.has(job_title) ? "non_senior" : "uncertain");`,
+      `  const notes = status === "senior" ? "" : (status === "non_senior" ? "المسمى في المصدر ليس إداريًا؛ أُضيف كأقرب شخص متاح" : "غير مؤكد كمدير — أقرب شخص متاح في المصدر");`,
+      `  const _rank = status === "senior" ? 0 : (status === "uncertain" ? 1 : 2);`,
+    ] : []),
     `  return {`,
     `    id, full_name, job_title, company, linkedin, email, phone,`,
+    ...(withNotes ? [`    notes, _rank, _idx: idx,`] : []),
     ...extra,
     `  };`,
     `}).filter((row) => row.id && row.full_name && (row.job_title || row.company || row.linkedin));`,
+    ...(withNotes ? [
+      `mapped.sort((a, b) => a._rank - b._rank || a._idx - b._idx);`,
+      `return mapped.map(({ _rank, _idx, ...rest }) => rest);`,
+    ] : [`return mapped;`]),
   ].join("\n");
 }
 
@@ -515,21 +581,87 @@ export async function inspectSavedCompanyAndPeople(params: {
   return { hasOwnLimit, peopleCandidates, savedPeopleMap, companyCandidates, hasMissingRawPeople, hasMissingRawCompanies, anyPeopleOkOrEmpty, anyCompanyOk };
 }
 
-function roleMismatchDetected(linkedCandidates: SavedPeopleCandidate[], nounAr: string | undefined, requestText: string): boolean {
+function assessManagerRoleEvidence(
+  linkedCandidates: SavedPeopleCandidate[],
+  nounAr: string | undefined,
+  requestText: string,
+): {
+  isManagerAsk: boolean;
+  allExplicitNonSenior: boolean;
+  allConfirmedSenior: boolean;
+  annotation?: PeopleMapAnnotation;
+} {
   const roleKeys: ReadonlyArray<RoleKey> = ["manager", "engineer", "sales", "hr", "accountant"];
   const detectedKey = roleKeys.find((k) => namesRoleAr(requestText, k, false));
   const roleDef = roleOfNoun(nounAr) ?? (detectedKey ? roleDefOf(detectedKey) : null);
-  if (!roleDef) return false;
   const previews = linkedCandidates.flatMap((c) => c.rawRows.map(extractPersonPreview)).filter((p) => p.fullName);
-  if (previews.length === 0) return false;
-  const titled = previews.filter((p) => p.jobTitle !== "");
-  if (titled.length === 0) return false;
-  const hasMatchOrUnclear = titled.some((p) => {
-    const tier = titleTierOf(p.jobTitle, roleDef.key);
-    const verdict = titleRoleVerdict(p.jobTitle, roleDef.key);
-    return verdict === "match" || tier <= 1;
+  if (previews.length === 0) return { isManagerAsk: false, allExplicitNonSenior: false, allConfirmedSenior: true };
+
+  if (!roleDef || roleDef.key !== "manager") {
+    if (!roleDef) return { isManagerAsk: false, allExplicitNonSenior: false, allConfirmedSenior: true };
+    const titled = previews.filter((p) => p.jobTitle !== "");
+    if (titled.length === 0) return { isManagerAsk: false, allExplicitNonSenior: false, allConfirmedSenior: true };
+    const hasMatchOrUnclear = titled.some((p) => titleRoleVerdict(p.jobTitle, roleDef.key) === "match" || titleTierOf(p.jobTitle, roleDef.key) <= 1);
+    return { isManagerAsk: false, allExplicitNonSenior: !hasMatchOrUnclear, allConfirmedSenior: true };
+  }
+
+  const statuses = new Map<string, SeniorityStatus>();
+  for (const p of previews) {
+    if (!p.jobTitle) continue;
+    const tier = titleTierOf(p.jobTitle, "manager");
+    if (tier === 0 || (tier !== 3 && p.seniorityScore !== null && p.seniorityScore >= 6)) {
+      statuses.set(p.jobTitle, "senior");
+    } else if (tier === 3) {
+      statuses.set(p.jobTitle, "non_senior");
+    }
+  }
+
+  const rowStatuses: SeniorityStatus[] = previews.map((p) => {
+    if (p.seniorityScore !== null && p.seniorityScore >= 6 && titleTierOf(p.jobTitle, "manager") !== 3) return "senior";
+    if (!p.jobTitle) return "uncertain";
+    return statuses.get(p.jobTitle) ?? "uncertain";
   });
-  return !hasMatchOrUnclear;
+  const titledStatuses = previews.filter((p) => p.jobTitle !== "").map((p) => {
+    if (p.seniorityScore !== null && p.seniorityScore >= 6 && titleTierOf(p.jobTitle, "manager") !== 3) return "senior" as const;
+    return statuses.get(p.jobTitle) ?? ("uncertain" as const);
+  });
+  const allExplicitNonSenior = titledStatuses.length > 0 && titledStatuses.every((s) => s === "non_senior");
+  const allConfirmedSenior = rowStatuses.every((s) => s === "senior");
+  const seniorTitles = [...statuses.entries()].filter(([, s]) => s === "senior").map(([t]) => t);
+  const nonSeniorTitles = [...statuses.entries()].filter(([, s]) => s === "non_senior").map(([t]) => t);
+  return {
+    isManagerAsk: true,
+    allExplicitNonSenior,
+    allConfirmedSenior,
+    annotation: {
+      seniorTitles,
+      nonSeniorTitles,
+      withNotes: !allConfirmedSenior,
+    },
+  };
+}
+
+function buildEligiblePeopleSampleParams(
+  endpoint: CatalogEndpoint,
+  company: ReturnType<typeof extractCompanyPreview>,
+  perCount: number,
+): Record<string, unknown> | null {
+  const params: Record<string, unknown> = {};
+  const domain = company.website
+    ? company.website.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]?.trim() ?? ""
+    : "";
+  for (const inp of endpoint.inputs) {
+    const key = inp.name;
+    const lk = key.toLowerCase();
+    if (/website|domain/.test(lk) && domain) { params[key] = domain; continue; }
+    if (/linkedin/.test(lk) && /url|company/.test(lk) && company.linkedin) { params[key] = company.linkedin; continue; }
+    if (/^company$/i.test(lk) && (company.linkedin || domain || company.name)) { params[key] = company.linkedin || domain || company.name; continue; }
+    if ((/company.*name|^name$|^query$|^q$/.test(lk)) && company.name) { params[key] = company.name; continue; }
+    if (/^page$/i.test(key)) { params[key] = 1; continue; }
+    if (/per_?page|limit|max_?results|^count$/i.test(lk)) { params[key] = perCount; continue; }
+    if (inp.required) return null;
+  }
+  return Object.keys(params).length > 0 ? params : null;
 }
 
 export async function recordQuestionOnce(opts: {
@@ -557,6 +689,9 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   catalog: TregCatalog;
   access: AccountAccess;
   capabilities?: CapabilityDiscovery;
+  gateway?: Gateway;
+  forceCompaniesOnly?: boolean;
+  isRecoveryRetry?: boolean;
   calls: CallRow[];
   callParams: Map<string, Record<string, unknown>>;
   codeRuns: Map<string, CodeRun>;
@@ -570,11 +705,13 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   loadEvidenceMap: (stagesList: Array<Record<string, unknown>>) => Promise<Map<string, string | null>>;
   makeLookup: (evMap: Map<string, string | null>) => Parameters<typeof validateAndPricePlan>[1];
   finalizePlan: (planIn: PricedPlan, evMap: Map<string, string | null>, opts: { skipAdvice?: boolean }) => Promise<{ ok: true; plan: PricedPlan } | { ok: false; advice?: string[]; issues?: string[] }>;
+  onCallsRefreshed?: (calls: CallRow[], inspection: SavedEvidenceInspection) => void;
   inspection?: SavedEvidenceInspection;
   log?: (line: string) => void;
 }): Promise<RecoveryResult> {
-  const { mission, store, catalog, access, capabilities, calls, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
-  const inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
+  const { mission, store, catalog, access, capabilities, gateway, forceCompaniesOnly, isRecoveryRetry, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
+  let calls = params.calls;
+  let inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
 
   const finishDiag = <T extends "none" | "own_limit" | "sources_unavailable">(kind: T, reason: string, issueCodes: ReadonlyArray<string> = [], capIssues: ReadonlyArray<string> = []): RecoveryResult => {
     const cleanCap = sanitizeCapIssuesForAdmin(capIssues, 2);
@@ -591,13 +728,19 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   };
 
   const requestText = askedTextOf(mission);
-  const peopleRequested = Boolean(understoodPeople) || inspection.peopleCandidates.length > 0;
-  if (!peopleRequested) return finishDiag("none", "not_people_request");
-
+  const hasAnswer = Boolean(mission.answer_text && String(mission.answer_text).trim() !== "");
+  const proposalHasChild = stagesIn.some(
+    (st) => isObject(st) && st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "",
+  );
+  const companiesOnlyAfterAnswer =
+    Boolean(forceCompaniesOnly) ||
+    (hasAnswer && !isRecoveryRetry && !isPeopleRetryChoice(mission.answer_text) && !understoodPeople && !proposalHasChild);
   // Discover validated stages + eligible endpoints FROM capability discovery when enabled
   const discoveryPeopleStage = capabilities
     ? capabilities.stages.find((s) => s.stage.operation === "people.discover" && s.stage.parentKey !== null) ?? null
     : null;
+  const peopleRequested = !companiesOnlyAfterAnswer && (Boolean(understoodPeople) || Boolean(discoveryPeopleStage) || inspection.peopleCandidates.length > 0);
+  if (!peopleRequested && !companiesOnlyAfterAnswer) return finishDiag("none", "not_people_request");
   const discoveryRootStage = capabilities
     ? (discoveryPeopleStage?.stage.parentKey
         ? capabilities.stages.find((s) => s.stage.key === discoveryPeopleStage.stage.parentKey) ?? null
@@ -620,14 +763,167 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       : finishDiag("none", "no_company_evidence");
   }
 
+  let seq = params.outSeq;
+  const buildCompaniesOnlyPlan = async (noteAr?: string): Promise<RecoveryResult | null> => {
+    const allowedCompanies = usableCompanies.filter((co) => co.rawJson !== null && isStageAllowed(co.endpointId, catalog, access) && (!eligibleRootIds || eligibleRootIds.has(co.endpointId)));
+    const coCandidate = allowedCompanies[0];
+    if (!coCandidate) return null;
+    const rawCoText = typeof coCandidate.rawJson === "string" ? coCandidate.rawJson : JSON.stringify(coCandidate.rawJson);
+    const coFields = usefulFieldsOfPage(rawCoText);
+    const coFieldSet = new Set<FieldClass>(coFields.map((f) => f.cls));
+    const coColumns: Array<{ key: string; title_ar: string }> = [
+      { key: "name", title_ar: "اسم الشركة" },
+      { key: "industry", title_ar: "النشاط والتخصص" },
+      { key: "city", title_ar: "المدينة" },
+      { key: "country", title_ar: "الدولة" },
+      { key: "website", title_ar: "الموقع الإلكتروني" },
+      { key: "linkedin", title_ar: "صفحة الشركة على الشبكة المهنية" },
+      ...(coFieldSet.has("address") ? [{ key: "address", title_ar: FIELD_LABEL_AR.address }] : []),
+      ...(coFieldSet.has("phone") ? [{ key: "phone", title_ar: "هاتف المقر الرئيسي" }] : []),
+      ...(coFieldSet.has("email") ? [{ key: "email", title_ar: "الإيميل العام للشركة" }] : []),
+    ];
+    const extraCoFields = uncoveredFields(coFields.filter((f) => SAFE_FIELD_PATH.test(f.path)), coColumns);
+    for (const f of extraCoFields) {
+      if (!coColumns.some((c) => c.key === f.cls)) coColumns.push({ key: f.cls, title_ar: FIELD_LABEL_AR[f.cls] });
+    }
+    const companyCode = buildSavedCompanyMapCode(coCandidate.rowExpr, extraCoFields);
+    const sbCo = await runSandbox(companyCode, { [coCandidate.callId]: coCandidate.rawJson });
+    let mappedCo: unknown[] = [];
+    if (sbCo.ok && sbCo.resultJson) {
+      try {
+        const parsed = JSON.parse(sbCo.resultJson);
+        if (Array.isArray(parsed)) mappedCo = parsed;
+      } catch { /* empty */ }
+    }
+    if (mappedCo.length === 0 || !mappedCo.every(isObject)) return null;
+    seq += 1;
+    const coOutId = outIdOf(seq);
+    await store.putFile(mission.id, `out/${coOutId}.json`, JSON.stringify(mappedCo), "application/json");
+    codeRuns.set(coOutId, { code: companyCode, files: [coCandidate.callId] });
+    try { await store.putNew(mission.id, codeRunPath(coOutId), JSON.stringify({ code: companyCode, files: [coCandidate.callId] }), "application/json"); } catch { /* ignore */ }
+    const coCall = calls.find((c) => c.id === `${mission.id}:${coCandidate.callId}`);
+    const coParams = callParams.get(coCandidate.callId) ?? coCall?.params_digest ?? {};
+    const coQuery = ["query", "q", "keyword", "search", "search_query"].map((k) => coParams[k]).find((v) => typeof v === "string" && v.trim() !== "") as string | undefined;
+    const needsRelFallback = Boolean(coQuery) && !requestNamesSector(`${requestText} ${mission.answer_text ?? ""}`);
+    const relTerms = (understoodCompanies?.search_terms?.length ? understoodCompanies.search_terms : [understoodCompanies?.topic, coQuery].filter((v): v is string => typeof v === "string" && v.trim() !== "")).slice(0, 8);
+    const companiesTarget = Math.max(
+      1,
+      Number(understoodCompanies?.expected_rows) ||
+      Number(isObject(rootCandidateFromStages) ? rootCandidateFromStages.expected_rows : 0) ||
+      Math.max(2, coCandidate.rows ?? 2),
+    );
+    const rootStage: Record<string, unknown> = {
+      key: rootStageKey,
+      title_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة",
+      endpoint_id: coCandidate.endpointId,
+      expected_rows: companiesTarget,
+      parent_key: null,
+      deliver: true,
+      columns: coColumns,
+      measured_by: [coCandidate.callId],
+      yield_from: coOutId,
+      ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: ["name", "industry"], min_own_words: 0, review: true } } : {}),
+    };
+    const evMap = await loadEvidenceMap([rootStage]);
+    const unservedReason = isCompaniesOnlyChoice(mission.answer_text)
+      ? "اخترتَ الاستمرار بالشركات المتاحة فقط."
+      : companiesOnlyAfterAnswer
+        ? "اكتفى الطلب بالشركات فقط بناءً على توضيحك."
+        : "جُرّبت مصادر المديرين المتاحة حاليًا ولم تتوفر بيانات كافية.";
+    const coWants = requestWantsContacts(requestText);
+    const coContactsNote = coWants.email || coWants.phone
+      ? "اكتفت الخطة ببيانات الشركات المتاحة فقط دون بيانات تواصل مسؤولي الشركات."
+      : undefined;
+    const coLookup = {
+      ...makeLookup(evMap),
+      peopleEstimate: undefined,
+      understoodPeople: undefined,
+      childStepSources: () => [],
+    };
+    const checked = validateAndPricePlan(
+      {
+        summary_ar: `ستحصل على ${rootStage.title_ar} المتاحة من المصادر.`,
+        stages: [rootStage] as any,
+        unserved_steps: [{ reason_ar: unservedReason }],
+        ...(coContactsNote ? { contacts_note_ar: coContactsNote } : {}),
+        ...(noteAr ? { assumptions_ar: [noteAr] } : {}),
+      },
+      coLookup,
+    );
+    const chosenChecked = checked.ok || !noteAr
+      ? checked
+      : validateAndPricePlan(
+          {
+            summary_ar: `ستحصل على ${rootStage.title_ar} المتاحة من المصادر.`,
+            stages: [rootStage] as any,
+            unserved_steps: [{ reason_ar: unservedReason }],
+            ...(coContactsNote ? { contacts_note_ar: coContactsNote } : {}),
+          },
+          coLookup,
+        );
+    if (!chosenChecked.ok) {
+      log?.(`company_people_recovery_co_validate_failed ${mission.id} ${chosenChecked.issues.slice(0, 3).join("; ")}`);
+      return null;
+    }
+    const fin = await finalizePlan(chosenChecked.plan, evMap, { skipAdvice: true });
+    if (!fin.ok) {
+      log?.(`company_people_recovery_co_finalize_failed ${mission.id} ${(fin.issues ?? fin.advice ?? []).slice(0, 3).join("; ")}`);
+      return null;
+    }
+    clearDiag();
+    return { kind: "plan", plan: fin.plan, outSeq: seq };
+  };
+
+  const tryCompaniesOnlyFallback = async (): Promise<RecoveryResult | null> => {
+    if (!companiesOnlyAfterAnswer && !isPeopleRetryChoice(mission.answer_text)) return null;
+    const retryNote = companiesOnlyAfterAnswer
+      ? undefined
+      : "جُرّبت مصادر إضافية للمديرين ولم تتوفر بيانات كافية، فجهّزنا خطة الشركات المتاحة فقط؛ وتقدر ترفضها أو تعدّلها قبل أي خصم.";
+    return buildCompaniesOnlyPlan(retryNote);
+  };
+
+  if (companiesOnlyAfterAnswer) {
+    const coPlan = await buildCompaniesOnlyPlan();
+    if (coPlan) return coPlan;
+    return finishDiag("none", "companies_only_no_company_evidence");
+  }
+
+  // On customer «نحاول تاني» retry, probe any remaining untried eligible people sources before giving up.
+  if (isPeopleRetryChoice(mission.answer_text) && discoveryPeopleStage && gateway && usableCompany && usableCompany.rawRows.length > 0) {
+    const calledEps = new Set(calls.filter((c) => (c.phase ?? "planning") === "planning").map((c) => c.endpoint_id));
+    const untriedEligible = discoveryPeopleStage.eligible.filter((e) => !calledEps.has(e.id));
+    const previewCompany = extractCompanyPreview(usableCompany.rawRows[0]);
+    const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
+    let probedAny = false;
+    for (const candidate of untriedEligible.slice(0, 3)) {
+      const epDef = catalog.byId.get(candidate.id);
+      if (!epDef || !isStageAllowed(candidate.id, catalog, access)) continue;
+      const sampleParams = buildEligiblePeopleSampleParams(epDef, previewCompany, perCount);
+      if (!sampleParams) continue;
+      const res = await gateway.tregCall({ endpoint_id: candidate.id, params: sampleParams, why: "retry_remaining_eligible_people" });
+      if (typeof res.call_id === "string") callParams.set(res.call_id, sampleParams);
+      probedAny = true;
+      if (res.ok === true && Number(res.rows_in_page ?? 0) > 0) break;
+    }
+    if (probedAny) {
+      calls = await store.listCalls(mission.id);
+      inspection = await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
+      params.onCallsRefreshed?.(calls, inspection);
+    }
+  }
+
   // Counter-cases: missing raw people file or incompatible raw rows (e.g. non-person blobs) -> never invent card or question
   const usablePeople = inspection.peopleCandidates.filter((p) => p.usable);
   if (inspection.peopleCandidates.length > 0 && usablePeople.length === 0) {
+    const coPlan = await tryCompaniesOnlyFallback();
+    if (coPlan) return coPlan;
     return finishDiag("none", "unusable_people_rows");
   }
 
   // No positive people call answered (all failed 402/422/timeout/refused or never tried; note answeredEmpty preserves plan_invalid_after_N when all people calls returned 0 rows)
   if (inspection.peopleCandidates.length === 0) {
+    const coPlan = await tryCompaniesOnlyFallback();
+    if (coPlan) return coPlan;
     if (inspection.hasOwnLimit) return finishDiag("own_limit", "no_people_candidates_own_limit");
     if (inspection.anyPeopleOkOrEmpty) return finishDiag("none", "no_people_candidates_empty");
     return finishDiag("sources_unavailable", "no_people_candidates_unavailable");
@@ -640,7 +936,11 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   const canAskOverCap = runState.peopleRecoveryAsked !== true;
 
   if (linkedPeople.length === 0) {
-    if (alreadyAsked) return finishDiag("none", "no_linked_people");
+    if (alreadyAsked) {
+      const coPlan = await tryCompaniesOnlyFallback();
+      if (coPlan) return coPlan;
+      return finishDiag("none", "no_linked_people");
+    }
     const question_ar = "لم نتمكن من ربط نتائج مسؤولي الشركات تلقائيًا بالخطة؛ هل تفضّل الاستمرار بالشركات فقط أم تحديد مسمى وظيفي آخر؟";
     const options_ar = ["الاستمرار بالشركات فقط", "تحديد مسمى وظيفي آخر"];
     if (checkCustomerText(question_ar).issues.length === 0) {
@@ -650,9 +950,11 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     return finishDiag("none", "no_linked_people");
   }
 
-  // Check role compatibility (Driver/Intern vs requested Managers -> never fabricate manager card)
-  if (roleMismatchDetected(linkedPeople, understoodPeople?.noun_ar, requestText)) {
-    if (alreadyAsked) return finishDiag("none", "role_mismatch");
+  // Assess role / seniority compatibility from catalog role/seniority fields (no word list, zero model calls):
+  // - All titled rows explicitly non-senior on first pass -> ask 1 contextual question once
+  // - Otherwise NEVER refuse with role_mismatch: rank most senior first & mark non-confirmed rows «uncertain» with honest per-row note
+  const roleEval = assessManagerRoleEvidence(linkedPeople, understoodPeople?.noun_ar, requestText);
+  if (roleEval.allExplicitNonSenior && !alreadyAsked) {
     const roleLabel = understoodPeople?.noun_ar?.trim() || "المديرين";
     const question_ar = `المتاح حاليًا في بيانات مسؤولي الشركات لا يطابق المسمى المطلوب (${roleLabel})؛ هل تفضّل الاستمرار بالشركات فقط أم توسيع المسمى الوظيفي المتاح؟`;
     const options_ar = ["الاستمرار بالشركات فقط", "توسيع المسمى الوظيفي المتاح"];
@@ -664,7 +966,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   }
 
   // When capability discovery is active: never plan non-eligible people endpoints; prefer eligible + saved evidence,
-  // else record exact capability reason + issues and ask ONE honest question (never «حد من جانبنا» when rows exist).
+  // else record exact capability reason + issues and ask ONE honest plain-Arabic question (never «حد من جانبنا» when rows exist).
   const collectedCapIssues: string[] = [];
   let candidatesToPlan = linkedPeople;
   if (capabilities) {
@@ -698,12 +1000,12 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       };
       lastRecoveryDiagnostic.set(mission.id, diag);
       if (canAskOverCap) {
-        const question_ar = "مصادر بيانات مسؤولي الشركات التي جُرّبت لا تتوافق مع خطة الاستخراج المعتمدة حاليًا، وتتوفر قائمة الشركات نفسها؛ هل تفضّل الاستمرار بالشركات فقط أم إعادة المحاولة؟";
-        const options_ar = ["الاستمرار بالشركات فقط", "إعادة المحاولة بمصدر آخر"];
-        if (checkCustomerText(question_ar).issues.length === 0) {
-          return { kind: "question", question_ar, options_ar, diagnostic: diag };
+        if (checkCustomerText(PLAIN_PEOPLE_FALLBACK_QUESTION_AR).issues.length === 0) {
+          return { kind: "question", question_ar: PLAIN_PEOPLE_FALLBACK_QUESTION_AR, options_ar: [...PLAIN_PEOPLE_FALLBACK_OPTIONS_AR], diagnostic: diag };
         }
       }
+      const coPlan = await tryCompaniesOnlyFallback();
+      if (coPlan) return coPlan;
       return { kind: "none", diagnostic: diag };
     }
 
@@ -731,12 +1033,12 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       };
       lastRecoveryDiagnostic.set(mission.id, diag);
       if (canAskOverCap) {
-        const question_ar = "مصادر بيانات مسؤولي الشركات التي جُرّبت لا تتوافق مع خطة الاستخراج المعتمدة حاليًا، وتتوفر قائمة الشركات نفسها؛ هل تفضّل الاستمرار بالشركات فقط أم إعادة المحاولة؟";
-        const options_ar = ["الاستمرار بالشركات فقط", "إعادة المحاولة بمصدر آخر"];
-        if (checkCustomerText(question_ar).issues.length === 0) {
-          return { kind: "question", question_ar, options_ar, diagnostic: diag };
+        if (checkCustomerText(PLAIN_PEOPLE_FALLBACK_QUESTION_AR).issues.length === 0) {
+          return { kind: "question", question_ar: PLAIN_PEOPLE_FALLBACK_QUESTION_AR, options_ar: [...PLAIN_PEOPLE_FALLBACK_OPTIONS_AR], diagnostic: diag };
         }
       }
+      const coPlan = await tryCompaniesOnlyFallback();
+      if (coPlan) return coPlan;
       return { kind: "none", diagnostic: diag };
     }
 
@@ -744,9 +1046,13 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   }
 
   const wants = requestWantsContacts(requestText);
-  const peopleTitle = understoodPeople?.noun_ar?.trim() ? `${understoodPeople.noun_ar.trim()} كل شركة` : "مسؤولو كل شركة";
+  const rawPeopleTitle = understoodPeople?.noun_ar?.trim() ? `${understoodPeople.noun_ar.trim()} كل شركة` : "مسؤولو كل شركة";
+  const peopleTitle = roleEval.isManagerAsk && !roleEval.allConfirmedSenior
+    ? "مسؤولون وممثلون متاحون لكل شركة"
+    : roleEval.isManagerAsk
+      ? rawPeopleTitle
+      : neutralPeopleTitleAr(rawPeopleTitle, "manager", "شركة");
   const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
-  let seq = params.outSeq;
   let sawOverCap = false;
   let sawCandidateRejected = false;
   let lastFailReason = "stage_not_allowed";
@@ -764,6 +1070,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       { key: "linkedin", title_ar: "الملف المهني" },
       ...(wants.email ? [{ key: "email", title_ar: "الإيميل", kind: "work_email" }] : []),
       ...(wants.phone ? [{ key: "phone", title_ar: "رقم التليفون", kind: "phone" }] : []),
+      ...(roleEval.annotation?.withNotes ? [{ key: "notes", title_ar: "ملاحظة" }] : []),
     ];
     const rawPeopleText = typeof linked.rawJson === "string" ? linked.rawJson : JSON.stringify(linked.rawJson);
     const peopleFields = usefulFieldsOfPage(rawPeopleText);
@@ -771,7 +1078,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     for (const f of extraPeopleFields) {
       if (!peopleColumns.some((c) => c.key === f.cls)) peopleColumns.push({ key: f.cls, title_ar: FIELD_LABEL_AR[f.cls] });
     }
-    const peopleCode = buildSavedPeopleMapCode(linked.rowExpr, extraPeopleFields);
+    const peopleCode = buildSavedPeopleMapCode(linked.rowExpr, extraPeopleFields, roleEval.annotation);
     const sbPeople = await runSandbox(peopleCode, { [linked.callId]: linked.rawJson });
     let mappedPeople: unknown[] = [];
     if (sbPeople.ok && sbPeople.resultJson) {
@@ -949,6 +1256,9 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       return { kind: "question", question_ar, options_ar };
     }
   }
+
+  const coPlan = await tryCompaniesOnlyFallback();
+  if (coPlan) return coPlan;
 
   const finalReason = sawOverCap && !canAskOverCap
     ? "over_cap_question_blocked"
