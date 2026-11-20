@@ -1,0 +1,24 @@
+{
+  "endpoint": {
+    "id": "crawl4ai.google.serp.maps",
+    "cost": {
+      "type": "per_success",
+      "per": 1,
+      "unit": "call",
+      "usd": 0.00023
+    },
+    "input": {
+      "body": {
+        "limit": {
+          "note": "at most 100; default 20"
+        },
+        "location": {
+          "note": "the city or area, like Austin, TX; leave it empty to name the place in `query`"
+        },
+        "query": {
+          "note": "what you would type in Google Maps, like coffee"
+        }
+      }
+    }
+  }
+}

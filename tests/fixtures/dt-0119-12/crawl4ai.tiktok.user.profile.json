@@ -1,0 +1,18 @@
+{
+  "endpoint": {
+    "id": "crawl4ai.tiktok.user.profile",
+    "cost": {
+      "type": "per_success",
+      "per": 1,
+      "unit": "call",
+      "usd": 0.00064
+    },
+    "input": {
+      "body": {
+        "username": {
+          "note": "the handle, with or without @, or the profile URL"
+        }
+      }
+    }
+  }
+}

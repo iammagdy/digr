@@ -55,7 +55,7 @@
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5,
-  "plan.price.pricedUnder": 1
+  "plan.price.pricedUnder": 2
  },
  "flags_off_g2": {
   "mission.delivered": 15,
@@ -113,7 +113,7 @@
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5,
-  "plan.price.pricedUnder": 1
+  "plan.price.pricedUnder": 2
  },
  "stage3_g1": {
   "mission.delivered": 15,
@@ -171,7 +171,7 @@
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5,
-  "plan.price.pricedUnder": 1
+  "plan.price.pricedUnder": 2
  },
  "stage3_g2": {
   "mission.delivered": 15,
@@ -229,7 +229,7 @@
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5,
-  "plan.price.pricedUnder": 1
+  "plan.price.pricedUnder": 2
  },
  "stage3_live_7539": {
   "mission.delivered": 15,
@@ -287,6 +287,6 @@
   "money[3].args.p_cost_usd": 0.04569,
   "money[4].args.p_points_cap": 25000,
   "money.calls": 5,
-  "plan.price.pricedUnder": 1
+  "plan.price.pricedUnder": 2
  }
 }

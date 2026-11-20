@@ -1,0 +1,56 @@
+{
+  "endpoint": {
+    "id": "crawl4ai.google.serp.organic",
+    "cost": {
+      "type": "per_success",
+      "per": 1,
+      "unit": "page",
+      "usd": 0.00038
+    },
+    "input": {
+      "queryParams": {
+        "q": {
+          "note": "the query, up to 512 characters. Google's own page (source gg) reads site: and quoted phrases as hints, not filters: check each row's link and text against them"
+        },
+        "country": {
+          "note": "two-letter Google country (gl), default us"
+        },
+        "language": {
+          "note": "Google interface language (hl), e.g. en or pt-br; default en"
+        },
+        "location": {
+          "note": "a city or region, e.g. Austin, TX; an unknown place answers 400 with the closest names"
+        },
+        "num": {
+          "note": "results to return: a multiple of 10 from 10 to 100 (num/10 Google pages); default 10"
+        },
+        "page": {
+          "note": "page over num, 1 to 30: num=10&page=2 is results 11-20"
+        },
+        "time": {
+          "enum": [
+            "hour",
+            "day",
+            "week",
+            "month",
+            "year"
+          ],
+          "note": "Google's time filter"
+        },
+        "fresh": {
+          "enum": [
+            "1"
+          ],
+          "note": "1 skips the cache"
+        },
+        "source": {
+          "enum": [
+            "auto",
+            "google"
+          ],
+          "note": "auto (default) may answer from Crawl4AI's fallback page, which has no AI Overview; google answers from Google's own page only, with the AI Overview when Google shows one, and is a free 503 when Google cannot be reached. The answer's source names the page that answered: gg is Google's own, gs the fallback"
+        }
+      }
+    }
+  }
+}

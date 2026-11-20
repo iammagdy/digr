@@ -1,0 +1,44 @@
+{
+  "endpoint": {
+    "id": "crawl4ai.web.scrape",
+    "cost": {
+      "type": "per_success",
+      "per": 1,
+      "unit": "page",
+      "usd": 0.00025
+    },
+    "input": {
+      "body": {
+        "url": {},
+        "format": {
+          "enum": [
+            "both",
+            "md",
+            "html"
+          ],
+          "default": "both"
+        },
+        "proxy": {
+          "enum": [
+            "none",
+            "isp",
+            "residential"
+          ],
+          "default": "none",
+          "note": "Costs more: isp 0.30 credits, residential 0.60 (plain page 0.15). Use only for a site that blocked a plain request, and try isp before residential."
+        },
+        "country": {
+          "note": "Two-letter exit country for isp or residential, e.g. us, gb. A country without isp addresses is served through residential at 0.60."
+        },
+        "parse": {
+          "note": "true for all, or pick {links, media, metadata, tables}"
+        },
+        "timeout": {
+          "min": 5,
+          "max": 120,
+          "note": "Seconds, 5 to 120: answer within this time. Send a little less than your client's limit (25 for a 30 s client): the answer is the page, 403 blocked or 504 timeout, never a dropped call. Neither failure is charged."
+        }
+      }
+    }
+  }
+}

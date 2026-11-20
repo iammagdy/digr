@@ -44,7 +44,7 @@ describe("T7 (D8): the declared correction layer checks the WHOLE old tuple and 
     expect(real.byId.get(FIND)!.cost).toMatchObject({ unit: "result", usd: 0.0198 });
     expect(real.byId.get(FIND)!.inputs.find((i) => i.name === "count")).toMatchObject({ default: 1, minimum: 1, maximum: 3 });
     for (const id of BLITZ) expect(real.byId.get(id)!.cost?.usd).toBe(0.001);
-    expect(CATALOG_PRICE_REV).toBe(1);
+    expect(CATALOG_PRICE_REV).toBe(2);
   });
   it("T8 parity: the stage3 card copy of the blitz employee-finder price equals the catalog", () => {
     const card = B2B_CARDS.find((c) => c.endpointId === "blitzapi.people.employee-finder")!;

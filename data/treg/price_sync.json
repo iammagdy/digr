@@ -1,0 +1,53 @@
+{
+  "revision": 2,
+  "entries": [
+    {
+      "id": "blitzapi.companies.enrich",
+      "was": {
+        "unit": "record",
+        "usd": 0.000495
+      },
+      "now": {
+        "unit": "record",
+        "usd": 0.001
+      },
+      "since": "2026-11-20"
+    },
+    {
+      "id": "blitzapi.companies.search",
+      "was": {
+        "unit": "record",
+        "usd": 0.000495
+      },
+      "now": {
+        "unit": "record",
+        "usd": 0.001
+      },
+      "since": "2026-11-20"
+    },
+    {
+      "id": "blitzapi.companies.tam-by-jobs",
+      "was": {
+        "unit": "record",
+        "usd": 0.000495
+      },
+      "now": {
+        "unit": "record",
+        "usd": 0.001
+      },
+      "since": "2026-11-20"
+    },
+    {
+      "id": "blitzapi.companies.tam-by-people",
+      "was": {
+        "unit": "record",
+        "usd": 0.000495
+      },
+      "now": {
+        "unit": "record",
+        "usd": 0.001
+      },
+      "since": "2026-11-20"
+    }
+  ]
+}

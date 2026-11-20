@@ -1,5 +1,4 @@
-/**
- * The revision of the declared catalog price corrections (catalog.ts DECLARED_PRICE_CORRECTIONS). It lives alone because the price of a plan carries it (agentMission/price.ts) and that module must stay free of the catalog's file access.
- * Bump it when a correction is added or changed: a plan priced under an older revision that uses a corrected endpoint is re-quoted at approval (agentMission/lifecycle.ts).
- */
-export const CATALOG_PRICE_REV = 1;
+/** Older unapproved cards that use corrected endpoints must be priced again at approval. */
+export const CATALOG_PRICE_REV = 2;
+/** SHA-256 of the exact price_sync.json bytes for this revision. Update both pins together. */
+export const PRICE_SYNC_SHA256 = "233406e0a07a38d75b170ae49ca114db6ea644da7887389ab882ea0f0a022b07";

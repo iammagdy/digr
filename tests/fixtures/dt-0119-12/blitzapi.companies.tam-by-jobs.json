@@ -1,0 +1,27 @@
+{
+  "endpoint": {
+    "id": "blitzapi.companies.tam-by-jobs",
+    "cost": {
+      "type": "per_result",
+      "per": 1,
+      "unit": "record",
+      "usd": 0.001
+    },
+    "input": {
+      "body": {
+        "job": {
+          "note": "Job title, seniority, location and date-posted filters."
+        },
+        "company": {
+          "note": "Company firmographic filters."
+        },
+        "max_results": {
+          "default": 3,
+          "min": 1,
+          "max": 50
+        },
+        "cursor": {}
+      }
+    }
+  }
+}
