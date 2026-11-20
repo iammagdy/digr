@@ -31,6 +31,13 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf",
   },
+  async rewrites() {
+    // Hidden live office status page (D-0150/D-0151): served statically from public/office/index.html at /office.
+    // Returning an array uses afterFiles so Next.js trailingSlash normalization (/office/ -> 308 /office) runs cleanly.
+    return [
+      { source: "/office", destination: "/office/index.html" },
+    ];
+  },
   async redirects() {
     // www.diger.tech → diger.tech (keeps one canonical host for cookies, e-mailed links and SEO).
     return [
@@ -58,6 +65,8 @@ const nextConfig = {
       { source: "/admin/:path*", headers: noindex },
       { source: "/api/:path*", headers: noindex },
       { source: "/(verify|reset|forgot)", headers: noindex },
+      { source: "/office", headers: noindex },
+      { source: "/office/:path*", headers: noindex },
     ];
   },
   webpack: (config) => {
