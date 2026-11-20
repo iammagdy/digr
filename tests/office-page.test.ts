@@ -49,7 +49,7 @@ function createOfficeDomHarness(html: string, fetchImpl: (url: string) => Promis
     return el;
   };
   for (const id of [
-    "office-canvas", "hover-tooltip", "bots-hotspots", "dock-scroll", "prs-bar", "feed-status",
+    "stage-space", "stage-wrapper", "office-canvas", "hover-tooltip", "bots-hotspots", "dock-scroll", "prs-bar", "feed-status",
     "btn-all", "btn-working", "btn-idle", "btn-stuck", "live-clock",
     "modal-overlay", "card-avatar-img", "card-name", "card-role", "card-task-id",
     "card-location-text", "card-task-desc", "card-task-step", "card-task-next",
@@ -121,6 +121,63 @@ describe("DT-20261120-office: hidden noindex office routing and counter-cases", 
 
 describe("DT-20261120-office: static office page uses live feed, real roles, noindex meta, and zero sample data", () => {
   const html = readFileSync("public/office/index.html", "utf8");
+  const css = html.split("<style>")[1].split("</style>")[0];
+
+  it("removes the fixed 840px office width", () => {
+    expect(css).not.toMatch(/max-width\s*:\s*840px\b/i);
+  });
+
+  it("paints the document and body with the existing office dark color", () => {
+    expect(css).toMatch(/--bg-dark\s*:\s*#0a0e17\s*;/i);
+    const pageRule = css.match(/(?:^|\n)\s*html\s*,\s*body\s*\{([^}]*)\}/)?.[1];
+    expect(pageRule).toMatch(/background\s*:\s*var\(--bg-dark\)\s*;/i);
+  });
+
+  it("keeps the office stage at the drawing's 800 by 540 aspect ratio", () => {
+    const stageRule = css.match(/(?:^|\n)\s*\.canvas-stage\s*\{([^}]*)\}/)?.[1];
+    expect(stageRule).toMatch(/aspect-ratio\s*:\s*800\s*\/\s*540\s*;/i);
+  });
+
+  it("fits stage and translates coordinates proportionally across TV and phone geometries", async () => {
+    const stubFetch = async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { bots: {}, open_prs: [] };
+      },
+    });
+    const { ctx, elements } = createOfficeDomHarness(html, stubFetch);
+    const stageSpace = elements.get("stage-space");
+    const stage = elements.get("stage-wrapper");
+    const canvas = elements.get("office-canvas");
+
+    stageSpace.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1920, height: 1080 });
+    stage.getBoundingClientRect = () => ({ left: 160, top: 0, width: 1600, height: 1080 });
+    ctx.devicePixelRatio = 2;
+
+    ctx.setupCanvasDPR();
+
+    expect(stage.style.width).toBe("1600px");
+    expect(canvas.width).toBe(3200);
+    expect(canvas.height).toBe(2160);
+    expect(ctx.getCanvasCoords({ clientX: 1460, clientY: 298 })).toMatchObject({
+      x: 650,
+      y: 149,
+      clientX: 1300,
+      clientY: 298,
+    });
+
+    stageSpace.getBoundingClientRect = () => ({ left: 0, top: 0, width: 390, height: 500 });
+    stage.getBoundingClientRect = () => ({ left: 0, top: 60, width: 390, height: 263.25 });
+
+    ctx.setupCanvasDPR();
+
+    expect(stage.style.width).toBe("390px");
+    expect(canvas.width / canvas.height).toBeCloseTo(800 / 540);
+    const coords = ctx.getCanvasCoords({ clientX: 195, clientY: 191.625 });
+    expect(coords).toMatchObject({ y: 270, clientX: 195, clientY: 131.625 });
+    expect(coords.x).toBeCloseTo(400);
+  });
 
   it("includes robots noindex meta, 30s live poll, stale 45m rule, real roles, and zero sample text", () => {
     expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
