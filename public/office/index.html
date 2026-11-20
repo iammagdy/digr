@@ -16,7 +16,9 @@
     --accent-red: #ef4444;
     --text-main: #f8fafc;
     --text-dim: #94a3b8;
+    --office-height: 100vh;
   }
+  @supports (height: 100dvh) { :root { --office-height: 100dvh; } }
 
   * {
     box-sizing: border-box;
@@ -26,20 +28,24 @@
     -webkit-user-select: none;
   }
 
+  html, body {
+    width: 100%;
+    height: var(--office-height);
+    background: var(--bg-dark);
+  }
+
   body {
-    background: transparent;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     color: var(--text-main);
     direction: rtl;
-    padding: 4px;
-    width: 100%;
-    overflow-x: hidden;
+    overflow: hidden;
   }
 
   .office-container {
     width: 100%;
-    max-width: 840px;
-    margin: 0 auto;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
     background: #090d16;
     border: 3px solid #1e293b;
     border-radius: 10px;
@@ -135,7 +141,18 @@
   }
 
   /* Canvas Stage Wrapper */
+  .stage-space {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .canvas-stage {
+    flex: none;
+    min-width: 0;
     position: relative;
     width: 100%;
     aspect-ratio: 800 / 540;
@@ -220,6 +237,7 @@
     white-space: nowrap;
   }
   .dock-scroll {
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -558,6 +576,8 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  .top-bar, .team-dock, .bottom-bar { flex: none; }
+  .prs-bar { flex: 0 1 auto; min-height: 0; max-height: 22%; overflow: auto; overflow-wrap: anywhere; }
   .pr-chip {
     background: #131c2e;
     border: 1px solid #223049;
@@ -586,6 +606,46 @@
     .live-clock { display: none; }
     .rpg-card { max-width: 95vw; }
   }
+@media (min-width: 1700px) and (min-height: 950px) and (min-aspect-ratio: 16/9) {
+  .office-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) calc(var(--office-height) * 40 / 27) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    background: var(--bg-dark);
+    border-width: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .stage-space { grid-area: 1 / 2 / 3 / 3; }
+  .top-bar { grid-area: 1 / 1; }
+  .prs-bar { grid-area: 2 / 1; max-height: 100%; }
+  .team-dock { grid-area: 1 / 3; max-height: 55vh; }
+  .bottom-bar { grid-area: 2 / 3; }
+
+  .top-bar, .prs-bar, .team-dock, .bottom-bar {
+    min-width: 0;
+    align-self: start;
+    overflow-wrap: anywhere;
+  }
+
+  .controls-group, .team-dock, .dock-scroll {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .controls-group { width: 100%; flex-wrap: nowrap; }
+  .feed-status, .dock-btn { white-space: normal; }
+  .team-dock { overflow: auto; }
+  .dock-scroll { flex: none; overflow: visible; }
+}
+
+@media (min-width: 1000px) {
+  .prs-bar, .dock-scroll, .team-dock { scrollbar-width: none; }
+  .prs-bar::-webkit-scrollbar, .dock-scroll::-webkit-scrollbar, .team-dock::-webkit-scrollbar {
+    display: none;
+  }
+}
 </style>
 </head>
 <body>
@@ -608,65 +668,67 @@
   </div>
 
   <!-- Canvas Stage -->
-  <div class="canvas-stage" id="stage-wrapper">
-    <canvas id="office-canvas"></canvas>
-    <div class="hover-tooltip" id="hover-tooltip"></div>
-    
-    <!-- Hotspots Overlay (Clean Click Targets) -->
-    <div class="bots-hotspots-wrap" id="bots-hotspots"></div>
+  <div class="stage-space" id="stage-space">
+    <div class="canvas-stage" id="stage-wrapper">
+      <canvas id="office-canvas"></canvas>
+      <div class="hover-tooltip" id="hover-tooltip"></div>
 
-    <!-- Room Labels Overlay -->
-    <div class="room-tag" style="top: 50px; right: 28px; border-color: #f59e0b; color: #fbbf24;">👑 غرفة المدير «الكبير»</div>
-    <div class="room-tag" style="top: 50px; left: 45px; border-color: #38bdf8; color: #38bdf8;">💻 صالة التطوير الرئيسية</div>
-    <div class="room-tag" style="bottom: 12px; right: 28px; border-color: #d97706; color: #f59e0b;">☕ ركن القهوة والمطبخ</div>
-    <div class="room-tag" style="bottom: 12px; left: 45px; border-color: #14b8a6; color: #2dd4bf;">🛋️ ركن الاستراحة والألعاب</div>
+      <!-- Hotspots Overlay (Clean Click Targets) -->
+      <div class="bots-hotspots-wrap" id="bots-hotspots"></div>
 
-    <!-- In-Page RPG Modal Dialog -->
-    <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
-      <div class="rpg-card" onclick="event.stopPropagation()">
-        <div class="card-header">
-          <div class="card-profile">
-            <div class="card-avatar-wrap">
-              <img src="" id="card-avatar-img" alt="avatar">
-            </div>
-            <div class="card-titles">
-              <h3 id="card-name">اسم البوت</h3>
-              <p id="card-role">الدور الوظيفي</p>
-            </div>
+      <!-- Room Labels Overlay -->
+      <div class="room-tag" style="top: 50px; right: 28px; border-color: #f59e0b; color: #fbbf24;">👑 غرفة المدير «الكبير»</div>
+      <div class="room-tag" style="top: 50px; left: 45px; border-color: #38bdf8; color: #38bdf8;">💻 صالة التطوير الرئيسية</div>
+      <div class="room-tag" style="bottom: 12px; right: 28px; border-color: #d97706; color: #f59e0b;">☕ ركن القهوة والمطبخ</div>
+      <div class="room-tag" style="bottom: 12px; left: 45px; border-color: #14b8a6; color: #2dd4bf;">🛋️ ركن الاستراحة والألعاب</div>
+    </div>
+  </div>
+
+  <!-- In-Page RPG Modal Dialog -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+    <div class="rpg-card" onclick="event.stopPropagation()">
+      <div class="card-header">
+        <div class="card-profile">
+          <div class="card-avatar-wrap">
+            <img src="" id="card-avatar-img" alt="avatar">
           </div>
-          <button class="card-close-btn" onclick="closeModal()" title="إغلاق">✕</button>
+          <div class="card-titles">
+            <h3 id="card-name">اسم البوت</h3>
+            <p id="card-role">الدور الوظيفي</p>
+          </div>
         </div>
-        <div class="card-body">
-          <div class="status-row">
-            <span class="status-pill" id="card-status-pill">🟢 شغال بنشاط</span>
-            <span id="card-progress-text" style="font-size:12px;font-weight:800;color:#38bdf8;">0%</span>
-          </div>
+        <button class="card-close-btn" onclick="closeModal()" title="إغلاق">✕</button>
+      </div>
+      <div class="card-body">
+        <div class="status-row">
+          <span class="status-pill" id="card-status-pill">🟢 شغال بنشاط</span>
+          <span id="card-progress-text" style="font-size:12px;font-weight:800;color:#38bdf8;">0%</span>
+        </div>
 
-          <div class="task-card">
-            <div class="task-meta">
-              <span id="card-task-id">المهمة الحالية:</span>
-              <span id="card-location-text">📍 بدون تحديث</span>
-            </div>
-            <div class="task-title" id="card-task-desc">في انتظار البث المباشر...</div>
-            <div class="task-step" id="card-task-step"></div>
-            <div class="progress-bg">
-              <div class="progress-fill" id="card-progress-bar" style="width:0%;"></div>
-            </div>
-            <div class="task-next" id="card-task-next"></div>
+        <div class="task-card">
+          <div class="task-meta">
+            <span id="card-task-id">المهمة الحالية:</span>
+            <span id="card-location-text">📍 بدون تحديث</span>
           </div>
+          <div class="task-title" id="card-task-desc">في انتظار البث المباشر...</div>
+          <div class="task-step" id="card-task-step"></div>
+          <div class="progress-bg">
+            <div class="progress-fill" id="card-progress-bar" style="width:0%;"></div>
+          </div>
+          <div class="task-next" id="card-task-next"></div>
+        </div>
 
-          <div class="recent-box">
-            <h4>آخر الإنجازات المسجلة:</h4>
-            <ul id="card-recent-list"></ul>
-          </div>
+        <div class="recent-box">
+          <h4>آخر الإنجازات المسجلة:</h4>
+          <ul id="card-recent-list"></ul>
+        </div>
 
-          <div class="card-footer-actions">
-            <button class="nav-bot-btn" onclick="stepBot(-1)" title="البوت السابق">◀</button>
-            <button class="cheer-btn" onclick="cheerCurrentBot()">
-              <span>✨ إرسال تحية وتشجيع للبوت</span>
-            </button>
-            <button class="nav-bot-btn" onclick="stepBot(1)" title="البوت التالي">▶</button>
-          </div>
+        <div class="card-footer-actions">
+          <button class="nav-bot-btn" onclick="stepBot(-1)" title="البوت السابق">◀</button>
+          <button class="cheer-btn" onclick="cheerCurrentBot()">
+            <span>✨ إرسال تحية وتشجيع للبوت</span>
+          </button>
+          <button class="nav-bot-btn" onclick="stepBot(1)" title="البوت التالي">▶</button>
         </div>
       </div>
     </div>
@@ -732,7 +794,7 @@ function setupCanvasDPR() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const targetW = Math.max(320, Math.round((rect.width || BASE_W) * dpr));
   const targetH = Math.max(216, Math.round((rect.height || BASE_H) * dpr));
-  
+
   if (canvas.width !== targetW || canvas.height !== targetH) {
     canvas.width = targetW;
     canvas.height = targetH;
@@ -844,7 +906,7 @@ function drawParquetFloor(x, y, w, h) {
   const tileSize = 32;
   const plankH = 8;
   const colors = ['#c89666', '#bd8b5b', '#b38050', '#caa074', '#a87545'];
-  
+
   for (let py = y; py < y + h; py += plankH) {
     const rowIndex = Math.floor(py / plankH);
     for (let px = x; px < x + w; px += tileSize) {
@@ -852,13 +914,13 @@ function drawParquetFloor(x, y, w, h) {
       const actualX = px - offset;
       const colIndex = Math.floor(actualX / tileSize);
       const c = colors[Math.abs((rowIndex * 3 + colIndex * 7) % colors.length)];
-      
+
       const drawX = Math.max(x, actualX);
       const drawW = Math.min(x + w - drawX, tileSize - (drawX - actualX));
       if (drawW > 0) {
         ctx.fillStyle = c;
         ctx.fillRect(drawX, py, drawW, plankH);
-        
+
         ctx.fillStyle = 'rgba(70, 40, 20, 0.25)';
         ctx.fillRect(drawX, py + plankH - 1, drawW, 1);
         ctx.fillRect(drawX + drawW - 1, py, 1, plankH);
@@ -950,7 +1012,7 @@ function drawCheckeredFloor(x, y, w, h) {
       const tw = Math.min(size, x + w - px);
       const th = Math.min(size, y + h - py);
       ctx.fillRect(px, py, tw, th);
-      
+
       ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
       ctx.fillRect(px, py + th - 1, tw, 1);
       ctx.fillRect(px + tw - 1, py, 1, th);
@@ -1097,10 +1159,10 @@ function drawWalls() {
   const gpx = 510;
   ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
   ctx.fillRect(gpx - 3, wallH, 6, 235);
-  
+
   ctx.fillStyle = '#3d1f12';
   ctx.fillRect(gpx - 2, wallH, 4, 180);
-  
+
   ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
   ctx.fillRect(gpx - 1, wallH + 10, 2, 70);
   ctx.fillRect(gpx - 1, wallH + 90, 2, 80);
@@ -1476,15 +1538,15 @@ function drawBotBubble(bot, hx, hy, r, time) {
   const textMetrics = ctx.measureText(text);
   const bw = Math.max(textMetrics.width + 12, 54);
   const bh = 15;
-  
+
   // Subtle vertical float animation
   const floatY = Math.sin(time * 0.005 + hx) * 2;
   const bubbleY = hy - r - 20 + floatY;
-  
+
   let bg = 'rgba(11, 16, 27, 0.95)';
   let border = '#38bdf8';
   let textColor = '#f8fafc';
-  
+
   if (bot.status === 'stuck') {
     bg = 'rgba(69, 10, 10, 0.95)';
     border = '#ef4444';
@@ -1500,14 +1562,14 @@ function drawBotBubble(bot, hx, hy, r, time) {
     border = '#fbbf24';
     textColor = '#fef08a';
   }
-  
+
   // Bubble rectangle
   ctx.fillStyle = bg;
   ctx.fillRect(hx - bw / 2, bubbleY, bw, bh);
   ctx.strokeStyle = border;
   ctx.lineWidth = 1.2;
   ctx.strokeRect(hx - bw / 2, bubbleY, bw, bh);
-  
+
   // Downward pointer arrow
   ctx.fillStyle = bg;
   ctx.beginPath();
@@ -1516,14 +1578,14 @@ function drawBotBubble(bot, hx, hy, r, time) {
   ctx.lineTo(hx, bubbleY + bh + 4);
   ctx.closePath();
   ctx.fill();
-  
+
   ctx.strokeStyle = border;
   ctx.beginPath();
   ctx.moveTo(hx - 4, bubbleY + bh);
   ctx.lineTo(hx, bubbleY + bh + 4);
   ctx.lineTo(hx + 4, bubbleY + bh);
   ctx.stroke();
-  
+
   // Text
   ctx.fillStyle = textColor;
   ctx.fillText(text, hx, bubbleY + 11);
@@ -1714,7 +1776,7 @@ function initHotspots() {
     const top = (b.y / BASE_H * 100);
     return '<button class="bot-hotspot" id="hotspot-' + b.id + '" data-id="' + b.id + '" style="left:' + left + '%; top:' + top + '%;" title="' + b.name + ' - ' + b.title + '" aria-label="' + b.name + ' - ' + b.title + '"></button>';
   }).join('');
-  
+
   wrap.addEventListener('click', (e) => {
     const btn = e.target.closest('.bot-hotspot');
     if (btn && btn.dataset.id) {
