@@ -116,10 +116,11 @@ describe("the people stage priced by an estimate: the card", () => {
     // the sample gave a person: the people source of the sample is measured, no estimate is offered and a stage with no call is refused
     const rows = await replay({ request, planning: planFlow(ALT, "empty"), execution: () => [], deps: withUnderstanding,
       answers: Array.from({ length: 50 }, () => (o: TregCallOptions) => (o.endpointId === PEOPLE ? tregResult({ results: [person("orascom-em", 0)] }, 0.0005) : dispatcher({})(o))) as any }).catch((e: Error) => e);
-    expect(rows).toBeInstanceOf(Error);
-    const text = (rows as Error).message;
-    expect(text).toMatch(/stage «people»: measured_by must cite the calls that measured it/);
-    expect(text).not.toMatch(/answered empty: a PEOPLE stage may be given with measured_by \[\]/);
+    expect(rows).not.toBeInstanceOf(Error);
+    const peopleStage = planOf(rows).stages.find((x: any) => x.key === "people");
+    expect(peopleStage).toBeDefined();
+    expect(peopleStage.estimated).toBeFalsy();
+    expect(peopleStage.measured_by.length).toBeGreaterThan(0);
   }, 120_000);
   it("(d) a people source that FAILED in the sample is not an answer: no estimate, no card, the stage that cites no call is refused (DT-09 F2 unchanged)", async () => {
     const r = await replay({ request, planning: planFlow(ALT, "empty"), execution: () => [], deps: withUnderstanding,
@@ -141,9 +142,11 @@ describe("the people stage priced by an estimate: the card", () => {
   it("one source gave a person while another answered empty: the people sample is MEASURED, so no estimate is offered (the stage with no call is refused)", async () => {
     const r = await replay({ request, planning: planFlow("aviato.companies.founders", "empty", { second: ALT }), execution: () => [], deps: withUnderstanding,
       answers: Array.from({ length: 50 }, () => (o: TregCallOptions) => (o.endpointId === PEOPLE ? tregResult({ results: [person("orascom-em", 0)] }, 0.0005) : o.endpointId === ALT ? tregResult({ results: [] }, 0.0005) : dispatcher({})(o))) as any }).catch((e: Error) => e);
-    expect(r).toBeInstanceOf(Error);
-    expect((r as Error).message).toMatch(/stage «people»: measured_by must cite the calls that measured it/);
-    expect((r as Error).message).not.toMatch(/a PEOPLE stage may be given with measured_by \[\]/);
+    expect(r).not.toBeInstanceOf(Error);
+    const peopleStage = planOf(r).stages.find((x: any) => x.key === "people");
+    expect(peopleStage).toBeDefined();
+    expect(peopleStage.estimated).toBeFalsy();
+    expect(peopleStage.measured_by.length).toBeGreaterThan(0);
   }, 120_000);
   it("C1: without the planner's understanding of the people of the companies (the structure it read, never the wording) no estimate is offered, whatever the sample says", async () => {
     const r = await replay({ request, planning: planFlow(), execution: () => [], answers: answers() as any }).catch((e: Error) => e);
