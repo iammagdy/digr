@@ -26,7 +26,7 @@ export type PlatformEmailTemplateId =
   | "admin-topup-alert";
 
 export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = {
-  "welcome": `أهلًا {{ .Name }} — حسابك على ديجر جاهز`,
+  "welcome": `أهلًا {{ .Name }}، حسابك على ديجر جاهز`,
   "topup-received": `استلمنا طلب شحن {{ .AmountEgp }} ج.م`,
   "topup-approved": `أُضيف {{ .Credits }} نقطة إلى رصيدك`,
   "topup-rejected": `تعذّر اعتماد طلب الشحن`,
@@ -151,14 +151,14 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
     audience: "customer",
     preheader: "ثلاث خطوات وتستلم أول ملف بيانات: اشحن، اسأل، وافق.",
     heading: "أهلًا {{ .Name }}، حسابك جاهز",
-    paragraphs: ["ديجر يحوّل سؤالك البحثي إلى ملفات جاهزة للتحليل. هكذا تبدأ:"],
+    paragraphs: ["ديجر يحوّل طلبك إلى ملفات بيانات جاهزة للتحليل. هكذا تبدأ:"],
     facts: [
       { label: "١ · اشحن رصيدك", value: "عبر إنستاباي" },
       { label: "٢ · اسأل بالعربية", value: "والمساعد يحدد التفاصيل" },
       { label: "٣ · وافق على السعر", value: "وتدفع على المسلَّم فقط" },
     ],
     button: { href: "{{ .SiteURL }}/dashboard/chat", label: "ابدأ أول بحث" },
-    note: "النقطة الواحدة = ٠٫١٠ ج.م، وأي حجز مؤقت مُحرَّر لا يُخصم منك.",
+    note: "النقطة الواحدة = ٠٫١٠ ج.م.",
   }),
   "topup-received": layout("topup-received", {
     audience: "customer",

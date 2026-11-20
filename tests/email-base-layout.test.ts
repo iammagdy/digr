@@ -145,8 +145,20 @@ describe("customer rules, for every template", () => {
   const subject = (id: PlatformEmailTemplateId) => render(id).subject;
 
   it("the templates that speak of a released hold use the exact words", () => {
-    for (const id of ["refund", "job-done", "welcome"] as const) expect(visibleText(render(id).html), id).toContain("حجز مؤقت مُحرَّر");
+    for (const id of ["refund", "job-done"] as const) expect(visibleText(render(id).html), id).toContain("حجز مؤقت مُحرَّر");
     expect(render("refund").subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠٧ نقطة");
+  });
+
+  it("welcome (DT-20261119-02b copy): comma subject, «طلبك إلى ملفات بيانات», the point note without a hold sentence", () => {
+    const { subject: sub, html } = renderEmailTemplate("welcome", { Name: "أحمد", SiteURL: "https://diger.tech" } as any);
+    expect(sub).toBe("أهلًا أحمد، حسابك على ديجر جاهز");
+    expect(sub).not.toContain("—");
+    const text = visibleText(html);
+    expect(text).toContain("ديجر يحوّل طلبك إلى ملفات بيانات جاهزة للتحليل. هكذا تبدأ:");
+    expect(text).not.toContain("سؤالك البحثي");
+    expect(text).toContain("النقطة الواحدة = ٠٫١٠ ج.م.");
+    expect(text).not.toContain("حجز مؤقت");
+    expect(text).toContain("وتدفع على المسلَّم فقط");
   });
 
   it("the top-up received e-mail keeps the review sentence of the top-up page; the other top-up e-mails do not invent another", () => {
@@ -196,7 +208,7 @@ describe("the inventory: every sender in the app uses a template that exists, fo
     expect([...used].sort()).toEqual(["job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected"]);
     for (const key of used) expect(IDS).toContain(key);
     expect(src("src/lib/server/topupOwnerAlert.ts")).toContain('"admin-topup-alert"');
-    // the welcome e-mail is sent by the database trigger, with the customer's name only
-    expect(readFileSync(new URL("../supabase/migrations/20261013170000_welcome_email_on_confirm.sql", import.meta.url), "utf8")).toContain("jsonb_build_object('Name', v_name)");
+    // the welcome e-mail is asked for by the database trigger (a user id only) and sent by send-email's welcome-only path, with the customer's name only (DT-20261119-02b)
+    expect(readFileSync(new URL("../supabase/functions/send-email/index.ts", import.meta.url), "utf8")).toContain('buildResendPayload({ template: "welcome", to, vars: { Name: name } })');
   });
 });
