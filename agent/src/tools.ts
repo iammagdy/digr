@@ -142,6 +142,10 @@ export interface ToolContext {
   state: RunState;
   /** The sandboxed code runner override (tests). */
   sandbox?: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** Customer explicitly chose companies-only on fallback question (or accounted planner dropped people after an answer). */
+  forceCompaniesOnly?: boolean;
+  /** Customer explicitly chose «نحاول تاني» on the people recovery fallback question. */
+  isRecoveryRetry?: boolean;
   /** Optional diagnostic logger from runMission. */
   log?: (line: string) => void;
   /** The model review of uncertain rows (execution phase), within the review budget; absent: uncertain rows are not delivered. */
@@ -290,23 +294,33 @@ function createPlanCoordinator(ctx: ToolContext) {
     return ev;
   };
 
-  const makeBuildContext = async (calls: CallRow[], stagesIn: Array<Record<string, unknown>>, inspectionIn?: SavedEvidenceInspection) => {
+  const makeBuildContext = async (callsIn: CallRow[], stagesIn: Array<Record<string, unknown>>, inspectionIn?: SavedEvidenceInspection) => {
     const prefix = `${mission.id}:`;
-    const inspection = inspectionIn ?? await inspectSavedCompanyAndPeople({ mission, store, catalog: ctx.catalog, calls, callParams: state.callParams, stagesIn });
+    let currentCalls = callsIn;
+    let currentInspection = inspectionIn ?? await inspectSavedCompanyAndPeople({ mission, store, catalog: ctx.catalog, calls: currentCalls, callParams: state.callParams, stagesIn });
     const estimateAllowed = (id: string): boolean => policyVerdict(id, ctx.access).allowed && !blockedEndpointReason(id) && isSellable(id, ctx.catalog);
     const peopleEstimate = (() => {
       if (!ctx.understoodPeople) return null;
       const ranked = peopleSourcesForCompanies(ctx.catalog, estimateAllowed);
-      const answers = peopleAnswersOf(calls, new Set(ranked.map((x) => x.id)));
+      const answers = peopleAnswersOf(currentCalls, new Set(ranked.map((x) => x.id)));
       if (answers.gaveRows || answers.answeredEmpty.size === 0) return null;
       return peopleEstimateOf(ranked, answers.answeredEmpty);
     })();
     const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
+    const proposalCompaniesOnlyAfterAnswer = (() => {
+      if (ctx.forceCompaniesOnly) return true;
+      const hasAnswer = Boolean(mission.answer_text && String(mission.answer_text).trim() !== "");
+      if (!hasAnswer || ctx.isRecoveryRetry) return false;
+      const proposalHasChild = stagesIn.some(
+        (st) => isObject(st) && st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "",
+      );
+      return !ctx.understoodPeople && !proposalHasChild;
+    })();
     const makeLookup = (evMap: Map<string, string | null>) => ({
       ...(noRelevance ? { noRelevance: true } : {}),
-      ...(peopleEstimate ? { peopleEstimate } : {}),
+      ...(peopleEstimate && !proposalCompaniesOnlyAfterAnswer ? { peopleEstimate } : {}),
       call: (id: string): RecordedCall | null => {
-        const row = calls.find((c) => c.id === `${mission.id}:${id}`);
+        const row = currentCalls.find((c) => c.id === `${mission.id}:${id}`);
         return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: Object.fromEntries(Object.entries(row.params_digest ?? {}).filter(([k]) => !k.startsWith("__"))) } : null;
       },
       evidenceText: (id: string) => evMap.get(id) ?? null,
@@ -317,22 +331,22 @@ function createPlanCoordinator(ctx: ToolContext) {
       isContactSource,
       pricingSettings: ctx.pricingSettings,
       ...(ctx.understoodPeople ? { understoodPeople: ctx.understoodPeople } : {}),
-      childStepSources: (noun: string) => { const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
+      childStepSources: (noun: string) => { if (proposalCompaniesOnlyAfterAnswer) return []; const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
       contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
       mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
       contactAids: (kind: "email" | "phone") => {
         const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
         return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("email", ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats), alternates: alternateFinderSourcesOf("phone", ctx.catalog, allowedHelper, ctx.stats), profile_lookup: profileLookupSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
       },
-      endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
+      endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of currentCalls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
       savedCallsByEndpoint: () => {
         const m = new Map<string, Array<SavedEndpointCallDetail>>();
-        for (const c of calls) {
+        for (const c of currentCalls) {
           if (c.status !== "ok") continue;
           const rows = Number(c.rows_returned) || 0;
           if (rows <= 0) continue;
           const callId = c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id;
-          const enriched = inspection.savedPeopleMap.get(c.endpoint_id)?.find((x) => x.callId === callId);
+          const enriched = currentInspection.savedPeopleMap.get(c.endpoint_id)?.find((x) => x.callId === callId);
           const list = m.get(c.endpoint_id) ?? [];
           list.push(enriched ?? { callId, rows });
           m.set(c.endpoint_id, list);
@@ -355,7 +369,7 @@ function createPlanCoordinator(ctx: ToolContext) {
       }
       let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
       try {
-        derived = await deriveEngineSpecsChecked(planIn, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
+        derived = await deriveEngineSpecsChecked(planIn, { store, missionId: mission.id, catalog: ctx.catalog, calls: currentCalls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
       } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
       if (derived && derived.issues.length > 0) return { ok: false, issues: derived.issues };
       if (derived) {
@@ -427,7 +441,15 @@ function createPlanCoordinator(ctx: ToolContext) {
       return { ok: true, plan: finalized, note: "the plan was recorded; the site computes the price and shows it to the customer. Stop now." };
     };
 
-    return { inspection, makeLookup, finalizeAcceptedPlan };
+    return {
+      inspection: currentInspection,
+      makeLookup,
+      finalizeAcceptedPlan,
+      refreshCalls: (freshCalls: CallRow[], freshInspection: SavedEvidenceInspection) => {
+        currentCalls = freshCalls;
+        currentInspection = freshInspection;
+      },
+    };
   };
 
   const recoverFromSaved = async (calls: CallRow[], opts: { stagesIn?: Array<Record<string, unknown>>; summaryHint?: string; assumptionsHint?: unknown; inspection?: SavedEvidenceInspection; log?: (line: string) => void } = {}): Promise<RecoveryResult> => {
@@ -435,11 +457,13 @@ function createPlanCoordinator(ctx: ToolContext) {
     const build = await makeBuildContext(calls, stagesIn, opts.inspection);
     return recoverCompanyPeopleFromSavedEvidence({
       mission, store, catalog: ctx.catalog, access: ctx.access, capabilities: ctx.capabilities,
+      gateway: ctx.gateway, forceCompaniesOnly: ctx.forceCompaniesOnly, isRecoveryRetry: ctx.isRecoveryRetry,
       calls, callParams: state.callParams, codeRuns: state.codeRuns, outSeq: state.outSeq,
       stagesIn, summaryHint: opts.summaryHint, assumptionsHint: opts.assumptionsHint,
       understoodCompanies: ctx.understoodCompanies, understoodPeople: ctx.understoodPeople,
       runSandbox, loadEvidenceMap, makeLookup: build.makeLookup,
       finalizePlan: (p, ev, o) => build.finalizeAcceptedPlan(p, ev, { ...o, persist: false }),
+      onCallsRefreshed: build.refreshCalls,
       inspection: build.inspection, log: opts.log,
     });
   };
@@ -1031,6 +1055,27 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           return recovered ?? r;
         };
 
+        // Pre-price companies-only guard (ORDER 10): independently of capability discovery, an explicit
+        // companies-only choice must route to companies-only recovery and never price or hold a people stage.
+        const stageHasPeople = (st: unknown): boolean => {
+          if (!isObject(st)) return false;
+          const cap = ctx.catalog.byId.get(String(st.endpoint_id ?? ""))?.capability ?? "";
+          if (PEOPLE_OF_COMPANY_CAPABILITIES.has(cap)) return true;
+          return st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "";
+        };
+        if (ctx.forceCompaniesOnly && stagesIn.some(stageHasPeople)) {
+          const recovered = await applyRecoveryResult(
+            await coord.recoverFromSaved(calls, {
+              stagesIn: stagesIn.filter((st) => !stageHasPeople(st)),
+              summaryHint: typeof a.summary_ar === "string" ? a.summary_ar : undefined,
+              assumptionsHint: a.assumptions_ar,
+              inspection: build.inspection,
+              log: ctx.log,
+            }),
+          );
+          return recovered ?? err("the customer chose companies only; propose a companies-only plan with no people stage");
+        }
+
         // UNIFIED CAPABILITY DISCOVERY: every stage reads one of the capabilities code validated for this request (inputs, outputs, availability, policy, price); the model recommends, code decides
         if (ctx.capabilities) {
           const capIssues = planStageIssues(stagesIn.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog);
@@ -1038,7 +1083,21 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         const evidence = await coord.loadEvidenceMap(stagesIn);
         const lookup = build.makeLookup(evidence);
-        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
+        const hasAnswer = Boolean(mission.answer_text && String(mission.answer_text).trim() !== "");
+        const proposalHasChild = stagesIn.some(
+          (st) => isObject(st) && st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "",
+        );
+        const companiesOnlyProposal =
+          !proposalHasChild &&
+          stagesIn.length > 0 &&
+          (Boolean(ctx.forceCompaniesOnly) || (hasAnswer && !ctx.isRecoveryRetry && !ctx.understoodPeople));
+        const unservedSteps =
+          a.unserved_steps !== undefined
+            ? a.unserved_steps
+            : companiesOnlyProposal
+              ? [{ reason_ar: "اكتفى الطلب بالشركات فقط بناءً على توضيحك." }]
+              : undefined;
+        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(unservedSteps !== undefined ? { unserved_steps: unservedSteps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) {
           return rejectOrRecover("the plan was not accepted; fix these and propose again", checked.issues, build.inspection.peopleCandidates.length > 0);
         }
