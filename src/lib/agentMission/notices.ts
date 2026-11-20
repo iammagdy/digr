@@ -98,7 +98,7 @@ function resolveStageCounts(f: MissionNoticeFacts, fallbackNoun: ItemNoun): Arra
   }));
 }
 
-function multiStageDeliveryCopy(stages: ReadonlyArray<{ noun: ItemNoun; delivered: number; planned: number }>): {
+function multiStageDeliveryCopy(stages: ReadonlyArray<{ noun: ItemNoun; delivered: number; planned: number }>, overallPlanned = 0): {
   deliveredSummary: string;
   partialOfPhrase: string;
 } {
@@ -106,7 +106,7 @@ function multiStageDeliveryCopy(stages: ReadonlyArray<{ noun: ItemNoun; delivere
   if (stages.length === 1) {
     return {
       deliveredSummary: countAr(stages[0].delivered, stages[0].noun),
-      partialOfPhrase: deliveredOfAr(stages[0].delivered, stages[0].planned, stages[0].noun),
+      partialOfPhrase: deliveredOfAr(stages[0].delivered, Math.max(stages[0].planned, overallPlanned), stages[0].noun),
     };
   }
   const shortOnly = stages.filter((s) => s.delivered < s.planned);
@@ -125,7 +125,7 @@ function boundedSubject(title: string, suffix: string): string {
 }
 
 function noticeMoneyLineAr(f: MissionNoticeFacts, kind: MissionNoticeKind, deliveredSummary: string): string {
-  if (f.free) return `${FREE_RERUN_MONEY_LINE_AR}.`;
+  if (f.free) return FREE_RERUN_MONEY_LINE_AR;
   const charged = Math.max(0, Math.round(f.chargedPoints));
   const held = heldPointsOf(f);
   if (charged > 0 && (kind === "completed" || kind === "partial")) {
@@ -168,7 +168,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
     : (knownItemNoun(f.noun ?? "") ?? (f.noun === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : itemNounOf(t)));
   const resolvedStages = resolveStageCounts(f, singleNoun);
   const counts = resolvedStages.length > 0
-    ? multiStageDeliveryCopy(resolvedStages)
+    ? multiStageDeliveryCopy(resolvedStages, f.planned)
     : {
         deliveredSummary: countAr(f.delivered, singleNoun),
         partialOfPhrase: deliveredOfAr(f.delivered, f.planned, singleNoun),

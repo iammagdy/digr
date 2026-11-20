@@ -34,6 +34,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // their phone (8 of 10 «رقم الشركة» before, 0 now in these fake worlds, whose answers hold no personal number), the person-phone chain is blitz, aiark, tomba up to 0.05 USD a call (no company-number search and no validator call for it),
 // and the price follows (hold 1,341 -> 2,569, charge 1,166 -> 2,234 points for the same 15 rows). The three other worlds are unchanged.
 // DT-20261119-07 B: the two people worlds store e-mail alternates and test the second pass; the workbook has unavailable contact cells.
+// DT-20261119-13 CHANGED (D-0133, D-0134, D-0140, C1-C7): only the `notices` digests of the five worlds were re-pinned: bounded <=45 status subjects, real stage nouns, and single-placement money in detail1. All other sections byte-identical.
 // Only mission, providerCalls and workbook are re-pinned for those worlds. The existing ledger, planView, finalView, notices and visible event hashes still apply.
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
 const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);
