@@ -1,10 +1,11 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { isSellable, loadTregCatalog, loadTregPriceBaseline, parseCatalog, type CatalogEndpoint } from "../src/lib/treg/catalog";
-import { applyPriceSync, type PriceSyncFile } from "../src/lib/treg/priceSyncFile";
+import { isSellable, loadTregCatalog, loadTregPriceBaseline, parseCatalog, type CatalogEndpoint, type TregCatalog, PINNED_PRICE_IDS } from "../src/lib/treg/catalog";
+import { applyPriceSync, type PriceSyncEntry, type PriceSyncFile } from "../src/lib/treg/priceSyncFile";
 import { buildPriceSync, type PriceObservation } from "../src/lib/treg/priceSync";
 import { main, observePrice, priceSyncRevisionMatches } from "../scripts/capabilities/sync-prices";
 import { CATALOG_PRICE_REV } from "../src/lib/treg/priceRev";
@@ -141,5 +142,53 @@ it("checks the full file in a fresh process and preserves corrupt target bytes o
     expect(readFileSync(target, "utf8")).toBe(corrupt);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+it("only the proven fixture rates change and all other catalog fields are retained", () => {
+  const fixtureDir = "tests/fixtures/dt-0119-12";
+  const observations = new Map<string, PriceObservation>();
+  for (const file of readdirSync(fixtureDir).filter((name) => name.endsWith(".json"))) {
+    const id = file.slice(0, -5);
+    observations.set(id, observePrice(id, { ok: true, status: 200, text: readFileSync(path.join(fixtureDir, file), "utf8") }));
+  }
+  const before = loadTregPriceBaseline();
+  const { file, rows } = buildPriceSync(before, empty, observations, PINNED_PRICE_IDS, date);
+  expect(rows.map((row) => row.reason)).toEqual([
+    "apply", "apply", "apply", "apply",
+    "size_note_changed", "size_note_changed", "size_note_changed", "input_added",
+    "basis_unproven", "basis_unproven", "basis_unproven",
+  ]);
+  expect(file).toEqual(JSON.parse(readFileSync(path.join(catalogDir, "price_sync.json"), "utf8")));
+
+  const rates = new Map(file.entries.map((entry) => [entry.id, entry.now?.usd]));
+  const assertOnlyProvenPricesChanged = (catalog: TregCatalog) => {
+    for (const stored of before.endpoints) {
+      const usd = rates.get(stored.id);
+      const expected = usd === undefined ? stored : { ...stored, cost: { ...stored.cost, usd } };
+      assert.deepEqual(catalog.byId.get(stored.id), expected, stored.id);
+    }
+  };
+  assertOnlyProvenPricesChanged(loadTregCatalog());
+  const control = before.endpoints.find((endpoint) => !rates.has(endpoint.id) && endpoint.cost?.usd)!;
+  const mutant = loadTregCatalog({ syncFile: path.join(catalogDir, "price_sync.json") });
+  const observed = mutant.byId.get(control.id)!;
+  observed.cost = { ...observed.cost!, usd: observed.cost!.usd! + 0.000001 };
+  expect(() => assertOnlyProvenPricesChanged(mutant)).toThrow(control.id);
+});
+
+it("rejects invalid anchors, foreign units, and duplicate or pinned entries before changing the catalog", () => {
+  const valid = { id, was: { unit: "record", usd: 0.000495 }, now: { unit: "record", usd: 0.001 }, since: date };
+  const cases: Array<{ entries: PriceSyncEntry[]; pinned?: Set<string> }> = [
+    { entries: [{ ...valid, was: { ...valid.was, usd: 0.0005 } }] },
+    { entries: [{ ...valid, now: { ...valid.now, unit: "page" } }] },
+    { entries: [valid, valid] },
+    { entries: [valid], pinned: new Set([id]) },
+  ];
+  for (const { entries, pinned } of cases) {
+    const cold = baseline();
+    expect(() => applyPriceSync(cold, { revision: 2, entries }, pinned ?? new Set())).toThrow(/invalid price sync/);
+    expect(cold.byId.get(id)?.cost?.usd).toBe(0.000495);
   }
 });

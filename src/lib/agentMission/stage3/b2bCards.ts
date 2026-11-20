@@ -69,7 +69,7 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
     reader: { kind: "list", fields: { id: ["website_url"], name: ["name"], website: ["website_url"], activity: ["industry"], hq: ["city"], employees: ["company_size"], founded: ["founded"], linkedin: ["linkedin_url"] } },
     verifiedOn: [{ mission: M_A, calls: calls(1, 7) }, { mission: M_B, calls: calls(1, 4) }],
     note: `${BY_SHAPE} Verified on 4 real pages of 50 companies. The live calls carried a country and an industry filter (the page echoes \`meta.filters\`); no size filter was ever seen, so size is NOT claimed (a size condition becomes a mark column). \`phone_number\` is the boolean «false» on all 200 stored companies (a flag, never a number), so this tool gives NO HQ phone and the card does not map it. \`company_size\` and \`founded\` are text.` }),
-  U({ endpointId: "blitzapi.companies.search", role: "companies.search", carries: ["sector", "country", "size"], needs: [], page: { list: ["results"], cursor: null }, costUsd: 0.000495, costUnit: "record",
+  U({ endpointId: "blitzapi.companies.search", role: "companies.search", carries: ["sector", "country", "size"], needs: [], page: { list: ["results"], cursor: null }, costUsd: 0.001, costUnit: "record",
     reader: { kind: "list", fields: { id: ["linkedin_url"], name: ["name"], website: ["website"], domain: ["domain"], activity: ["industry"], hq: ["hq"], employees: ["size"], founded: ["founded_year"], linkedin: ["linkedin_url"] } },
     note: `${NO_PAGE} GUESS: the «company» input object carries industry, country and size.` }),
   U({ endpointId: "aviato.companies.search", role: "companies.search", carries: ["sector", "country"], needs: [], page: { list: ["items"], cursor: null }, costUsd: 0.0025, costUnit: "call",
