@@ -54,8 +54,7 @@ const utcDay = (now: Date): string => now.toISOString().slice(0, 10);
 export const EXPLORATION_READ_PAGE = 1000;
 
 /**
- * What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. `source: "database"` means the sum is the COMPLETE shared sum: it is proven complete only when the rows read reach the table's exact
- * row count for that day, or when a verified EMPTY terminal page was read (a short page proves nothing: the server may cut an answer). A failed page, an unprovable end, or a sum that lacks the caller's own pending row (`requireTag`) is not complete and falls back to memory,
+ * What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. `source: "database"` means the sum is the COMPLETE shared sum: it is proven complete only when a verified EMPTY terminal page was read after paging in order by the server's real page length (a short page, or reaching an earlier row count, proves nothing: the server may cut an answer, and a row inserted between the count and a page can push an older row out of it). The exact row count is only a minimum sanity check at that terminal page. A failed page, an unprovable end, or a sum that lacks the caller's own pending row (`requireTag`) is not complete and falls back to memory,
  * which never counts as the shared ledger. `day` pins the UTC day to read (a reservation counts on the day its row was written on).
  */
 export async function readExplorationSpend(deps: ExplorationDeps, opts?: { day?: string; requireTag?: string }): Promise<{ request: number; day: number; source: "database" | "memory" }> {
@@ -83,7 +82,6 @@ export async function readExplorationSpend(deps: ExplorationDeps, opts?: { day?:
         if (error || !Array.isArray(data)) break;
         for (const r of data) byKey.set(r?.id !== undefined && r?.id !== null ? `id:${r.id}` : `n:${byKey.size}:${from}`, r);
         if (data.length === 0) { complete = expected === null || byKey.size >= expected; break; }
-        if (expected !== null && byKey.size >= expected) { complete = true; break; }
         if (!canPage) break; // an answer that cannot be continued and does not reach the exact count may be cut: not a complete sum
         from += data.length; // the server's REAL page length, not the one asked
       }

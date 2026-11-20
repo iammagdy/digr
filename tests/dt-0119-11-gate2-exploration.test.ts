@@ -128,7 +128,8 @@ describe("F1: a shared client fails CLOSED", () => {
  * DT-20261119-11 Gate 2 round 2, F1 narrow fix (فزاع P0): truncated successful reads, the UTC rollover, the exact pending row in the checked sum, and a settled row's immutable accounting day. Offline, fake database and provider, no spend.
  */
 /** A database that HONORS ranges but never answers more than `serverMax` rows (a configured server row limit); `hideCount` also hides the exact count. `hide` removes rows from every read (a read that misses a row). */
-function capped(db: ReturnType<typeof createMemoryDb>, serverMax: number, o: { hideCount?: boolean; hide?: (r: any) => boolean; onInsert?: () => void } = {}) {
+let idSeq = 0;
+function capped(db: ReturnType<typeof createMemoryDb>, serverMax: number, o: { hideCount?: boolean; hide?: (r: any) => boolean; onInsert?: () => void; assignId?: boolean; beforeInsert?: (row: any) => Promise<void>; afterHead?: () => void } = {}) {
   const reads: number[] = [];
   const client: any = {
     storage: db.storage,
@@ -145,10 +146,10 @@ function capped(db: ReturnType<typeof createMemoryDb>, serverMax: number, o: { h
         range: (f: number, t: number) => { from = f; to = t; return b; },
         eq: (c: string, v: any) => { inner.eq(c, v); return b; },
         update: (p: any) => { inner.update(p); return b; },
-        insert: async (row: any) => { const r = await inner.insert(row); o.onInsert?.(); return r; },
+        insert: async (row: any) => { await o.beforeInsert?.(row); const r = await inner.insert(o.assignId && row.id === undefined ? { ...row, id: `a_i${String((idSeq += 1)).padStart(4, "0")}` } : row); o.onInsert?.(); return r; },
         then: (res: any, rej: any) => {
           const task = (async () => {
-            if (headCount) { const all = db.rows(EXPLORATION_TABLE).filter((r: any) => filtersGte.every(([c, v]) => r[c] >= v) && filtersLt.every(([c, v]) => r[c] < v) && !(o.hide?.(r))); return o.hideCount ? { data: null, error: null } : { data: null, count: all.length, error: null }; }
+            if (headCount) { const all = db.rows(EXPLORATION_TABLE).filter((r: any) => filtersGte.every(([c, v]) => r[c] >= v) && filtersLt.every(([c, v]) => r[c] < v) && !(o.hide?.(r))); const res = o.hideCount ? { data: null, error: null } : { data: null, count: all.length, error: null }; o.afterHead?.(); return res; }
             const out = await inner;
             if (out.error || !Array.isArray(out.data)) return out;
             let data = out.data.filter((r: any) => !(o.hide?.(r)));
@@ -276,5 +277,25 @@ describe("F1 round 2: the UTC day", () => {
     const call = answer();
     const r = await runSampleCall({ id: "aviato.companies.employees", params: xParams }, ctx(), { client, requestId: "t6", userId: "u", call });
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("F1 round 2b: a row inserted between the count and a page cannot push an older charged row out", () => {
+  it("996 zero rows + a $0.450 row with the highest sort id; A pauses before its insert, two peers settle at their wire caps, a zero-cost row with a low id lands between A's count and its page → NO dispatch from A, ledger ≤ $0.50", async () => {
+    const db = createMemoryDb();
+    db.seed(EXPLORATION_TABLE, Array.from({ length: 996 }, (_, i) => ({ id: `a_${String(i).padStart(4, "0")}`, request_id: `z${i}`, cost_usd: 0, created_at: `${today()}T00:00:01.000Z` })));
+    db.seed(EXPLORATION_TABLE, [{ id: "b_big", request_id: "big", cost_usd: 0.450, created_at: `${today()}T00:00:02.000Z` }]);
+    const peer = async (id: string) => { const c = exactCap(); await runSampleCall({ id: "aviato.companies.employees", params: xParams }, ctx(), { client: capped(db, 1000, { assignId: true }).client, requestId: id, userId: "u", call: c }); return c; };
+    let inserted = false; let injected = false;
+    const a = capped(db, 1000, {
+      assignId: true,
+      beforeInsert: async (row) => { if (!inserted && String(row.refused_reason ?? "").startsWith("reserved:") && row.request_id === "A") { inserted = true; await peer("P1"); await peer("P2"); } },
+      afterHead: () => { if (inserted && !injected) { injected = true; db.seed(EXPLORATION_TABLE, [{ id: "a_inj", request_id: "refused", cost_usd: 0, created_at: `${today()}T00:00:03.000Z` }]); } },
+    });
+    const callA = exactCap();
+    await runSampleCall({ id: "aviato.companies.employees", params: xParams }, ctx(), { client: a.client, requestId: "A", userId: "u", call: callA });
+    expect(injected).toBe(true);
+    expect(callA).not.toHaveBeenCalled();
+    expect(total(db)).toBeLessThanOrEqual(EXPLORATION_DAY_CAP_USD + 1e-9);
   });
 });
