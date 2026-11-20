@@ -106,17 +106,27 @@ export function contractFromSnapshot(e: Record<string, any>, pausedProviders: Re
   };
 }
 
+/** Returns the same input groups used by the drift and price checks, with their raw field metadata. */
+export function catalogInputFields(input: unknown): Array<[string, string, unknown]> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+  const groups = input as Record<string, unknown>;
+  const fields: Array<[string, string, unknown]> = [];
+  for (const group of ["body", "queryParams", "query", "pathParams", "params"]) {
+    const entries = groups[group];
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) continue;
+    for (const [name, spec] of Object.entries(entries)) fields.push([group, name, spec]);
+  }
+  return fields;
+}
+
 /** From TREG's public `/catalog/endpoints/{id}` answer (`{ endpoint: {...}, example_response }`). List and cursor paths are not stated there: they stay null (the output contract is compared only where both sides state it). */
 export function contractFromLive(detail: Record<string, any>, pausedProviders: ReadonlySet<string> = new Set()): EndpointContract | null {
   const e = detail?.endpoint;
   if (!e || typeof e !== "object" || typeof e.id !== "string") return null;
-  const groups = e.input && typeof e.input === "object" ? e.input : {};
-  const inputs: Array<[string, boolean, string]> = [];
-  for (const g of ["body", "queryParams", "query", "pathParams", "params"]) {
-    const fields = groups[g];
-    if (!fields || typeof fields !== "object" || Array.isArray(fields)) continue;
-    for (const [name, spec] of Object.entries(fields as Record<string, any>)) inputs.push([name, Boolean(spec?.required), normType(spec?.type)]);
-  }
+  const inputs = catalogInputFields(e.input).map(([, name, spec]): [string, boolean, string] => {
+    const field = spec as { required?: unknown; type?: unknown } | null;
+    return [name, Boolean(field?.required), normType(field?.type)];
+  });
   const provider = String(e.provider ?? e.id.split(".")[0]);
   return {
     id: e.id, provider, capability: String(e.capability ?? ""), inputs: sortInputs(inputs),

@@ -1,4 +1,4 @@
-import { DECLARED_PRICE_CORRECTIONS } from "../treg/catalog";
+import { PINNED_PRICE_IDS, SYNCED_PRICE_IDS } from "../treg/catalog";
 import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import type { PricedPlan } from "./plan";
 
@@ -9,6 +9,5 @@ import type { PricedPlan } from "./plan";
  */
 export function planNeedsRequote(plan: Pick<PricedPlan, "stages" | "price">): boolean {
   if ((plan.price?.pricedUnder ?? 0) >= CATALOG_PRICE_REV) return false;
-  const corrected = new Set(DECLARED_PRICE_CORRECTIONS.map((c) => c.id));
-  return plan.stages.some((st) => [st.endpoint_id, st.engine?.endpoint_id, ...(st.engine?.alternatives ?? []).map((a) => a.endpoint_id)].some((id) => typeof id === "string" && corrected.has(id)));
+  return plan.stages.some((st) => [st.endpoint_id, st.engine?.endpoint_id, ...(st.engine?.alternatives ?? []).map((a) => a.endpoint_id)].some((id) => typeof id === "string" && (PINNED_PRICE_IDS.has(id) || SYNCED_PRICE_IDS.has(id))));
 }

@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { normalizeArabic } from "../arabicNormalize";
 import { PAUSED_PROVIDERS } from "./blockList";
+import priceSync from "../../../data/treg/price_sync.json";
+import { applyPriceSync } from "./priceSyncFile";
+import { CATALOG_PRICE_REV } from "./priceRev";
 
 /**
  * The TREG catalog as DATA: a local snapshot (data/treg/treg_catalog_sellable.json, 3,276 endpoints with inputs, cost, observed stats, siblings, a test request, the
@@ -86,6 +89,7 @@ export interface TregCatalog {
   byId: ReadonlyMap<string, CatalogEndpoint>;
   /** The ids of the write actions (create, edit, delete, post, reply, send…): never sellable. */
   writeIds: ReadonlySet<string>;
+  withdrawnIds?: ReadonlySet<string>;
 }
 
 /** Builds the catalog from the two parsed files. Pure (no file access), so tests can hand it a small snapshot. */
@@ -207,19 +211,33 @@ export function applyPriceCorrections(catalog: TregCatalog, corrections: Readonl
   return out;
 }
 
-const cache = new Map<string, TregCatalog>();
+export const PINNED_PRICE_IDS: ReadonlySet<string> = new Set(DECLARED_PRICE_CORRECTIONS.map((entry) => entry.id));
+export const SYNCED_PRICE_IDS: ReadonlySet<string> = new Set(priceSync.entries.map((entry: { id: string }) => entry.id));
 
-/** Reads data/treg/ once per process (and per directory). No network. */
-export function loadTregCatalog(options: { dir?: string } = {}): TregCatalog {
-  const dir = options.dir ?? path.join(process.cwd(), "data", "treg");
-  const hit = cache.get(dir);
-  if (hit) return hit;
+const cache = new Map<string, TregCatalog>();
+const defaultDir = () => path.join(process.cwd(), "data", "treg");
+
+/** The immutable input to the runtime overlay and to each weekly rebuild. */
+export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatalog {
+  const dir = options.dir ?? defaultDir();
   const snapshot = JSON.parse(readFileSync(path.join(dir, "treg_catalog_sellable.json"), "utf-8"));
   const writes = JSON.parse(readFileSync(path.join(dir, "treg_write_actions.json"), "utf-8"));
   const catalog = parseCatalog(snapshot, writes);
   declareExtraInputs(catalog);
   applyPriceCorrections(catalog);
-  cache.set(dir, catalog);
+  return catalog;
+}
+
+/** Loads the bundled overlay. The CLI supplies an explicit file to check proposed bytes cold. */
+export function loadTregCatalog(options: { dir?: string; syncFile?: string } = {}): TregCatalog {
+  const { dir = defaultDir(), syncFile } = options;
+  const hit = syncFile === undefined ? cache.get(dir) : undefined;
+  if (hit) return hit;
+  const catalog = loadTregPriceBaseline({ dir });
+  const overlay: unknown = syncFile === undefined ? priceSync : JSON.parse(readFileSync(syncFile, "utf-8"));
+  const file = applyPriceSync(catalog, overlay, PINNED_PRICE_IDS);
+  if (syncFile === undefined && file.revision !== CATALOG_PRICE_REV) throw new Error("catalog price revision disagrees with the price sync file");
+  if (syncFile === undefined) cache.set(dir, catalog);
   return catalog;
 }
 
@@ -234,7 +252,7 @@ export function clearTregCatalogCache(): void {
  */
 export function isSellable(id: string, catalog: TregCatalog = loadTregCatalog()): boolean {
   const key = String(id ?? "").trim();
-  if (!key || catalog.writeIds.has(key)) return false;
+  if (!key || catalog.writeIds.has(key) || catalog.withdrawnIds?.has(key)) return false;
   const endpoint = catalog.byId.get(key);
   if (!endpoint) return false;
   if (String(endpoint.scope ?? "").toLowerCase() === "own_account") return false;

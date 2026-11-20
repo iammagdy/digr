@@ -1,0 +1,28 @@
+{
+  "endpoint": {
+    "id": "sixtyfour.companies.intelligence.start",
+    "cost": {
+      "type": "per_success",
+      "unit": "call",
+      "usd": 0.3
+    },
+    "input": {
+      "body": {
+        "target_company": {
+          "note": "Company name, domain or LinkedIn URL."
+        },
+        "struct": {
+          "note": "Requested output fields and natural-language descriptions."
+        },
+        "tier": {
+          "enum": [
+            "micro",
+            "low"
+          ]
+        },
+        "research_plan": {},
+        "field_confidence": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "endpoint": {
+    "id": "sixtyfour.companies.search",
+    "cost": {
+      "type": "per_result",
+      "unit": "result",
+      "usd": 0.03
+    },
+    "input": {
+      "body": {
+        "query": {
+          "note": "Natural-language query."
+        },
+        "mode": {
+          "enum": [
+            "company"
+          ]
+        },
+        "page_size": {
+          "enum": [
+            10
+          ]
+        },
+        "max_results": {
+          "enum": [
+            10
+          ]
+        },
+        "persist_history": {
+          "enum": [
+            false
+          ]
+        },
+        "output_shape": {
+          "enum": [
+            "raw"
+          ]
+        }
+      }
+    }
+  }
+}

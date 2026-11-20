@@ -1,0 +1,24 @@
+{
+  "endpoint": {
+    "id": "blitzapi.companies.search",
+    "cost": {
+      "type": "per_result",
+      "per": 1,
+      "unit": "record",
+      "usd": 0.001
+    },
+    "input": {
+      "body": {
+        "company": {
+          "note": "Name, industry, size, HQ, revenue, funding and keyword filters."
+        },
+        "max_results": {
+          "default": 10,
+          "min": 1,
+          "max": 50
+        },
+        "cursor": {}
+      }
+    }
+  }
+}

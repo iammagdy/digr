@@ -1,0 +1,16 @@
+{
+  "endpoint": {
+    "id": "blitzapi.companies.enrich",
+    "cost": {
+      "type": "per_success",
+      "per": 1,
+      "unit": "record",
+      "usd": 0.001
+    },
+    "input": {
+      "body": {
+        "company_linkedin_url": {}
+      }
+    }
+  }
+}
