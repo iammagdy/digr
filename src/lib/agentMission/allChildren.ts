@@ -1,7 +1,7 @@
 import { toArabicDigits } from "../arabicDigits";
 import { childCountOf } from "./childCount";
 import { isPeopleStage } from "./people";
-import { priceMissionByCode } from "./price";
+import { carriedRevision, priceMissionByCode } from "./price";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
 
 /**
@@ -52,7 +52,7 @@ export async function withAllChildren(plan: PricedPlan, deps: AllChildrenDeps): 
     const est = allChildrenEstimate(counters.slice(0, Math.max(1, parent.planned_rows)), Math.max(1, Number(stage.per_parent_rows) || 1));
     if (est.total < 1) continue;
     const stages = out.stages.map((s) => (s.key === stage.key ? { ...s, planned_rows: est.total, expected_rows: est.total, per_parent_rows: est.perParent, all_children: true } : s));
-    const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });
+    const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings, ...carriedRevision(out.price) });
     if (price.overCap) { if (!(out.notes_ar ?? []).includes(NOTE_CAP_AR)) out = { ...out, notes_ar: [...(out.notes_ar ?? []), NOTE_CAP_AR] }; continue; }
     const note = noteAr(parent.title_ar, est.read, est.total);
     out = { ...out, stages, price, notes_ar: [...(out.notes_ar ?? []).filter((n) => n !== note), note] };

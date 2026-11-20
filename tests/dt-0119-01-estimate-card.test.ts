@@ -103,8 +103,8 @@ describe("the people stage priced by an estimate: the card", () => {
     const plan = planOf(r);
     const people = plan.stages.find((s: any) => s.key === "people");
     expect(people).toMatchObject({ estimated: true, planned_rows: 10, measured_by: [], measured_from_calls: [], sample_rows: [] });
-    // the estimate: the dearest of the next three sources of the table after the one that answered empty (0.0005001 USD), exactly as peopleEstimate.ts derives it from the catalog
-    expect(people.measured_cost_per_row_usd).toBeCloseTo(0.0005001, 6);
+    // the estimate: the dearest of the next three sources of the table after the one that answered empty (0.0010001 USD: blitz is now 0.001 per record, D-0135), exactly as peopleEstimate.ts derives it from the catalog
+    expect(people.measured_cost_per_row_usd).toBeCloseTo(0.0010001, 6);
     expect(plan.stages.find((s: any) => s.key === "companies").estimated).toBeUndefined();
     expect(plan.assumptions_ar).toContain(PEOPLE_ESTIMATE_NOTE_AR);
     expect(r.planView.assumptionsAr).toContain(PEOPLE_ESTIMATE_NOTE_AR);
@@ -166,18 +166,18 @@ describe("the people stage priced by an estimate: the card", () => {
     const ranked = peopleSourcesForCompanies(catalog, () => true);
     const ids = ranked.map((x) => x.id);
     const e0 = peopleEstimateOf(ranked, new Set())!;
-    expect(e0.endpointIds.length).toBe(13);
-    expect(e0.endpointIds).toEqual(ids.slice(0, 13));
-    expect(ids.slice(13).every((id) => ranked.find((x) => x.id === id)!.effectiveUsd > PEOPLE_ESTIMATE_MAX_USD)).toBe(true);
+    expect(e0.endpointIds.length).toBe(12); // findymail (now priced per person: 0.0198 / its hit rate) left the table (D-0135)
+    expect(e0.endpointIds).toEqual(ids.slice(0, 12));
+    expect(ids.slice(12).every((id) => ranked.find((x) => x.id === id)!.effectiveUsd > PEOPLE_ESTIMATE_MAX_USD)).toBe(true);
     expect(e0.ceilingPersonUsd).toBeCloseTo(0.0196, 6);
     // 0 / 1 / 3 / 5 sources tried empty: the estimate follows the next three (USD per person)
-    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 0)))!.costPerPersonUsd).toBeCloseTo(0.000495, 6);
-    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 1)))!.costPerPersonUsd).toBeCloseTo(0.0005001, 6);
+    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 0)))!.costPerPersonUsd).toBeCloseTo(0.0010001, 6);
+    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 1)))!.costPerPersonUsd).toBeCloseTo(0.0010004, 6);
     expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 3)))!.costPerPersonUsd).toBeCloseTo(0.002, 6);
-    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 5)))!.costPerPersonUsd).toBeCloseTo(0.0063647, 6);
+    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 5)))!.costPerPersonUsd).toBeCloseTo(0.0064032, 6);
     // every source of the table tried empty (or none left under the ceiling): no estimate, no card
-    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 13)))).toBeNull();
-    expect(peopleEstimateOf(ranked.slice(13), new Set())).toBeNull();
+    expect(peopleEstimateOf(ranked, new Set(ids.slice(0, 12)))).toBeNull();
+    expect(peopleEstimateOf(ranked.slice(12), new Set())).toBeNull();
     expect(peopleEstimateOf([], new Set())).toBeNull();
     // a source tried empty is never the endpoint of the estimated stage
     expect(peopleEstimateOf(ranked, new Set([ids[0]]))!.endpointIds).not.toContain(ids[0]);
@@ -190,36 +190,36 @@ describe("the people stage priced by an estimate: the card", () => {
 });
 
 describe("the money end to end: approve -> a model-carried run -> settle per stage, on the money fake (the SQL's rules)", () => {
-  // the plan the customer approved: 5 companies + 10 people, hold 2,554, today's blended unit 148.002371, the card's full charge 2,221
-  it("(a) every person delivered: charged EXACTLY the card's full charge 2,221, the rest of the hold released; the per-stage function settled, the one-unit function never", async () => {
+  // the plan the customer approved: 5 companies + 10 people, hold 2,585, today's blended unit 149.835704, the card's full charge 2,248
+  it("(a) every person delivered: charged EXACTLY the card's full charge 2,248, the rest of the hold released; the per-stage function settled, the one-unit function never", async () => {
     const r = await world([2, 2, 2, 2, 2]);
     const m: any = r.mission;
-    expect(m).toMatchObject({ status: "completed", delivered_units: 15, charged_points: 2221, reserved_points: 2554, unit_price_points: 148.002371 });
+    expect(m).toMatchObject({ status: "completed", delivered_units: 15, charged_points: 2248, reserved_points: 2585, unit_price_points: 149.835704 });
     expect(m.error ?? null).toBeNull();
-    expect(planOf(r).price).toMatchObject({ maxChargePoints: 2221, reservePoints: 2554 });
+    expect(planOf(r).price).toMatchObject({ maxChargePoints: 2248, reservePoints: 2585 });
     const x = money(r);
     expect(x.names.filter((n) => n === "settle_job_by_stage_atomic").length).toBe(2); // the approval's probe + the settlement
     expect(x.names).not.toContain("settle_job_atomic");
     expect(x.names.indexOf("settle_job_by_stage_atomic")).toBeLessThan(x.names.indexOf("create_quote_atomic"));
-    expect(x.ledger.find((l) => l.type === "charge")!.delta).toBe(-2221);
-    expect(x.ledger.find((l) => l.type === "release")!.delta).toBe(2554);
-    expect(r.money.balance()).toBe(r.initialBalance - 2221);
+    expect(x.ledger.find((l) => l.type === "charge")!.delta).toBe(-2248);
+    expect(x.ledger.find((l) => l.type === "release")!.delta).toBe(2585);
+    expect(r.money.balance()).toBe(r.initialBalance - 2248);
   }, 120_000);
-  it("(b) NO person delivered: the customer pays the companies at their own unit only (today's rule would charge 5 x 148.002371 = 741), the rest is released, and the customer is told what was charged", async () => {
+  it("(b) NO person delivered: the customer pays the companies at their own unit only (today's rule would charge 5 x 149.835704 = 749), the rest is released, and the customer is told what was charged", async () => {
     const r = await world([0, 0, 0, 0, 0]);
     const m: any = r.mission;
     const units = stageUnitsOf(planOf(r))!;
-    expect(units.base * 5).toBeLessThan(741);
+    expect(units.base * 5).toBeLessThan(749);
     expect(m).toMatchObject({ status: "completed", delivered_units: 5, charged_points: 373 });
     expect(m.error ?? null).toBeNull();
     expect(r.money.balance()).toBe(r.initialBalance - 373);
     expect(money(r).names).not.toContain("settle_job_atomic");
     expect(r.finalView.resultSummaryAr).toMatch(/لم يُخصم إلا مقابل ما سُلّم/);
   }, 120_000);
-  it("(c) some people: 2 companies with 2 people, 3 with none: the 5 companies at their unit + the 4 people at theirs (today's rule: 9 x 148.002371 = 1,333)", async () => {
+  it("(c) some people: 2 companies with 2 people, 3 with none: the 5 companies at their unit + the 4 people at theirs (today's rule: 9 x 149.835704 = 1,348)", async () => {
     const r = await world([2, 2, 0, 0, 0]);
-    expect(r.mission).toMatchObject({ status: "completed", delivered_units: 9, charged_points: 1112 });
-    expect(r.money.balance()).toBe(r.initialBalance - 1112);
+    expect(r.mission).toMatchObject({ status: "completed", delivered_units: 9, charged_points: 1123 });
+    expect(r.money.balance()).toBe(r.initialBalance - 1123);
   }, 120_000);
   // D-0117 (DT-20261119-06 PART B): the people WITHOUT a requested contact are delivered but not charged, on the per-stage path too: the estimated group's count loses them, the companies' count is untouched, the charge is the lower-of of the billable counts (never above today's)
   it("(e) D-0117: all 10 people delivered, only the first person of three companies carries a contact: the per-stage function settles 5 companies + 3 people (not 10), the charge is the lower-of of those counts, the file keeps every person, the customer is told 7 were not charged", async () => {
@@ -227,9 +227,9 @@ describe("the money end to end: approve -> a model-carried run -> settle per sta
     const r = await replay({ request, planning: planFlow(), execution: execution(), answers: answers([2, 2, 2, 2, 2], (slug, first) => first && ["orascom-em", "nile-em", "delta-em"].includes(slug)) as any, deps: withUnderstanding });
     const m: any = r.mission;
     const units = stageUnitsOf(planOf(r))!;
-    const expected = settlementChargeByStage({ base: 5, estimated: 3 }, units, 148.002371, 2554);
-    expect(expected).toBeLessThan(2221);
-    expect(m).toMatchObject({ status: "completed", delivered_units: 15, charged_points: expected, reserved_points: 2554 });
+    const expected = settlementChargeByStage({ base: 5, estimated: 3 }, units, 149.835704, 2585);
+    expect(expected).toBeLessThan(2248);
+    expect(m).toMatchObject({ status: "completed", delivered_units: 15, charged_points: expected, reserved_points: 2585 });
     const settle = [...r.money.calls].reverse().find((c) => c.name === "settle_job_by_stage_atomic")!;
     expect((settle.args as any).p_units).toEqual({ base: 5, estimated: 3 });
     expect(money(r).names).not.toContain("settle_job_atomic");
@@ -237,7 +237,7 @@ describe("the money end to end: approve -> a model-carried run -> settle per sta
     expect(JSON.parse((await r.store.getFile(r.missionId, "rows/people.json"))!)).toHaveLength(10);
     expect(r.store.events.some((e) => e.kind === "result" && e.message_ar === unbilledLineAr(7, ["email", "phone"]))).toBe(true);
   }, 120_000);
-  it("the units come from the plan the customer APPROVED even when the run widens a stage (an open people stage: the run's own copy of the plan raises its planned rows to what the job may deliver): the charge of 5 companies + 4 people stays 1,112", async () => {
+  it("the units come from the plan the customer APPROVED even when the run widens a stage (an open people stage: the run's own copy of the plan raises its planned rows to what the job may deliver): the charge of 5 companies + 4 people stays 1,123", async () => {
     const r = await replay({ request, planning: planFlow(), execution: execution(), answers: answers([2, 2, 0, 0, 0]) as any, deps: withUnderstanding,
       // the same people stage, now «every person of each company» (children_open, 4 per company): the price inputs are untouched, so the approval still prices the same card
       beforeApproval: async ({ store, missionId }) => {
@@ -246,7 +246,7 @@ describe("the money end to end: approve -> a model-carried run -> settle per sta
         await store.updateMission(missionId, { plan });
       } });
     const m: any = r.mission;
-    expect(m).toMatchObject({ status: "completed", delivered_units: 9, charged_points: 1112 });
+    expect(m).toMatchObject({ status: "completed", delivered_units: 9, charged_points: 1123 });
     // the database charges from the prices of the accepted quote; the run's own expectation (from the APPROVED plan's units) must equal it, or the mission is flagged «charge X differs from the expected Y» for the admin
     expect(m.error ?? null).toBeNull();
     expect(money(r).names).not.toContain("settle_job_atomic");

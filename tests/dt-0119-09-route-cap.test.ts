@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ceilToMicroUsd, tregRouteCapUsd } from "../src/lib/server/spendGate/bounds";
-import { estimateCallUsd, tregRouteMaxUsd } from "../agent/src/gateway";
+import { ceilToMicroUsd, tregCallBoundUsd } from "../src/lib/server/spendGate/bounds";
+import { estimateCallUsd, tregCallBoundOf } from "../agent/src/gateway";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executeTregCall, isRouteMaxCostBody } from "../src/functions/shared/tregClient";
 import { classifyFailure } from "../src/lib/agentMission/sourceRanking";
@@ -18,21 +18,21 @@ afterEach(() => { logs.restore(); teardownPoolWorld(); });
 
 describe("F1: the route cap is rounded UP to the micro-dollar, never down", () => {
   it("the live case: aiark.people.search (0.0026335) is sent as at least 0.002634", () => {
-    expect(tregRouteCapUsd(0.0026335)).toBe(0.002634);
+    expect(tregCallBoundUsd(0.0026335)).toBe(0.002634);
     const catalog = loadTregCatalog();
     expect(estimateCallUsd(catalog.byId.get("aiark.people.search")!, {}, catalog)).toBe(0.0026335);
-    expect(tregRouteMaxUsd("aiark.people.search", {}, catalog)).toBe(0.002634);
+    expect(tregCallBoundOf("aiark.people.search", {}, catalog)).toBe(0.002634);
   });
 
   it.each([
     // COUNTER: an amount that is exact to the micro-dollar is not moved (float noise is not a fraction of a micro-dollar: 0.000495 x 10 is 4950.000000000001 micro)
     [0.001, 0.001], [0.0025, 0.0025], [0.005, 0.005], [0.000495 * 10, 0.00495], [0.000495 * 65, 0.032175], [0.05, 0.05], [1, 1], [0.0123456789, 0.012346], [0.0004, 0.001], [0, 0.001], [0.0010000004, 0.001001],
-  ])("tregRouteCapUsd(%s) = %s (the floor 0.001 is kept)", (estimate, cap) => {
-    expect(tregRouteCapUsd(estimate)).toBe(cap);
+  ])("tregCallBoundUsd(%s) = %s (the floor 0.001 is kept)", (estimate, cap) => {
+    expect(tregCallBoundUsd(estimate)).toBe(cap);
   });
 
   it("COUNTER over 4,000 exact micro-dollar prices (some carry upward float noise, e.g. 0.000495 x 65 = 32175.000000000004 micro): none moves", () => {
-    for (let k = 1000; k < 5000; k += 1) expect(tregRouteCapUsd(k / 1e6), String(k)).toBe(Number((k / 1e6).toFixed(6)));
+    for (let k = 1000; k < 5000; k += 1) expect(tregCallBoundUsd(k / 1e6), String(k)).toBe(Number((k / 1e6).toFixed(6)));
   });
 
   it("ceilToMicroUsd: whole micro-dollars stay, any fraction goes up, a non-number is 0", () => {
@@ -49,7 +49,7 @@ describe("F1: the route cap is rounded UP to the micro-dollar, never down", () =
     for (const [id, endpoint] of catalog.byId) {
       for (const params of [{}, { limit: 50 }, { size: 1 }, { max_results: 100 }] as Array<Record<string, unknown>>) {
         const estimate = estimateCallUsd(endpoint, params, catalog);
-        const cap = tregRouteMaxUsd(id, params, catalog);
+        const cap = tregCallBoundOf(id, params, catalog);
         if (cap === null) continue;
         if (Object.keys(params).length === 0) priced += 1;
         const floored = Math.max(estimate, 0.001) * 1e6;

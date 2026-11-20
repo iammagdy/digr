@@ -53,6 +53,13 @@ const withTextUnlocked = (view: unknown): unknown => {
 };
 const dataSheets = (cells: Record<string, string[][]>): Record<string, string[][]> => Object.fromEntries(Object.entries(cells).slice(1));
 
+/** DT-20261119-11: the plan's price now carries the catalog price revision it was made under (`price.pricedUnder`): the one stated difference of the plan, set apart before the hash is compared. */
+function withoutPriceRevision(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutPriceRevision);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "pricedUnder").map(([k, x]) => [k, withoutPriceRevision(x)]));
+  return v;
+}
+
 /** The topic mark taken out: its column entry and its value on every row, anywhere in the document. */
 function withoutTopicMark(v: unknown): unknown {
   if (Array.isArray(v)) return v.filter((x) => !(x && typeof x === "object" && (x as { key?: unknown }).key === "topic_relation")).map(withoutTopicMark);
@@ -63,7 +70,7 @@ function withoutTopicMark(v: unknown): unknown {
 describe("TikTok: the plan and the customer's view are byte for byte what they were; the file differs in one stated cell kind only", () => {
   it("plan and view", async () => {
     const w = await tiktokWorld();
-    expect(sha(withoutResearchGate(withoutMatchCounts(withoutConditions(w.plan))))).toBe(BASE.tiktok.plan);
+    expect(sha(withoutPriceRevision(withoutResearchGate(withoutMatchCounts(withoutConditions(w.plan)))))).toBe(BASE.tiktok.plan);
     expect(sha(withTextUnlocked(withoutResearchGate(withoutLinksWhole(withoutMatchCounts(w.view)))))).toBe(BASE.tiktok.view);
   }, 120_000);
   it("the file: the only change is «عدد الردود» of the reply rows (20 cells, empty -> «غير متاح»); with those put back the file is the old one", async () => {
@@ -87,7 +94,7 @@ describe("TikTok: the plan and the customer's view are byte for byte what they w
 describe("X: the plan, the view and the file are what they were, plus the topic mark", () => {
   it("with the topic mark taken out, the plan and the view are the old ones; the mark itself is there on every chosen tweet", async () => {
     const w = await xWorld();
-    expect(sha(withoutResearchGate(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan)))))).toBe(BASE.x.plan);
+    expect(sha(withoutPriceRevision(withoutResearchGate(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan))))))).toBe(BASE.x.plan);
     expect(sha(withoutResearchGate(withoutLinksWhole(withoutTopicMark(withoutMatchCounts(w.view)))))).toBe(BASE.x.view);
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);

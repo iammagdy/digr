@@ -2,7 +2,7 @@ import { AGENT_JOB_POINTS_CAP, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants
 import { childCountOf } from "./childCount";
 import { countAr, itemNounOf, knownItemNoun } from "./itemNoun";
 import { customerPlanView, stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
-import { priceMissionByCode } from "./price";
+import { carriedRevision, priceMissionByCode } from "./price";
 import { OPEN_REPLIES_FLOOR } from "./foundation/openReplies";
 import { holdLimitOf, type HoldLimit } from "./holdLimit";
 import { pointsAr } from "../pointsFormat";
@@ -122,7 +122,7 @@ function withCommentsPerPost(plan: PricedPlan, perPost: number): PricedPlan | nu
   copy.notes_ar = notes;
   copy.summary_ar = copy.summary_ar.replace(/[،,]\s*مع كل تعليق[^.]*\./, `، بحد أقصى ${per} تعليق من كل ${word}${r.replies ? " مع ردودها" : ""}.`);
   if (copy.summary_ar === plan.summary_ar) copy.summary_ar = `${copy.summary_ar.replace(/[.\s]+$/u, "")}، بحد أقصى ${per} تعليق من كل ${word}.`;
-  copy.price = priceMissionByCode(stagePriceInputs(copy.stages, copy.contact_steps), { settings: copy.price.settings });
+  copy.price = priceMissionByCode(stagePriceInputs(copy.stages, copy.contact_steps), { settings: copy.price.settings, ...carriedRevision(plan.price) });
   return copy;
 }
 

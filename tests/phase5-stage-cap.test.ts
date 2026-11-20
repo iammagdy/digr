@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { createGateway, estimateCallUsd, tregRouteMaxUsd, type Gateway } from "../agent/src/gateway";
+import { createGateway, estimateCallUsd, tregCallBoundOf, type Gateway } from "../agent/src/gateway";
 import { createSourceGateway, stageScopeOf, verifiedCallMaxUsdOf, type StageScope } from "../agent/src/engine/sourceGateway";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
@@ -33,17 +33,19 @@ function fakeTreg(budget: ReturnType<typeof createJobCallBudget>, plan: { costUs
   const calls: Array<Record<string, unknown>> = [];
   let n = 0;
   const gateway = {
-    async tregCall(input: { endpoint_id?: unknown; params?: unknown }) {
+    async tregCall(input: { endpoint_id?: unknown; params?: unknown; spend_limit_usd?: unknown }) {
       n += 1;
       const id = `call_${String(n).padStart(4, "0")}`;
       calls.push({ endpoint_id: input.endpoint_id, ...(input.params as Record<string, unknown>) });
       const est = plan.estimateUsd ?? plan.costUsd;
       if (!budget.reserve(est)) return { ok: false as const, call_id: id, refused: "over_budget", message: "no" };
       if (plan.delayMs) await new Promise((r) => setTimeout(r, plan.delayMs));
+      // DT-20261119-11: like the real gateway, the call may take all the money the stage gave it (the header), reports THIS call's own charge (null when unknown) and what was reserved for it
+      const reserved = typeof input.spend_limit_usd === "number" ? input.spend_limit_usd : est;
       if (plan.throws) { budget.settle(est, null); throw new Error("simulated: the call threw after it may have gone out"); }
-      if (plan.fail) { budget.settle(est, null); return { ok: false as const, call_id: id, failed: true as const, http_status: 0, message: "simulated timeout" }; }
+      if (plan.fail) { budget.settle(est, null); return { ok: false as const, call_id: id, failed: true as const, http_status: 0, message: "simulated timeout", charge_usd: null, reserved_usd: reserved }; }
       budget.settle(est, plan.costUsd);
-      return { ok: true as const, call_id: id, http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null };
+      return { ok: true as const, call_id: id, http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null, charge_usd: plan.costUsd, reserved_usd: reserved };
     },
   } as unknown as Gateway;
   return { gateway, calls };
@@ -98,41 +100,52 @@ describe("the stage cap is a boundary: the next call can never take the stage pa
     expect(sg.stageSpentUsd("s") + 0.0004).toBeGreaterThan(0.001);
   });
 
-  it("a call whose cost is UNKNOWN (a failure: the provider may have billed it) counts at its maximum, never at zero and never at the smaller estimate", async () => {
+  it("a call whose cost is UNKNOWN (a failure: the provider may have billed it) keeps what was RESERVED for it, never zero and never the smaller estimate", async () => {
     const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
     const t = fakeTreg(budget, { costUsd: 0, estimateUsd: 0.0001, fail: true });
     const sg = createSourceGateway({ gateway: t.gateway, scope: scopeOf(0.001), budget, maxCallUsd: () => 0.0004 });
     expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ ok: false, failed: true });
-    expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ ok: false, failed: true });
-    // the job budget kept the estimate (0.0001 each: unchanged), the cap counts the maximum (0.0004 each): a third call (0.0012) is refused
-    expect(budget.spentUsd()).toBeCloseTo(0.0002, 12);
-    expect(sg.stageSpentUsd("s")).toBeCloseTo(0.0002, 12);
-    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.0008, 12);
-    expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ ok: false, refused: "stage_cap" });
-    expect(t.calls).toHaveLength(2);
-  });
-
-  it("a call that THROWS counts at its maximum, releases its reservation, and the error still reaches the engine", async () => {
-    const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
-    const t = fakeTreg(budget, { costUsd: 0, estimateUsd: 0.0001, throws: true });
-    const sg = createSourceGateway({ gateway: t.gateway, scope: scopeOf(0.001), budget, maxCallUsd: () => 0.0006 });
-    await expect(sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).rejects.toThrow(/simulated/);
-    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.0006, 12);
-    // 0.0006 + 0.0006 > 0.001: refused (a leaked reservation would count 0.0012 + 0.0006; a zero count would allow it)
+    // the job budget kept the estimate (0.0001: unchanged here); the stage cap keeps the money the call was given (DT-20261119-11 D3: all the stage had left, 0.001), so the stage has none left for a second call
+    expect(budget.spentUsd()).toBeCloseTo(0.0001, 12);
+    expect(sg.stageSpentUsd("s")).toBeCloseTo(0.0001, 12);
+    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.001, 12);
     expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ ok: false, refused: "stage_cap" });
     expect(t.calls).toHaveLength(1);
   });
 
-  it("CONCURRENCY: 10 calls racing on one stage (maximum 0.0003 each, cap 0.001): at most 3 are sent, so even if each costs its full maximum the stage stays within its cap", async () => {
+  it("a documented zero (a refusal the provider answered) frees the stage's money: the next call goes out", async () => {
+    const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
+    const tregCall = vi.fn(async (i: any) => (tregCall.mock.calls.length === 1 ? { ok: false as const, call_id: "c1", failed: true as const, http_status: 402, message: "x", charge_usd: 0, reserved_usd: i.spend_limit_usd } : { ok: true as const, call_id: "c2", http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null, charge_usd: 0.0003, reserved_usd: i.spend_limit_usd }));
+    const gateway = { tregCall } as unknown as Gateway;
+    const sg = createSourceGateway({ gateway, scope: scopeOf(0.001), budget, maxCallUsd: () => 0.0004 });
+    await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} });
+    expect(sg.stageCapUsedUsd("s")).toBe(0);
+    expect((await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).ok).toBe(true);
+    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.0003, 12);
+  });
+
+  it("a call that THROWS counts the money the stage reserved for it (all it had left), releases its reservation, and the error still reaches the engine", async () => {
+    const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
+    const t = fakeTreg(budget, { costUsd: 0, estimateUsd: 0.0001, throws: true });
+    const sg = createSourceGateway({ gateway: t.gateway, scope: scopeOf(0.001), budget, maxCallUsd: () => 0.0006 });
+    await expect(sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).rejects.toThrow(/simulated/);
+    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.001, 12);
+    // the stage has nothing left: refused (a leaked reservation would count 0.002; a zero count would allow it)
+    expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ ok: false, refused: "stage_cap" });
+    expect(t.calls).toHaveLength(1);
+  });
+
+  it("CONCURRENCY: 10 calls racing on one stage (maximum 0.0003 each, cap 0.001): the first takes ALL the stage's money before it is sent, so only that one is sent and the stage stays within its cap (DT-20261119-11 D3)", async () => {
     const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
     const t = fakeTreg(budget, { costUsd: 0.0003, delayMs: 5 });
     const sg = createSourceGateway({ gateway: t.gateway, scope: scopeOf(0.001), budget, maxCallUsd: () => 0.0003 });
     const results = await Promise.all(Array.from({ length: 10 }, () => sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })));
-    expect(t.calls).toHaveLength(3);
-    expect(results.filter((r) => !r.ok && "refused" in r && r.refused === "stage_cap")).toHaveLength(7);
+    expect(t.calls).toHaveLength(1);
+    expect(results.filter((r) => !r.ok && "refused" in r && r.refused === "stage_cap")).toHaveLength(9);
     expect(sg.stageCapUsedUsd("s")).toBeLessThanOrEqual(0.001 + 1e-12);
-    // the reservations were all released: a later call sees only what was counted (0.0009 + 0.0003 > 0.001: refused; no leak, no double count)
-    expect(await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).toMatchObject({ refused: "stage_cap" });
+    expect(sg.stageCapUsedUsd("s")).toBeCloseTo(0.0003, 12); // the one call's real charge: the reservation was released, nothing leaked
+    // and the released money is there for a later call
+    expect((await sg.call({ stageKey: "s", endpoint_id: TREG_ID, params: {} })).ok).toBe(true);
   });
 
   it("no verified maximum, no call under a cap: no bound function, a null, zero, negative or non-finite maximum, and every direct web source", async () => {
@@ -210,7 +223,7 @@ describe("the verified maximum of a TREG call is the route cap the gateway reall
   }
   const requiredParams = (id: string): Record<string, unknown> => Object.fromEntries(catalog.byId.get(id).inputs.filter((i: any) => i.required).map((i: any) => [i.name, i.type === "number" || i.type === "integer" ? 5 : "orascom-em.com.eg"]));
 
-  it("for catalog ids with and without a page size, with unknown parameters the gateway drops: the bound equals X-Treg-Route-Max-Cost of the real call, to the micro-dollar", async () => {
+  it("for catalog ids with and without a page size, with unknown parameters the gateway drops: the estimated bound is what a stage checks a call against, and the header sent is never below it", async () => {
     const ids = [TREG_ID, TREG_ID_2, "tomba.people.phone.find", "anyapi.linkedin.email.work.find", "blitzapi.people.waterfall-icp", "aiark.people.search"].filter((id) => catalog.byId.has(id));
     expect(ids.length).toBeGreaterThanOrEqual(3);
     for (const id of ids) {
@@ -220,8 +233,9 @@ describe("the verified maximum of a TREG call is the route cap the gateway reall
         const r = await gatewayWith(call).tregCall({ endpoint_id: id, params });
         expect(r.ok, `${id} ${JSON.stringify(extra)}`).toBe(true);
         const sent = Number((call.mock.calls[0] as any[])[0].routeMaxCostUsd);
-        expect(tregRouteMaxUsd(id, params, catalog), `${id} ${JSON.stringify(extra)}`).toBe(sent);
-        expect(verifiedCallMaxUsdOf(catalog)(id, params)).toBe(sent);
+        // DT-20261119-11 D-0138: the bound is the ESTIMATE (what a capped stage checks a call against, and the smallest amount the call is admitted with); what is SENT is the money the call may take, which is never below it
+        expect(verifiedCallMaxUsdOf(catalog)(id, params)).toBe(tregCallBoundOf(id, params, catalog));
+        expect(sent, `${id} ${JSON.stringify(extra)}`).toBeGreaterThanOrEqual(tregCallBoundOf(id, params, catalog)! - 1e-9);
         expect(sent).toBeGreaterThanOrEqual(0.001);
       }
     }
@@ -229,7 +243,7 @@ describe("the verified maximum of a TREG call is the route cap the gateway reall
 });
 
 describe("the floor of the route cap: a call estimated under 0.001 is still bounded by what TREG is told (0.001), never by its smaller estimate", () => {
-  it("for cheap catalog ids the gateway accepts, the bound equals the route cap really sent, and it is the 0.001 floor", async () => {
+  it("for cheap catalog ids the gateway accepts, the bound keeps its 0.001 floor and the header sent is never below it", async () => {
     const store = createMemoryStore();
     const mission = newMission({ id: "msn_cap6", user_id: USER_ID, request_text: "x", status: "executing" });
     store.missions.set(mission.id, mission);
@@ -245,8 +259,8 @@ describe("the floor of the route cap: a call estimated under 0.001 is still boun
       const r = await g.tregCall({ endpoint_id: id, params: req(id) });
       if (!r.ok || call.mock.calls.length === 0) continue;
       const sent = Number((call.mock.calls[0] as any[])[0].routeMaxCostUsd);
-      expect(tregRouteMaxUsd(id, req(id), catalog), id).toBe(sent);
-      expect(sent, id).toBe(0.001);
+      expect(tregCallBoundOf(id, req(id), catalog), id).toBe(0.001); // the bound keeps its 0.001 floor
+      expect(sent, id).toBeGreaterThanOrEqual(0.001); // what is sent is the money the call may take (D-0138: at least 0.05 USD), never below the bound
       checked += 1;
     }
     expect(checked).toBeGreaterThanOrEqual(3);

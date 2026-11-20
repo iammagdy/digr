@@ -1,6 +1,7 @@
 import { unitPricePointsFromCost, UNIT_SCALE, type PricingBasis } from "../recordPricing";
 import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, type MissionPricingSettings } from "../missionPricing";
 import { holdValueUsd } from "../server/callBudget";
+import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import {
   AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
   AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
@@ -50,9 +51,16 @@ export interface MissionPriceOptions {
   settings?: MissionPricingSettings;
   /** The most a job may hold. */
   capPoints?: number;
+  /**
+   * F2 (Gate 2): the catalog price revision the result is stamped with. ABSENT = the price is built from NEW evidence, so it carries the current revision. A caller that REUSES saved cost inputs (a customer's edit, a smaller version, the final recompute, the replies or
+   * all-comments re-pricing) passes the revision of the price it started from (`carriedRevision(plan.price)`), so a stale quote never becomes a current one; null = the stored price had no revision (a plan made before it existed): none is written.
+   */
+  pricedUnder?: number | null;
 }
 
 export interface MissionPriceResult {
+  /** The catalog price revision this price was made under (catalog.ts CATALOG_PRICE_REV); absent on a plan priced before the revision existed (DT-20261119-11 D7). */
+  pricedUnder?: number;
   /** 2: the one rule of missionPricing.ts. Plans stored before it have no `rule` and are priced by the old formula (legacyPriceMissionByCode). */
   rule?: 2;
   /** Provider cost of the whole mission at the planned rows, USD (the rows to collect included). */
@@ -121,6 +129,9 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
   return AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD * Math.max(0, planned - 1) + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD * planned + review * AGENT_REVIEW_ROW_ESTIMATE_USD;
 }
 
+/** The revision to carry through a re-pricing that reuses the saved costs of `price` (F2). */
+export const carriedRevision = (price: { pricedUnder?: number } | null | undefined): { pricedUnder: number | null } => ({ pricedUnder: typeof price?.pricedUnder === "number" ? price.pricedUnder : null });
+
 export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, options: MissionPriceOptions = {}): MissionPriceResult {
   if (stages.length === 0) throw new Error("a mission has at least one stage");
   const settings = options.settings ?? DEFAULT_MISSION_PRICING_SETTINGS;
@@ -139,7 +150,7 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
   if (!(costPerFinal > 0)) throw new Error("the measured cost per final row is not positive");
   const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints: options.capPoints ?? AGENT_JOB_POINTS_CAP });
   return {
-    rule: 2, totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
+    rule: 2, ...(options.pricedUnder === undefined ? { pricedUnder: CATALOG_PRICE_REV } : options.pricedUnder === null ? {} : { pricedUnder: options.pricedUnder }), totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
     ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints: rule.reservePoints, maxChargePoints: rule.chargeAtFullPoints,
     minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap,
     reviewBudgetUsd: reviewBudgetUsdFor(rule.chargeAtFullPoints),

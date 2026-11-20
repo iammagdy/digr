@@ -1,8 +1,9 @@
-import { executeTregCall, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
+import { executeTregCall, maxTregAttempts, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
 import { blockedEndpointReason } from "../treg/blockList";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyVerdict, type AccountAccess } from "../treg/dataPolicy";
-import { createJobCallBudget } from "../server/callBudget";
+import { callMoney, createJobCallBudget, floorMicroUsd, type CallMoney } from "../server/callBudget";
+import { classifyTregCharge } from "../server/tregCharge";
 import { createFirstPageCapture } from "../server/rawCapture";
 import { checkParams, type StepSample } from "./validate";
 import { resolvedParamValue } from "./paramRules";
@@ -49,24 +50,51 @@ export function resetExplorationMemoryForTesting(): void { MEMORY.day.clear(); M
 
 const utcDay = (now: Date): string => now.toISOString().slice(0, 10);
 
-/** What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. */
-export async function readExplorationSpend(deps: ExplorationDeps): Promise<{ request: number; day: number; source: "database" | "memory" }> {
+/** Rows ASKED per request of the shared ledger. The server may answer fewer (a configured row limit): the next page starts after the rows ACTUALLY received, and a short page never ends the read (F1 round 2). */
+export const EXPLORATION_READ_PAGE = 1000;
+
+/**
+ * What exploration already spent: for this request and today (UTC), from `exploration_calls`; or from process memory when the table cannot be read. `source: "database"` means the sum is the COMPLETE shared sum: it is proven complete only when a verified EMPTY terminal page was read after paging in order by the server's real page length (a short page, or reaching an earlier row count, proves nothing: the server may cut an answer, and a row inserted between the count and a page can push an older row out of it). The exact row count is only a minimum sanity check at that terminal page. A failed page, an unprovable end, or a sum that lacks the caller's own pending row (`requireTag`) is not complete and falls back to memory,
+ * which never counts as the shared ledger. `day` pins the UTC day to read (a reservation counts on the day its row was written on).
+ */
+export async function readExplorationSpend(deps: ExplorationDeps, opts?: { day?: string; requireTag?: string }): Promise<{ request: number; day: number; source: "database" | "memory" }> {
   const now = deps.now ?? new Date();
   const mem = deps.memory ?? MEMORY;
   const client = deps.client;
+  const day = opts?.day ?? utcDay(now);
   if (client && typeof client.from === "function") {
     try {
-      const dayStart = `${utcDay(now)}T00:00:00.000Z`;
+      const dayStart = `${day}T00:00:00.000Z`;
       const nextDay = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
-      const { data, error } = await client.from(EXPLORATION_TABLE).select("request_id,cost_usd,created_at").gte("created_at", dayStart).lt("created_at", nextDay);
-      if (!error && Array.isArray(data)) {
-        const day = data.reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
-        const request = data.filter((r: any) => r.request_id === deps.requestId).reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
-        return { request, day, source: "database" };
+      // the exact number of rows of the day, asked first (a row written in between only adds rows: the sum still has to reach this count). Not obtainable → the end must be a verified empty page.
+      let expected: number | null = null;
+      try {
+        const head = client.from(EXPLORATION_TABLE).select("id", { count: "exact", head: true }).gte("created_at", dayStart).lt("created_at", nextDay);
+        const res = await head;
+        if (res && !res.error && typeof res.count === "number" && res.count >= 0) expected = res.count;
+      } catch { expected = null; }
+      const byKey = new Map<string, any>();
+      let complete = false;
+      for (let from = 0; from < 2_000_000;) {
+        const base = client.from(EXPLORATION_TABLE).select("id,request_id,cost_usd,created_at,refused_reason").gte("created_at", dayStart).lt("created_at", nextDay);
+        const canPage = base && typeof base.order === "function" && typeof base.range === "function";
+        const { data, error } = await (canPage ? base.order("id").range(from, from + EXPLORATION_READ_PAGE - 1) : base);
+        if (error || !Array.isArray(data)) break;
+        for (const r of data) byKey.set(r?.id !== undefined && r?.id !== null ? `id:${r.id}` : `n:${byKey.size}:${from}`, r);
+        if (data.length === 0) { complete = expected === null || byKey.size >= expected; break; }
+        if (!canPage) break; // an answer that cannot be continued and does not reach the exact count may be cut: not a complete sum
+        from += data.length; // the server's REAL page length, not the one asked
+      }
+      const rows = [...byKey.values()];
+      if (complete && opts?.requireTag && !rows.some((r: any) => r.refused_reason === opts.requireTag && r.request_id === deps.requestId)) complete = false; // the caller's own pending row must be inside the sum
+      if (complete) {
+        const total = rows.reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
+        const request = rows.filter((r: any) => r.request_id === deps.requestId).reduce((s: number, r: any) => s + Math.max(0, Number(r.cost_usd) || 0), 0);
+        return { request, day: total, source: "database" };
       }
     } catch { /* fall through to memory */ }
   }
-  return { request: mem.request.get(deps.requestId) ?? 0, day: mem.day.get(utcDay(now)) ?? 0, source: "memory" };
+  return { request: mem.request.get(deps.requestId) ?? 0, day: mem.day.get(day) ?? 0, source: "memory" };
 }
 
 export interface ExplorationAttempt {
@@ -82,20 +110,71 @@ export interface ExplorationAttempt {
   internal?: string;
 }
 
-async function recordAttempt(deps: ExplorationDeps, row: { endpointId: string; params: PlanParam[]; limit: number | null; attempt: ExplorationAttempt; budgetUsd: number }): Promise<void> {
+/**
+ * THE SHARED EXPLORATION LEDGER, RESERVED BEFORE THE REQUEST (DT-20261119-11 D1): the request's and the day's money are counted from `exploration_calls`, so a call writes ITS OWN ROW first with a cost equal to the most it may bill (the reservation), then re-reads the
+ * totals; when the reservation does not fit either cap the row is zeroed and nothing is sent. Two calls in parallel therefore cannot both spend the same money. After the call the SAME row is updated to what was charged, or KEPT at the reserved amount when the
+ * charge is unknown.
+ */
+async function holdExploration(deps: ExplorationDeps, holdUsd: number, row: { endpointId: string; params: PlanParam[]; limit: number | null }, capUsd: number): Promise<{ tag: string; day: string } | null> {
+  const now = deps.now ?? new Date(); // read ONCE: the row's accounting day is the day of this clock and never changes (settlement keeps its created_at)
+  const mem = deps.memory ?? MEMORY;
+  const tag = `reserved:${now.getTime()}:${Math.random().toString(36).slice(2, 10)}`;
+  mem.request.set(deps.requestId, (mem.request.get(deps.requestId) ?? 0) + holdUsd);
+  mem.day.set(utcDay(now), (mem.day.get(utcDay(now)) ?? 0) + holdUsd);
+  const release = () => {
+    mem.request.set(deps.requestId, Math.max(0, (mem.request.get(deps.requestId) ?? 0) - holdUsd));
+    mem.day.set(utcDay(now), Math.max(0, (mem.day.get(utcDay(now)) ?? 0) - holdUsd));
+  };
+  const client = deps.client;
+  if (client && typeof client.from === "function") {
+    // A SHARED CLIENT (F1, Gate 2): nothing is sent until the COMPLETE shared sum has been read AFTER this reservation's row was written and it fits both caps. A failed insert, a failed or incomplete read (a fallback to this process's memory is NOT the shared
+    // ledger) or a failed reconciliation is "unavailable": no call. The row is zeroed on a denial and the update is checked; a row whose cleanup is not confirmed STAYS at its reserved amount (counted conservatively), memory included.
+    try {
+      const { error } = await client.from(EXPLORATION_TABLE).insert({
+        request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId, params_digest: { names: row.params.map((p) => p.name), limit: row.limit }, cost_usd: Number(holdUsd.toFixed(6)), http_status: null, rows_returned: 0, duration_ms: 0,
+        budget_usd: capUsd, refused_reason: tag, created_at: now.toISOString(),
+      });
+      if (error) { release(); return null; } // the row was not written: nothing to clean
+      // the totals now INCLUDE this reservation (the database rows are the shared ledger; the memory counters only back the no-client mode)
+      // F1 round 2: the sum is the row's OWN day (not a fresh clock) and must contain this exact pending row; a UTC day that changed since the row was dated is a denial (the day it was checked on is over)
+      const spent = await readExplorationSpend(deps, { day: utcDay(now), requireTag: tag });
+      const sameDay = utcDay(deps.now ?? new Date()) === utcDay(now);
+      const fits = spent.source === "database" && sameDay && spent.request <= capUsd + 1e-9 && spent.day <= EXPLORATION_DAY_CAP_USD + 1e-9;
+      if (fits) return { tag, day: utcDay(now) };
+    } catch { /* the insert or the read threw: the reservation row may exist; treated as a denial whose cleanup must be confirmed below */ }
+    let cleaned = false;
+    try {
+      const { error } = await client.from(EXPLORATION_TABLE).update({ cost_usd: 0, refused_reason: `released:${tag}`.slice(0, 300) }).eq("request_id", deps.requestId).eq("refused_reason", tag);
+      cleaned = !error;
+    } catch { cleaned = false; }
+    if (cleaned) release(); // an unconfirmed cleanup keeps the row (and this process's hold) at the reserved amount
+    return null;
+  } else if ((mem.request.get(deps.requestId) ?? 0) > capUsd + 1e-9 || (mem.day.get(utcDay(now)) ?? 0) > EXPLORATION_DAY_CAP_USD + 1e-9) { release(); return null; }
+  return { tag, day: utcDay(now) };
+}
+
+async function recordAttempt(deps: ExplorationDeps, row: { endpointId: string; params: PlanParam[]; limit: number | null; attempt: ExplorationAttempt; budgetUsd: number }, held?: { tag: string; holdUsd: number; day?: string }): Promise<void> {
   const now = deps.now ?? new Date();
   const mem = deps.memory ?? MEMORY;
-  mem.request.set(deps.requestId, (mem.request.get(deps.requestId) ?? 0) + row.attempt.costUsd);
-  mem.day.set(utcDay(now), (mem.day.get(utcDay(now)) ?? 0) + row.attempt.costUsd);
+  const dayKey = held?.day ?? utcDay(now); // a settled reservation stays on the day it was reserved on
+  // an attempt that holds a reservation REPLACES it (its row is updated, its memory hold is swapped for the final amount); any other attempt adds its cost
+  mem.request.set(deps.requestId, Math.max(0, (mem.request.get(deps.requestId) ?? 0) - (held?.holdUsd ?? 0) + row.attempt.costUsd));
+  mem.day.set(dayKey, Math.max(0, (mem.day.get(dayKey) ?? 0) - (held?.holdUsd ?? 0) + row.attempt.costUsd));
   const client = deps.client;
   if (!client || typeof client.from !== "function") return;
+  const values = {
+    request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId,
+    params_digest: { names: row.params.map((p) => p.name), limit: row.limit },
+    cost_usd: Number(row.attempt.costUsd.toFixed(6)), http_status: row.attempt.httpStatus || null, rows_returned: row.attempt.rows, duration_ms: Math.max(0, Math.round(row.attempt.durationMs)),
+    budget_usd: row.budgetUsd, refused_reason: row.attempt.outcome === "ok" ? null : `${row.attempt.outcome}: ${row.attempt.internal ?? row.attempt.detail}`.slice(0, 300), created_at: now.toISOString(),
+  };
   try {
-    const { error } = await client.from(EXPLORATION_TABLE).insert({
-      request_id: deps.requestId, user_id: deps.userId, endpoint_id: row.endpointId,
-      params_digest: { names: row.params.map((p) => p.name), limit: row.limit },
-      cost_usd: Number(row.attempt.costUsd.toFixed(6)), http_status: row.attempt.httpStatus || null, rows_returned: row.attempt.rows, duration_ms: Math.max(0, Math.round(row.attempt.durationMs)),
-      budget_usd: row.budgetUsd, refused_reason: row.attempt.outcome === "ok" ? null : `${row.attempt.outcome}: ${row.attempt.internal ?? row.attempt.detail}`.slice(0, 300), created_at: now.toISOString(),
-    });
+    // F1 round 2: the settlement of a reserved row NEVER rewrites its created_at (its accounting day is fixed when it was admitted)
+    const { created_at: _keepDay, ...settled } = values;
+    void _keepDay;
+    const { error } = held
+      ? await client.from(EXPLORATION_TABLE).update(settled).eq("request_id", deps.requestId).eq("refused_reason", held.tag)
+      : await client.from(EXPLORATION_TABLE).insert(values);
     if (error) console.warn(JSON.stringify({ tag: "exploration_record_failed", message: String(error.message ?? error.code ?? "").slice(0, 160) }));
   } catch (err) {
     console.warn(JSON.stringify({ tag: "exploration_record_failed", message: String((err as Error)?.message ?? "").slice(0, 160) }));
@@ -249,7 +328,20 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     return { ok: false, attempt: a };
   }
 
+  // THE MONEY OF THIS CALL (D1/D2): all the exploration money left, split over the requests the call can make, reserved on the SHARED ledger before the request and sent as the header
+  const money = callMoney(allowed, estimate, maxTregAttempts({}), { maxShare: 0.5 });
+  const held = money ? await holdExploration(deps, money.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
+  if (!money || !held) {
+    const a = attempt({ outcome: "over_budget", detail: "this call does not fit the exploration budget left for this request" });
+    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+    return { ok: false, attempt: a };
+  }
   const budget = createJobCallBudget({ ceilingUsd: Math.min(capUsd, spent.request + allowed), spentUsd: spent.request });
+  /** The attempt's row, then the reservation given back: a charge that is not known keeps the reserved amount (never zero). */
+  const settleRecord = async (a: ExplorationAttempt, chargeKnown: boolean): Promise<void> => {
+    if (!chargeKnown) { a.costUsd = money.holdUsd; a.detail = `${a.detail}${a.detail ? " " : ""}(the charge is not known: the reserved amount stays counted)`.slice(0, 300); }
+    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd }, { tag: held.tag, holdUsd: money.holdUsd, day: held.day });
+  };
   const n = (sampleCounter += 1);
   const store = deps.client?.storage?.from?.("partials");
   const capture = store ? createFirstPageCapture(store, `${EXPLORATION_JOB_PREFIX}${deps.requestId}_${n}`) : undefined;
@@ -260,39 +352,42 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
   try {
     result = await call({
       endpointId: id, method: endpoint.method === "GET" ? "GET" : "POST", params: callParams, userId: deps.userId, jobId: `${EXPLORATION_JOB_PREFIX}${deps.requestId}`,
-      stepId: `explore_${n}`, page: 1, routeMaxCostUsd: Number(Math.max(estimate, 0.001).toFixed(6)), timeoutMs, callBudget: budget, callEstimateUsd: estimate, endpointScope: endpoint.scope,
+      stepId: `explore_${n}`, page: 1, routeMaxCostUsd: money.perRequestUsd, ...(money.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs, callBudget: budget, callEstimateUsd: money.holdUsd, endpointScope: endpoint.scope,
       ...(capture ? { rawCapture: capture } : {}),
     });
   } catch (err) {
     const a = attempt({ outcome: "http_error", durationMs: Date.now() - started, detail: `the call threw: ${clip((err as Error)?.message, 120)}` });
-    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+    await settleRecord(a, false); // a call that threw may have gone out: the reserved amount stays counted
     return { ok: false, attempt: a };
   }
   const durationMs = Date.now() - started;
-  const costUsd = Math.max(0, result.costMicro || 0) / 1_000_000;
+  // DT-20261119-11 F3: the shared reading of the charge (tregCharge.ts): a reported charge wins, a documented free refusal is zero, anything uncertain keeps the reserved amount
+  const charged = classifyTregCharge(result);
+  const chargeKnown = charged.known;
+  const costUsd = charged.known ? charged.usd : 0;
   console.info(JSON.stringify({ tag: "planner_sample", endpointId: id, ok: result.ok, httpStatus: result.httpStatus, durationMs, costUsd, timedOut: Boolean(result.timedOut), budgetStopped: Boolean(result.budgetStopped), error: result.error ? clip(result.error, 60) : undefined }));
   if (result.budgetStopped) {
     const a = attempt({ outcome: "over_budget", durationMs, detail: "the call would pass the exploration budget" });
     stats.madeCalls -= 1;
-    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+    await settleRecord(a, true);
     return { ok: false, attempt: a };
   }
   if (!result.ok) {
     const timedOut = Boolean(result.timedOut);
     const a = attempt({ outcome: timedOut ? "timeout" : "http_error", httpStatus: result.httpStatus, costUsd, durationMs, detail: timedOut ? `no answer within ${Math.round(timeoutMs / 1000)} s` : clip(result.errorDetails || result.detail || result.error, 140) });
-    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+    await settleRecord(a, chargeKnown);
     return { ok: false, attempt: a };
   }
   const { digest, reading } = buildShapeDigest(result.data, endpoint);
   if (reading.rows.length === 0) {
     const a = attempt({ outcome: "empty", httpStatus: result.httpStatus, costUsd, durationMs, detail: `the call worked but no rows were found in the answer${reading.warnings.length ? ` (${clip(reading.warnings.join("; "), 120)})` : ""}` });
-    await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+    await settleRecord(a, chargeKnown);
     return { ok: false, attempt: a };
   }
   const rows = reading.rows.slice(0, SAMPLE_PAGE_ROWS_PER_CALL);
   const a = attempt({ outcome: "ok", httpStatus: result.httpStatus, rows: rows.length, costUsd, durationMs, detail: "" });
   void now;
-  await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
+  await settleRecord(a, chargeKnown);
 
   // A SECOND PAGE for a per-call endpoint (when the first answered a next-page token, the budget and the time allow): the price divides by the rows one call RETURNS, which one page can mis-state.
   const pageRows = [rows.length];
@@ -301,20 +396,22 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     const after = await readExplorationSpend(deps);
     const left = Math.min(capUsd - after.request, EXPLORATION_DAY_CAP_USD - after.day);
     const time = deps.deadlineAtMs !== undefined ? Math.min(SAMPLE_CALL_TIMEOUT_MS, deps.deadlineAtMs - Date.now() - PLANNER_MIN_TURN_MS) : SAMPLE_CALL_TIMEOUT_MS;
-    if (estimate <= left + 1e-12 && time >= 3_000) {
+    const money2 = estimate <= left + 1e-12 && time >= 3_000 ? callMoney(left, estimate, maxTregAttempts({}), { maxShare: 0.5 }) : null;
+    const held2 = money2 ? await holdExploration(deps, money2.holdUsd, { endpointId: id, params, limit }, capUsd) : null;
+    if (money2 && held2) {
       const second = await call({
         endpointId: id, method: endpoint.method === "GET" ? "GET" : "POST", params: { ...callParams, [cursorParam]: reading.nextCursor }, userId: deps.userId, jobId: `${EXPLORATION_JOB_PREFIX}${deps.requestId}`,
-        stepId: `explore_${n}_p2`, page: 2, routeMaxCostUsd: Number(Math.max(estimate, 0.001).toFixed(6)), timeoutMs: time, callBudget: createJobCallBudget({ ceilingUsd: Math.min(capUsd, after.request + left), spentUsd: after.request }), callEstimateUsd: estimate, endpointScope: endpoint.scope,
+        stepId: `explore_${n}_p2`, page: 2, routeMaxCostUsd: money2.perRequestUsd, ...(money2.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs: time, callBudget: createJobCallBudget({ ceilingUsd: Math.min(capUsd, after.request + left), spentUsd: after.request }), callEstimateUsd: money2.holdUsd, endpointScope: endpoint.scope,
       }).catch(() => null);
       stats.madeCalls += 1;
-      if (second) {
-        const secondCost = Math.max(0, second.costMicro || 0) / 1_000_000;
-        const r2 = second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
-        const a2 = attempt({ outcome: second.ok && r2 > 0 ? "ok" : second.ok ? "empty" : "http_error", httpStatus: second.httpStatus, rows: r2, costUsd: secondCost, durationMs: 0, detail: "second page, to measure the rows one call returns" });
-        await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd });
-        a.costUsd += secondCost;
-        if (second.ok && r2 > 0) pageRows.push(Math.min(r2, SAMPLE_PAGE_ROWS_PER_CALL));
-      }
+      const charged2 = classifyTregCharge(second);
+      const known2 = charged2.known;
+      const secondCost = charged2.known ? charged2.usd : money2.holdUsd;
+      const r2 = second && second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
+      const a2 = attempt({ outcome: second && second.ok && r2 > 0 ? "ok" : second && second.ok ? "empty" : "http_error", httpStatus: second?.httpStatus ?? 0, rows: r2, costUsd: secondCost, durationMs: 0, detail: `second page, to measure the rows one call returns${known2 ? "" : " (the charge is not known: the reserved amount stays counted)"}` });
+      await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd }, { tag: held2.tag, holdUsd: money2.holdUsd, day: held2.day });
+      a.costUsd += secondCost;
+      if (second && second.ok && r2 > 0) pageRows.push(Math.min(r2, SAMPLE_PAGE_ROWS_PER_CALL));
     }
   }
   return { ok: true, attempt: a, rows, digest, body: result.data, pageRows };

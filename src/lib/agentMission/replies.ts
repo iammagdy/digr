@@ -5,7 +5,7 @@ import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPL
 import { childCountOf } from "./childCount";
 import { isPeopleStage } from "./people";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
-import { priceMissionByCode } from "./price";
+import { carriedRevision, priceMissionByCode } from "./price";
 
 /**
  * THE REPLIES OF A COMMENTS DELIVERY (the replies PR; owner decision recorded in the HANDOFF: child items are delivered raw, researchers analyse FULL threads). Live G4 (msn_3da66037878465ffbfd5, TikTok): a video whose own counter shows 25 delivered ONE comment, because replies were
@@ -353,7 +353,7 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
       // the comments' mapping keeps the tokens the replies tool needs (rule 6)
       const base = tokenMap === null ? plan.stages : plan.stages.map((s) => (s.key === comments.key && s.engine ? { ...s, carry_keys: source.rowTokens.map((t) => t.key), engine: { ...s.engine, map_code: tokenMap! } } : s));
       const stages = [...base.slice(0, at + 1), stageOf(rows), ...base.slice(at + 1)];
-      return { stages, price: priceMissionByCode(stagePriceInputs(stages, plan.contact_steps), { settings: plan.price.settings }) };
+      return { stages, price: priceMissionByCode(stagePriceInputs(stages, plan.contact_steps), { settings: plan.price.settings, ...carriedRevision(plan.price) }) };
     };
     let built = priced(planned);
     // the hold must fit the job limit: fewer replies are planned before the replies are dropped (the comments the customer asked for are never reduced for them)

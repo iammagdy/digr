@@ -21,11 +21,12 @@ export function tregCallStatusOf(result: { ok: boolean; rows?: unknown[] | null 
   return Array.isArray(result.rows) && result.rows.length > 0 ? "success" : "empty";
 }
 
-export async function commitTregSpend(
+/** DT-20261119-11 F5: commits a cost row and says whether it was REALLY committed (by the v2 function or the old one): a caller that must know the release was acknowledged reads it. */
+export async function commitTregSpendAcknowledged(
   client: any,
   args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: CallStatus; durationMs: number; jobId: string | null; keyRef?: CallRecord["keyRef"] },
-): Promise<void> {
-  if (args.costId === null || args.costId === undefined) return;
+): Promise<boolean> {
+  if (args.costId === null || args.costId === undefined) return true;
   const units = Math.max(0, Math.floor(Number(args.units) || 0));
   const costUsd = Math.max(0, Number(args.costUsd) || 0);
   try {
@@ -39,15 +40,22 @@ export async function commitTregSpend(
       jobId: args.jobId,
       ...(args.keyRef ? { keyRef: args.keyRef } : {}),
     });
-    return;
+    return true;
   } catch (e: any) {
     console.warn("[worker:provider_commit_v2_failed]", e?.code || "", String(e?.message || "").slice(0, 120));
   }
   // The same amount through the existing function; its own error is logged and never changes the job's outcome (as before).
   try {
     const { error } = await client.rpc("commit_provider_spend", { p_cost_id: args.costId, p_actual_cost_usd: costUsd, p_units: units });
-    if (error) console.warn("[worker:provider_commit_failed]", error?.code || "", String(error?.message || "").slice(0, 120));
+    if (error) { console.warn("[worker:provider_commit_failed]", error?.code || "", String(error?.message || "").slice(0, 120)); return false; }
+    return true;
   } catch (e: any) {
     console.warn("[worker:provider_commit_failed]", String(e?.message || "").slice(0, 120));
+    return false;
   }
+}
+
+/** The commit every existing caller uses: unchanged contract (it resolves to nothing; its failure is logged and never changes the job's outcome). */
+export async function commitTregSpend(client: any, args: Parameters<typeof commitTregSpendAcknowledged>[1]): Promise<void> {
+  await commitTregSpendAcknowledged(client, args);
 }

@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { providerCallBound, tregRouteCapUsd, MAX_SINGLE_OPERATION_USD } from "../src/lib/server/spendGate/bounds";
+import { providerCallBound, tregCallBoundUsd, MAX_SINGLE_OPERATION_USD } from "../src/lib/server/spendGate/bounds";
 import { modelRequestBound, modelUsageCost, DEFAULT_GATE_MAX_OUTPUT_TOKENS, TEMPLATE_TOKEN_ALLOWANCE } from "../src/lib/server/spendGate/modelBound";
 import { createMemorySpendGate, guardedPaidCall, spendGateMode, type SpendGate } from "../src/lib/server/spendGate/gate";
 import { ALLOWED_ANTHROPIC_BETAS, checkAnthropicBetas, isLoopbackAddress, startModelGate } from "../agent/src/modelGate";
@@ -25,10 +25,10 @@ const req = (key: string, usd: number, missionId: string | null = "msn_a", kind:
 
 describe("R61 bounds: a reservation is the most a call can cost, or the call has no bound and is refused", () => {
   it("FINDING 1: TREG's route cap is the bound; today the cap sent is max(estimate, 0.001) while the estimate is reserved", () => {
-    expect(tregRouteCapUsd(0.0004)).toBe(0.001);
-    const b = providerCallBound({ provider: "treg", op: "call", routeCapUsd: tregRouteCapUsd(0.0004) });
+    expect(tregCallBoundUsd(0.0004)).toBe(0.001);
+    const b = providerCallBound({ provider: "treg", op: "call", boundUsd: tregCallBoundUsd(0.0004) });
     expect(b).toMatchObject({ ok: true, usd: 0.001 });
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: null }).ok).toBe(false);
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: null }).ok).toBe(false);
   });
   it("FINDING 2: a search of 15 results is two blocks of ten, not 1.5", () => {
     expect(providerCallBound({ provider: "firecrawl", op: "search", limit: 15 })).toMatchObject({ ok: true, usd: Number((4 * FIRECRAWL_USD_PER_CREDIT).toFixed(6)) });
@@ -47,7 +47,7 @@ describe("R61 bounds: a reservation is the most a call can cost, or the call has
     expect(providerCallBound({ provider: "contextdev", op: "people_search", mode: "ultra" })).toMatchObject({ ok: true, usd: Number((50 * CONTEXTDEV_USD_PER_CREDIT).toFixed(6)) });
     expect(providerCallBound({ provider: "contextdev", op: "people_search", mode: "deep" as never }).ok).toBe(false);
     expect(providerCallBound({ provider: "openai", op: "x" }).ok).toBe(false);
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: MAX_SINGLE_OPERATION_USD + 0.01 }).ok).toBe(false);
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: MAX_SINGLE_OPERATION_USD + 0.01 }).ok).toBe(false);
   });
 });
 

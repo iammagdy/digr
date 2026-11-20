@@ -83,10 +83,12 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
     expect(r.ok).toBe(true);
     expect(t.call).toHaveBeenCalledTimes(1);
     const cap = Number((t.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd);
-    expect(x.counts.reserves).toHaveLength(1);
-    expect(x.counts.reserves[0]).toMatchObject({ kind: "provider", missionId: MISSION });
+    // DT-20261119-11: the call asks the grant for the most it may take, then for what the grant has room for; the amount GRANTED (the last asked) is the one sent
+    const granted = x.counts.reserves[x.counts.reserves.length - 1];
+    expect(x.counts.reserves.length).toBeGreaterThanOrEqual(1);
+    expect(granted).toMatchObject({ kind: "provider", missionId: MISSION });
     // ONE attempt by construction: the worker's token travels explicitly, so the client never hops to another pool key
-    expect(x.counts.reserves[0].boundUsd).toBeCloseTo(cap, 6);
+    expect(granted.boundUsd).toBeCloseTo(cap, 6);
     const sent = t.call.mock.calls[0][0] as TregCallOptions;
     expect(sent.token).toBe("worker-treg-token");
     expect(sent.legacyToken).toBeUndefined();
@@ -100,14 +102,24 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
     const t = treg(x.sg, { noToken: true });
     expect((await ask(t)).ok).toBe(true);
     const cap = Number((t.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd);
-    expect(x.counts.reserves[0].boundUsd).toBeCloseTo(cap * TREG_CAMPAIGN_ATTEMPTS, 6);
-    // and a grant whose per-operation maximum is lower refuses it before sending
-    const y = world({ ceilingUsd: 0.3, perOpMaxUsd: 0.1 });
+    expect(x.counts.reserves[x.counts.reserves.length - 1].boundUsd).toBeCloseTo(cap * TREG_CAMPAIGN_ATTEMPTS, 6);
+    // a grant whose per-operation maximum is lower is asked for a smaller amount (DT-20261119-11): the call goes out with the header that amount allows, every attempt covered
+    const z = world({ ceilingUsd: 0.3, perOpMaxUsd: 0.1 });
+    await admit(z);
+    const v = treg(z.sg, { noToken: true });
+    expect((await ask(v)).ok).toBe(true);
+    // no amount fits for EVERY attempt under a per-operation limit of 0.1: the call makes ONE request (the client is told not to hop) and reserves exactly that one
+    const vOpts = v.call.mock.calls[0][0] as TregCallOptions;
+    expect(vOpts.singleAttempt).toBe(true);
+    expect(z.counts.reserves[z.counts.reserves.length - 1].boundUsd).toBeCloseTo(Number(vOpts.routeMaxCostUsd), 6);
+    expect(z.counts.reserves[z.counts.reserves.length - 1].boundUsd).toBeLessThanOrEqual(0.1 + 1e-9);
+    // and a grant whose per-operation maximum cannot cover even the call's own estimate for every attempt refuses it before sending
+    const y = world({ ceilingUsd: 0.3, perOpMaxUsd: 0.0005 });
     await admit(y);
     const u = treg(y.sg, { noToken: true });
     expect(await ask(u)).toMatchObject({ ok: false, refused: "spend_gate" });
     expect(u.call).not.toHaveBeenCalled();
-    expect(y.sg.summary(MISSION).refusal_reasons).toEqual({ over_op_max: 1 });
+    expect(Object.keys(y.sg.summary(MISSION).refusal_reasons)).toEqual(["over_op_max"]);
   });
 
   it("B: a call that would pass the remaining budget is refused BEFORE the provider is invoked, and the mission is not charged for it", async () => {
@@ -118,7 +130,10 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
     expect(r).toMatchObject({ ok: false, refused: "spend_gate" });
     expect(t.call).not.toHaveBeenCalled();
     expect(x.w.owner.grant("camp1")).toMatchObject({ reservedUsd: 0, spentUsd: 0 });
-    expect(x.sg.summary(MISSION).refusal_reasons).toEqual({ over_ceiling: 1 });
+    // the call asked for the most it may take, then for smaller amounts down to its own estimate: the grant says «no room» each time (the per-operation limit first, the ceiling last)
+    const reasons = x.sg.summary(MISSION).refusal_reasons as Record<string, number>;
+    expect(Object.keys(reasons).sort()).toEqual(["over_ceiling", "over_op_max"]);
+    expect(reasons.over_ceiling).toBeGreaterThanOrEqual(1);
   });
 
   it("C: 40 concurrent calls cannot collectively hold or spend past the campaign ceiling (measured after every reserve and settle)", async () => {
@@ -284,10 +299,10 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
   });
 
   it("K: an operation with no maximum is refused before it is sent: a TREG call with no route cap, a Context.dev pre-built parser, and a model request with a server tool", async () => {
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: null })).toMatchObject({ ok: false, reason: "no_safe_bound" });
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: null })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     expect(providerCallBound({ provider: "contextdev", op: "parser", parser: "google-maps" })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     expect(providerCallBound({ provider: "firecrawl", op: "search", limit: 10, scrapesResults: true })).toMatchObject({ ok: false, reason: "no_safe_bound" });
-    expect(providerCallBound({ provider: "treg", op: "call", routeCapUsd: 0.001, attempts: 0 })).toMatchObject({ ok: false, reason: "no_safe_bound" });
+    expect(providerCallBound({ provider: "treg", op: "call", boundUsd: 0.001, attempts: 0 })).toMatchObject({ ok: false, reason: "no_safe_bound" });
     const x = world();
     await admit(x);
     const inner = vi.fn(async () => new Response("{}"));
@@ -355,7 +370,9 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
     const t = treg(x.sg);
     expect(await ask(t)).toMatchObject({ ok: false, refused: "spend_gate" });
     expect(t.call).not.toHaveBeenCalled();
-    expect(x.sg.summary(MISSION).refusal_reasons).toEqual({ over_ceiling: 1 });
+    const reasons = x.sg.summary(MISSION).refusal_reasons as Record<string, number>;
+    expect(reasons.over_ceiling).toBeGreaterThanOrEqual(1); // the amounts tried before it (above the per-operation limit) are counted too
+    expect(Object.keys(reasons).every((k) => k === "over_ceiling" || k === "over_op_max")).toBe(true);
   });
 
   /** One POST to the model gate on 127.0.0.1 with node's http (global fetch is stubbed to fail loudly in this file). */
