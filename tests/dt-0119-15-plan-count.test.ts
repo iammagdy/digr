@@ -103,6 +103,11 @@ describe("DT-20261119-15 ORDER 05 & ORDER 07 FINAL count rule regression suite",
     { label: "ORDER07 thousands item noun: نبدأ بـ 1,000 شركة", answerText: "نبدأ بـ 1,000 شركة", expected: 1000 },
     { label: "ORDER07 thousands Arabic item noun: نبدأ بـ ١٬٠٠٠ شركة", answerText: "نبدأ بـ ١٬٠٠٠ شركة", expected: 1000 },
 
+    // FU-15a per-clause decimal guard: decimal budget in another clause never cancels explicit quantity
+    { label: "FU-15a dash clauses with decimal budget: مصر - شركات برمجيات - نبدأ بـ 10 - الميزانية 50.5 جنيه", answerText: "مصر - شركات برمجيات - نبدأ بـ 10 - الميزانية 50.5 جنيه", expected: 10 },
+    { label: "FU-15a comma clauses with comma decimal budget: نبدأ بـ 10، الميزانية 50,5 جنيه", answerText: "نبدأ بـ 10، الميزانية 50,5 جنيه", expected: 10 },
+    { label: "FU-15a budget first with decimal: مصر - شركات برمجيات - الميزانية 50.5 جنيه - نبدأ بـ 10", answerText: "مصر - شركات برمجيات - الميزانية 50.5 جنيه - نبدأ بـ 10", expected: 10 },
+
     // Rule B: bare number NEVER overrides inside a multi-part reply
     { label: "ORDER05 / Faza'a r2 budget segment: مصر - شركات برمجيات - الميزانية - 500", answerText: "مصر - شركات برمجيات - الميزانية - 500", expected: 100 },
     { label: "ORDER05 / Faza'a r2 founding year segment: مصر - شركات برمجيات - سنة التأسيس - 2025", answerText: "مصر - شركات برمجيات - سنة التأسيس - 2025", expected: 100 },
