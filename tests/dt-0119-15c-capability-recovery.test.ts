@@ -729,8 +729,8 @@ describe("DT-20261119-15c LLM-First Brief + Capability-Bound Company+People Reco
     expect(droppedPlan.stages).toHaveLength(1);
     expect(droppedPlan.stages[0].key).toBe("companies");
 
-    // ORDER 02 (c): when brief is truly absent (`storedBrief: null`) and PEOPLE_WORDS has no «مدير» match,
-    // discovery has no company_people stage; with saved companies + people rows, recovery never ends in «حد من جانبنا» and asks ONE honest question.
+    // ORDER 08 (REVISED): when brief is absent (`storedBrief: null`), planner-on derives `company_people`
+    // discovery directly from `r.understanding` (`people_of_companies.asked === true`) and recovers a `plan_ready` 2-stage card.
     setChatModelForTesting(null);
     let tomba2 = 0;
     const noBrief = await runDiscoveryReplay({
@@ -758,7 +758,9 @@ describe("DT-20261119-15c LLM-First Brief + Capability-Bound Company+People Reco
         { tool: "treg_call", args: { endpoint_id: "aviato.companies.employees", params: { linkedinURL: "https://www.linkedin.com/company/cloudsoft5/", website: "http://cloudsoft5.com", page: 1, perPage: 1 }, why: "people", skip: allSkip } },
       ],
     });
-    expect(noBrief.mission.status).toBe("needs_input");
+    expect(noBrief.logs.some((l) => l.includes("capability_discovery") && l.includes("company_people:"))).toBe(true);
+    expect(noBrief.mission.status).toBe("plan_ready");
+    expect((noBrief.mission.plan as PricedPlan).stages.some((s) => s.key === "company_people")).toBe(true);
     expect(noBrief.mission.summary_ar ?? "").not.toBe(INTERNAL_PLANNING_AR);
   }, 30_000);
 
