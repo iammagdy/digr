@@ -117,7 +117,7 @@ export function renderCustomerMessageHtml(m: CustomerMessage, options: { siteUrl
 </style>
 </head>
 <body style="margin:0;padding:0;background:#F3F0E8;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
-<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all">${preheader}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all">${preheader}${"&#8199;&#65279;&#847;".repeat(40)}</div>
 <table role="presentation" class="bgw" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F3F0E8" style="background:#F3F0E8">
 <tr><td align="center" style="padding:32px 12px 40px">
 <!--[if mso]><table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->

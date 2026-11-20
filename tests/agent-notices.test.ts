@@ -45,7 +45,7 @@ describe("the worker tells the customer how a mission ended", () => {
     await runExecution(t.d(createFakeDriver([{ tool: "finish", args: { outcome: "cannot_serve", summary_ar: "لم يعد المصدر يعطي بيانات، فلم يُسلَّم شيء ولم يُخصم رصيد." } }])), m);
     expect(t.notify).toHaveBeenCalledWith(expect.objectContaining({ kind: "unserved", jobId: a.jobId, facts: expect.objectContaining({ delivered: 0, chargedPoints: 0, releasedPoints: a.reservePoints, hasJob: true }) }));
     const n = buildMissionNotice("unserved", { delivered: 0, planned: 220, chargedPoints: 0, releasedPoints: a.reservePoints, hasJob: true });
-    expect(n.body).toContain("حجز مؤقت مُحرَّر");
+    expect(n.body).toContain("وعاد الحجز المؤقت");
   });
 
   it("a notice that throws never changes the mission", async () => {

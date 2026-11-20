@@ -44,7 +44,8 @@ import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
-import { PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
+import { MAILBOX_LISTER_CAPABILITIES, PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
+import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { buildTools, newRunState, recoverCompanyPeoplePlan, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import type { UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
@@ -105,7 +106,7 @@ import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
 import { availableContactAnswerNote } from "../../src/lib/agentMission/contactQuestion";
 import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
-import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
+import { GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import { loadApprovedExclusion, withCustomerExclusion, type ReadMissionExclusion } from "./customerExclusion";
@@ -1281,12 +1282,27 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const shortStage = plan.stages.find((s) => s.deliver && s.replies_of === undefined && snap.counts(s.key).accepted < s.planned_rows);
   // the reason is about the stage that fell short: the language rule only ever applies to a stage of top-level items (a child stage is delivered raw), and a child stage that fell short while its parents were read says so
   const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
+  const childShareClause = (() => {
+    if (!shortStage || !parentOfShort || parentsBelowShare(plan, shortStage.key, rowsByStage) <= 0) return null;
+    const pNoun = itemNounOf(parentOfShort.title_ar);
+    const cNoun = itemNounOf(shortStage.title_ar);
+    const epCap = deps.catalog.byId.get(shortStage.endpoint_id)?.capability ?? "";
+    const withArticle = (w: string) => (w.startsWith("ال") ? w : `ال${w}`);
+    if (isPeopleStage(shortStage) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap)) {
+      const targetRole = cNoun.key === GENERIC_ITEM_NOUN.key || cNoun.key === pNoun.key ? "مديرًا" : cNoun.tamyiz;
+      return `لأن بعض ${withArticle(pNoun.plural)} لم نجد لها ${targetRole} مطابقًا في المصادر`;
+    }
+    if (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(shortStage.endpoint_id) || cNoun.key === pNoun.key || cNoun.key === GENERIC_ITEM_NOUN.key) {
+      return `لأن بعض ${withArticle(pNoun.plural)} لم نجد لها بيانات تواصل منشورة`;
+    }
+    return childShortfallClauseAr(pNoun.singular, pNoun.plural, cNoun.plural);
+  })();
   const checkedForShort = {
     ...checked,
     // THE SHORT STAGE'S OWN waiting items (live A1/A2: ten surplus companies a review never needed made the PEOPLE stage's shortfall «the review ran out»)
     pending: shortStage ? snap.counts(shortStage.key).pending : checked.pending,
     languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
-    childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
+    childShare: childShareClause,
   };
   // NOTHING DELIVERED: the reason is stated from what the run recorded for the delivered stages (found, left out per reason, waiting for a review, why it stopped), never from the model's note and never a guess
   const deliveredStages = plan.stages.filter((s) => s.deliver);
@@ -1332,7 +1348,16 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  const noticeStages = plan.stages
+    .filter((s) => s.deliver && s.replies_of === undefined)
+    .map((s) => {
+      const epCap = deps.catalog.byId.get(s.endpoint_id)?.capability ?? "";
+      const people = isPeopleStage(s) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap);
+      const contacts = !people && (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(s.endpoint_id));
+      const deliveredRows = fileByStage ? (fileByStage[s.key] ?? 0) : (rowsByStage[s.key]?.length ?? 0);
+      return { titleAr: s.title_ar, delivered: deliveredRows, planned: s.planned_rows, parentKey: s.parent_key, isPeople: people, isContacts: contacts };
+    });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
   // STAGE 4, S1 (behind DIGER_STAGE4_VERSIONS): version 1 of the delivered file, AFTER the file is stored and the mission is settled and told. Never throws, never changes the mission, never touches a money value (agent/src/stage4/firstVersion.ts).
   if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }
@@ -1342,7 +1367,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
  */
 export const NO_TOPIC_END_AR = "لم نستطع أن نحدد من رسالتك ما الذي نبحث عنه بالضبط (الموضوع أو الحساب)، فلم نرسل أي بحث ولم نجهّز خطة ولم يُخصم منك شيء. اكتب طلبك كاملًا في رسالة واحدة: المنصة، والموضوع، والحساب إن أردت، والعدد، والفترة.";
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
-export const INTERNAL_FAILURE_AR = "تعذّر تنفيذ طلبك بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج. لم يُخصم منك شيء، وأُبلغ فريقنا بالأمر ليراجعه.";
+export const INTERNAL_FAILURE_AR = "تعذّر استكمال تنفيذ طلبك في الوقت الحالي، وليس لأن المصدر خالٍ من النتائج. لم يُخصم منك شيء، وأُبلغ فريقنا بالأمر ليراجعه.";
 const loweredTargetClauseAr = (plan: PricedPlan): string => (plan.quantity?.reason_ar ? `لأن ${plan.quantity.reason_ar.replace(/[.،\s]+$/, "")}` : "لأن الخطة التي اعتمدتها كانت بعدد أقل من المطلوب");
 /** The sentence of a delivery that met the approved target when the target was lower than the request. */
 export const loweredTargetAr = (plan: PricedPlan): string => `سُلّم العدد الذي اعتمدته في الخطة، وهو أقل مما طلبت ${loweredTargetClauseAr(plan)}.`;

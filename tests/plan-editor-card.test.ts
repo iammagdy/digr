@@ -103,7 +103,8 @@ describe("THE END IS SAID, ONCE, HONESTLY, ON THE CARD", () => {
     const out = html(view);
     expect(out).toContain('data-testid="agent-end-line"');
     expect(out).toContain('aria-live="polite"');
-    expect(out).toContain("خلل من جانبنا");
+    expect(out).toContain("تعذّر استكمال تنفيذ طلبك");
+    expect(out).not.toContain("خلل من جانبنا");
     expect(out).toContain("حجز مؤقت مُحرَّر");
     expect(out).not.toContain("لم نجد");
   });

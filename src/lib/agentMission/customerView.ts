@@ -619,7 +619,7 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
 function endLineOf(phase: CustomerPhase, resultLinesAr: string[], summary: string | null): string | null {
   switch (phase) {
     case "done": return resultLinesAr[0] ?? "اكتملت مهمتك.";
-    case "partial": return resultLinesAr[0] ?? "اكتملت مهمتك بعدد أقل من المطلوب.";
+    case "partial": return resultLinesAr[0] ?? "تم تسليم مهمتك بعدد أقل من المطلوب.";
     case "unserved": return summary ?? "لم نتمكن من تجهيز طلبك، ولم يُخصم منك شيء.";
     case "failed": return summary ?? "تعذّر استكمال مهمتك ولم يُخصم منك شيء.";
     case "cancelled": return "أُلغيت هذه المهمة ولم يُخصم شيء.";

@@ -71,7 +71,8 @@ describe.each(SCENARIOS)("$name", (sc: Scenario) => {
     expect(isInternalEvent({ counts: flag!.counts })).toBe(true);
     // the customer: OUR failure, never an empty source
     expect(m.summary_ar).toBe(INTERNAL_FAILURE_AR);
-    expect(INTERNAL_FAILURE_AR).toContain("خلل من جانبنا");
+    expect(INTERNAL_FAILURE_AR).toContain("تعذّر استكمال تنفيذ طلبك");
+    expect(INTERNAL_FAILURE_AR).not.toContain("خلل من جانبنا");
     expect(INTERNAL_FAILURE_AR).toContain("لم يُخصم منك شيء");
     const resultEvent = r.store.events.filter((e) => e.kind === "result").pop()!;
     expect(resultEvent.message_ar).toBe(INTERNAL_FAILURE_AR);
@@ -85,9 +86,11 @@ describe.each(SCENARIOS)("$name", (sc: Scenario) => {
     expect(r.notices[0].kind).toBe("failed");
     expect(r.notices[0].facts).toMatchObject({ delivered: 0, cause: "internal", hasJob: true });
     const notice = buildMissionNotice(r.notices[0].kind, r.notices[0].facts, "مهمتك");
-    expect(notice.body).toContain("خلل من جانبنا");
+    expect(notice.body).toContain("تعذّر استكمال تنفيذ مهمتك");
+    expect(notice.body).not.toContain("خلل من جانبنا");
     expect(notice.body).not.toContain("لم نجد مصدرًا");
-    expect(notice.email!.subject).toContain("خلل من جانبنا");
+    expect(notice.email!.subject).toContain("تعذّر استكمال الطلب");
+    expect(notice.email!.subject).not.toContain("خلل من جانبنا");
     // the item store: the source gave rows, nothing was stored
     const snap = await readSnapshot(r.store, r.missionId);
     const first = r.plannedPlan.stages[0].key;
