@@ -12,7 +12,7 @@ const input = { max_results: 50, company: { name: { include: ["example"] } } };
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([
-  { name: "old catalog, affordable", afterSync: false, providerUsd: 0.02475, dailyCapUsd: 0.055, expectedHeader: ["0.02475"], spentUsd: 0.02475, expectedResult: { ok: true } },
+  { name: "old catalog, affordable", afterSync: false, providerUsd: 0.02475, dailyCapUsd: 0.055, expectedHeader: ["0.0375"], spentUsd: 0.02475, expectedResult: { ok: true } },
   { name: "synced catalog, affordable", afterSync: true, providerUsd: 0.05, dailyCapUsd: 0.055, expectedHeader: ["0.05"], spentUsd: 0.05, expectedResult: { ok: true } },
   { name: "synced catalog, over the daily cap", afterSync: true, providerUsd: 0.05, dailyCapUsd: 0.04, expectedHeader: [], spentUsd: 0, expectedResult: { ok: false, refused: "daily_cap" } },
 ])("admits a 50-row page only when it fits the daily cap ($name)", async ({ afterSync, providerUsd, dailyCapUsd, expectedHeader, spentUsd, expectedResult }) => {

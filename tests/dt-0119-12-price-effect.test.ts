@@ -12,7 +12,11 @@ const changed = "blitzapi.companies.search";
 const unchanged = "tomba.companies.search.reveal";
 
 function plan(endpointId: string, usd: number, revision?: number): PricedPlan {
-  const stages = [{ key: "companies", endpoint_id: endpointId, parent_key: null, planned_rows: 50, measured_cost_per_row_usd: usd, deliver: true, columns: [] }] as PricedStage[];
+  const stages: PricedStage[] = [{
+    key: "companies", title_ar: "شركات", endpoint_id: endpointId, parent_key: null,
+    expected_rows: 50, planned_rows: 50, measured_cost_per_row_usd: usd, measured_from_calls: [],
+    deliver: true, columns: [], sample_rows: [], measured_by: [],
+  }];
   const price = priceMissionByCode([{ rows: 50, costPerRowUsd: usd, deliver: true }]);
   return { summary_ar: "شركات", stages, price: revision === undefined ? price : { ...price, pricedUnder: revision } };
 }
