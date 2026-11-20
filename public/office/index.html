@@ -180,11 +180,12 @@
     font-size: clamp(11px, calc(11px + var(--office-growth)), 24px);
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(0,0,0,0.8);
-    transform: translate(-50%, -100%);
-    margin-top: -12px;
-    white-space: nowrap;
+    width: max-content;
+    max-width: calc(100% - 8px);
+    white-space: normal;
+    overflow-wrap: anywhere;
     opacity: 0;
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition: opacity 0.15s ease;
     z-index: 50;
     display: flex;
     align-items: center;
@@ -193,18 +194,24 @@
 
   .hover-tooltip.visible {
     opacity: 1;
-    transform: translate(-50%, -100%) scale(1);
   }
 
   .hover-tooltip::after {
     content: '';
     position: absolute;
     bottom: -6px;
-    left: 50%;
+    left: var(--tooltip-arrow-x, 50%);
     transform: translateX(-50%);
     border-width: 6px 6px 0;
     border-style: solid;
     border-color: #38bdf8 transparent transparent;
+  }
+
+  .hover-tooltip.below::after {
+    top: -6px;
+    bottom: auto;
+    border-width: 0 6px 6px;
+    border-color: transparent transparent #38bdf8;
   }
 
   /* Room Tags Overlay */
@@ -285,8 +292,8 @@
   }
   .bot-hotspot {
     position: absolute;
-    width: 50px;
-    height: 64px;
+    width: max(50px, 6.25%);
+    height: max(64px, 11.851852%);
     transform: translate(-50%, -60%);
     background: transparent;
     border: none;
@@ -1843,6 +1850,7 @@ function syncHotspotPositions() {
     if (btn) {
       btn.style.left = (b.x / BASE_W * 100) + '%';
       btn.style.top = (b.y / BASE_H * 100) + '%';
+      btn.style.zIndex = String(Math.floor(b.y));
     }
   }
 }
@@ -1944,29 +1952,39 @@ function gameLoop(time) {
 const tooltip = document.getElementById('hover-tooltip');
 
 function getCanvasCoords(e) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = stage.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
   const scaleX = BASE_W / rect.width;
   const scaleY = BASE_H / rect.height;
   return {
     x: (e.clientX - rect.left) * scaleX,
     y: (e.clientY - rect.top) * scaleY,
     clientX: e.clientX - rect.left,
-    clientY: e.clientY - rect.top
+    clientY: e.clientY - rect.top,
+    width: rect.width,
+    height: rect.height
   };
 }
 
-canvas.addEventListener('mousemove', (e) => {
+stage.addEventListener('mousemove', (e) => {
   const coords = getCanvasCoords(e);
-  let found = null;
+  if (!coords) return;
+  const hotspot = e.target.closest(".bot-hotspot");
+  let found = hotspot ? BOTS[hotspot.dataset.id] : null;
+  if (found && currentFilter !== 'all' && found.status !== currentFilter) {
+    found = null;
+  }
 
-  for (const key of BOT_KEYS) {
-    const bot = BOTS[key];
-    if (currentFilter !== 'all' && bot.status !== currentFilter) continue;
-    const dx = coords.x - bot.x;
-    const dy = coords.y - (bot.y - 6);
-    if (Math.sqrt(dx * dx + dy * dy) < 28) {
-      found = bot;
-      break;
+  if (!found) {
+    for (const key of BOT_KEYS) {
+      const bot = BOTS[key];
+      if (currentFilter !== 'all' && bot.status !== currentFilter) continue;
+      const dx = coords.x - bot.x;
+      const dy = coords.y - (bot.y - 6);
+      if (Math.sqrt(dx * dx + dy * dy) < 28) {
+        found = bot;
+        break;
+      }
     }
   }
 
@@ -1975,21 +1993,32 @@ canvas.addEventListener('mousemove', (e) => {
 
   if (found) {
     tooltip.textContent = found.name + ' • ' + (found.shortTask || found.statusLabel);
-    tooltip.style.left = coords.clientX + 'px';
-    tooltip.style.top = coords.clientY + 'px';
+    const { offsetWidth, offsetHeight } = tooltip;
+    const left = Math.max(4, Math.min(coords.clientX - offsetWidth / 2, coords.width - offsetWidth - 4));
+    const above = coords.clientY - 12 - offsetHeight;
+    const below = above < 4;
+    const preferredTop = below ? coords.clientY + 12 : above;
+    const top = Math.max(4, Math.min(preferredTop, coords.height - offsetHeight - 4));
+    const arrowX = Math.max(8, Math.min(coords.clientX - left, offsetWidth - 8));
+
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.style.setProperty('--tooltip-arrow-x', arrowX + 'px');
+    tooltip.classList.toggle('below', below);
     tooltip.classList.add('visible');
   } else {
     tooltip.classList.remove('visible');
   }
 });
 
-canvas.addEventListener('mouseleave', () => {
+stage.addEventListener('mouseleave', () => {
   hoveredBotId = null;
   tooltip.classList.remove('visible');
 });
 
 canvas.addEventListener('click', (e) => {
   const coords = getCanvasCoords(e);
+  if (!coords) return;
   for (const key of BOT_KEYS) {
     const bot = BOTS[key];
     const dx = coords.x - bot.x;
