@@ -244,12 +244,62 @@ export function parseBrief(raw: unknown): ParsedBrief {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const NUMBER_WORD_RE = new RegExp(`(?<![ء-ي])(?:[وب]?)(${NUMBER_WORDS_SRC})(?![ء-ي])`, "g");
 
-/** Every whole number a text writes: in digits (Arabic-Indic or Latin, with or without a thousands mark) and in words («مية», «عشرين»). */
-export function numbersWritten(raw: string): Set<number> {
-  const t = normalizeDigits(String(raw ?? "")).replace(/(\d)[,٬](?=\d{3}\b)/g, "$1");
+/** Strip optional Arabic proclitics before checking bare feminine dual grammar (`شركتين` → 2). */
+const DUAL_PROCLITIC = /^[وف]?[بلك]?/;
+const AR_STRIP = /[\u064B-\u0652\u0670\u0640]/g;
+
+/** Item nouns explicitly named in the brief's own text and objectives (singular «ة» nouns such as «شركة»). */
+export function briefItemNouns(brief: Pick<ResearchBrief, "request" | "topic" | "objectives"> | null | undefined, prior?: Pick<ResearchBrief, "request" | "topic" | "objectives"> | null): string[] {
+  const seen = new Set<string>();
+  const addFrom = (b: Pick<ResearchBrief, "request" | "topic" | "objectives"> | null | undefined) => {
+    if (!b) return;
+    const chunks = [b.topic, b.request, ...(b.objectives ?? []).flatMap((o) => [o.what, o.request])];
+    for (const chunk of chunks) {
+      if (typeof chunk !== "string" || chunk.trim() === "") continue;
+      for (const tok of normalizeDigits(chunk.replace(AR_STRIP, "")).split(/[^\p{L}\p{N}]+/u)) {
+        const bare = tok.replace(/^ال/, "");
+        if (/^\p{L}{2,}ة$/u.test(bare)) seen.add(bare);
+      }
+    }
+  };
+  addFrom(brief);
+  addFrom(prior);
+  return [...seen];
+}
+
+/** Every whole number a text writes: in digits, in cardinal words («مية», «عشرين»), and optionally the Arabic feminine dual (`<stem>تين`/`<stem>تان` after optional `و/ف/ب/ل/ك`) ONLY for item nouns named by the brief. */
+export function numbersWritten(raw: string, nouns?: ReadonlyArray<string>): Set<number> {
+  const clean = normalizeDigits(String(raw ?? "").replace(AR_STRIP, ""));
+  const t = clean.replace(/(\d)[,٬](?=\d{3}\b)/g, "$1");
   const out = new Set<number>();
   for (const m of t.match(/\d+/g) ?? []) { const n = Number(m); if (Number.isSafeInteger(n)) out.add(n); }
-  for (const m of t.matchAll(NUMBER_WORD_RE)) { const n = numberOfWord(m[1]); if (n !== null) out.add(n); }
+  const cardinalMatched = new Set<string>();
+  for (const m of t.matchAll(NUMBER_WORD_RE)) {
+    const n = numberOfWord(m[1]);
+    if (n !== null) {
+      out.add(n);
+      cardinalMatched.add(m[1].trim());
+    }
+  }
+  if (!out.has(2) && nouns && nouns.length > 0) {
+    const dualTokens = new Set<string>();
+    for (const noun of nouns) {
+      const n = normalizeDigits(String(noun ?? "").replace(AR_STRIP, "")).trim().replace(/^ال/, "");
+      const stem = n.endsWith("ة") ? n.slice(0, -1) : n;
+      if (stem.length < 2) continue;
+      dualTokens.add(`${stem}تين`);
+      dualTokens.add(`${stem}تان`);
+    }
+    if (dualTokens.size > 0) {
+      for (const tok of clean.split(/[^\p{L}\p{N}]+/u)) {
+        if (!tok || /\d/.test(tok) || cardinalMatched.has(tok) || numberOfWord(tok) !== null) continue;
+        if (/^ال/.test(tok)) continue;
+        const bare = tok.replace(DUAL_PROCLITIC, "");
+        if (!bare || /^ال/.test(bare) || cardinalMatched.has(bare) || numberOfWord(bare) !== null) continue;
+        if (dualTokens.has(bare)) { out.add(2); break; }
+      }
+    }
+  }
   return out;
 }
 
@@ -340,9 +390,10 @@ function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): Valida
   if (contactAskVerdict(request) === "clarify") return { ok: false, reason: "privacy_clarify", contentAr: contactClarifyAr(request) };
   if (request.length < BRIEF_REQUEST_MIN || request.length > BRIEF_REQUEST_MAX) return { ok: false, reason: "request_length" };
 
+  const nouns = briefItemNouns(brief, ctx.prior);
   const groundText = [...ctx.customerTurns, ctx.prior?.request ?? ""].join("\n");
-  const written = numbersWritten(groundText);
-  for (const n of numbersWritten(request)) if (!written.has(n)) return { ok: false, reason: "number_not_written" };
+  const written = numbersWritten(groundText, nouns);
+  for (const n of numbersWritten(request, nouns)) if (!written.has(n)) return { ok: false, reason: "number_not_written" };
   if (brief.count !== null && !written.has(brief.count)) return { ok: false, reason: "number_not_written" };
 
   const named = new Set<string>([...platformsNamedIn(groundText), ...platformsNamedIn(String(ctx.assistantQuestion ?? ""))]);
@@ -356,7 +407,7 @@ function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): Valida
     if (JSON.stringify(fieldsPlatforms) !== JSON.stringify(inRequest)) return { ok: false, reason: "platform_mismatch" };
     if (fieldsPlatforms.length === 1 && contract.platform !== fieldsPlatforms[0]) return { ok: false, reason: "platform_mismatch" };
   }
-  if (brief.count !== null && !numbersWritten(request).has(brief.count)) return { ok: false, reason: "count_mismatch" };
+  if (brief.count !== null && !numbersWritten(request, nouns).has(brief.count)) return { ok: false, reason: "count_mismatch" };
   // X has no comments stage in the contract: «تعليقات إكس» is stated by the plan as replies, not dropped here
   if (brief.content.includes("comments") && contract.comments === "none" && contract.platform !== "x") return { ok: false, reason: "comments_dropped" };
   if (brief.content.includes("replies") && contract.replies === "none") return { ok: false, reason: "replies_dropped" };
@@ -386,7 +437,8 @@ export function withPartCounts(brief: ResearchBrief): ResearchBrief {
   const objectives = brief.objectives ?? [];
   if (brief.count === null || objectives.filter((o) => o.parent === null).length < 2) return brief;
   const n = brief.count;
-  const ofParts = objectives.some((o) => o.count === n || (typeof o.request === "string" && numbersWritten(o.request).has(n)));
+  const nouns = briefItemNouns(brief);
+  const ofParts = objectives.some((o) => o.count === n || (typeof o.request === "string" && numbersWritten(o.request, nouns).has(n)));
   return ofParts ? { ...brief, count: null } : brief;
 }
 
@@ -462,7 +514,8 @@ export function sameContract(a: RequestContract, b: RequestContract): boolean {
 
 /** The numbers a reply may repeat in brief mode: the ones the customer wrote in this conversation (in Arabic-Indic digits, as replies are written). */
 export function briefNumbersAr(ctx: Pick<BriefContext, "customerTurns" | "prior">): string[] {
-  return [...numbersWritten([...ctx.customerTurns, ctx.prior?.request ?? ""].join("\n"))].map((n) => toArabicDigits(n));
+  const nouns = ctx.prior ? briefItemNouns(ctx.prior) : undefined;
+  return [...numbersWritten([...ctx.customerTurns, ctx.prior?.request ?? ""].join("\n"), nouns)].map((n) => toArabicDigits(n));
 }
 
 /** A brief stored on an assistant message (`messages.plan.researchBrief`), read back with the same schema (a broken or old value is null). */
