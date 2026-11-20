@@ -5,6 +5,9 @@ import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { namesRoleAr, roleDefOf, roleOfNoun, titleRoleVerdict, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type FieldClass, type SourceField } from "../../src/lib/agentMission/fields";
+import { requestNamesSector } from "../../src/lib/agentMission/entities";
+import { CONTRACT_ONLY_CLASSES } from "../../src/lib/agentMission/taskContracts";
 import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
@@ -77,19 +80,33 @@ export type RecoveryResult =
   | { kind: "own_limit" }
   | { kind: "none" };
 
+const SAFE_FIELD_PATH = /^[A-Za-z0-9_.]+$/;
+
+const extraFieldAssignments = (extraFields: ReadonlyArray<SourceField>, existingKeys: ReadonlySet<string>): string[] => {
+  const seen = new Set<string>(existingKeys);
+  const lines: string[] = [];
+  for (const f of extraFields) {
+    if (seen.has(f.cls) || !SAFE_FIELD_PATH.test(f.path)) continue;
+    seen.add(f.cls);
+    lines.push(`    ${f.cls}: atPath(r, ${JSON.stringify(f.path)}),`);
+  }
+  return lines;
+};
+
 export function extractPersonPreview(raw: Record<string, unknown>) {
   const person = isObject(raw.person) ? raw.person : raw;
-  const exps = Array.isArray(person.experiences) ? person.experiences : Array.isArray(raw.experiences) ? raw.experiences : Array.isArray(raw.employment_history) ? raw.employment_history : [];
+  const exps = Array.isArray(person.experiences) ? person.experiences : Array.isArray(raw.experiences) ? raw.experiences : Array.isArray(raw.employment_history) ? raw.employment_history : Array.isArray(raw.positionList) ? raw.positionList : [];
   const exp = exps.find(isObject) ?? {};
   const fullName = nonEmptyStr(person.full_name) || nonEmptyStr(person.fullName) || nonEmptyStr(person.name) || [nonEmptyStr(person.first_name) || nonEmptyStr(person.firstName), nonEmptyStr(person.last_name) || nonEmptyStr(person.lastName)].filter(Boolean).join(" ") || nonEmptyStr(raw.full_name) || nonEmptyStr(raw.name);
   const jobTitle = nonEmptyStr(person.job_title) || nonEmptyStr(person.jobTitle) || nonEmptyStr(person.title) || nonEmptyStr(person.headline) || nonEmptyStr(person.position) || nonEmptyStr(exp.job_title) || nonEmptyStr(exp.title) || nonEmptyStr(raw.job_title) || nonEmptyStr(raw.title);
   const compObj = isObject(person.company) ? person.company : isObject(raw.organization) ? raw.organization : null;
   const company = (typeof person.company === "string" ? person.company.trim() : "") || nonEmptyStr(person.company_name) || nonEmptyStr(person.companyName) || nonEmptyStr(exp.company_name) || nonEmptyStr(exp.companyName) || nonEmptyStr(compObj?.name) || nonEmptyStr(raw.companyName) || nonEmptyStr(raw.company_name);
+  const companyDomain = nonEmptyStr(exp.company_domain) || nonEmptyStr(exp.companyDomain) || nonEmptyStr(raw.companyWebsite) || nonEmptyStr(raw.company_website) || nonEmptyStr(compObj?.website_url) || nonEmptyStr(compObj?.domain);
   const urls = isObject(person.URLs) ? person.URLs : null;
   const linkedin = nonEmptyStr(person.linkedin_url) || nonEmptyStr(person.linkedinUrl) || nonEmptyStr(person.linkedin) || nonEmptyStr(person.profile_url) || nonEmptyStr(urls?.linkedin) || nonEmptyStr(raw.linkedin_url) || nonEmptyStr(raw.linkedin);
   const email = nonEmptyStr(person.email) || nonEmptyStr(raw.email);
   const id = nonEmptyStr(raw.id) || nonEmptyStr(raw.personID) || nonEmptyStr(raw.person_id) || nonEmptyStr(person.id) || linkedin || email;
-  return { id, fullName, jobTitle, company, linkedin };
+  return { id, fullName, jobTitle, company, companyDomain, linkedin };
 }
 
 export function extractCompanyPreview(raw: Record<string, unknown>) {
@@ -100,14 +117,16 @@ export function extractCompanyPreview(raw: Record<string, unknown>) {
   return { id, name, website, linkedin };
 }
 
-export function buildSavedPeopleMapCode(rowExpr: string): string {
+export function buildSavedPeopleMapCode(rowExpr: string, extraFields: ReadonlyArray<SourceField> = []): string {
+  const extra = extraFieldAssignments(extraFields, new Set(["id", "full_name", "job_title", "company", "linkedin", "email", "phone"]));
   return [
     `const list = ${rowExpr};`,
     `if (!Array.isArray(list)) return [];`,
     `const s = (v) => typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : "";`,
+    ...(extra.length > 0 ? [`const atPath = (obj, p) => { const v = p.split(".").reduce((c, k) => (c && typeof c === "object" ? c[k] : undefined), obj); return v === undefined || v === null ? "" : s(v); };`] : []),
     `return list.filter((r) => r && typeof r === "object").map((r) => {`,
     `  const p = r.person && typeof r.person === "object" ? r.person : r;`,
-    `  const exps = Array.isArray(p.experiences) ? p.experiences : Array.isArray(r.experiences) ? r.experiences : Array.isArray(r.employment_history) ? r.employment_history : [];`,
+    `  const exps = Array.isArray(p.experiences) ? p.experiences : Array.isArray(r.experiences) ? r.experiences : Array.isArray(r.employment_history) ? r.employment_history : Array.isArray(r.positionList) ? r.positionList : [];`,
     `  const exp = exps.find((x) => x && typeof x === "object") || {};`,
     `  const compObj = p.company && typeof p.company === "object" ? p.company : r.organization && typeof r.organization === "object" ? r.organization : {};`,
     `  const urls = p.URLs && typeof p.URLs === "object" ? p.URLs : {};`,
@@ -118,20 +137,28 @@ export function buildSavedPeopleMapCode(rowExpr: string): string {
     `  const email = s(p.email) || s(r.email) || s(p.work_email) || s(r.work_email);`,
     `  const phone = s(p.phone) || s(r.phone) || s(p.mobile) || s(r.mobile);`,
     `  const id = s(r.id) || s(r.personID) || s(r.person_id) || s(p.id) || linkedin || email;`,
-    `  return { id, full_name, job_title, company, linkedin, email, phone };`,
+    `  return {`,
+    `    id, full_name, job_title, company, linkedin, email, phone,`,
+    ...extra,
+    `  };`,
     `}).filter((row) => row.id && row.full_name && (row.job_title || row.company || row.linkedin));`,
   ].join("\n");
 }
 
-export function buildSavedCompanyMapCode(rowExpr: string): string {
+export function buildSavedCompanyMapCode(rowExpr: string, extraFields: ReadonlyArray<SourceField> = []): string {
+  const extra = extraFieldAssignments(extraFields, new Set(["id", "name", "industry", "city", "country", "website", "linkedin", "phone", "address", "email"]));
   return [
     `const list = ${rowExpr};`,
     `if (!Array.isArray(list)) return [];`,
     `const s = (v) => typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : "";`,
+    ...(extra.length > 0 ? [`const atPath = (obj, p) => { const v = p.split(".").reduce((c, k) => (c && typeof c === "object" ? c[k] : undefined), obj); return v === undefined || v === null ? "" : s(v); };`] : []),
     `return list.filter((r) => r && typeof r === "object").map((r, i) => {`,
     `  const linkedin = s(r.linkedin_url) || s(r.linkedinUrl) || s(r.linkedin) || s(r.company_linkedin_url);`,
     `  const website = s(r.website_url) || s(r.website) || s(r.domain) || s(r.url);`,
     `  const name = s(r.name) || s(r.company_name) || s(r.companyName) || s(r.title);`,
+    `  const phone = s(r.phone_number) || s(r.phone) || s(r.telephone) || s(r.mobile);`,
+    `  const address = s(r.street_address) || s(r.address) || s(r.full_address) || s(r.formatted_address);`,
+    `  const email = s(r.email) || s(r.contact_email) || s(r.public_email);`,
     `  const id = linkedin || s(r.id) || website || name || ("company_" + (i + 1));`,
     `  return {`,
     `    id,`,
@@ -141,19 +168,57 @@ export function buildSavedCompanyMapCode(rowExpr: string): string {
     `    country: s(r.country) || s(r.country_code),`,
     `    website,`,
     `    linkedin,`,
+    `    phone,`,
+    `    address,`,
+    `    email,`,
+    ...extra,
     `  };`,
     `}).filter((row) => row.id && row.name);`,
   ].join("\n");
 }
 
+const normalizeHostToken = (raw: string): string => {
+  const s = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]?.split("?")[0] ?? "";
+  return s.includes(".") && s.length >= 4 ? s : "";
+};
+
+const linkedinCompanyToken = (raw: string): string => {
+  const m = raw.trim().toLowerCase().match(/linkedin\.com\/company\/([^/?#]+)/);
+  return m?.[1] ?? "";
+};
+
 export function parentCompanyMatchScore(params: Record<string, unknown>, rows: ReadonlyArray<Record<string, unknown>>, parentRows: Array<Record<string, unknown>>): number {
   if (parentRows.length === 0) return 0;
   if (parentBinding(params, parentRows)) return 2;
-  const parentNames = parentRows.flatMap((p) => [p.name, p.company_name, p.website, p.domain].map((v) => nonEmptyStr(v).toLowerCase()).filter((v) => v.length >= 3));
-  if (parentNames.length === 0) return 0;
+  const parentHosts = new Set<string>();
+  const parentSlugs = new Set<string>();
+  const parentNames: string[] = [];
+  for (const p of parentRows) {
+    for (const v of [p.name, p.company_name, p.companyName, p.website, p.website_url, p.domain, p.url]) {
+      const s = nonEmptyStr(v).toLowerCase();
+      if (s.length >= 3) parentNames.push(s);
+      const host = normalizeHostToken(s);
+      if (host) parentHosts.add(host);
+    }
+    for (const v of [p.linkedin_url, p.linkedinUrl, p.linkedin]) {
+      const slug = linkedinCompanyToken(nonEmptyStr(v));
+      if (slug) parentSlugs.add(slug);
+    }
+  }
+  for (const pv of Object.values(params)) {
+    if (typeof pv !== "string") continue;
+    const host = normalizeHostToken(pv);
+    if (host && parentHosts.has(host)) return 2;
+    const slug = linkedinCompanyToken(pv);
+    if (slug && parentSlugs.has(slug)) return 2;
+  }
+  if (parentNames.length === 0 && parentHosts.size === 0) return 0;
   for (const r of rows) {
-    const comp = extractPersonPreview(r).company.toLowerCase();
+    const pv = extractPersonPreview(r);
+    const comp = pv.company.toLowerCase();
     if (comp && parentNames.some((pn) => comp.includes(pn) || pn.includes(comp.split(" ")[0] ?? ""))) return 1;
+    const host = normalizeHostToken(pv.companyDomain);
+    if (host && parentHosts.has(host)) return 1;
   }
   return 0;
 }
@@ -325,7 +390,6 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
 }): Promise<RecoveryResult> {
   const { mission, store, catalog, access, capabilities, calls, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
   const inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
-  if (inspection.hasOwnLimit) return { kind: "own_limit" };
 
   const requestText = askedTextOf(mission);
   const peopleRequested = Boolean(understoodPeople) || inspection.peopleCandidates.length > 0;
@@ -335,7 +399,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   const rootCandidateFromStages = stagesIn.find((st) => isObject(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === ""));
   const usableCompany = inspection.companyCandidates.find((c) => c.usable && c.rawJson !== null);
   const hasCompanyEvidence = Boolean(usableCompany) || (Boolean(rootCandidateFromStages) && inspection.anyCompanyOk);
-  if (!hasCompanyEvidence && !usableCompany) return { kind: "none" };
+  if (!hasCompanyEvidence && !usableCompany) return inspection.hasOwnLimit ? { kind: "own_limit" } : { kind: "none" };
 
   // Counter-cases: missing raw people file or incompatible raw rows (e.g. non-person blobs) -> never invent card or question
   const usablePeople = inspection.peopleCandidates.filter((p) => p.usable);
@@ -343,8 +407,9 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     return { kind: "none" };
   }
 
-  // No positive people call answered (all failed 402/422/timeout or never tried; note answeredEmpty preserves plan_invalid_after_N when all people calls returned 0 rows)
+  // No positive people call answered (all failed 402/422/timeout/refused or never tried; note answeredEmpty preserves plan_invalid_after_N when all people calls returned 0 rows)
   if (inspection.peopleCandidates.length === 0) {
+    if (inspection.hasOwnLimit) return { kind: "own_limit" };
     if (inspection.anyPeopleOkOrEmpty) return { kind: "none" };
     return { kind: "sources_unavailable" };
   }
@@ -353,6 +418,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   const linkedPeople = usablePeople.filter((p) => p.linkScore > 0 && p.rawJson !== null);
   const runState = await readRunState(store, mission.id);
   const alreadyAsked = runState.peopleRecoveryAsked === true || Boolean(mission.answer_text);
+  const canAskOverCap = runState.peopleRecoveryAsked !== true;
 
   if (linkedPeople.length === 0) {
     if (alreadyAsked) return { kind: "none" };
@@ -370,10 +436,25 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     return checkCustomerText(question_ar).issues.length === 0 ? { kind: "question", question_ar, options_ar } : { kind: "none" };
   }
 
-  // Build mapped people stage from linked evidence
+  // Build mapped people stage from linked evidence, preserving all useful source fields
   const linked = linkedPeople[0]!;
   if (!isStageAllowed(linked.endpointId, catalog, access)) return { kind: "none" };
-  const peopleCode = buildSavedPeopleMapCode(linked.rowExpr);
+  const wants = requestWantsContacts(requestText);
+  const peopleColumns: Array<{ key: string; title_ar: string; kind?: string }> = [
+    { key: "full_name", title_ar: "الاسم الكامل" },
+    { key: "job_title", title_ar: "المسمى الوظيفي" },
+    { key: "company", title_ar: "الشركة" },
+    { key: "linkedin", title_ar: "الملف المهني" },
+    ...(wants.email ? [{ key: "email", title_ar: "الإيميل", kind: "work_email" }] : []),
+    ...(wants.phone ? [{ key: "phone", title_ar: "رقم التليفون", kind: "phone" }] : []),
+  ];
+  const rawPeopleText = typeof linked.rawJson === "string" ? linked.rawJson : JSON.stringify(linked.rawJson);
+  const peopleFields = usefulFieldsOfPage(rawPeopleText);
+  const extraPeopleFields = uncoveredFields(peopleFields.filter((f) => !CONTRACT_ONLY_CLASSES.includes(f.cls)), peopleColumns);
+  for (const f of extraPeopleFields) {
+    if (!peopleColumns.some((c) => c.key === f.cls)) peopleColumns.push({ key: f.cls, title_ar: FIELD_LABEL_AR[f.cls] });
+  }
+  const peopleCode = buildSavedPeopleMapCode(linked.rowExpr, extraPeopleFields);
   const sbPeople = await runSandbox(peopleCode, { [linked.callId]: linked.rawJson });
   let mappedPeople: unknown[] = [];
   if (sbPeople.ok && sbPeople.resultJson) {
@@ -392,7 +473,6 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
 
   // Candidate root company stages: prefer valid root stage from stagesIn, fallback to synthesizing from saved company evidence
   const rootOptions: Array<Record<string, unknown>> = [];
-  const wants = requestWantsContacts(requestText);
   const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
   const companiesTarget = Math.max(
     1,
@@ -405,7 +485,25 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     rootOptions.push({ ...rootCandidateFromStages, expected_rows: Number(rootCandidateFromStages.expected_rows) || companiesTarget });
   }
   if (usableCompany && usableCompany.rawJson !== null && isStageAllowed(usableCompany.endpointId, catalog, access)) {
-    const companyCode = buildSavedCompanyMapCode(usableCompany.rowExpr);
+    const rawCoText = typeof usableCompany.rawJson === "string" ? usableCompany.rawJson : JSON.stringify(usableCompany.rawJson);
+    const coFields = usefulFieldsOfPage(rawCoText);
+    const coFieldSet = new Set<FieldClass>(coFields.map((f) => f.cls));
+    const coColumns: Array<{ key: string; title_ar: string }> = [
+      { key: "name", title_ar: "اسم الشركة" },
+      { key: "industry", title_ar: "النشاط والتخصص" },
+      { key: "city", title_ar: "المدينة" },
+      { key: "country", title_ar: "الدولة" },
+      { key: "website", title_ar: "الموقع الإلكتروني" },
+      { key: "linkedin", title_ar: "صفحة الشركة على الشبكة المهنية" },
+      ...(coFieldSet.has("address") ? [{ key: "address", title_ar: FIELD_LABEL_AR.address }] : []),
+      ...(coFieldSet.has("phone") ? [{ key: "phone", title_ar: "هاتف المقر الرئيسي" }] : []),
+      ...(coFieldSet.has("email") ? [{ key: "email", title_ar: "الإيميل العام للشركة" }] : []),
+    ];
+    const extraCoFields = uncoveredFields(coFields, coColumns);
+    for (const f of extraCoFields) {
+      if (!coColumns.some((c) => c.key === f.cls)) coColumns.push({ key: f.cls, title_ar: FIELD_LABEL_AR[f.cls] });
+    }
+    const companyCode = buildSavedCompanyMapCode(usableCompany.rowExpr, extraCoFields);
     const sbCo = await runSandbox(companyCode, { [usableCompany.callId]: usableCompany.rawJson });
     let mappedCo: unknown[] = [];
     if (sbCo.ok && sbCo.resultJson) {
@@ -420,6 +518,11 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       await store.putFile(mission.id, `out/${coOutId}.json`, JSON.stringify(mappedCo), "application/json");
       codeRuns.set(coOutId, { code: companyCode, files: [usableCompany.callId] });
       try { await store.putNew(mission.id, codeRunPath(coOutId), JSON.stringify({ code: companyCode, files: [usableCompany.callId] }), "application/json"); } catch { /* ignore */ }
+      const coCall = calls.find((c) => c.id === `${mission.id}:${usableCompany.callId}`);
+      const coParams = callParams.get(usableCompany.callId) ?? coCall?.params_digest ?? {};
+      const coQuery = ["query", "q", "keyword", "search", "search_query"].map((k) => coParams[k]).find((v) => typeof v === "string" && v.trim() !== "") as string | undefined;
+      const needsRelFallback = Boolean(coQuery) && !requestNamesSector(`${requestText} ${mission.answer_text ?? ""}`);
+      const relTerms = (understoodCompanies?.search_terms?.length ? understoodCompanies.search_terms : [understoodCompanies?.topic, coQuery].filter((v): v is string => typeof v === "string" && v.trim() !== "")).slice(0, 8);
       rootOptions.push({
         key: "companies",
         title_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة",
@@ -427,29 +530,15 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
         expected_rows: companiesTarget,
         parent_key: null,
         deliver: true,
-        columns: [
-          { key: "name", title_ar: "اسم الشركة" },
-          { key: "industry", title_ar: "النشاط والتخصص" },
-          { key: "city", title_ar: "المدينة" },
-          { key: "country", title_ar: "الدولة" },
-          { key: "website", title_ar: "الموقع الإلكتروني" },
-          { key: "linkedin", title_ar: "صفحة الشركة على الشبكة المهنية" },
-        ],
+        columns: coColumns,
         measured_by: [usableCompany.callId],
         yield_from: coOutId,
+        ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: ["name", "industry"], min_own_words: 0, review: true } } : {}),
       });
     }
   }
 
   const peopleTitle = understoodPeople?.noun_ar?.trim() ? `${understoodPeople.noun_ar.trim()} كل شركة` : "مسؤولو كل شركة";
-  const peopleColumns: Array<{ key: string; title_ar: string; kind?: string }> = [
-    { key: "full_name", title_ar: "الاسم الكامل" },
-    { key: "job_title", title_ar: "المسمى الوظيفي" },
-    { key: "company", title_ar: "الشركة" },
-    { key: "linkedin", title_ar: "الملف المهني" },
-    ...(wants.email ? [{ key: "email", title_ar: "الإيميل", kind: "work_email" }] : []),
-    ...(wants.phone ? [{ key: "phone", title_ar: "رقم التليفون", kind: "phone" }] : []),
-  ];
 
   let sawOverCap = false;
   for (const rootStage of rootOptions) {
@@ -457,7 +546,12 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     const rootExpected = Math.max(1, Number(rootStage.expected_rows) || companiesTarget);
     const parentTitle = String(rootStage.title_ar ?? "الشركات").trim();
     const baseSummary = summaryHint ? firstSentenceAr(summaryHint).replace(/[.،]+$/, "") : "";
-    const assembledSummary = `${baseSummary || `ستحصل على ${parentTitle}`}، ومع كل شركة مسؤولها حسب المتاح.`;
+    const hintedSummary = `${baseSummary || `ستحصل على ${parentTitle}`}، ومع كل شركة مسؤولها حسب المتاح.`;
+    const neutralSummary = `ستحصل على ${parentTitle}، ومع كل شركة مسؤولها حسب المتاح.`;
+    const textVariants: Array<{ summary: string; assumptions: unknown }> = [
+      { summary: hintedSummary, assumptions: assumptionsHint },
+      ...(hintedSummary !== neutralSummary || assumptionsHint !== undefined ? [{ summary: neutralSummary, assumptions: undefined }] : []),
+    ];
     const assembledStages: Array<Record<string, unknown>> = [
       rootStage,
       {
@@ -476,18 +570,20 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     const capOk = !capabilities || planStageIssues(assembledStages.map((st) => ({ key: String(st.key ?? ""), endpoint_id: String(st.endpoint_id ?? ""), parent_key: (st.parent_key as string | null) ?? null })), capabilities, catalog).length === 0;
     if (!capOk) continue;
     const evMap = await loadEvidenceMap(assembledStages);
-    const checked = validateAndPricePlan({ summary_ar: assembledSummary, stages: assembledStages as any, ...(assumptionsHint !== undefined ? { assumptions_ar: assumptionsHint as any } : {}) }, makeLookup(evMap));
-    if (!checked.ok) {
-      if (checked.issues.some((i) => /more than the job limit|lower the expected rows/i.test(i))) sawOverCap = true;
-      log?.(`company_people_recovery_validate_failed ${mission.id} ${checked.issues.slice(0, 3).join("; ")}`);
-      continue;
+    for (const tv of textVariants) {
+      const checked = validateAndPricePlan({ summary_ar: tv.summary, stages: assembledStages as any, ...(tv.assumptions !== undefined ? { assumptions_ar: tv.assumptions as any } : {}) }, makeLookup(evMap));
+      if (!checked.ok) {
+        if (checked.issues.some((i) => /more than the job limit|lower the expected rows/i.test(i))) sawOverCap = true;
+        log?.(`company_people_recovery_validate_failed ${mission.id} ${checked.issues.slice(0, 3).join("; ")}`);
+        continue;
+      }
+      const fin = await finalizePlan(checked.plan, evMap, { skipAdvice: false });
+      if (fin.ok) return { kind: "plan", plan: fin.plan, outSeq: seq };
+      log?.(`company_people_recovery_finalize_failed ${mission.id} ${(fin.issues ?? []).slice(0, 3).join("; ")}`);
     }
-    const fin = await finalizePlan(checked.plan, evMap, { skipAdvice: false });
-    if (fin.ok) return { kind: "plan", plan: fin.plan, outSeq: seq };
-    log?.(`company_people_recovery_finalize_failed ${mission.id} ${(fin.issues ?? []).slice(0, 3).join("; ")}`);
   }
 
-  if (sawOverCap && !alreadyAsked) {
+  if (sawOverCap && canAskOverCap) {
     const question_ar = "العدد المطلوب من الشركات يتجاوز الحد الأقصى لحجز المهمة الواحدة حاليًا؛ هل تفضّل تقليل العدد ليناسب الحد المتاح أم الاستمرار بالشركات فقط؟";
     const options_ar = ["تقليل العدد ليناسب الحد المتاح", "الاستمرار بالشركات فقط"];
     if (checkCustomerText(question_ar).issues.length === 0) return { kind: "question", question_ar, options_ar };
