@@ -77,14 +77,29 @@ export interface UnderstoodPeopleSummary {
 export interface RecoveryDiagnostic {
   reason: string;
   issueCodes: string[];
+  capIssues?: string[];
 }
 
 export type RecoveryResult =
   | { kind: "plan"; plan: PricedPlan; outSeq: number }
-  | { kind: "question"; question_ar: string; options_ar: string[] }
+  | { kind: "question"; question_ar: string; options_ar: string[]; diagnostic?: RecoveryDiagnostic }
   | { kind: "sources_unavailable"; diagnostic?: RecoveryDiagnostic }
   | { kind: "own_limit"; diagnostic?: RecoveryDiagnostic }
   | { kind: "none"; diagnostic?: RecoveryDiagnostic };
+
+export function sanitizeCapIssuesForAdmin(issues: ReadonlyArray<string>, maxCount = 2): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of issues) {
+    const head = (String(raw ?? "").split(";")[0] ?? "").replace(/ for this request$/i, "").replace(/ of VALIDATED CAPABILITIES$/i, "");
+    const clean = head.replace(/[^\x20-\x7E]/g, " ").replace(/["'`«»]/g, "").replace(/\s+/g, " ").trim().slice(0, 74);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+    if (out.length >= maxCount) break;
+  }
+  return out;
+}
 
 const lastRecoveryDiagnostic = new Map<string, RecoveryDiagnostic>();
 
@@ -561,8 +576,13 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   const { mission, store, catalog, access, capabilities, calls, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
   const inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
 
-  const finishDiag = <T extends "none" | "own_limit" | "sources_unavailable">(kind: T, reason: string, issueCodes: ReadonlyArray<string> = []): RecoveryResult => {
-    const diagnostic: RecoveryDiagnostic = { reason, issueCodes: [...new Set(issueCodes)] };
+  const finishDiag = <T extends "none" | "own_limit" | "sources_unavailable">(kind: T, reason: string, issueCodes: ReadonlyArray<string> = [], capIssues: ReadonlyArray<string> = []): RecoveryResult => {
+    const cleanCap = sanitizeCapIssuesForAdmin(capIssues, 2);
+    const diagnostic: RecoveryDiagnostic = {
+      reason,
+      issueCodes: [...new Set(issueCodes)],
+      ...(cleanCap.length > 0 ? { capIssues: cleanCap } : {}),
+    };
     lastRecoveryDiagnostic.set(mission.id, diagnostic);
     return { kind, diagnostic } as RecoveryResult;
   };
@@ -573,6 +593,21 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   const requestText = askedTextOf(mission);
   const peopleRequested = Boolean(understoodPeople) || inspection.peopleCandidates.length > 0;
   if (!peopleRequested) return finishDiag("none", "not_people_request");
+
+  // Discover validated stages + eligible endpoints FROM capability discovery when enabled
+  const discoveryPeopleStage = capabilities
+    ? capabilities.stages.find((s) => s.stage.operation === "people.discover" && s.stage.parentKey !== null) ?? null
+    : null;
+  const discoveryRootStage = capabilities
+    ? (discoveryPeopleStage?.stage.parentKey
+        ? capabilities.stages.find((s) => s.stage.key === discoveryPeopleStage.stage.parentKey) ?? null
+        : capabilities.stages.find((s) => s.stage.operation === "companies.discover" && s.stage.parentKey === null) ?? null)
+    : null;
+  const rootStageKey = discoveryRootStage?.stage.key || "companies";
+  const peopleStageKey = discoveryPeopleStage?.stage.key || "people";
+  const eligibleRootIds = discoveryRootStage ? new Set(discoveryRootStage.eligible.map((e) => e.id)) : null;
+  const eligiblePeopleIds = discoveryPeopleStage ? new Set(discoveryPeopleStage.eligible.map((e) => e.id)) : null;
+  const eligiblePeopleRank = new Map((discoveryPeopleStage?.eligible ?? []).map((e, i) => [e.id, i] as const));
 
   // Any company source gave positive rows?
   const rootCandidateFromStages = stagesIn.find((st) => isObject(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === ""));
@@ -628,6 +663,86 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     return finishDiag("none", "role_mismatch");
   }
 
+  // When capability discovery is active: never plan non-eligible people endpoints; prefer eligible + saved evidence,
+  // else record exact capability reason + issues and ask ONE honest question (never «حد من جانبنا» when rows exist).
+  const collectedCapIssues: string[] = [];
+  let candidatesToPlan = linkedPeople;
+  if (capabilities) {
+    const sampleRootEp = usableCompanies.find((c) => !eligibleRootIds || eligibleRootIds.has(c.endpointId))?.endpointId
+      ?? discoveryRootStage?.selected
+      ?? usableCompany?.endpointId
+      ?? "";
+    const evalCapIssuesForPeople = (epIds: ReadonlyArray<string>): string[] => {
+      const out: string[] = [];
+      for (const epId of epIds) {
+        const issues = planStageIssues(
+          [
+            { key: rootStageKey, endpoint_id: sampleRootEp, parent_key: null },
+            { key: peopleStageKey, endpoint_id: epId, parent_key: rootStageKey },
+          ],
+          capabilities,
+          catalog,
+        );
+        out.push(...issues);
+      }
+      return out;
+    };
+
+    if (!discoveryPeopleStage || !eligiblePeopleIds || eligiblePeopleIds.size === 0) {
+      const rawCapIssues = evalCapIssuesForPeople(linkedPeople.map((p) => p.endpointId));
+      const noStageIssues = rawCapIssues.length > 0 ? rawCapIssues : [`stage ${peopleStageKey}: no eligible capability in discovery`];
+      const diag: RecoveryDiagnostic = {
+        reason: "capability_no_people_stage",
+        issueCodes: ["cap_stage_issues", "no_eligible_people_capability"],
+        capIssues: sanitizeCapIssuesForAdmin(noStageIssues, 2),
+      };
+      lastRecoveryDiagnostic.set(mission.id, diag);
+      if (canAskOverCap) {
+        const question_ar = "مصادر بيانات مسؤولي الشركات التي جُرّبت لا تتوافق مع خطة الاستخراج المعتمدة حاليًا، وتتوفر قائمة الشركات نفسها؛ هل تفضّل الاستمرار بالشركات فقط أم إعادة المحاولة؟";
+        const options_ar = ["الاستمرار بالشركات فقط", "إعادة المحاولة بمصدر آخر"];
+        if (checkCustomerText(question_ar).issues.length === 0) {
+          return { kind: "question", question_ar, options_ar, diagnostic: diag };
+        }
+      }
+      return { kind: "none", diagnostic: diag };
+    }
+
+    const eligibleLinked = linkedPeople
+      .filter((p) => eligiblePeopleIds.has(p.endpointId))
+      .sort((a, b) =>
+        b.linkScore - a.linkScore ||
+        (eligiblePeopleRank.get(a.endpointId) ?? 999) - (eligiblePeopleRank.get(b.endpointId) ?? 999) ||
+        b.rows - a.rows ||
+        a.callId.localeCompare(b.callId),
+      );
+    const ineligibleLinked = linkedPeople.filter((p) => !eligiblePeopleIds.has(p.endpointId));
+    if (ineligibleLinked.length > 0) {
+      collectedCapIssues.push(...evalCapIssuesForPeople(ineligibleLinked.map((p) => p.endpointId)));
+    }
+
+    if (eligibleLinked.length === 0) {
+      const rawIneligibleIssues = collectedCapIssues.length > 0
+        ? collectedCapIssues
+        : [`stage ${peopleStageKey}: sampled people endpoints are not eligible`];
+      const diag: RecoveryDiagnostic = {
+        reason: "sampled_people_not_eligible",
+        issueCodes: ["sampled_people_not_eligible", "cap_stage_issues"],
+        capIssues: sanitizeCapIssuesForAdmin(rawIneligibleIssues, 2),
+      };
+      lastRecoveryDiagnostic.set(mission.id, diag);
+      if (canAskOverCap) {
+        const question_ar = "مصادر بيانات مسؤولي الشركات التي جُرّبت لا تتوافق مع خطة الاستخراج المعتمدة حاليًا، وتتوفر قائمة الشركات نفسها؛ هل تفضّل الاستمرار بالشركات فقط أم إعادة المحاولة؟";
+        const options_ar = ["الاستمرار بالشركات فقط", "إعادة المحاولة بمصدر آخر"];
+        if (checkCustomerText(question_ar).issues.length === 0) {
+          return { kind: "question", question_ar, options_ar, diagnostic: diag };
+        }
+      }
+      return { kind: "none", diagnostic: diag };
+    }
+
+    candidatesToPlan = eligibleLinked;
+  }
+
   const wants = requestWantsContacts(requestText);
   const peopleTitle = understoodPeople?.noun_ar?.trim() ? `${understoodPeople.noun_ar.trim()} كل شركة` : "مسؤولو كل شركة";
   const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
@@ -637,7 +752,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   let lastFailReason = "stage_not_allowed";
   const collectedIssueCodes: string[] = [];
 
-  for (const linked of linkedPeople) {
+  for (const linked of candidatesToPlan) {
     if (!isStageAllowed(linked.endpointId, catalog, access)) {
       collectedIssueCodes.push("stage_not_allowed");
       continue;
@@ -691,15 +806,16 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     );
 
     const rootOptions: Array<Record<string, unknown>> = [];
-    const rootMeasured = isObject(rootCandidateFromStages) && Array.isArray(rootCandidateFromStages.measured_by)
+    const rootCandidateAllowed = Boolean(rootCandidateFromStages && isObject(rootCandidateFromStages) && (!eligibleRootIds || eligibleRootIds.has(String(rootCandidateFromStages.endpoint_id ?? ""))));
+    const rootMeasured = rootCandidateAllowed && isObject(rootCandidateFromStages) && Array.isArray(rootCandidateFromStages.measured_by)
       ? rootCandidateFromStages.measured_by.map(String)
       : [];
     const rootHasMatchedCompany = matchedIds.size === 0 || rootMeasured.some((id) => matchedIds.has(id));
-    if (rootCandidateFromStages && isObject(rootCandidateFromStages) && rootHasMatchedCompany) {
-      rootOptions.push({ ...rootCandidateFromStages, expected_rows: Number(rootCandidateFromStages.expected_rows) || companiesTarget });
+    if (rootCandidateAllowed && isObject(rootCandidateFromStages) && rootHasMatchedCompany) {
+      rootOptions.push({ ...rootCandidateFromStages, ...(capabilities ? { key: rootStageKey } : {}), expected_rows: Number(rootCandidateFromStages.expected_rows) || companiesTarget });
     }
-    for (const coCandidate of orderedCompanies.slice(0, 2)) {
-      if (coCandidate.rawJson === null || !isStageAllowed(coCandidate.endpointId, catalog, access)) continue;
+    const allowedCompanies = orderedCompanies.filter((co) => co.rawJson !== null && isStageAllowed(co.endpointId, catalog, access) && (!eligibleRootIds || eligibleRootIds.has(co.endpointId)));
+    for (const coCandidate of allowedCompanies.slice(0, 2)) {
       const rawCoText = typeof coCandidate.rawJson === "string" ? coCandidate.rawJson : JSON.stringify(coCandidate.rawJson);
       const coFields = usefulFieldsOfPage(rawCoText);
       const coFieldSet = new Set<FieldClass>(coFields.map((f) => f.cls));
@@ -739,7 +855,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
         const needsRelFallback = Boolean(coQuery) && !requestNamesSector(`${requestText} ${mission.answer_text ?? ""}`);
         const relTerms = (understoodCompanies?.search_terms?.length ? understoodCompanies.search_terms : [understoodCompanies?.topic, coQuery].filter((v): v is string => typeof v === "string" && v.trim() !== "")).slice(0, 8);
         rootOptions.push({
-          key: "companies",
+          key: rootStageKey,
           title_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة",
           endpoint_id: coCandidate.endpointId,
           expected_rows: companiesTarget,
@@ -752,12 +868,18 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
         });
       }
     }
-    if (rootCandidateFromStages && isObject(rootCandidateFromStages) && !rootHasMatchedCompany) {
-      rootOptions.push({ ...rootCandidateFromStages, expected_rows: Number(rootCandidateFromStages.expected_rows) || companiesTarget });
+    if (rootCandidateAllowed && isObject(rootCandidateFromStages) && !rootHasMatchedCompany) {
+      rootOptions.push({ ...rootCandidateFromStages, ...(capabilities ? { key: rootStageKey } : {}), expected_rows: Number(rootCandidateFromStages.expected_rows) || companiesTarget });
+    }
+    if (capabilities && rootOptions.length === 0 && usableCompanies.length > 0) {
+      sawCandidateRejected = true;
+      lastFailReason = "sampled_company_not_eligible";
+      collectedIssueCodes.push("sampled_company_not_eligible", "cap_stage_issues");
+      collectedCapIssues.push(...planStageIssues([{ key: rootStageKey, endpoint_id: usableCompanies[0].endpointId, parent_key: null }], capabilities, catalog));
     }
 
     for (const rootStage of rootOptions) {
-      const pKey = typeof rootStage.key === "string" && rootStage.key ? rootStage.key : "companies";
+      const pKey = typeof rootStage.key === "string" && rootStage.key ? rootStage.key : rootStageKey;
       const rootExpected = Math.max(1, Number(rootStage.expected_rows) || companiesTarget);
       const parentTitle = String(rootStage.title_ar ?? "الشركات").trim();
       const baseSummary = summaryHint ? firstSentenceAr(summaryHint).replace(/[.،]+$/, "") : "";
@@ -770,7 +892,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       const assembledStages: Array<Record<string, unknown>> = [
         rootStage,
         {
-          key: "people",
+          key: peopleStageKey,
           title_ar: peopleTitle,
           endpoint_id: linked.endpointId,
           parent_key: pKey,
@@ -789,6 +911,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
         sawCandidateRejected = true;
         lastFailReason = "capability_rejected";
         collectedIssueCodes.push("cap_stage_issues");
+        collectedCapIssues.push(...capIssues);
         continue;
       }
       const evMap = await loadEvidenceMap(assembledStages);
@@ -832,5 +955,5 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     : sawCandidateRejected
       ? lastFailReason
       : lastFailReason;
-  return finishDiag("none", finalReason, collectedIssueCodes);
+  return finishDiag("none", finalReason, collectedIssueCodes, collectedCapIssues);
 }
