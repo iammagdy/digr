@@ -479,7 +479,6 @@ const HAS_ASCII_OR_ARABIC_DECIMAL =
  */
 function answerScalarCount(answerText: unknown, allowBare = false): number | null {
   if (typeof answerText !== "string" || !answerText.trim()) return null;
-  if (HAS_ASCII_OR_ARABIC_DECIMAL.test(answerText)) return null;
 
   const ascii = answerText
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
@@ -492,6 +491,7 @@ function answerScalarCount(answerText: unknown, allowBare = false): number | nul
 
   const explicitMatches: number[] = [];
   for (const seg of segments) {
+    if (HAS_ASCII_OR_ARABIC_DECIMAL.test(seg)) continue;
     const m = EXPLICIT_ANSWER_QUANTITY.exec(seg);
     if (!m) continue;
     const n = Number(m[1].replace(/[,٬]/g, ""));
@@ -501,7 +501,7 @@ function answerScalarCount(answerText: unknown, allowBare = false): number | nul
   if (explicitMatches.length === 1) return explicitMatches[0];
   if (explicitMatches.length > 1) return null;
 
-  if (segments.length === 1 && allowBare) {
+  if (segments.length === 1 && allowBare && !HAS_ASCII_OR_ARABIC_DECIMAL.test(segments[0])) {
     const m = BARE_ANSWER_INTEGER.exec(segments[0]);
     if (m) {
       const n = Number(m[1]);
