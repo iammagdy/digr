@@ -11,10 +11,10 @@ import { fakeMoneyClient } from "./helpers/agentMoney";
 const changed = "blitzapi.companies.search";
 const unchanged = "tomba.companies.search.reveal";
 
-function plan(endpointId: string, usd: number, revision: number): PricedPlan {
+function plan(endpointId: string, usd: number, revision?: number): PricedPlan {
   const stages = [{ key: "companies", endpoint_id: endpointId, parent_key: null, planned_rows: 50, measured_cost_per_row_usd: usd, deliver: true, columns: [] }] as PricedStage[];
   const price = priceMissionByCode([{ rows: 50, costPerRowUsd: usd, deliver: true }]);
-  return { summary_ar: "شركات", stages, price: { ...price, pricedUnder: revision } };
+  return { summary_ar: "شركات", stages, price: revision === undefined ? price : { ...price, pricedUnder: revision } };
 }
 const mission = (stored: PricedPlan) => ({ plan: stored, id: "msn_test", user_id: "user_test" });
 
@@ -27,7 +27,8 @@ describe("approval across a catalog sync", () => {
     expect(ledger.map((row) => row.type)).toEqual(["topup"]);
     const catalog = loadTregCatalog();
     const usd = expectedCost(catalog.byId.get(changed)!, catalog, undefined).usdPerItem!;
-    const current = plan(changed, usd, 2);
+    const current = plan(changed, usd);
+    expect(current.price.pricedUnder).toBe(2);
     expect([old.price.maxChargePoints, old.price.reservePoints]).toEqual([208, 239]);
     expect([current.price.maxChargePoints, current.price.reservePoints]).toEqual([347, 399]);
     expect(await approveMission(client, mission(current))).toMatchObject({ ok: true, reservePoints: 399 });

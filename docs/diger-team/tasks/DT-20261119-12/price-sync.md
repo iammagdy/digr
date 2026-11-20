@@ -57,4 +57,3 @@ Of the original 81 changes, the 63 billing-label changes stay held, three rows a
 - Golden fixture updates are restricted to five stored mission hashes and five revision stamps. The before/after diff of the golden tests showed the same customer views, notices, workbooks, provider call sequences and ledger amounts.
 - Mutation checks cover bad rate validation, absent billing multiplier, repeat-run anchor, reverse sibling impact, stale approval and revision pin. The catalog invariant test also alters an unchanged endpoint by $0.000001 and asserts that the comparison fails.
 - Live billing, provider rate limits, production job counts and deployment trace behavior require separate verification. This work ran with saved metadata and offline provider fakes.
-
