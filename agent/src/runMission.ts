@@ -1574,11 +1574,21 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const noticeStages = plan.stages
     .filter((s) => s.deliver && s.replies_of === undefined)
     .map((s) => {
-      const epCap = deps.catalog.byId.get(s.endpoint_id)?.capability ?? "";
+      const ep = deps.catalog.byId.get(s.endpoint_id);
+      const epCap = ep?.capability ?? "";
       const people = isPeopleStage(s) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap);
       const contacts = !people && (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(s.endpoint_id));
       const deliveredRows = fileByStage ? (fileByStage[s.key] ?? 0) : (rowsByStage[s.key]?.length ?? 0);
-      return { titleAr: s.title_ar, delivered: deliveredRows, planned: s.planned_rows, parentKey: s.parent_key, isPeople: people, isContacts: contacts };
+      return {
+        titleAr: s.title_ar,
+        delivered: deliveredRows,
+        planned: s.planned_rows,
+        parentKey: s.parent_key,
+        isPeople: people,
+        isContacts: contacts,
+        ...(epCap ? { capability: epCap } : {}),
+        ...(ep?.platform ? { platform: ep.platform } : {}),
+      };
     });
   await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
   // STAGE 4, S1 (behind DIGER_STAGE4_VERSIONS): version 1 of the delivered file, AFTER the file is stored and the mission is settled and told. Never throws, never changes the mission, never touches a money value (agent/src/stage4/firstVersion.ts).

@@ -34,8 +34,17 @@ export function sectorWordsOf(request: unknown): string[] {
   return normalizeText(clause.replace(/[0-9٠-٩]+/g, " ").replace(/[^\p{L}\s]/gu, " "))
     .split(/\s+/)
     .filter((w) => !FILLER.has(w.replace(/^و(?=.{2,})/, "")) && !isNumberWord(w) && !isNumberWord(w.replace(/^و(?=.{2,})/, "")))
-    .map((w) => w.replace(/^(?:و|ب|ل|ف)(?=.{4,})/, ""))
-    .filter((w) => [...w].length >= 3 && !FILLER.has(w) && !NATIONALITY.test(w) && !NOUN_WORDS.test(w) && !placeWords.has(w.replace(/^ال/, "")) && !placeWords.has(w));
+    .map((w) => w.replace(/^(?:[وبفل](?=ال.{2,})|لل(?=.{3,}))/, ""))
+    .filter((w) => {
+      const noConj = w.replace(/^و(?=.{2,})/, "");
+      const noPrep = w.replace(/^(?:و|ب|ل|ف)(?=.{3,})/, "");
+      return [...w].length >= 3
+        && !FILLER.has(noConj)
+        && !NATIONALITY.test(noConj)
+        && !NOUN_WORDS.test(noConj)
+        && !placeWords.has(noPrep.replace(/^ال/, ""))
+        && !placeWords.has(w);
+    });
 }
 
 /**
