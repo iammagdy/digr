@@ -47,7 +47,7 @@ import { readRunState, updateRunState, type RunState } from "./runState";
 import { MAILBOX_LISTER_CAPABILITIES, PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { buildTools, newRunState, recoverCompanyPeoplePlan, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
-import { getLastRecoveryDiagnostic, type RecoveryDiagnostic, type UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
+import { getLastRecoveryDiagnostic, sanitizeCapIssuesForAdmin, type RecoveryDiagnostic, type UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
@@ -58,7 +58,8 @@ import { createSourceGateway, stageDispatchOf, stageScopeOf, verifiedCallMaxUsdO
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract, platformsNamedIn } from "../../src/lib/agentMission/requestContract";
-import { objectivesIssue, type ResearchBrief } from "../../src/lib/agentMission/researchBrief";
+import { briefNumbersAr, objectivesIssue, validateBrief, type ResearchBrief } from "../../src/lib/agentMission/researchBrief";
+import { decideTurn } from "../../src/lib/agentMission/conversationModel";
 import { readSemanticNormalizationFlag } from "../../src/lib/agentMission/semantic/flag";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
@@ -70,7 +71,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readMultiStageEngineFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, chatCapabilityLines, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readMultiStageEngineFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -256,17 +257,48 @@ async function askReducedScope(deps: RunnerDeps, mission: MissionRecord, questio
  * LLM-FIRST OBJECTIVES IN THE WORKER (docs/LLM-FIRST-OBJECTIVES.md): the brief the chat validated and stored with THIS mission's card, when it is the brief of exactly these words, its objectives still pass the structure and grounding check
  * against this mission's own words, and the customer has not since changed the request by answering a question (a reduced-scope «yes» changes nothing). Otherwise null: the words are read, as before. Never throws.
  */
-async function missionObjectivesBrief(deps: RunnerDeps, mission: MissionRecord, note: { capabilityScope?: string }): Promise<ResearchBrief | null> {
+async function missionObjectivesBrief(
+  deps: RunnerDeps,
+  mission: MissionRecord,
+  note: { capabilityScope?: string },
+  options: { capabilityLines?: string[]; semantic?: boolean } = {},
+): Promise<{ brief: ResearchBrief; revisedByAnswer: boolean } | null> {
   if (!deps.readMissionBrief) return null;
   try {
     const brief = await deps.readMissionBrief(mission.id, mission.user_id);
     if (!brief?.objectives || brief.objectives.length === 0) return null;
     const norm = (t: unknown) => String(t ?? "").replace(/\s+/g, " ").trim();
     if (norm(brief.request) !== norm(mission.request_text)) return null;
-    if (mission.answer_text && !(note.capabilityScope && CAPABILITY_SCOPE_YES.test(String(mission.answer_text)))) return null;
     const named = new Set<string>(platformsNamedIn(`${mission.request_text} ${mission.answer_text ?? ""}`));
+    if (mission.answer_text && !(note.capabilityScope && CAPABILITY_SCOPE_YES.test(String(mission.answer_text)))) {
+      // Keep stored LLM objectives across clarifying answers (country/field/count) unless the existing chat LLM brief builder drops or changes them.
+      const refined = await decideTurn({
+        message: mission.answer_text,
+        balancePoints: null,
+        open: { id: mission.id, state: "needs_input", questionAr: mission.question_ar ?? null, requestText: mission.request_text },
+        brief: {
+          enabled: true,
+          soFar: brief,
+          numbersAr: briefNumbersAr({ customerTurns: [mission.request_text, mission.answer_text], prior: brief }),
+          ...(options.capabilityLines && options.capabilityLines.length > 0 ? { capabilityLines: options.capabilityLines } : {}),
+        },
+      }).catch(() => null);
+      if (refined?.brief?.ok) {
+        const checked = validateBrief(refined.brief.brief, {
+          customerTurns: [mission.request_text, mission.answer_text],
+          assistantQuestion: mission.question_ar ?? null,
+          prior: brief,
+          semantic: options.semantic === true,
+        });
+        if (checked.ok && checked.brief.objectives && checked.brief.objectives.length > 0 && !objectivesIssue(checked.brief, named)) {
+          return { brief: checked.brief, revisedByAnswer: true };
+        }
+      }
+      if (objectivesIssue(brief, named)) { deps.log?.(`objectives_not_used ${mission.id}`); return null; }
+      return { brief, revisedByAnswer: false };
+    }
     if (objectivesIssue(brief, named)) { deps.log?.(`objectives_not_used ${mission.id}`); return null; }
-    return brief;
+    return { brief, revisedByAnswer: false };
   } catch { return null; }
 }
 
@@ -612,6 +644,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // UNIFIED CAPABILITY DISCOVERY (docs/UNIFIED-CAPABILITY-DISCOVERY.md), only when `capability_discovery_v1` is on for this account (off: null, and the planning below is exactly what it was). Read from the local catalog, the web sources, the
   // account's policy, the providers' keys and caps: NO provider call and no model call. The social compiled path keeps its own cards (its plan is recorded against the discovery); the model-planned path may plan only validated capabilities.
   let discovery: CapabilityDiscovery | null = null;
+  let planMission: MissionRecord = mission;
   if (readCapabilityDiscoveryFlag(settings, mission.user_id)) {
     const caps = deps.providerDailyCaps ? await deps.providerDailyCaps().catch(() => undefined) : undefined;
     const today = deps.providerToday ? await deps.providerToday().catch(() => undefined) : undefined;
@@ -621,9 +654,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     const routing = routerOn ? routingFactsOf(loadRegistryArtifact(), { minLevel: minLevelFor(redesign.isTest), healthOf: (id) => sourceHealth(sourceStats.get(id), planningNow).state }) : undefined;
     // LLM-FIRST OBJECTIVES: the research objectives the chat model proposed and the chat validated, read from the brief the SERVER stored with this mission's card (customers cannot write it), checked again against this mission's own words;
     // absent or not usable: the words are read, as before
-    const objectiveBrief = await missionObjectivesBrief(deps, mission, await readRunState(store, mission.id));
+    const objectiveResult = await missionObjectivesBrief(deps, mission, await readRunState(store, mission.id), { capabilityLines: chatCapabilityLines(registry), semantic });
+    const objectiveBrief = objectiveResult?.brief ?? null;
+    if (objectiveResult?.revisedByAnswer) planMission = { ...mission, request_text: objectiveResult.brief.request, answer_text: null };
     // PHASE 2, switch `web_via_treg` (OFF): a companies chain whose websites no companies source documents gains the official-website step reached through the TREG gateway (companies → official website → contacts)
-    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}), ...(routerOn ? { extendedFamilies: true } : {}) }), registry, { enrichWebsites: readWebViaTregFlag(settings, mission.user_id), ...(routing ? { routing } : {}) });
+    discovery = discoverCapabilities(researchNeedOf({ request: planMission.request_text, answer: planMission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}), ...(routerOn ? { extendedFamilies: true } : {}) }), registry, { enrichWebsites: readWebViaTregFlag(settings, mission.user_id), ...(routing ? { routing } : {}) });
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: discovery.stages.length, eligible: discovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: discovery.unsupported.length, limitations: discovery.limitations.length } }).catch(() => undefined);
     deps.log?.(`capability_discovery ${mission.id} status=${discovery.status} ${discovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
     // social data and another kind in one request reach the social compiler, which plans social data only: the other part is never cut silently; the customer is asked first (as for a step no capability serves)
@@ -672,7 +707,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
   }
   const capabilityPrompt = discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "";
-  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {
@@ -846,7 +881,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await store.addEvent(mission.id, { kind: "call", message_ar: b2b.ok ? "قياس داخلي: خطة شركات مبنية بالكود." : "قياس داخلي: لم تُبنَ خطة الشركات بالكود، فبقيت الطريقة الحالية.", counts: { b2b_compiled: b2b.ok ? 1 : 0 } }).catch(() => undefined);
     if (b2b.ok) state.proposedPlan = b2b.plan;
   }
-  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote) + capabilityPrompt);
+  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(planMission, calls, resumeNote) + capabilityPrompt);
   if (!compiled && !b2b?.ok) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
@@ -854,7 +889,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     llmBase += output.llmCostUsd;
     const fresh = await store.listCalls(mission.id);
     if (!fresh.some((c) => (c.phase ?? "planning") === "planning" && c.status === "ok" && Number(c.rows_returned ?? 0) > 0)) break;
-    output = await runOnce(`${planningPrompt(mission, fresh, resumeNote)}${capabilityPrompt}\n\n${PLANNING_NUDGE}`);
+    output = await runOnce(`${planningPrompt(planMission, fresh, resumeNote)}${capabilityPrompt}\n\n${PLANNING_NUDGE}`);
     await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   }
   const llm = Number(llmBase + output.llmCostUsd);
@@ -867,12 +902,15 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const singleRejectionEnd = (state.planRejections?.count ?? 0) === 1 && output.stop === "end" && !state.finish;
   const shouldRecoverSdkStop = !state.proposedPlan && !state.question && !compiled && (!state.finish || state.finishOrigin === "code_forced_cap");
   let recoveryDiag: RecoveryDiagnostic | null = null;
+  let recoveryQuestionDiag: RecoveryDiagnostic | null = null;
   if (shouldRecoverSdkStop) {
     const existing = await store.getMission(mission.id).catch(() => null);
     if (!existing || (existing.status !== "plan_ready" && !existing.plan && (!existing.worker_id || existing.worker_id === mission.worker_id))) {
       const recovered = await recoverCompanyPeoplePlan(ctx, deps.log);
       if (!singleRejectionEnd && (recovered.kind === "sources_unavailable" || recovered.kind === "own_limit")) forceClassifyFromCalls = true;
-      if (recovered.kind !== "plan" && recovered.kind !== "question") {
+      if (recovered.kind === "question" && recovered.diagnostic) {
+        recoveryQuestionDiag = recovered.diagnostic;
+      } else if (recovered.kind !== "plan" && recovered.kind !== "question") {
         recoveryDiag = recovered.diagnostic ?? getLastRecoveryDiagnostic(mission.id) ?? { reason: `recovery_${recovered.kind}`, issueCodes: [] };
       }
     } else if (!state.proposedPlan && !state.question) {
@@ -881,7 +919,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   } else if (!state.proposedPlan && !state.question && !compiled) {
     const prevDiag = getLastRecoveryDiagnostic(mission.id);
     if (prevDiag && prevDiag.reason !== "not_people_request") {
-      recoveryDiag = { reason: `skipped_after_${prevDiag.reason}`, issueCodes: prevDiag.issueCodes };
+      recoveryDiag = { reason: `skipped_after_${prevDiag.reason}`, issueCodes: prevDiag.issueCodes, ...(prevDiag.capIssues ? { capIssues: prevDiag.capIssues } : {}) };
     } else if (understoodPeople) {
       recoveryDiag = { reason: `skipped_${state.finishOrigin ?? "model_finish"}`, issueCodes: [] };
     }
@@ -916,6 +954,22 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
   } else if (state.question) {
     await store.updateMission(mission.id, { ...base, status: "needs_input", question_ar: state.question });
+    if (recoveryQuestionDiag) {
+      const recKey = `issue_rec_${recoveryQuestionDiag.reason}`.replace(/[^a-z0-9_]/g, "_").slice(0, 40);
+      const recIssueCounts = Object.fromEntries(
+        recoveryQuestionDiag.issueCodes
+          .map((c) => c.replace(/[^a-z0-9_]/g, "_"))
+          .filter(Boolean)
+          .slice(0, 12)
+          .map((c) => [`issue_${c}`.slice(0, 40), 1]),
+      );
+      await store.addEvent(mission.id, {
+        kind: "call",
+        message_ar: "علامة داخلية للمشرف: تعذّر استخدام مصادر مسؤولي الشركات غير المعتمدة، طُلب توضيح العميل.",
+        counts: { adm_flag: 1, [recKey]: 1, ...recIssueCounts },
+      }).catch(() => undefined);
+      deps.log?.(`company_people_recovery_diagnostic ${mission.id} reason=${recoveryQuestionDiag.reason}${recoveryQuestionDiag.issueCodes.length ? ` issues=${recoveryQuestionDiag.issueCodes.join(",")}` : ""}${recoveryQuestionDiag.capIssues?.length ? ` cap_issues=${recoveryQuestionDiag.capIssues.join(" | ")}` : ""}`);
+    }
   } else {
     // ROUND 25: a mission that already shows a plan (a stale run racing the card) is never closed as unserved or failed: the stored plan stays for the customer to approve
     const current = await store.getMission(mission.id).catch(() => null);
@@ -931,6 +985,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     const issueCategories = state.planRejections?.lastCategories ?? [];
     const finishOrigin: "model_finish" | "code_forced_cap" | "sdk_stop" = !state.finish ? "sdk_stop" : (state.finishOrigin ?? "model_finish");
     deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason} origin=${finishOrigin}${issueCategories.length ? ` issues=${issueCategories.join(",")}` : ""}`);
+    const capIssues = sanitizeCapIssuesForAdmin(recoveryDiag?.capIssues ?? [], 2);
     if (verdict.cls === "internal") {
       // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours
       const issueCounts = Object.fromEntries(
@@ -938,7 +993,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
           .filter(([k, v]) => /^[a-z_]{1,40}$/.test(k) && typeof v === "number" && v > 0)
           .map(([k, v]) => [`issue_${k}`, v]),
       );
-      await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: noCardSentenceAr(verdict), error: `admin: planning_failed class=internal reason=${verdict.reason}${output.error ? ` detail=${output.error}` : ""}`.slice(0, 300) });
+      const capDetail = capIssues.length > 0 ? `cap_issues=${capIssues.join("; ")}` : "";
+      const detailParts = [output.error, capDetail].filter((x): x is string => Boolean(x && x.trim() !== ""));
+      await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: noCardSentenceAr(verdict), error: `admin: planning_failed class=internal reason=${verdict.reason}${detailParts.length ? ` detail=${detailParts.join(" | ")}` : ""}`.slice(0, 300) });
       await store.addEvent(mission.id, { kind: "call", message_ar: "علامة للمشرف: تعذّر التخطيط من جانبنا.", counts: { adm_flag: 1, [`finish_${finishOrigin}`]: 1, ...issueCounts } });
       await store.addEvent(mission.id, { kind: "result", message_ar: noCardSentenceAr(verdict) });
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
@@ -965,7 +1022,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
         message_ar: "علامة داخلية للمشرف: تعذّر أو تخطّى استرداد خطة الشركات والأشخاص.",
         counts: { adm_flag: 1, [recKey]: 1, ...recIssueCounts },
       }).catch(() => undefined);
-      deps.log?.(`company_people_recovery_diagnostic ${mission.id} reason=${recoveryDiag.reason}${recoveryDiag.issueCodes.length ? ` issues=${recoveryDiag.issueCodes.join(",")}` : ""}`);
+      deps.log?.(`company_people_recovery_diagnostic ${mission.id} reason=${recoveryDiag.reason}${recoveryDiag.issueCodes.length ? ` issues=${recoveryDiag.issueCodes.join(",")}` : ""}${capIssues.length ? ` cap_issues=${capIssues.join(" | ")}` : ""}`);
     }
   }
 }

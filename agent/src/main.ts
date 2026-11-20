@@ -104,7 +104,15 @@ async function main() {
     // P0 (15 Nov 2026): the customer's own messages the chat server stored with this mission's card (code-written); the newest card of the mission is the one read
     // (the newest card OF THE MISSION THAT HOLDS THEM: an answer typed in the chat writes a later card of the same mission with no words)
     readMissionWords: async (missionId, userId) => { const { data, error } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(20); if (error) throw new Error("mission_words_read_failed"); return newestCustomerWords(Array.isArray(data) ? data : []); },
-    readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
+    readMissionBrief: async (missionId, userId) => {
+      const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(20);
+      if (!Array.isArray(data)) return null;
+      for (const row of data) {
+        const b = storedBriefOf(row?.plan);
+        if (b) return b;
+      }
+      return null;
+    },
     // PHASE 5.3 (read ONLY when customer_exclusion_files_v1 is on for the mission's account): the exclusion list the chat server stored on the same card, for the same user; a failed read or a malformed list throws (never «no list»)
     readMissionExclusion: missionExclusionReader(client),
     // P0 (15 Nov 2026): «without repeating what was delivered»: the earlier missions the chat server recorded on this mission's card, and of those the ones this customer completed with a delivery
