@@ -1,5 +1,6 @@
 import { toBool, toEpochMs, toNumber } from "../coerce";
 import type { CatalogEndpoint } from "./catalog";
+import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 
 /**
  * Reads the rows and the next cursor out of ONE real provider answer, using what the catalog says about the endpoint, and never trusting one hint alone.
@@ -16,10 +17,39 @@ import type { CatalogEndpoint } from "./catalog";
  * Pure: no server imports, no network.
  */
 
-export type ListStrategy = "list_path" | "example" | "common_keys" | "single_object" | "root_object" | "none";
+export interface MissionPageMetadata {
+  listPath: string;
+  nextPath: string;
+  cursorParam: string;
+  cursorType: "string" | "integer";
+  hasMorePath?: string;
+  nilMarkerPath?: string;
+  preferForCount?: boolean;
+}
+
+export function missionPageOf(endpointId: string): MissionPageMetadata | undefined {
+  const contract = (providerMetadata as any)?.treg?.contracts?.[endpointId];
+  return contract?.missionPage;
+}
+
+export function pageInputValue(cursor: unknown, contract: MissionPageMetadata): string | number | null {
+  if (contract.cursorType === "string") {
+    if (typeof cursor !== "string") return null;
+    const text = cursor.trim();
+    return text && !/^(null|undefined)$/i.test(text) && !MASKED.test(text) && !/^https?:\/\//i.test(text) ? cursor : null;
+  }
+  if (typeof cursor !== "string" && typeof cursor !== "number") return null;
+  if (!/^\d+$/.test(String(cursor).trim())) return null;
+  const n = Number(cursor);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+export type ListStrategy = "list_path" | "declared_missing" | "example" | "common_keys" | "single_object" | "root_object" | "none";
 export type CursorStrategy = "cursor_path" | "example" | "common_keys" | "none";
 
 export interface ShapeHints {
+  id?: string;
+  missionPage?: MissionPageMetadata;
   listPath?: string | null;
   cursorPath?: string | null;
   example?: unknown;
@@ -45,12 +75,17 @@ export interface ShapeReading {
   warnings: string[];
 }
 
-export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields">): ShapeHints => ({
-  listPath: endpoint.list_path,
-  cursorPath: endpoint.cursor_path,
-  example: endpoint.example_response_trimmed,
-  itemFields: endpoint.item_fields,
-});
+export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string }): ShapeHints => {
+  const missionPage = endpoint.id ? missionPageOf(endpoint.id) : undefined;
+  return {
+    id: endpoint.id,
+    ...(missionPage ? { missionPage } : {}),
+    listPath: missionPage?.listPath ?? endpoint.list_path,
+    cursorPath: missionPage?.nextPath ?? endpoint.cursor_path,
+    example: endpoint.example_response_trimmed,
+    itemFields: endpoint.item_fields,
+  };
+};
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -156,6 +191,26 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
   const warnings: string[] = [];
   const asRows = (v: unknown): Obj[] | null => (isObjectList(v) ? v : Array.isArray(v) && v.length === 0 ? [] : null);
 
+  if (hints.missionPage) {
+    const mp = hints.missionPage;
+    const rawList = getPath(body, mp.listPath);
+    if (Array.isArray(rawList)) {
+      if (rawList.length === 0 || rawList.every(isObj)) {
+        return { rows: rawList as Obj[], path: mp.listPath, strategy: "list_path", warnings: [] };
+      }
+      return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared list_path «${mp.listPath}» contains non-object rows`] };
+    }
+    if (rawList === null && mp.nilMarkerPath) {
+      const marker = getPath(body, mp.nilMarkerPath);
+      const rawMore = mp.hasMorePath ? getPath(body, mp.hasMorePath) : undefined;
+      const isTerminal = rawMore === false || rawMore === 0 || rawMore === "0" || rawMore === "false" || rawMore === "False";
+      if (isObj(marker) && isTerminal) {
+        return { rows: [], path: mp.listPath, strategy: "list_path", warnings: [] };
+      }
+    }
+    return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared list_path «${mp.listPath}» is absent or malformed`] };
+  }
+
   // 1. the catalog's own list path
   const hint = hints.listPath;
   if (typeof hint === "string" && !NO_LIST_PATH.has(hint)) {
@@ -241,6 +296,28 @@ function cursorAtCommonKeys(value: unknown, path: string, depth: number): Cursor
 }
 
 function readCursor(body: unknown, hints: ShapeHints): { found: CursorFound | null; strategy: CursorStrategy; hasMore: boolean | null } {
+  if (hints.missionPage) {
+    const mp = hints.missionPage;
+    let hasMore: boolean | null = null;
+    if (mp.hasMorePath) {
+      const rawMore = getPath(body, mp.hasMorePath);
+      if (rawMore === false || rawMore === 0 || rawMore === "0" || rawMore === "false" || rawMore === "False") {
+        hasMore = false;
+      } else if (rawMore === true || rawMore === 1 || rawMore === "1" || rawMore === "true" || rawMore === "True") {
+        hasMore = true;
+      }
+    }
+    if (hasMore === false) return { found: null, strategy: "none", hasMore };
+
+    const cursor = pageInputValue(getPath(body, mp.nextPath), mp);
+    if (cursor === null) return { found: null, strategy: "none", hasMore };
+    return {
+      found: { value: String(cursor), path: mp.nextPath, kind: mp.cursorType === "integer" ? "offset" : "token" },
+      strategy: "cursor_path",
+      hasMore,
+    };
+  }
+
   let found: CursorFound | null = null;
   let strategy: CursorStrategy = "none";
   const hint = hints.cursorPath;
@@ -320,11 +397,16 @@ export function coerceRow(row: Obj, itemFields: Record<string, { type: string }>
 export const readEpochMs = toEpochMs;
 
 export function readShape(body: unknown, hints: ShapeHints = {}): ShapeReading {
-  const list = readList(body, hints);
-  const cursor = readCursor(body, hints);
+  const missionPage = hints.missionPage ?? (hints.id ? missionPageOf(hints.id) : undefined);
+  const resolvedHints = missionPage && !hints.missionPage ? { ...hints, missionPage } : hints;
+  const list = readList(body, resolvedHints);
+  let cursor = readCursor(body, resolvedHints);
+  if (list.strategy === "declared_missing") {
+    cursor = { found: null, strategy: "none", hasMore: cursor.hasMore };
+  }
   const coercions: Record<string, number> = {};
   const unreadable: Record<string, number> = {};
-  const rows = list.rows.map((row) => coerceRow(row, hints.itemFields, coercions, unreadable));
+  const rows = list.rows.map((row) => coerceRow(row, resolvedHints.itemFields, coercions, unreadable));
   return {
     rows,
     listPath: list.path,

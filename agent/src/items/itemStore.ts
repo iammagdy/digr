@@ -63,7 +63,7 @@ export type Op =
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
 
-export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string>; /** The oldest moment of the source rows the stream has read (a stage read in date windows), or null. */ oldest: number | null }
+export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string>; /** The oldest moment of the source rows the stream has read (a stage read in date windows), or null. */ oldest: number | null; visitedPositions: Set<string | null> }
 
 export interface StageLog {
   items: Map<string, StoredItem>;
@@ -108,13 +108,14 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       const n = op.pages === undefined ? 1 : Math.max(0, Math.floor(op.pages) || 0);
       log.pages += n;
       log.sourceRows += Math.max(0, Math.floor(op.rows_in_page) || 0);
-      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>(), oldest: null };
+      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>(), oldest: null, visitedPositions: new Set<string | null>() };
       s.pages += n;
       if (typeof op.oldest_ms === "number" && Number.isFinite(op.oldest_ms)) s.oldest = s.oldest === null ? op.oldest_ms : Math.min(s.oldest, op.oldest_ms);
       for (const k of op.keys ?? []) s.seen.add(k);
       s.rows += Math.max(0, Math.floor(op.rows_in_page) || 0);
       s.cursor = op.cursor_next;
       s.ended = op.ended;
+      s.visitedPositions.add(op.cursor_in ?? null);
       log.streams.set(op.stream, s);
       return;
     }
@@ -164,7 +165,7 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
 }
 
 /** Every barren-page counter is derived from the log (a page that added no new item), so a resumed run counts them as the first run did. The page op carries no «new items» field: the engine writes its items in the SAME segment. */
-function foldSegments(segments: ReadonlyArray<Segment>): Map<string, StageLog> {
+export function foldSegments(segments: ReadonlyArray<Segment>): Map<string, StageLog> {
   const logs = new Map<string, StageLog>();
   for (const seg of segments) {
     const itemsInSegment = new Map<string, number>();

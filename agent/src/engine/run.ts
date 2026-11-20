@@ -1,5 +1,6 @@
 import { AGENT_COLLECT_MAX_PAGES, AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
+import { missionPageOf, pageInputValue } from "../../../src/lib/treg/shapeReader";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
@@ -144,8 +145,9 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   let anyFailed = false;
   // EVERY PARENT IS READ, each up to its own share, in the source's order. The share is the customer's number per parent. When the stage's total is lower than parents x that number (the model's own, smaller target) the share is an equal part of the total:
   // the first parent never takes all of it while the others have children. There is no second round: a page's rows beyond a parent's share are kept out, and reading the next page of that parent would skip them (a child list is delivered in the source's order).
+  const isFillTotal = spec.fill_total_across_parents === true && stage.per_parent_rows === undefined;
   const per = stage.per_parent_rows ?? Number.POSITIVE_INFINITY;
-  const fair = Math.max(1, Math.ceil(stage.planned_rows / parentRows.length));
+  const fair = isFillTotal ? Number.POSITIVE_INFINITY : Math.max(1, Math.ceil(stage.planned_rows / parentRows.length));
   const rounds = [Math.min(per, fair)];
   // A PARENT THE SOURCE GAVE NO CHILD FOR IS REPLACED (live, 2026-10-30: «٥ فيديوهات تيك توك ... ومن كل فيديو ١٠ تعليقات»: the plan took the five NEWEST videos, brand new, and the comment source answered 0, 0, 1, 0 and 10 comments, so 16 of 55 were delivered while the
   // search had checked 20 videos and kept 15 beyond the five). The parent stage's own spares (matches it checked and kept beyond its volume) stand in, one at a time, so the customer gets the number of parents he asked for, each with children. Only a parent with NO child is replaced
@@ -225,10 +227,13 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         // supply is reached or every tool has ended; only then is the source's end real. A parent that gave nothing keeps the retry of its own input first.
         const childrenOf = (): number => items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
         const shortOfSupply = (): boolean => (Number.isFinite(parentCap) ? childrenOf() < parentCap : childrenOf() === baseline);
+        const isCatalogPaging = spec.catalog_paging === true && missionPageOf(spec.endpoint_id) !== undefined;
         if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
-          if (primary && childrenOf() === baseline) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
+          if (primary && childrenOf() === baseline && !isCatalogPaging) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
           for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
             const alt = spec.alternatives![i];
+            if (isCatalogPaging && alt.endpoint_id === spec.endpoint_id) continue;
+            if (isFillTotal) break;
             const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
             if (!alt.parent_binding || value === null) continue;
             const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
@@ -567,7 +572,14 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a source paged by a PAGE NUMBER (a numeric `page` input the measuring call gave) is read page by page: the next number, until a page comes back empty (or repeats itself, which the barren-page rule ends)
     const pageMode = spec.cursor_param === "page" && Number.isFinite(Number(params.page));
     const cursor = state?.cursor ?? null;
-    const callParams = cursor && spec.cursor_param ? { ...params, [spec.cursor_param]: pageMode ? Number(cursor) : cursor } : params;
+    const paging = spec.catalog_paging === true ? missionPageOf(spec.endpoint_id) : undefined;
+    const isCatalogPaging = paging !== undefined;
+    if (isCatalogPaging && cursor !== null && state?.visitedPositions?.has(cursor)) {
+      return { reason: "source_exhausted", aborted: null };
+    }
+    const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
+    if (cursor !== null && nextInput === null) return { reason: "source_exhausted", aborted: null };
+    const callParams = cursor && spec.cursor_param ? { ...params, [spec.cursor_param]: nextInput } : params;
     const result = deps.sources ? await deps.sources.call({ stageKey: stage.key, endpoint_id: spec.endpoint_id, params: callParams }) : await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
     if (!result.ok) {
       if ("refused" in result) return { reason: refusalStop(result.refused), aborted: null };
@@ -576,7 +588,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
       if (parentId !== null && "http_status" in result && PARENT_UNKNOWN_HTTP.has(Number(result.http_status))) return { reason: "source_exhausted", aborted: null };
       // a page that failed is asked once more; a second failure ends the stream with that reason (what was saved stays saved)
       failures += 1;
-      if (failures >= 2) return { reason: "failed", aborted: null };
+      if (failures >= (isCatalogPaging ? 1 : 2)) return { reason: "failed", aborted: null };
       continue;
     }
     failures = 0;
@@ -600,8 +612,13 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
-    const guaranteeCount = deps.redesignStages?.has(stage.key) === true;
-    const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
+    const guaranteeCount = deps.redesignStages?.has(stage.key) === true || isCatalogPaging;
+    let ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
+    if (isCatalogPaging && nextCursor) {
+      if (nextCursor === cursor || state?.visitedPositions?.has(nextCursor)) {
+        ended = true;
+      }
+    }
     const before = items.counts(stage.key).accepted;
     const deliveredBefore = items.counts(stage.key).excludedByReason.already_delivered ?? 0;
     const newBefore = items.counts(stage.key).new;

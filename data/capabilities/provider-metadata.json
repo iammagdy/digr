@@ -409,7 +409,13 @@
     "supersededBy": null,
     "blocked": false,
     "blockedBy": null,
-    "policy": "public"
+    "policy": "public",
+    "missionPage": {
+     "listPath": "output.data.posts",
+     "nextPath": "output.data.nextCursor",
+     "cursorParam": "cursor",
+     "cursorType": "string"
+    }
    },
    "anyapi.google.maps.reviews": {
     "id": "anyapi.google.maps.reviews",
@@ -14201,7 +14207,14 @@
     "supersededBy": null,
     "blocked": false,
     "blockedBy": null,
-    "policy": "public"
+    "policy": "public",
+    "missionPage": {
+     "listPath": "comments",
+     "nextPath": "cursor",
+     "cursorParam": "cursor",
+     "cursorType": "string",
+     "hasMorePath": "has_next_page"
+    }
    },
    "scrapecreators.x.v1-facebook-profile": {
     "id": "scrapecreators.x.v1-facebook-profile",
@@ -16976,7 +16989,15 @@
     "supersededBy": null,
     "blocked": false,
     "blockedBy": null,
-    "policy": "public"
+    "policy": "public",
+    "missionPage": {
+     "listPath": "data.search_item_list",
+     "nextPath": "data.cursor",
+     "cursorParam": "offset",
+     "cursorType": "integer",
+     "hasMorePath": "data.has_more",
+     "nilMarkerPath": "data.search_nil_info"
+    }
    },
    "tikhub.tiktok.user.profile": {
     "id": "tikhub.tiktok.user.profile",
@@ -17082,7 +17103,14 @@
     "supersededBy": null,
     "blocked": false,
     "blockedBy": null,
-    "policy": "public"
+    "policy": "public",
+    "missionPage": {
+     "listPath": "data.comments",
+     "nextPath": "data.cursor",
+     "cursorParam": "cursor",
+     "cursorType": "integer",
+     "hasMorePath": "data.has_more"
+    }
    },
    "tikhub.x.instagram-v1-fetch-hashtag-posts": {
     "id": "tikhub.x.instagram-v1-fetch-hashtag-posts",
@@ -18953,7 +18981,14 @@
     "supersededBy": null,
     "blocked": false,
     "blockedBy": null,
-    "policy": "public"
+    "policy": "public",
+    "missionPage": {
+     "listPath": "data.comments",
+     "nextPath": "data.continuation_token",
+     "cursorParam": "continuation_token",
+     "cursorType": "string",
+     "preferForCount": true
+    }
    },
    "tinyfish.web.fetch": {
     "id": "tinyfish.web.fetch",
@@ -21287,6 +21322,33 @@
     "blocked": false,
     "blockedBy": null,
     "policy": "public"
+   }
+  },
+  "missionListedServices": {
+   "youtube.video.comments": {
+    "slug": "social-youtube-comments",
+    "nounAr": "تعليق"
+   },
+   "tiktok.video.comments": {
+    "slug": "social-tiktok-comments",
+    "nounAr": "تعليق"
+   },
+   "facebook.post.comments": {
+    "slug": "social-facebook-comments",
+    "nounAr": "تعليق",
+    "knownParentCapability": "facebook.user.posts"
+   },
+   "facebook.user.posts": {
+    "slug": "social-facebook-posts",
+    "nounAr": "منشور"
+   },
+   "youtube.search.videos": {
+    "slug": "social-youtube-videos",
+    "nounAr": "فيديو"
+   },
+   "youtube.channel.videos": {
+    "slug": "social-youtube-videos",
+    "nounAr": "فيديو"
    }
   }
  },
