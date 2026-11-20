@@ -44,10 +44,10 @@ import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
-import { MAILBOX_LISTER_CAPABILITIES, PEOPLE_OF_COMPANY_CAPABILITIES, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
+import { MAILBOX_LISTER_CAPABILITIES, PEOPLE_OF_COMPANY_CAPABILITIES, isPeopleOfCompanyStep, understoodPeopleOf } from "../../src/lib/agentMission/childSources";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { buildTools, newRunState, recoverCompanyPeoplePlan, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
-import { getLastRecoveryDiagnostic, sanitizeCapIssuesForAdmin, type RecoveryDiagnostic, type UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
+import { getLastRecoveryDiagnostic, isCompaniesOnlyChoice, isPeopleRetryChoice, sanitizeCapIssuesForAdmin, type RecoveryDiagnostic, type UnderstoodCompaniesSummary } from "./companyPeopleRecovery";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
@@ -71,7 +71,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, chatCapabilityLines, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readMultiStageEngineFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, chatCapabilityLines, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readMultiStageEngineFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ResearchNeed, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -92,6 +92,7 @@ import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
 import { LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, llmPlannerOn, runLlmPlanning } from "./llmPlanner/run";
+import type { Understanding } from "./llmPlanner/planner";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -300,6 +301,92 @@ async function missionObjectivesBrief(
     if (objectivesIssue(brief, named)) { deps.log?.(`objectives_not_used ${mission.id}`); return null; }
     return { brief, revisedByAnswer: false };
   } catch { return null; }
+}
+
+/**
+ * Derives capability-discovery need directly from the worker LLM planner's structured
+ * `r.understanding` when `llm_planner_v1` is active (zero stored brief, zero extra model calls,
+ * zero keyword lists).
+ */
+export function needFromPlannerUnderstanding(
+  baseNeed: ResearchNeed,
+  understanding: Understanding,
+  opts: {
+    understoodPeople: ReturnType<typeof understoodPeopleOf>;
+    understoodCompanies?: UnderstoodCompaniesSummary;
+    forceCompaniesOnly: boolean;
+    isRecoveryRetry: boolean;
+  },
+): ResearchNeed {
+  const steps = understanding.steps ?? [];
+  const hasCompanyContacts = steps.some((s) => s.capability === "company.contacts" || MAILBOX_LISTER_CAPABILITIES.has(s.capability));
+  const hasCompanyPhone = steps.some((s) => s.capability === "company.contacts");
+  const hasCompanyStep =
+    Boolean(opts.understoodCompanies) ||
+    steps.some((s) => s.parent === null && (s.platform === "companies" || s.capability.startsWith("companies.")));
+  const hasPlaceStep = steps.some((s) => s.platform === "places" || s.capability.startsWith("places."));
+  const hasReviewStep = steps.some((s) => s.capability === "places.reviews" || s.capability === "apps.reviews");
+  const hasAppStep = steps.some((s) => s.platform === "apps" || s.capability.startsWith("apps."));
+  const hasWebStep = steps.some((s) => s.platform === "web" || s.capability.startsWith("web."));
+  const hasPeopleStep = steps.some((s) => s.platform === "people" || isPeopleOfCompanyStep(s));
+  const understoodCount =
+    opts.understoodCompanies?.expected_rows ??
+    (typeof understanding.companies_count === "number" && Number.isInteger(understanding.companies_count) && understanding.companies_count >= 1
+      ? understanding.companies_count
+      : null);
+  const count = baseNeed.count ?? understoodCount;
+  const conditions = {
+    period: baseNeed.conditions.period || steps.some((s) => s.period !== null),
+    country: baseNeed.conditions.country || steps.some((s) => Boolean(s.country)),
+    language: baseNeed.conditions.language || steps.some((s) => Boolean(s.language)),
+  };
+  const topic = baseNeed.topic ?? opts.understoodCompanies?.topic ?? null;
+
+  if (opts.forceCompaniesOnly) {
+    const kind = baseNeed.kind === "unknown" && (hasCompanyStep || baseNeed.people) ? "companies" : baseNeed.kind;
+    return { ...baseNeed, kind, people: false, count, conditions, topic };
+  }
+
+  if (opts.understoodPeople || opts.isRecoveryRetry) {
+    const kind = baseNeed.kind === "social" || baseNeed.kind === "mixed" ? baseNeed.kind : "companies";
+    const email = baseNeed.contacts.email || hasCompanyContacts;
+    const phone = baseNeed.contacts.phone || hasCompanyPhone;
+    return {
+      ...baseNeed,
+      kind,
+      people: true,
+      contacts: { email, phone },
+      websites: baseNeed.websites || email || phone,
+      count,
+      conditions,
+      topic,
+    };
+  }
+
+  if (hasCompanyStep || hasCompanyContacts) {
+    const kind = baseNeed.kind === "unknown" ? "companies" : baseNeed.kind;
+    const email = baseNeed.contacts.email || hasCompanyContacts;
+    const phone = baseNeed.contacts.phone || hasCompanyPhone;
+    return {
+      ...baseNeed,
+      kind,
+      people: false,
+      contacts: { email, phone },
+      websites: baseNeed.websites || email || phone,
+      count,
+      conditions,
+      topic,
+    };
+  }
+
+  if (baseNeed.kind === "unknown") {
+    const kind = hasPlaceStep ? "places" : hasAppStep ? "apps" : hasPeopleStep ? "people" : hasWebStep ? "web" : baseNeed.kind;
+    if (kind !== baseNeed.kind) {
+      return { ...baseNeed, kind, reviews: baseNeed.reviews || hasReviewStep, count, conditions, topic };
+    }
+  }
+
+  return { ...baseNeed, count, conditions, topic };
 }
 
 /**
@@ -572,6 +659,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // DT-20261118-03 PR-7: the request's STRUCTURE as the planner understood it (a people step under a companies step) reaches catalog_search of the path below
   let understoodPeople: ReturnType<typeof understoodPeopleOf> = null;
   let understoodCompanies: UnderstoodCompaniesSummary | undefined;
+  let plannerUnderstanding: Understanding | null = null;
   // the planner ran and answered (a plan, a question, a hand-over, or a failure to read it): the agent path below is never allowed to ask the customer (DT-20261119-03 R2)
   let plannerRan = false;
   if (deps.plannerModel && llmPlannerOn(settings) && !(deps.spendGate && deps.spendGate.active(mission.id))) {
@@ -590,6 +678,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
       plannerRan = true;
       if (r.understanding) {
+        plannerUnderstanding = r.understanding;
         understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
         const compStep = r.understanding.steps.find((s) => !s.parent);
         if (compStep) {
@@ -645,6 +734,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // account's policy, the providers' keys and caps: NO provider call and no model call. The social compiled path keeps its own cards (its plan is recorded against the discovery); the model-planned path may plan only validated capabilities.
   let discovery: CapabilityDiscovery | null = null;
   let planMission: MissionRecord = mission;
+  const initialRunState = await readRunState(store, mission.id);
+  const isRecoveryRetry = initialRunState.peopleRecoveryAsked === true && isPeopleRetryChoice(mission.answer_text);
+  const plannerDecidedCompaniesOnly =
+    Boolean(mission.answer_text) &&
+    !isRecoveryRetry &&
+    plannerRan &&
+    !understoodPeople;
+  const forceCompaniesOnly =
+    (initialRunState.peopleRecoveryAsked === true && isCompaniesOnlyChoice(mission.answer_text)) ||
+    plannerDecidedCompaniesOnly;
   if (readCapabilityDiscoveryFlag(settings, mission.user_id)) {
     const caps = deps.providerDailyCaps ? await deps.providerDailyCaps().catch(() => undefined) : undefined;
     const today = deps.providerToday ? await deps.providerToday().catch(() => undefined) : undefined;
@@ -652,29 +751,49 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     const routerOn = readRegistryRouterFlag(settings, mission.user_id);
     const registry = buildCapabilityRegistry(deps.catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, access).allowed, webKeys: deps.providerKey ? webAvailable : NO_WEB, ...(caps ? { dailyCapUsd: caps } : {}), ...(today ? { spentTodayUsd: today.spentTodayUsd, ...(typeof today.tregDailyCapUsd === "number" ? { tregDailyCapUsd: today.tregDailyCapUsd } : {}) } : {}), ...(routerOn ? { handCards: true, extendedFamilies: true } : {}) });
     const routing = routerOn ? routingFactsOf(loadRegistryArtifact(), { minLevel: minLevelFor(redesign.isTest), healthOf: (id) => sourceHealth(sourceStats.get(id), planningNow).state }) : undefined;
-    // LLM-FIRST OBJECTIVES: the research objectives the chat model proposed and the chat validated, read from the brief the SERVER stored with this mission's card (customers cannot write it), checked again against this mission's own words;
-    // absent or not usable: the words are read, as before
-    const objectiveResult = await missionObjectivesBrief(deps, mission, await readRunState(store, mission.id), { capabilityLines: chatCapabilityLines(registry), semantic });
-    const objectiveBrief = objectiveResult?.brief ?? null;
+    // ORDER 08: When llm_planner_v1 is ON and the worker planner ran, discovery comes from r.understanding (NO stored brief, NO chat/worker decideTurn refinement).
+    // The stored brief path remains active ONLY when the planner is off or did not run (rollback compatibility).
+    const plannerOnActive = llmPlannerOn(settings) && plannerRan;
+    const objectiveResult = plannerOnActive
+      ? null
+      : await missionObjectivesBrief(deps, mission, initialRunState, { capabilityLines: chatCapabilityLines(registry), semantic });
+    const objectiveBriefRaw = objectiveResult?.brief ?? null;
+    const objectiveBrief =
+      forceCompaniesOnly && objectiveBriefRaw?.objectives && objectiveBriefRaw.objectives.some((o) => o.operation !== "people.discover")
+        ? { ...objectiveBriefRaw, objectives: objectiveBriefRaw.objectives.filter((o) => o.operation !== "people.discover") }
+        : objectiveBriefRaw;
     if (objectiveResult?.revisedByAnswer) planMission = { ...mission, request_text: objectiveResult.brief.request, answer_text: null };
     // PHASE 2, switch `web_via_treg` (OFF): a companies chain whose websites no companies source documents gains the official-website step reached through the TREG gateway (companies → official website → contacts)
-    discovery = discoverCapabilities(researchNeedOf({ request: planMission.request_text, answer: planMission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}), ...(routerOn ? { extendedFamilies: true } : {}) }), registry, { enrichWebsites: readWebViaTregFlag(settings, mission.user_id), ...(routing ? { routing } : {}) });
-    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: discovery.stages.length, eligible: discovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: discovery.unsupported.length, limitations: discovery.limitations.length } }).catch(() => undefined);
-    deps.log?.(`capability_discovery ${mission.id} status=${discovery.status} ${discovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
+    const rawNeed = researchNeedOf({ request: planMission.request_text, answer: planMission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}), ...(routerOn ? { extendedFamilies: true } : {}) });
+    const effectiveNeed = plannerOnActive && plannerUnderstanding
+      ? needFromPlannerUnderstanding(rawNeed, plannerUnderstanding, { understoodPeople, understoodCompanies, forceCompaniesOnly, isRecoveryRetry })
+      : rawNeed;
+    const discovered = discoverCapabilities(effectiveNeed, registry, { enrichWebsites: readWebViaTregFlag(settings, mission.user_id), ...(routing ? { routing } : {}) });
+    const remainingStages = forceCompaniesOnly ? discovered.stages.filter((s) => s.stage.operation !== "people.discover") : discovered.stages;
+    const effectiveDiscovery: CapabilityDiscovery = forceCompaniesOnly && remainingStages.length !== discovered.stages.length
+      ? {
+          ...discovered,
+          stages: remainingStages,
+          status: remainingStages.length > 0 && remainingStages.every((s) => s.eligible.length > 0) ? "supported" : discovered.status,
+        }
+      : discovered;
+    discovery = effectiveDiscovery;
+    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: effectiveDiscovery.stages.length, eligible: effectiveDiscovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: effectiveDiscovery.unsupported.length, limitations: effectiveDiscovery.limitations.length } }).catch(() => undefined);
+    deps.log?.(`capability_discovery ${mission.id} status=${effectiveDiscovery.status} ${effectiveDiscovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
     // social data and another kind in one request reach the social compiler, which plans social data only: the other part is never cut silently; the customer is asked first (as for a step no capability serves)
-    if (compiledActive && discovery.need.kind === "mixed") {
-      const asked = await askReducedScope(deps, mission, `${mixedPartsAr(discovery)} نجهّز الآن جزء وسائل التواصل فقط بخطته وسعره، والجزء الآخر تكتبه في رسالة جديدة؟`);
+    if (compiledActive && effectiveDiscovery.need.kind === "mixed") {
+      const asked = await askReducedScope(deps, mission, `${mixedPartsAr(effectiveDiscovery)} نجهّز الآن جزء وسائل التواصل فقط بخطته وسعره، والجزء الآخر تكتبه في رسالة جديدة؟`);
       if (asked) return;
     }
     if (!compiledActive) {
-      if (discovery.status === "blocked" || discovery.status === "unsupported") {
-        const sentence = capabilityEndAr(discovery);
+      if (effectiveDiscovery.status === "blocked" || effectiveDiscovery.status === "unsupported") {
+        const sentence = capabilityEndAr(effectiveDiscovery);
         await store.updateMission(mission.id, { status: "unserved", summary_ar: sentence, ...clear });
         await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
         await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
         return;
       }
-      if (discovery.status === "partial" && (await askReducedScope(deps, mission, [discovery.messageAr, discovery.alternativeAr].filter(Boolean).join(" ")))) return;
+      if (effectiveDiscovery.status === "partial" && (await askReducedScope(deps, mission, [effectiveDiscovery.messageAr, effectiveDiscovery.alternativeAr].filter(Boolean).join(" ")))) return;
     }
   }
   // ROUND 25: THE LEGACY MODEL-PLANNED PATH TAKES ONLY COMPANIES OR PLACES (platformQuestion.ts). A request with no platform that looks like social data gets the platform card «من أنهي منصة؟»; anything else unclear gets ONE clarifying card. Both come BEFORE any model turn or
@@ -706,8 +825,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       return;
     }
   }
-  const capabilityPrompt = discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "";
-  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const calledPlanningEps = new Set(calls.filter((c) => (c.phase ?? "planning") === "planning").map((c) => c.endpoint_id));
+  const discoveryPeople = discovery?.stages.find((s) => s.stage.operation === "people.discover");
+  const untriedEligiblePeople = (discoveryPeople?.eligible ?? []).filter((e) => !calledPlanningEps.has(e.id)).map((e) => e.id);
+  const retryGuidance = isRecoveryRetry
+    ? `\n\nThe customer chose to retry finding company decision-makers. ${untriedEligiblePeople.length > 0 ? `Untried eligible people sources to try now: ${untriedEligiblePeople.join(", ")}.` : "No remaining untried eligible people sources exist; propose a companies-only plan from saved company evidence or finish cleanly."}`
+    : forceCompaniesOnly
+      ? "\n\nThe customer chose to continue with companies only. Propose a companies-only plan using the saved companies evidence without a people stage."
+      : "";
+  const capabilityPrompt = (discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "") + retryGuidance;
+  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(forceCompaniesOnly ? { forceCompaniesOnly: true } : {}), ...(isRecoveryRetry ? { isRecoveryRetry: true } : {}), ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {
@@ -986,7 +1113,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     const finishOrigin: "model_finish" | "code_forced_cap" | "sdk_stop" = !state.finish ? "sdk_stop" : (state.finishOrigin ?? "model_finish");
     deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason} origin=${finishOrigin}${issueCategories.length ? ` issues=${issueCategories.join(",")}` : ""}`);
     const capIssues = sanitizeCapIssuesForAdmin(recoveryDiag?.capIssues ?? [], 2);
-    if (verdict.cls === "internal") {
+    const postRunState = await readRunState(store, mission.id).catch(() => ({} as RunState));
+    const honestRetryOrCompaniesEnd =
+      postRunState.peopleRecoveryAsked === true &&
+      (isPeopleRetryChoice(mission.answer_text) || isCompaniesOnlyChoice(mission.answer_text));
+    if (honestRetryOrCompaniesEnd) {
+      const honestSentence = "جُرّبت مصادر المديرين المتاحة حاليًا ولم تتوفر بيانات كافية؛ ولم يُحجز أو يُخصم أي رصيد.";
+      await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: honestSentence });
+      await store.addEvent(mission.id, { kind: "result", message_ar: honestSentence });
+      await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "empty" });
+    } else if (verdict.cls === "internal") {
       // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours
       const issueCounts = Object.fromEntries(
         Object.entries(state.planRejections?.categories ?? {})
