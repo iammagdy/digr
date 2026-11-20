@@ -5,7 +5,8 @@ import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, withoutUnwritte
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
-import { pointsAr } from "../pointsFormat";
+import { pointsAr, unitPriceLabelAr } from "../pointsFormat";
+import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
 import { countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
@@ -249,7 +250,12 @@ export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; value
   if (!price || !(Number(price.max_charge_points) > 0)) return { facts: [], noteAr: null };
   const minutes = Math.round(Number(plan?.expected_minutes) || 0);
   const split = countedSplitOf(price);
+  const listed = price.listed_rate;
+  const reviewedRates = (providerMetadata.treg as { missionListedServices?: Record<string, { nounAr: string }> }).missionListedServices;
+  const showListed = Number.isFinite(listed?.unit_points) && listed.unit_points > 0
+    && Object.values(reviewedRates ?? {}).some(({ nounAr }) => nounAr === listed.noun_ar);
   const facts = [
+    ...(showListed ? [{ labelAr: "سعر الوحدة قبل الحد الأدنى", valueAr: unitPriceLabelAr(listed.unit_points, listed.noun_ar) }] : []),
     { labelAr: "السعر حتى", valueAr: pointsAr(Math.round(split ? split.countedMax : Number(price.max_charge_points))) },
     ...(split ? [{ labelAr: OPEN_REPLIES_LABEL_AR, valueAr: openRepliesFactAr(split.openRows, split.openMax) }] : []),
     { labelAr: "حجز مؤقت", valueAr: pointsAr(Math.round(Number(price.reserve_points))) },
@@ -277,7 +283,9 @@ export function priceExplainOf(plan: any): string[] {
   const estimate = Math.round(Number(price.max_charge_points));
   const reserve = Math.round(Number(price.reserve_points));
   if (!countedSplitOf(price) && Number.isFinite(reserve) && reserve > estimate) {
-    out.push(`الحجز المؤقت ${pointsAr(reserve)} = أقصى السعر ${pointsAr(estimate)} + هامش أمان ${pointsAr(reserve - estimate)}؛ وهو ليس خصمًا، ولا يُخصم أكثر من أقصى السعر، ويُحرَّر ما لا يُستخدم منه بعد التسليم.`);
+    out.push(price.execution_funding_applied === true
+      ? `الحجز المؤقت ${pointsAr(reserve)} لتغطية جمع العدد المخطط. أقصى سعر للتسليم الكامل ${pointsAr(estimate)}، ويُحرَّر ما لا يُستخدم من الحجز.`
+      : `الحجز المؤقت ${pointsAr(reserve)} = أقصى السعر ${pointsAr(estimate)} + هامش أمان ${pointsAr(reserve - estimate)}؛ وهو ليس خصمًا، ولا يُخصم أكثر من أقصى السعر، ويُحرَّر ما لا يُستخدم منه بعد التسليم.`);
   }
   return out;
 }

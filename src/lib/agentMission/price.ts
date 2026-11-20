@@ -1,5 +1,6 @@
 import { unitPricePointsFromCost, UNIT_SCALE, type PricingBasis } from "../recordPricing";
 import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, type MissionPricingSettings } from "../missionPricing";
+import { effectiveJobPointsCap } from "../jobPointsCap";
 import { holdValueUsd } from "../server/callBudget";
 import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import {
@@ -45,6 +46,22 @@ export interface StagePriceInput {
   reviewShare?: number;
   /** A stage that CODE adds (the replies of the comments, replies.ts): the model plans and executes nothing for it, so it adds no planning and no execution estimate. Its provider cost and its rows count as any stage's. */
   codeOnly?: boolean;
+  /** Sealed by the planner from the reviewed tariff and checked execution recipes. */
+  listedRate?: ListedMissionRate;
+  stageKey?: string;
+  parentKey?: string | null;
+  executionFunding?: readonly ExecutionFundingRoute[];
+}
+
+export interface ListedMissionRate {
+  unitPoints: number;
+  nounAr: string;
+}
+
+export interface ExecutionFundingRoute {
+  rowsPerPage: number;
+  callUsdMicro: number;
+  mode: "paged" | "one_shot";
 }
 
 export interface MissionPriceOptions {
@@ -88,6 +105,8 @@ export interface MissionPriceResult {
   minApplied?: boolean;
   /** The markup and the minimum this price was computed with (kept so the approval prices the SAME plan the customer saw). */
   settings?: MissionPricingSettings;
+  listedRate?: ListedMissionRate;
+  executionFundingApplied?: true;
   overCap: boolean;
 }
 
@@ -132,6 +151,42 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
 /** The revision to carry through a re-pricing that reuses the saved costs of `price` (F2). */
 export const carriedRevision = (price: { pricedUnder?: number } | null | undefined): { pricedUnder: number | null } => ({ pricedUnder: typeof price?.pricedUnder === "number" ? price.pricedUnder : null });
 
+/** Calls that the sealed page evidence can fund for a target. Alternates book their own calls. */
+export function executionCallsForFunding(route: ExecutionFundingRoute, rows: number, parents: number, primary: boolean): number | null {
+  if (!Number.isSafeInteger(route.rowsPerPage) || route.rowsPerPage < 1 ||
+      !Number.isSafeInteger(route.callUsdMicro) || route.callUsdMicro < 0 ||
+      !Number.isSafeInteger(rows) || rows < 1 || !Number.isSafeInteger(parents) || parents < 1) return null;
+  if (route.mode === "paged") return Math.ceil(rows / route.rowsPerPage) + parents - 1;
+  if (route.mode !== "one_shot" || (primary && Math.ceil(rows / parents) > route.rowsPerPage)) return null;
+  return parents;
+}
+
+function fundingReservePoints(stages: ReadonlyArray<StagePriceInput>, capPoints: number): number | null {
+  const rowsByStage = new Map(stages.map(({ stageKey, rows }) => [stageKey, rows]));
+  let forecastMicro = 0;
+  for (const stage of stages) {
+    if (!stage.stageKey || stage.parentKey === undefined || !stage.executionFunding?.length) return null;
+    const parents = stage.parentKey === null ? 1 : rowsByStage.get(stage.parentKey);
+    if (parents === undefined) return null;
+    for (const [index, route] of stage.executionFunding.entries()) {
+      const calls = executionCallsForFunding(route, stage.rows, parents, index === 0);
+      if (calls === null) return null;
+      forecastMicro += calls * route.callUsdMicro;
+    }
+  }
+  if (!Number.isSafeInteger(forecastMicro)) return null;
+  const forecast = forecastMicro / 1_000_000;
+  if (executionBudgetUsd(capPoints) < forecast) return null;
+  let low = 0;
+  let high = capPoints;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (executionBudgetUsd(mid) >= forecast) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
 export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, options: MissionPriceOptions = {}): MissionPriceResult {
   if (stages.length === 0) throw new Error("a mission has at least one stage");
   const settings = options.settings ?? DEFAULT_MISSION_PRICING_SETTINGS;
@@ -148,11 +203,22 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
   const total = provider + model;
   const costPerFinal = total / delivered;
   if (!(costPerFinal > 0)) throw new Error("the measured cost per final row is not positive");
-  const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints: options.capPoints ?? AGENT_JOB_POINTS_CAP });
+  const deliveredStages = stages.filter((s) => s.deliver);
+  const rate = deliveredStages.length === 1 ? deliveredStages[0].listedRate : undefined;
+  const listedMicro = typeof rate?.unitPoints === "number" ? unitMicro(rate.unitPoints) : 0;
+  const listedRate = rate && Number.isSafeInteger(listedMicro) && listedMicro > 0 ? rate : undefined;
+  const capPoints = listedRate
+    ? Math.min(Math.floor(options.capPoints ?? AGENT_JOB_POINTS_CAP), effectiveJobPointsCap())
+    : options.capPoints ?? AGENT_JOB_POINTS_CAP;
+  const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints, listedUnitPoints: listedRate?.unitPoints });
+  const funding = listedRate ? fundingReservePoints(stages, capPoints) : 0;
+  const reservePoints = Math.max(rule.reservePoints, funding ?? capPoints + 1);
   return {
     rule: 2, ...(options.pricedUnder === undefined ? { pricedUnder: CATALOG_PRICE_REV } : options.pricedUnder === null ? {} : { pricedUnder: options.pricedUnder }), totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
-    ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints: rule.reservePoints, maxChargePoints: rule.chargeAtFullPoints,
-    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap,
+    ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints, maxChargePoints: rule.chargeAtFullPoints,
+    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap || funding === null,
+    ...(listedRate ? { listedRate: { ...listedRate, unitPoints: rule.unitPoints } } : {}),
+    ...(funding !== null && funding > rule.reservePoints ? { executionFundingApplied: true } : {}),
     reviewBudgetUsd: reviewBudgetUsdFor(rule.chargeAtFullPoints),
   };
 }

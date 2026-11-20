@@ -3,7 +3,7 @@ import { effectiveJobPointsCap, JOB_MAX_POINTS_CAP } from "./jobPointsCap";
 import { formatAr } from "./arabicDigits";
 
 /**
- * THE ONE PRICING RULE of every mission (owner decision of 2026-10-28). One general rule, no per-service price. The quote of the agent (agentMission/plan.ts), the calculator (missionEstimate.ts)
+ * THE ONE PRICING RULE of every mission (owner decision of 2026-10-28). The quote of the agent (agentMission/plan.ts), the calculator (missionEstimate.ts)
  * and the public pages all take their numbers from THIS module; the model never decides or states a price.
  *
  *   unit price per delivered MATCHING row (points) = (provider cost + model cost, review included, per delivered matching row, USD) x markup x 55 / 0.10      (markup 10: 5,500 points per USD)
@@ -78,6 +78,8 @@ export interface MissionRuleInput {
   volume: number;
   /** Provider cost + model cost (review included) per delivered MATCHING row, USD. */
   costPerRowUsd: number;
+  /** A listed rate resolved by code for a supported service. */
+  listedUnitPoints?: number;
   settings?: MissionPricingSettings;
   /** The most a job may hold (the site's cap). */
   capPoints?: number;
@@ -120,7 +122,10 @@ export function priceByRule(input: MissionRuleInput): MissionRulePrice {
   const volume = Math.max(0, Math.floor(input.volume));
   if (volume < 1) throw new Error("a mission sells at least one row");
   if (!(input.costPerRowUsd > 0)) throw new Error("the cost per matching row must be positive");
-  const unitMicroRule = unitPriceMicro(input.costPerRowUsd, basisOf(settings));
+  const listedMicro = typeof input.listedUnitPoints === "number" ? Math.round(input.listedUnitPoints * UNIT_SCALE) : 0;
+  const unitMicroRule = Number.isSafeInteger(listedMicro) && listedMicro > 0
+    ? listedMicro
+    : unitPriceMicro(input.costPerRowUsd, basisOf(settings));
   const unitPoints = unitMicroRule / UNIT_SCALE;
   const min = settings.minChargePoints;
   // floor(minimum / volume) in millionths: volume x that is at most the minimum and more than the minimum minus a thousandth of a point per 1,000 rows, so its ceil is exactly the minimum
