@@ -3,7 +3,7 @@ import { pointsAr } from "../pointsFormat";
 import { customerSafeText } from "./text";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 import { fitArabicWords, missionTitleAr } from "./fileNames";
-import { CONTACT_ITEM_NOUN, countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, knownItemNoun, type ItemNoun } from "./itemNoun";
+import { CONTACT_ITEM_NOUN, countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounFromCapability, itemNounOf, knownItemNoun, type ItemNoun } from "./itemNoun";
 import { FREE_RERUN_MONEY_LINE_AR, heldPointsOf } from "./moneyText";
 
 /**
@@ -20,6 +20,8 @@ export interface NoticeStageCount {
   parentKey?: string | null;
   isPeople?: boolean;
   isContacts?: boolean;
+  capability?: string | null;
+  platform?: string | null;
 }
 
 export interface MissionNoticeFacts {
@@ -78,19 +80,24 @@ function stageNounOf(s: NoticeStageCount, parentNoun?: ItemNoun): ItemNoun {
     if (s.noun === GENERIC_ITEM_NOUN.singular) return GENERIC_ITEM_NOUN;
   }
   const n = itemNounOf(s.titleAr);
-  if (s.parentKey && !s.isPeople && (n.key === GENERIC_ITEM_NOUN.key || (parentNoun && n.key === parentNoun.key))) {
-    return CONTACT_ITEM_NOUN;
+  if (s.isPeople) {
+    return n.key !== GENERIC_ITEM_NOUN.key ? n : (knownItemNoun("شخص") ?? n);
   }
-  if (s.parentKey && s.isPeople && n.key === GENERIC_ITEM_NOUN.key) {
-    return knownItemNoun("شخص") ?? n;
+  const byMeta = itemNounFromCapability(s.capability, s.platform);
+  if (n.key !== GENERIC_ITEM_NOUN.key && !(s.parentKey && s.isContacts !== false && parentNoun && n.key === parentNoun.key)) {
+    return n;
+  }
+  if (byMeta) return byMeta;
+  if (s.parentKey && s.isContacts !== false && (n.key === GENERIC_ITEM_NOUN.key || (parentNoun && n.key === parentNoun.key))) {
+    return CONTACT_ITEM_NOUN;
   }
   return n;
 }
 
-function resolveStageCounts(f: MissionNoticeFacts, fallbackNoun: ItemNoun): Array<{ noun: ItemNoun; delivered: number; planned: number }> {
+function resolveStageCounts(f: MissionNoticeFacts): Array<{ noun: ItemNoun; delivered: number; planned: number }> {
   if (!f.stages || f.stages.length === 0) return [];
   const rootStage = f.stages.find((s) => !s.parentKey);
-  const parentNoun = rootStage ? stageNounOf(rootStage) : fallbackNoun;
+  const parentNoun = rootStage ? stageNounOf(rootStage) : undefined;
   return f.stages.map((s) => ({
     noun: s.parentKey ? stageNounOf(s, parentNoun) : stageNounOf(s),
     delivered: Math.max(0, Math.floor(Number(s.delivered) || 0)),
@@ -166,7 +173,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
   const singleNoun = f.noun === CONTACT_ITEM_NOUN.singular
     ? CONTACT_ITEM_NOUN
     : (knownItemNoun(f.noun ?? "") ?? (f.noun === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : itemNounOf(t)));
-  const resolvedStages = resolveStageCounts(f, singleNoun);
+  const resolvedStages = resolveStageCounts(f);
   const counts = resolvedStages.length > 0
     ? multiStageDeliveryCopy(resolvedStages, f.planned)
     : {
@@ -201,7 +208,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
         suffix: " — تعذّر استكمال الطلب",
         preheader: "لم يُخصم شيء، تعذّر استكمال الطلب حاليًا.",
         heading: named ? `تعذّر استكمال مهمة «${t}»` : "تعذّر استكمال مهمتك",
-        lead: `تعذّر استكمال تنفيذ مهمتك${named ? ` «${t}»` : ""} في الوقت الحالي دون تسليم نتائج. يمكنك إعادة إرسال الطلب بعد قليل.`,
+        lead: `تعذّر استكمال تنفيذ مهمتك${named ? ` «${t}»` : ""} في الوقت الحالي دون تسليم نتائج، ويمكنك إعادة إرسال الطلب بعد قليل.`,
         title: `«${t}»: تعذّر استكمال الطلب`,
       }
     : unserved && f.cause === "empty"
@@ -209,7 +216,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
           suffix: " — لا توجد نتائج مطابقة",
           preheader: "لم يُخصم شيء، لم نجد نتائج تطابق شروطك.",
           heading: named ? `لم نجد نتائج مطابقة لطلب «${t}»` : "لم نجد نتائج مطابقة لطلبك",
-          lead: `بحثنا في المصادر المتاحة${named ? ` عن «${t}»` : ""} ولم نجد نتائج تطابق طلبك بدقة، فلم نسلّم شيئًا. يمكنك تعديل كلمات البحث أو توسيع النطاق.`,
+          lead: `بحثنا في المصادر المتاحة${named ? ` عن «${t}»` : ""} ولم نجد نتائج تطابق طلبك بدقة، ويمكنك تعديل كلمات البحث أو توسيع النطاق.`,
           title: `«${t}»: لا نتائج مطابقة`,
         }
       : unserved
@@ -217,14 +224,14 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
             suffix: " — خارج مصادرنا حاليًا",
             preheader: "لم يُخصم شيء، الطلب خارج مصادرنا حاليًا.",
             heading: named ? `طلب «${t}» غير متاح بمصادرنا الحالية` : "طلبك غير متاح بمصادرنا الحالية",
-            lead: `لا يتوفر بين مصادرنا الحالية ما يخدم طلبك${named ? ` «${t}»` : ""} بالدقة المطلوبة، لذلك لم نبدأ تنفيذه. يمكنك تجربة صياغة أخرى أو استهداف منصة مختلفة.`,
+            lead: `لا يتوفر بين مصادرنا الحالية ما يخدم طلبك${named ? ` «${t}»` : ""} بالدقة المطلوبة، ويمكنك تجربة صياغة أخرى أو استهداف منصة مختلفة.`,
             title: `«${t}»: خارج مصادرنا حاليًا`,
           }
         : {
             suffix: " — توقف قبل الاكتمال",
             preheader: "لم يُخصم شيء، توقف التنفيذ قبل الاكتمال.",
             heading: named ? `توقف تنفيذ مهمة «${t}»` : "توقف تنفيذ مهمتك",
-            lead: `توقف العمل على مهمتك${named ? ` «${t}»` : ""} قبل أن يكتمل ولم نسلّمك أي ملفات. يمكنك إعادة المحاولة بعد قليل.`,
+            lead: `توقف العمل على مهمتك${named ? ` «${t}»` : ""} قبل اكتمالها دون تسليم ملفات، ويمكنك إعادة المحاولة بعد قليل.`,
             title: `«${t}»: توقف قبل الاكتمال`,
           };
 

@@ -55,6 +55,31 @@ export const ITEM_NOUNS: ReadonlyArray<ItemNoun> = [
 export const GENERIC_ITEM_NOUN: ItemNoun = N("عنصر", "عنصران", "عنصرين", "عناصر", "عنصرًا", false);
 export const CONTACT_ITEM_NOUN: ItemNoun = N("جهة تواصل", "جهتا تواصل", "جهتي تواصل", "جهات تواصل", "جهة تواصل", true);
 
+/**
+ * The item noun of a stage from its CATALOG METADATA (`capability` / `platform`, never customer keywords):
+ * replies -> رد, comments -> تعليق, reviews -> تقييم, videos -> فيديو, reels/shorts -> ريل,
+ * posts/tweets/articles/notes/feed -> تغريدة on X/Twitter when titled so or منشور otherwise,
+ * companies search -> شركة, mailbox lister -> جهة تواصل, people-of-company -> شخص.
+ */
+export function itemNounFromCapability(capability?: string | null, platform?: string | null): ItemNoun | null {
+  const cap = String(capability ?? "").trim().toLowerCase();
+  if (!cap) return null;
+  if (cap === "companies.emails.list" || cap === "companies.emails.role" || cap === "b2b_contact") return CONTACT_ITEM_NOUN;
+  if (cap === "companies.search" || cap === "companies.businesses.search") return knownItemNoun("شركة");
+  if (/(?:^|\.)(?:employees|founders|organization_contacts|people)(?:\.|$)/.test(cap)) return knownItemNoun("شخص");
+  if (/(?:^|\.)replies$/.test(cap)) return knownItemNoun("رد");
+  if (/(?:^|\.)comments(?:\.|$)/.test(cap)) return knownItemNoun("تعليق");
+  if (/(?:^|\.)reviews(?:\.|$)/.test(cap)) return knownItemNoun("تقييم");
+  if (/(?:^|\.)(?:reels|shorts)(?:\.|$)/.test(cap)) return knownItemNoun("ريل");
+  if (/(?:^|\.)videos(?:\.|$)/.test(cap)) return knownItemNoun("فيديو");
+  if (/(?:^|\.)tweets(?:\.|$)/.test(cap)) return knownItemNoun("تغريدة");
+  if (/(?:^|\.)(?:posts|articles|notes|feed|dynamics)(?:\.|$)/.test(cap)) {
+    const plat = String(platform ?? "").trim().toLowerCase();
+    return plat === "twitter" ? knownItemNoun("تغريدة") : knownItemNoun("منشور");
+  }
+  return null;
+}
+
 const KNOWN = new Map<string, ItemNoun>();
 for (const n of ITEM_NOUNS) for (const form of [n.singular, n.dual, n.dualGen, n.plural, n.tamyiz, ...(n.aliases ?? [])]) KNOWN.set(normalizeText(form), n);
 
@@ -91,14 +116,18 @@ export function itemNounOf(text: string | null | undefined): ItemNoun {
 }
 
 /** The noun of what the customer RECEIVES: the noun of the delivered stages when they all name the same thing («التغريدات»), else «عنصر» (posts together with their comments are items). */
-export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean; parent_key?: unknown }> } | null | undefined): ItemNoun {
+export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean; parent_key?: unknown; capability?: unknown; platform?: unknown }> } | null | undefined): ItemNoun {
   const stages = Array.isArray(plan?.stages) ? plan!.stages! : [];
   const delivered = stages.filter((s) => s?.deliver !== false);
   // ROUND 58: a delivered step that hangs on another delivered step DESCRIBES its items («بيانات تواصل الشركات» of «شركات مستحضرات التجميل»): its rows are details of those companies, never more companies. The sum of the two is
   // counted as «عنصر», never in the parent's noun (live risk: 20 companies + 12 contact rows told as «٣٢ شركة» on the card, in the notice and in the file)
   const deliveredKeys = new Set(delivered.map((s) => String((s as { key?: unknown })?.key ?? "")).filter(Boolean));
   if (delivered.some((s) => typeof s?.parent_key === "string" && s.parent_key !== "" && deliveredKeys.has(s.parent_key))) return GENERIC_ITEM_NOUN;
-  const nouns = (delivered.length > 0 ? delivered : stages.slice(0, 1)).map((s) => itemNounOf(String(s?.title_ar ?? s?.titleAr ?? "")));
+  const nouns = (delivered.length > 0 ? delivered : stages.slice(0, 1)).map((s) => {
+    const byTitle = itemNounOf(String(s?.title_ar ?? s?.titleAr ?? ""));
+    if (byTitle.key !== GENERIC_ITEM_NOUN.key) return byTitle;
+    return itemNounFromCapability(typeof s?.capability === "string" ? s.capability : null, typeof s?.platform === "string" ? s.platform : null) ?? byTitle;
+  });
   return nouns.length > 0 && nouns.every((n) => n.key === nouns[0].key) ? nouns[0] : GENERIC_ITEM_NOUN;
 }
 
