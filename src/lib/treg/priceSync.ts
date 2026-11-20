@@ -15,6 +15,9 @@ export interface PriceSyncRow {
   before: number | null;
   observed: number | null;
   reason: string;
+  billingBefore: string | null;
+  billingObserved: string | null;
+  routedEstimate: number | null;
   field?: string;
   state: "applied" | "held" | "same" | "report-only" | "gone" | "restored" | "unverified";
 }
@@ -47,9 +50,8 @@ function limitsMatch(stored: CatalogEndpoint, live: unknown): { reason: string; 
     if (!isDeepStrictEqual(expected.map((value) => value ?? null), observed.map((value) => value ?? null))) {
       return { reason: "input_limits_changed", field: storedField.name };
     }
-    // With no structured range, an opaque note may be the only record of a size rule.
-    if (storedField.minimum == null && storedField.maximum == null && storedField.enum == null &&
-      (storedField.note ?? null) !== (field.note ?? null)) {
+    // Structured metadata cannot prove what an opaque note says about an additional size rule.
+    if ((storedField.note ?? null) !== (field.note ?? null)) {
       return { reason: "size_note_changed", field: storedField.name };
     }
   }
@@ -109,7 +111,12 @@ export function buildPriceSync(baseline: TregCatalog, previous: PriceSyncFile, o
     const cost = record(live?.cost);
     const { unit, usd: before } = priceSyncTuple(endpoint.cost);
     const observed = typeof cost?.usd === "number" && Number.isFinite(cost.usd) ? cost.usd : null;
-    const writeRow = (state: PriceSyncRow["state"], reason: string, field?: string) => rows.push({ id, unit, before, observed, state, reason, field });
+    const billingBefore = endpoint.cost?.type ?? null;
+    const billingObserved = typeof cost?.type === "string" ? cost.type : null;
+    const routedEstimate = endpoint.kind === "routed" ? unitCost(endpoint, catalog)?.usd ?? null : null;
+    const writeRow = (state: PriceSyncRow["state"], reason: string, field?: string) => {
+      rows.push({ id, unit, before, observed, state, reason, field, billingBefore, billingObserved, routedEstimate });
+    };
 
     if (pinned.has(id)) { writeRow("report-only", "pinned_by_review"); continue; }
     if (endpoint.kind !== "direct") { writeRow("report-only", "routed_report_only"); continue; }

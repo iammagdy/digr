@@ -4,8 +4,12 @@ import { closeSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, sym
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { estimateCallUsd } from "../../agent/src/gateway";
+import { TOOL_CARDS } from "../../src/lib/agentMission/foundation/toolCards";
+import { B2B_CARDS } from "../../src/lib/agentMission/stage3/b2bCards";
+import { callMoneyCapUsd } from "../../src/lib/server/callBudget";
 import { unitPricePointsFromCost } from "../../src/lib/recordPricing";
-import { loadTregPriceBaseline, PINNED_PRICE_IDS } from "../../src/lib/treg/catalog";
+import { loadTregPriceBaseline, PINNED_PRICE_IDS, type TregCatalog } from "../../src/lib/treg/catalog";
 import { buildPriceSync, type PriceObservation, type PriceSyncRow } from "../../src/lib/treg/priceSync";
 import { validatePriceSyncFile } from "../../src/lib/treg/priceSyncFile";
 import { CATALOG_PRICE_REV, PRICE_SYNC_SHA256 } from "../../src/lib/treg/priceRev";
@@ -88,21 +92,40 @@ function writeChecked(dir: string, target: string, previous: Buffer, next: Buffe
   }
 }
 
-function report(date: string, rows: PriceSyncRow[], healthy: boolean): string {
+function report(date: string, rows: PriceSyncRow[], healthy: boolean, catalog: TregCatalog): string {
   const counts = new Map<string, number>();
   for (const row of rows) counts.set(row.state, (counts.get(row.state) ?? 0) + 1);
   const points = (usd: number | null) => usd === null ? "—" : String(unitPricePointsFromCost(usd));
+  const cell = (value: string | null) => value?.replaceAll("|", "\\|").replace(/[\r\n]/g, " ") ?? "—";
+  const applied = new Map(rows.filter((row) => row.state === "applied" || row.state === "restored").map((row) => [row.id, row.observed]));
+  const cards = [...B2B_CARDS, ...TOOL_CARDS.map((card) => ({ endpointId: card.endpointId, costUsd: card.costUsdPerPage }))];
+  const copyMismatches = cards.filter((card) => applied.has(card.endpointId) && card.costUsd !== applied.get(card.endpointId));
+  const aboveCap = rows.filter((row) => {
+    const endpoint = catalog.byId.get(row.id);
+    if (row.state !== "held" || row.observed === null || !endpoint?.cost ||
+      row.before === null || row.observed <= row.before) return false;
+    // Compare the default call on the stored unit and input basis. A changed basis requires manual review.
+    const old = { ...endpoint, cost: { ...endpoint.cost, usd: row.before } };
+    const next = { ...endpoint, cost: { ...endpoint.cost, usd: row.observed } };
+    return estimateCallUsd(next, {}, catalog) > callMoneyCapUsd(estimateCallUsd(old, {}, catalog));
+  });
   return [
     `# Catalog price sync, ${date}`, "",
     `Checked ${rows.length} endpoints. ${[...counts].sort().map(([state, count]) => `${count} ${state}`).join(", ")}.`,
     healthy ? "Changes require a reviewed PR." : "Metadata coverage failed. Apply is disabled for this run.",
-    "", "| Endpoint | Unit | Stored USD | Observed USD | Proposed provider component (points per billing unit) | Decision |",
-    "| --- | --- | ---: | ---: | ---: | --- |",
+    "", "| Endpoint | Unit | Billing label, stored → observed | USD, stored → observed | Change | Provider points, stored → proposed | Effective routed USD | Decision |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
     ...rows.map((row) => {
       const effective = row.state === "applied" || row.state === "restored" ? row.observed : row.before;
       const reason = row.field ? `${row.reason} (${row.field.replaceAll("|", "\\|").replace(/[\r\n]/g, " ")})` : row.reason;
-      return `| ${row.id} | ${row.unit ?? "—"} | ${row.before ?? "—"} | ${row.observed ?? "—"} | ${points(row.before)} → ${points(effective)} | ${row.state}/${reason} |`;
-    }), "", "COMMANDER merges only after a read-only check shows zero approved or running jobs. Recheck immediately after deployment.",
+      const pct = row.before && row.observed !== null ? `${((row.observed / row.before - 1) * 100).toFixed(2)}%` : "—";
+      return `| ${row.id} | ${cell(row.unit)} | ${cell(row.billingBefore)} → ${cell(row.billingObserved)} | ${row.before ?? "—"} → ${row.observed ?? "—"} | ${pct} | ${points(row.before)} → ${points(effective)} | ${row.routedEstimate ?? "—"} | ${row.state}/${reason} |`;
+    }),
+    "", "## Card prices to review", "",
+    ...(copyMismatches.length ? copyMismatches.map((card) => `- ${card.endpointId}: ${card.costUsd} → ${applied.get(card.endpointId)} USD.`) : ["None."]),
+    "", "## Held rises above D-0138 on a default call using the stored billing basis", "",
+    ...(aboveCap.length ? aboveCap.map((row) => `- ${row.id}: ${row.before} → ${row.observed} USD per stored billing unit.`) : ["None."]),
+    "", "COMMANDER merges only after a read-only check shows zero approved or running jobs. Recheck immediately after deployment.",
     "When the overlay changes, regenerate the registry and update the price revision and its SHA-256 pin in the same PR.", "",
   ].join("\n");
 }
@@ -135,7 +158,7 @@ export async function main(argv: string[], fetchOverride?: Fetcher): Promise<num
     writeChecked(dir, target, previous, bytes);
     process.stderr.write(`Update priceRev.ts to revision ${proposal.file.revision}, SHA-256 ${hash(bytes)}\n`);
   }
-  const rendered = report(date, proposal.rows, healthy);
+  const rendered = report(date, proposal.rows, healthy, baseline);
   if (out) writeFileSync(path.resolve(out), rendered);
   else process.stdout.write(rendered);
   return 0;
