@@ -624,10 +624,16 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         </div>
       ) : null}
       {finished && !headlineAr && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
+      {v.phase === "partial" && v.partialReasonAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-partial-reason">{v.partialReasonAr}</p> : null}
       {(v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
         <div className="flex flex-col gap-1" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <MoneyLine key={line} border={false}>{line}</MoneyLine>)}</div>
       ) : null}
-      {v.phase === "cancelled" ? <p className="m-0 text-[14px] font-semibold leading-[1.8] text-ink" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
+      {v.phase === "cancelled" ? (
+        <div className="flex flex-col gap-1" data-testid="agent-cancelled">
+          <p className="m-0 text-[14px] font-semibold leading-[1.8] text-ink">{v.endLineAr || "أُلغيت هذه المهمة ولم يُخصم شيء."}</p>
+          {v.expired && v.expiredNoteAr ? <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-expired-note">{v.expiredNoteAr}</p> : null}
+        </div>
+      ) : null}
       {v.files.length > 0 ? (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="agent-files">
           {excel ? (
@@ -644,7 +650,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         </div>
       ) : null}
       {finished && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}
-      {finished && moneyLinesAr.length > 0 ? <MoneyLine>{moneyLinesAr.join(" ")}</MoneyLine> : null}
+      {finished && (moneyLinesAr.length > 0 || v.partialRefundAr) ? (
+        <MoneyLine>{[...moneyLinesAr, ...(v.phase === "partial" && v.partialRefundAr ? [v.partialRefundAr] : [])].join(" ")}</MoneyLine>
+      ) : null}
       {onRetry && (v.phase === "failed" || v.phase === "unserved") ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="agent-retry">
           <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[220px]`} onClick={onRetry}>عدّل الطلب وجرّب تاني</button>
@@ -652,7 +660,13 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         </div>
       ) : null}
       {onRetry && v.phase === "partial" ? <div><button type="button" className="min-h-11 cursor-pointer border-0 bg-transparent p-0 text-[13.5px] font-semibold text-ac underline underline-offset-4" onClick={onRetry} data-testid="agent-retry-partial">عدّل الطلب واطلب الباقي</button></div> : null}
-      {onRetry && v.phase === "cancelled" ? <div><button type="button" className={BTN_PLAIN} onClick={onRetry} data-testid="agent-retry-cancelled">ابدأها من جديد</button></div> : null}
+      {onRetry && v.phase === "cancelled" ? (
+        <div>
+          <button type="button" className={v.expired ? BTN_PRIMARY : BTN_PLAIN} onClick={onRetry} data-testid="agent-retry-cancelled">
+            {v.expired ? "تجديد الخطة وإعادة الطلب" : "ابدأها من جديد"}
+          </button>
+        </div>
+      ) : null}
       {error ? <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="agent-error">{error}{/رصيد/.test(error) ? <> <a href="/dashboard/topup" className="text-ac">اشحن رصيدك</a></> : null}</p> : null}
     </section>
   );

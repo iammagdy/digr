@@ -34,7 +34,7 @@ const bad = (status: number, error: string): { ok: false; status: number; error:
 const MIN_TEXT = 3;
 const MAX_TEXT = 4000;
 const CANCELLABLE = ["queued", "needs_input", "plan_ready"];
-const SAFE_COLUMNS = `id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,created_at,${ADDON_MARKER_COLUMN}`;
+const SAFE_COLUMNS = `id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,error,created_at,${ADDON_MARKER_COLUMN}`;
 /**
  * MONEY PR 7e (docs/MONEY-PR-7A.md section 17): a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a research mission. Every action below that is written for a research mission refuses it, BEFORE it reads a plan,
  * claims a row or calls a money function, and changes nothing. Its own endpoint (stage4/reviewRequest.ts) is the only way to see or cancel it. The approval keeps its own sentence (below); every other action says this one.
@@ -296,15 +296,22 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   const stage3Queue = stage3QueueOn();
   const { data: mission } = await client.from(MISSION_TABLE).select(`${SAFE_COLUMNS},plan,updated_at,quote_id${stage3Queue ? ",approved_at" : ""}`).eq("id", input.id).eq("user_id", input.userId).maybeSingle();
   if (!mission || mission.user_id !== input.userId || hasAddonMarker(mission)) return bad(404, "المهمة غير موجودة.");
-  const [events, calls, queue] = await Promise.all([
+  const fetchJob = mission.job_id && mission.status === "completed"
+    ? client.from("jobs").select("delivered_units").eq("id", mission.job_id).maybeSingle()
+    : Promise.resolve({ data: null });
+  const [events, calls, queue, jobRes] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).order("id", { ascending: true }).limit(500),
     client.from(MISSION_CALLS_TABLE).select("id", { count: "exact", head: true }).eq("mission_id", input.id).neq("status", "refused"),
     readQueue(client, mission, input.now),
+    fetchJob,
   ]);
+  const jobDeliveredUnits = jobRes?.data?.delivered_units;
   const row: MissionRowForCustomer = {
     id: mission.id, status: mission.status, question_ar: mission.question_ar ?? null, plan_public: mission.plan_public ?? null, reserved_points: mission.reserved_points ?? null,
     unit_price_points: mission.unit_price_points ?? null, delivered_units: mission.delivered_units ?? null, charged_points: mission.charged_points ?? null, summary_ar: mission.summary_ar ?? null,
     files: Array.isArray(mission.files) ? mission.files : null, created_at: mission.created_at,
+    error: mission.error ?? null,
+    ...(typeof jobDeliveredUnits === "number" ? { charged_units: Number(jobDeliveredUnits) } : {}),
   };
   const evs: EventForCustomer[] = (Array.isArray(events?.data) ? events.data : []).map((e: any) => ({ id: Number(e.id), kind: String(e.kind), message_ar: String(e.message_ar ?? ""), counts: e.counts && typeof e.counts === "object" ? e.counts : {}, created_at: String(e.created_at) }));
   // the e-mail is promised only while it will really be sent (read only while the mission is in the worker's hands, when the line is shown)

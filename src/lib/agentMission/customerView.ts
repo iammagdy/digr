@@ -1,8 +1,10 @@
 import { CSV_LABEL_AR, CSV_METHODOLOGY_LABEL_AR } from "./csvLabels";
 import { queueLineV2 } from "./stage3/queueView";
-import { customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from "./text";
+import { checkCustomerText, customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from "./text";
+import { isExpiredMission } from "../requests/expiry";
+import { deliveredChargedLineAr } from "../jobs/requestStatus";
 import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, withoutUnwrittenLabels, writtenLatinWords } from "./shownWords";
-import { formatAr, toArabicDigits } from "../arabicDigits";
+import { formatAr, normalizeDigits, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr, unitPriceLabelAr } from "../pointsFormat";
@@ -42,6 +44,8 @@ export interface MissionRowForCustomer {
   summary_ar: string | null;
   files: Array<{ name: string; kind: string }> | null;
   created_at: string;
+  error?: string | null;
+  charged_units?: number | null;
 }
 export interface EventForCustomer { id: number; kind: string; message_ar: string; counts: Record<string, number> | null; created_at: string }
 export interface QueueInfo {
@@ -129,6 +133,10 @@ export interface CustomerMissionView {
   collectLineAr: string | null;
   /** The items saved so far and the total, for a progress bar. */
   savedSoFar: number;
+  expired?: boolean;
+  expiredNoteAr?: string | null;
+  partialReasonAr?: string | null;
+  partialRefundAr?: string | null;
   /**
    * THE LIMIT OF THE HOLD (live round 11): for a Facebook, Instagram or YouTube compiled plan, the hold against the job cap, what it is made of, and the smaller version by code. `over`: the plan is above the cap and has NO approve button. Null for every other plan.
    * `reservePoints` is the hold the customer would be asked to cover (the card compares it with the customer's balance).
@@ -538,15 +546,75 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
     const noun = itemNounOfPlan(plan);
     // a delivery short of the CARD is told against the card's total (what the customer approved); one that fills a card with a lowered target, against the request
-    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, deliveryDenominatorOf(delivered, planned, requestedRows), noun)}.`);
-    else if (requestedRows > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
+    if (requestedRows > 0 && delivered > 0) {
+      if (typeof mission.charged_units === "number" && Number.isFinite(mission.charged_units) && delivered > mission.charged_units) {
+        resultLinesAr.push(deliveredChargedLineAr({ delivered, charged: mission.charged_units }));
+      } else {
+        resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, deliveryDenominatorOf(delivered, planned, requestedRows), noun)}.`);
+      }
+    } else if (requestedRows > 0) {
+      resultLinesAr.push("لم يُسلَّم أي شيء.");
+    }
     if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun, ...(isFreeRerunEvents(input.events) ? { free: true } : {}) })}.`);
   }
-  // a stored summary that carries a number (written before the counts were stated by code) could disagree with the delivered count: it is not shown
-  // the words about the files are the files': one workbook with a sheet per stage, never «ملفين» (fileWording.ts)
-  const storedSummary = mission.summary_ar && !/[0-9٠-٩]/.test(mission.summary_ar) ? fixFileWordingAr(mission.summary_ar, plan?.stages) : null;
 
-  const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
+  const rawSummary = mission.summary_ar ? fixFileWordingAr(mission.summary_ar, plan?.stages) : null;
+  const summaryCheck = rawSummary ? checkCustomerText(rawSummary, { maxChars: 600 }) : null;
+  const summaryMatchesCardNumbers = (text: string): boolean => {
+    const nums = (normalizeDigits(text).replace(/(?<=\d)[,٬](?=\d)/g, "").match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+    if (nums.length === 0) return true;
+    const allowed = new Set<number>();
+    const realDelivered = delivered !== null && Number.isFinite(delivered) ? Math.round(delivered) : null;
+    if (realDelivered !== null) allowed.add(realDelivered);
+    if (typeof mission.charged_units === "number" && Number.isFinite(mission.charged_units)) allowed.add(Math.round(mission.charged_units));
+    const realCharged = mission.charged_points !== null && Number.isFinite(Number(mission.charged_points)) ? Math.round(Number(mission.charged_points)) : null;
+    if (realCharged !== null) allowed.add(realCharged);
+    const realReserved = mission.reserved_points !== null && Number(mission.reserved_points) > 0 && Number.isFinite(Number(mission.reserved_points)) ? Math.round(Number(mission.reserved_points)) : null;
+    if (realReserved !== null) allowed.add(realReserved);
+    if (realReserved !== null && realCharged !== null && realReserved > realCharged) allowed.add(realReserved - realCharged);
+    const denom = requestedRows > 0 && delivered !== null && delivered > 0 ? deliveryDenominatorOf(delivered, planned, requestedRows) : requestedRows > 0 ? requestedRows : null;
+    if (denom !== null && Number.isFinite(denom) && (phase !== "partial" || (realDelivered !== null && nums.includes(realDelivered)))) {
+      allowed.add(Math.round(denom));
+    }
+    return nums.every((n) => Number.isFinite(n) && allowed.has(n));
+  };
+  const storedSummary = rawSummary && summaryCheck
+    ? (/[0-9٠-٩]/.test(rawSummary)
+        ? (summaryCheck.issues.length === 0 && summaryMatchesCardNumbers(rawSummary) ? summaryCheck.text : null)
+        : (summaryCheck.issues.some((i) => !i.includes("no Latin words")) ? null : rawSummary))
+    : null;
+
+  const expired = phase === "cancelled" && isExpiredMission(mission);
+
+  let partialReasonAr: string | null = null;
+  let partialRefundAr: string | null = null;
+  if (phase === "partial") {
+    let reasonText = storedSummary;
+    if (!reasonText) {
+      const lastResult = [...input.events].reverse().find((e) => e.kind === "result" && e.message_ar);
+      if (lastResult?.message_ar) {
+        const c = checkCustomerText(lastResult.message_ar);
+        if (c.issues.length === 0) reasonText = c.text;
+      }
+    }
+    if (reasonText) {
+      partialReasonAr = reasonText.startsWith("اكتمل الجمع بعدد أقل من المطلوب")
+        ? reasonText
+        : `اكتمل الجمع بعدد أقل من المطلوب: ${reasonText.replace(/[.。\s]+$/u, "")}.`;
+    }
+    const hasKnownHoldAndCharge =
+      typeof mission.reserved_points === "number" && Number.isFinite(mission.reserved_points) &&
+      typeof mission.charged_points === "number" && Number.isFinite(mission.charged_points);
+    const refundPoints = hasKnownHoldAndCharge
+      ? Math.round(Number(mission.reserved_points)) - Math.round(Number(mission.charged_points))
+      : null;
+    partialRefundAr =
+      hasKnownHoldAndCharge && Number(mission.reserved_points) > 0 && refundPoints !== null && refundPoints > 0
+        ? `رجع لمحفظتك ${pointsAr(refundPoints)}.`
+        : null;
+  }
+
+  const endLineAr = endLineOf(phase, resultLinesAr, storedSummary, expired);
   const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], requestPartsAr: Array.isArray(plan?.request_parts_ar) ? plan.request_parts_ar.map(String).filter(Boolean).slice(0, 5) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)), headlineCountAr: headlineCountArOf(plan), countLinesAr: countLinesOf(plan),
@@ -565,6 +633,9 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     collectLineAr: collectLineOf(mission.status, Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)),
     lastEventAt: Number.isFinite(lastAt) ? lastAt : null,
     savedSoFar,
+    ...(expired ? { expired: true, expiredNoteAr: EXPIRED_PLAN_NOTE_AR } : {}),
+    ...(partialReasonAr ? { partialReasonAr } : {}),
+    ...(partialRefundAr ? { partialRefundAr } : {}),
   };
   // the limit is a key of the view ONLY when the plan carries one (a Facebook, Instagram or YouTube compiled plan): every other view is byte for byte what it was
   const limit = phase === "plan" ? limitViewOf(plan) : null;
@@ -594,10 +665,14 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     if (!t0) return "";
     const t = withoutUnwrittenLabels(t0, [requestText]);
     if (latinWordsOf(t).length === 0) return customerSafeText(t);
-    if (foreignLatinIn(t, written).length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t);
+    if (foreignLatinIn(t, written).length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t, "");
     return /[A-Za-z0-9]+_[A-Za-z0-9_]+/.test(t) ? customerSafeText(t) : toArabicDigits(t);
   };
   const nm = (s: string | null | undefined): string | null => (s === null || s === undefined ? null : m(s) || null);
+  const colTitle = (s: string | null | undefined, i: number): string => {
+    const out = m(String(s ?? ""));
+    return !out || out === NEUTRAL_CUSTOMER_TEXT_AR ? columnLabelAr(i) : out;
+  };
   const list = (a: ReadonlyArray<string> | undefined): string[] => (a ?? []).map(m).filter((x) => x !== "" && x !== NEUTRAL_CUSTOMER_TEXT_AR);
   // an answer the customer taps that is only the neutral source word says nothing
   const answers = (a: ReadonlyArray<string> | undefined): string[] => list(a).filter((x) => x !== SOURCE_LABEL_FALLBACK_AR);
@@ -605,32 +680,38 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     ...v,
     summaryAr: v.summaryAr !== null && v.summaryAr.trim() !== "" ? m(v.summaryAr) || NEUTRAL_HEADLINE_AR : nm(v.summaryAr), notesAr: list(v.notesAr), requestPartsAr: list(v.requestPartsAr), assumptionsAr: list(v.assumptionsAr), unservedAr: list(v.unservedAr), questionOptionsAr: answers(v.questionOptionsAr),
     stages: v.stages.map((s) => ({ ...s, titleAr: m(s.titleAr) || "مرحلة", noteAr: nm(s.noteAr) })),
-    samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr) || "مرحلة", columns: v.samples.columns.map((c, i) => ({ ...c, titleAr: m(c.titleAr) || columnLabelAr(i) })) } : null,
+    samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr) || "مرحلة", columns: v.samples.columns.map((c, i) => ({ ...c, titleAr: colTitle(c.titleAr, i) })) } : null,
     fileContentsAr: nm(v.fileContentsAr), priceLineAr: nm(v.priceLineAr), priceFacts: (v.priceFacts ?? []).map((f) => ({ labelAr: m(f.labelAr), valueAr: m(f.valueAr) })), priceNoteAr: nm(v.priceNoteAr), priceExplainAr: list(v.priceExplainAr), countLinesAr: list(v.countLinesAr), headlineCountAr: nm(v.headlineCountAr ?? null),
     totalRowsAr: m(v.totalRowsAr), ...(v.fileRowsAr !== undefined ? { fileRowsAr: nm(v.fileRowsAr) } : {}), periodAr: nm(v.periodAr), expectedAr: nm(v.expectedAr), progressLineAr: nm(v.progressLineAr), collectLineAr: nm(v.collectLineAr),
     questionAr: nm(v.questionAr), queueLineAr: nm(v.queueLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: m(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: m(s.countAr) } : {}) })),
     currentLineAr: m(v.currentLineAr), delayAr: nm(v.delayAr), remainingAr: nm(v.remainingAr), closePageAr: nm(v.closePageAr),
     resultLinesAr: list(v.resultLinesAr), resultSummaryAr: nm(v.resultSummaryAr), endLineAr: nm(v.endLineAr),
+    ...(v.expired ? { expired: true, expiredNoteAr: nm(v.expiredNoteAr) } : {}),
+    ...(v.partialReasonAr ? { partialReasonAr: nm(v.partialReasonAr) } : {}),
+    ...(v.partialRefundAr ? { partialRefundAr: nm(v.partialRefundAr) } : {}),
     ...(v.limit ? { limit: { ...v.limit, sentenceAr: nm(v.limit.sentenceAr), rowsAr: nm(v.limit.rowsAr) } } : {}),
     // the plan editor: titles, labels and the filter lines all go through m (a filter line is built from what the customer gave, so a word they wrote stays; any other Latin word or source label does not)
     edit: v.edit ? { ...v.edit, stages: v.edit.stages.map((s) => ({
       ...s, title_ar: m(s.title_ar) || "مرحلة", ...(s.per_parent_label_ar !== undefined ? { per_parent_label_ar: m(s.per_parent_label_ar) } : {}), ...(s.pages_label_ar !== undefined ? { pages_label_ar: m(s.pages_label_ar) } : {}),
       ...(s.replies ? { replies: { ...s.replies, label_ar: m(s.replies.label_ar) } } : {}),
-      columns: s.columns.map((c, i) => ({ ...c, title_ar: m(c.title_ar) || columnLabelAr(i) })),
+      columns: s.columns.map((c, i) => ({ ...c, title_ar: colTitle(c.title_ar, i) })),
       filters: s.filters.map((f) => ({ ...f, label_ar: m(f.label_ar) || FILTER_FALLBACK_AR, line_ar: m(f.line_ar) || FILTER_FALLBACK_AR })),
     })) } : null,
   };
 }
 
+export const EXPIRED_PLAN_END_AR = "انتهت مهلة اعتماد الخطة (٧٢ ساعة) دون تأكيد، ولم يُخصم أي رصيد من محفظتك.";
+export const EXPIRED_PLAN_NOTE_AR = "يمكنك إعادة تجهيز الخطة وتحديث الأسعار بنقرة واحدة.";
+
 /** THE HONEST END SENTENCE of a mission that ended, said once on the card (and read aloud as a status): what happened, in the customer's words; null while the mission is open. */
-function endLineOf(phase: CustomerPhase, resultLinesAr: string[], summary: string | null): string | null {
+function endLineOf(phase: CustomerPhase, resultLinesAr: string[], summary: string | null, expired = false): string | null {
   switch (phase) {
     case "done": return resultLinesAr[0] ?? "اكتملت مهمتك.";
     case "partial": return resultLinesAr[0] ?? "تم تسليم مهمتك بعدد أقل من المطلوب.";
     case "unserved": return summary ?? "لم نتمكن من تجهيز طلبك، ولم يُخصم منك شيء.";
     case "failed": return summary ?? "تعذّر استكمال مهمتك ولم يُخصم منك شيء.";
-    case "cancelled": return "أُلغيت هذه المهمة ولم يُخصم شيء.";
+    case "cancelled": return expired ? EXPIRED_PLAN_END_AR : "أُلغيت هذه المهمة ولم يُخصم شيء.";
     default: return null;
   }
 }

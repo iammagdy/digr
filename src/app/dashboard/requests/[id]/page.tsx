@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { pointsAr } from "@/lib/pointsFormat";
-import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
+import { REQUEST_STATUS_LABEL_AR, deliveredChargedLineAr, resolveRequestKind } from "@/lib/jobs/requestStatus";
 import { isSafeRequestId, readRequestFacts, type RequestFacts } from "@/lib/requests/facts";
 import { openJobHref } from "@/lib/requestLinks";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
@@ -35,9 +35,10 @@ interface Loaded {
   pointsAr: string | null;
   missionId: string | null;
   jobId: string | null;
+  billable?: number | null;
 }
 
-const fromFacts = (f: RequestFacts | null): Partial<Loaded> | null => (f ? { title: f.title, stateAr: f.stateAr, createdAt: f.createdAt, delivered: f.delivered, requested: f.requested, pointsAr: f.pointsAr } : null);
+const fromFacts = (f: RequestFacts | null): Partial<Loaded> | null => (f ? { title: f.title, stateAr: f.stateAr, createdAt: f.createdAt, delivered: f.delivered, requested: f.requested, pointsAr: f.pointsAr, billable: f.billable ?? null } : null);
 
 export default function RequestDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -80,14 +81,18 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         setJobId(job?.id ?? mission?.job_id ?? null);
         const kind = job ? resolveRequestKind({ status: job.status, delivered: job.delivered_units, requested: job.target_volume_max }) : null;
         const charged = job?.charged_credits ?? mission?.charged_points;
+        const missionDelivered = typeof mission?.delivered_units === "number" ? Number(mission.delivered_units) : null;
+        const jobDelivered = typeof job?.delivered_units === "number" ? Number(job.delivered_units) : null;
+        const hasContactMismatch = missionDelivered !== null && jobDelivered !== null && missionDelivered > jobDelivered;
         setFacts((prev) => ({
           ...prev,
           title: prev?.title ?? (typeof mission?.request_text === "string" ? mission.request_text : null),
           stateAr: prev?.stateAr || (kind ? REQUEST_STATUS_LABEL_AR[kind] : "قيد التنفيذ"),
           createdAt: job?.created_at ?? mission?.created_at ?? prev?.createdAt,
-          delivered: typeof (job?.delivered_units ?? mission?.delivered_units) === "number" ? Number(job?.delivered_units ?? mission?.delivered_units) : prev?.delivered ?? null,
+          delivered: missionDelivered ?? jobDelivered ?? prev?.delivered ?? null,
           requested: typeof job?.target_volume_max === "number" ? job.target_volume_max : prev?.requested ?? null,
           pointsAr: charged !== undefined && charged !== null ? pointsAr(Number(charged)) : prev?.pointsAr ?? null,
+          billable: hasContactMismatch ? jobDelivered : (prev?.billable ?? null),
         }));
         setRead("done");
       } catch { if (alive) setRead("failed"); }
@@ -136,7 +141,13 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-mut" data-testid="details-facts">
             {facts?.stateAr ? <span className="rounded-full bg-sf2 px-3 py-0.5 text-[12px] font-medium text-ink" data-testid="details-state">{facts.stateAr}</span> : <Skeleton className="h-6 w-20" />}
             {facts?.createdAt ? <span>{dayLabel(facts.createdAt)}</span> : <Skeleton className="h-5 w-24" />}
-            {facts && facts.delivered !== null && facts.delivered !== undefined ? <span data-testid="details-delivered">{facts.delivered !== undefined ? `وصل ${formatAr(facts.delivered)}${facts.requested ? ` من ${formatAr(facts.requested)}` : ""}` : ""}</span> : known ? null : <Skeleton className="h-5 w-28" />}
+            {facts && facts.delivered !== null && facts.delivered !== undefined ? (
+              <span data-testid="details-delivered">
+                {typeof facts.billable === "number" && facts.delivered > facts.billable
+                  ? deliveredChargedLineAr({ delivered: facts.delivered, charged: facts.billable })
+                  : `وصل ${formatAr(facts.delivered)}${facts.requested ? ` من ${formatAr(facts.requested)}` : ""}`}
+              </span>
+            ) : known ? null : <Skeleton className="h-5 w-28" />}
             {facts?.pointsAr ? <span data-testid="details-points">{facts.pointsAr}</span> : known ? null : <Skeleton className="h-5 w-16" />}
           </div>
         </header>
@@ -155,7 +166,8 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
 
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جارٍ تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
-        {read === "done" && missionId ? <AgentMissionCard missionId={missionId} stage2 /> : null}
+        {/* <AgentMissionCard missionId={missionId} stage2 /> */}
+        {read === "done" && missionId ? <AgentMissionCard missionId={missionId} stage2 onEdit={(requestText) => router.push(`/dashboard/chat?draft=${encodeURIComponent(requestText)}`)} /> : null}
         {/* STAGE C (behind DIGER_STAGE4_REVIEW or DIGER_STAGE4_EDITS): the truthful STATUS of every review or edit request on this file, decided on the server; it draws nothing while the route answers «not found» */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <FileWorkflow missionId={missionId} /> : null}
         {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}

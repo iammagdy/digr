@@ -46,7 +46,7 @@ const RUNNING_STATE_AR: Record<string, { chip: string; note: string }> = {
 };
 const ENDED_NOTE_AR: Record<EndedKind, string> = {
   cancelled: "ألغيت هذه المهمة قبل التنفيذ، ولم يُخصم منك شيء.",
-  expired: `${EXPIRED_SENTENCE_AR}؛ لم تُعتمد خلال ٧٢ ساعة، ولم يُخصم منك شيء.`,
+  expired: "انتهت مهلة اعتماد الخطة (٧٢ ساعة) دون تأكيد، ولم يُخصم أي رصيد من محفظتك.",
   failed: "تعذّر تجهيز هذه المهمة ولم يُخصم منك شيء.",
   unserved: "لم نتمكن من تلبية هذه المهمة ولم يُخصم منك شيء.",
 };

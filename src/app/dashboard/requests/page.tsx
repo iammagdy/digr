@@ -18,7 +18,7 @@ import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
 import { resultsReleasable } from "@/lib/producedFormats";
 import { jobFileIds } from "@/lib/producedFormats";
-import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, deliveredNothing, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
+import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, deliveredChargedLineAr, deliveredNothing, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
@@ -45,6 +45,7 @@ interface JobDoc {
   reservedCredits: number;
   chargedCredits?: number;
   rowsCollected?: number;
+  billableUnits?: number;
   /** True when the job row carried a delivered count (an absent count is unknown, never zero). */
   deliveredKnown?: boolean;
   targetVolumeMax?: number;
@@ -214,7 +215,7 @@ export default function RequestsPage() {
           .order("created_at", { ascending: false })
           .limit(100),
         // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
-        inGroups((ids) => supabase.from("missions").select("id, job_id, stages:plan_public->stages, files, compiled:plan_public->compiled").eq("user_id", user.id).in("job_id", ids)),
+        inGroups((ids) => supabase.from("missions").select("id, job_id, delivered_units, stages:plan_public->stages, files, compiled:plan_public->compiled").eq("user_id", user.id).in("job_id", ids)),
         supabase
           .from("messages")
           .select("conversation_id, plan")
@@ -236,26 +237,36 @@ export default function RequestsPage() {
       const artifactsByJob = new Map<string, any[]>();
       for (const artifact of (artifactsRes.data || []) as any[]) artifactsByJob.set(artifact.job_id, [...(artifactsByJob.get(artifact.job_id) || []), artifact]);
       const missionFilesByJob = new Map<string, any[]>();
-      for (const m of (missionsRes?.data || []) as any[]) if (m.job_id && Array.isArray(m.files)) missionFilesByJob.set(String(m.job_id), m.files);
+      const missionDeliveredByJob = new Map<string, number>();
+      for (const m of (missionsRes?.data || []) as any[]) {
+        if (m.job_id && Array.isArray(m.files)) missionFilesByJob.set(String(m.job_id), m.files);
+        if (m.job_id && typeof m.delivered_units === "number") missionDeliveredByJob.set(String(m.job_id), Number(m.delivered_units));
+      }
 
-      const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => ({
-        $id: r.id,
-        templateSlug: r.endpoint_id || r.template_slug || r.templateSlug || "",
-        params: typeof r.params === "string" ? r.params : JSON.stringify(r.params || {}),
-        status: r.status,
-        reservedCredits: Number(r.reserved_credits ?? r.reservedCredits ?? 0),
-        chargedCredits: r.charged_credits !== undefined && r.charged_credits !== null ? Number(r.charged_credits) : undefined,
-        rowsCollected: r.delivered_units ?? r.rows_collected ?? r.rowsCollected ?? 0,
-        deliveredKnown: typeof (r.delivered_units ?? r.rows_collected ?? r.rowsCollected) === "number",
-        targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
-        errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
-        createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-        updatedAt: r.updated_at ?? undefined,
-        leaseUntil: r.lease_until ?? null,
-        nextAttemptAt: r.next_attempt_at ?? null,
-        attemptCount: typeof r.attempt_count === "number" ? r.attempt_count : undefined,
-        fileIds: jobFileIds({ artifacts: artifactsByJob.get(r.id), resultFileId: r.result_file_id, missionFiles: missionFilesByJob.get(r.id) }),
-      }));
+      const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => {
+        const mDelivered = missionDeliveredByJob.get(r.id);
+        const jobDelivered = r.delivered_units ?? r.rows_collected ?? r.rowsCollected ?? 0;
+        const hasBillableDiff = typeof mDelivered === "number" && mDelivered > jobDelivered;
+        return {
+          $id: r.id,
+          templateSlug: r.endpoint_id || r.template_slug || r.templateSlug || "",
+          params: typeof r.params === "string" ? r.params : JSON.stringify(r.params || {}),
+          status: r.status,
+          reservedCredits: Number(r.reserved_credits ?? r.reservedCredits ?? 0),
+          chargedCredits: r.charged_credits !== undefined && r.charged_credits !== null ? Number(r.charged_credits) : undefined,
+          rowsCollected: hasBillableDiff ? mDelivered : jobDelivered,
+          billableUnits: hasBillableDiff ? Number(jobDelivered) : undefined,
+          deliveredKnown: typeof (mDelivered ?? r.delivered_units ?? r.rows_collected ?? r.rowsCollected) === "number",
+          targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
+          errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
+          createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+          updatedAt: r.updated_at ?? undefined,
+          leaseUntil: r.lease_until ?? null,
+          nextAttemptAt: r.next_attempt_at ?? null,
+          attemptCount: typeof r.attempt_count === "number" ? r.attempt_count : undefined,
+          fileIds: jobFileIds({ artifacts: artifactsByJob.get(r.id), resultFileId: r.result_file_id, missionFiles: missionFilesByJob.get(r.id) }),
+        };
+      });
       if (seq !== loadSeq.current) return; // a newer tab, search or page was asked for in the meantime
       setIndex(listed);
       setJobs(mappedJobs);
@@ -491,9 +502,11 @@ export default function RequestsPage() {
           const agentNoun = nounByJob[j.$id] ? (knownItemNoun(nounByJob[j.$id]) ?? (nounByJob[j.$id] === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : null)) : null;
           // the same one line as the completion panel, the notification, the e-mail and the wallet: what was charged and for how many items
           const agentMoneyLine = agentNoun ? moneyLineAr({ reservedPoints: j.reservedCredits || 0, chargedPoints: j.chargedCredits ?? 0, delivered: rows, noun: agentNoun }) : "";
+          const hasBillableMismatch = typeof j.billableUnits === "number" && rows > j.billableUnits;
           const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
             : nothingDelivered ? (agentNoun ? "لم يُسلَّم أي شيء، لذلك لا توجد ملفات لهذا الطلب، ولم يُخصم منك أي رصيد." : "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد.")
+            : hasBillableMismatch ? deliveredChargedLineAr({ delivered: rows, charged: j.billableUnits!, concise: true })
             : k === "partial" ? (agentNoun ? `تم تسليم ${deliveredOfAr(rows, requested || rows, agentNoun)}؛ ${agentMoneyLine}.` : partialDeliveryText(rows, requested || rows))
             : k === "done" && agentNoun ? `${agentMoneyLine}.` : "";
           const availableFormats = nothingDelivered ? [] : (["xlsx", "pdf", "csv"] as const).filter(
@@ -509,7 +522,7 @@ export default function RequestsPage() {
                   type="button"
                   data-testid="request-title"
                   // Opening a request shows its own page; a retry is the «إعادة المحاولة» button below, never a tap on the title.
-                  onClick={() => openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0) })}
+                  onClick={() => openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null })}
                   className="m-0 min-w-0 flex-1 cursor-pointer truncate border-0 bg-transparent p-0 text-right text-[14px] font-medium text-ink hover:underline focus-visible:outline-2"
                 >
                   {title}
@@ -543,7 +556,7 @@ export default function RequestsPage() {
                   onClick={() => {
                     // a retry is the only button that goes to the chat; «التفاصيل» and «متابعة التقدم» open the request's own page
                     if (k === "refunded" && !isDeterministicFailureAr(j.errorAr)) return void openFile(j, true);
-                    openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0) });
+                    openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null });
                   }}
                   className={`min-h-11 cursor-pointer rounded-full border-0 px-4 text-xs font-medium transition-colors ${
                     k === "running" ? "bg-ac text-onac hover:opacity-90" : "bg-sf2 text-ink hover:bg-sf"
