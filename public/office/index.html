@@ -127,6 +127,27 @@
     canvas#office-canvas { position: static; width: 100%; height: auto; }
     .room-tags { display: none; }
   }
+
+  .agent-popup-card {
+    position: absolute;
+    width: 230px;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    padding: 12px 14px;
+    z-index: 100;
+    color: #f8fafc;
+    font-family: 'IBM Plex Sans Arabic', Tahoma, sans-serif;
+    direction: rtl;
+    text-align: right;
+    box-sizing: border-box;
+    pointer-events: auto;
+  }
+  .agent-popup-card button:hover {
+    filter: brightness(1.1);
+  }
 </style></style>
 </head>
 <body>
@@ -496,6 +517,49 @@ function drawLoungeFloor(x, y, w, h) {
   ctx.fillRect(rx + rw - 11, ry + rh - 8 - bs, 3, bs);
 }
 
+// Clean and format sprint board task titles
+function cleanBoardTaskTitle(b) {
+  if (!b) return '';
+  let raw = b.task_title || b.taskTitle || '';
+  if (!raw && b.task && !b.task.includes('بدون تحديث') && b.task !== 'مهمة قيد التنفيذ' && b.task !== 'في انتظار البث المباشر...') {
+    raw = b.task;
+  }
+  if (!raw) {
+    raw = b.taskId || b.task || b.shortTask || '';
+  }
+  return String(raw)
+    .replace(/\s*🔴\s*متأخر/gu, '')
+    .replace(/\s*متأخر/gu, '')
+    .replace(/\s*بدون تحديث.*/gu, '')
+    .replace(/\s+\d+%$/gu, '')
+    .trim();
+}
+
+function fitBoardTitle(ctx, name, rawTitle, availWidth) {
+  const prefix = name ? name + ': ' : '';
+  const full = prefix + rawTitle;
+  if (ctx.measureText(full).width <= availWidth) {
+    return full;
+  }
+  let cut = rawTitle;
+  while (cut.length > 0 && ctx.measureText(prefix + cut + '…').width > availWidth) {
+    cut = cut.slice(0, -1);
+  }
+  if (cut.length === 0 && ctx.measureText(prefix + '…').width > availWidth) {
+    let pCut = prefix;
+    while (pCut.length > 0 && ctx.measureText(pCut + '…').width > availWidth) {
+      pCut = pCut.slice(0, -1);
+    }
+    return pCut ? pCut + '…' : '…';
+  }
+  return prefix + cut + '…';
+}
+
+if (typeof window !== 'undefined') {
+  window.cleanBoardTaskTitle = cleanBoardTaskTitle;
+  window.fitBoardTitle = fitBoardTitle;
+}
+
 // 5. Walls, Windows, Whiteboard (live task board with percentages)
 function drawWalls() {
   const wallH = 45;
@@ -598,13 +662,22 @@ function drawWalls() {
     ];
     activeBots.slice(0, 4).forEach((b, idx) => {
       const slot = slots[idx];
-      const rawTitle = (b.taskId || b.shortTask || b.task || '').slice(0, 18);
+      const rawTitle = cleanBoardTaskTitle(b);
+      const pctText = b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : '');
+      const percentWidth = ctx.measureText(pctText).width;
+      const availWidth = (slot.tx - slot.px) - percentWidth - 6;
+      const titleText = fitBoardTitle(ctx, b.name, rawTitle, availWidth);
+
+      const prevDir = ctx.direction || 'inherit';
+      ctx.direction = 'rtl';
       ctx.textAlign = 'right';
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(b.name + ': ' + rawTitle, slot.tx, slot.y);
+      ctx.fillText(titleText, slot.tx, slot.y);
+      ctx.direction = prevDir;
+
       ctx.textAlign = 'left';
       ctx.fillStyle = b.status === 'stuck' ? '#ef4444' : '#10b981';
-      ctx.fillText(b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : ''), slot.px, slot.y);
+      ctx.fillText(pctText, slot.px, slot.y);
     });
   }
 
@@ -2113,33 +2186,270 @@ function gameLoop(time) {
   requestAnimationFrame(gameLoop);
 }
 
-// ---------- Mouse parallax & hover glow ----------
-// The office is a living scene, not a dashboard: moving the mouse only
-// drifts the camera a touch and softly rings the bot under the cursor.
-// Clicking a bot (or anything else) opens nothing.
+// ---------- Mouse parallax, hover glow & click card ----------
+// Moving the mouse softly rings the bot under the cursor.
+// Clicking a bot opens its status card with task, progress, and cheer action.
 const stageEl = document.getElementById('stage-wrapper');
 
-stageEl.addEventListener('mousemove', (e) => {
+function findBotAtPointer(clientX, clientY) {
+  if (!canvas) return null;
   const rect = canvas.getBoundingClientRect();
-  if (STACKED_ON) { par.tx = 0; par.ty = 0; hoveredBotId = null; return; }
-  if (REDUCED_MOTION || cam.tzoom > 1.05) { par.tx = 0; par.ty = 0; }
-  else {
-    par.tx = (0.5 - (e.clientX - rect.left) / rect.width) * 15;
-    par.ty = (0.5 - (e.clientY - rect.top) / rect.height) * 9;
+  if (STACKED_ON) {
+    const layout = stackedLayout || computeStackedLayout();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    for (const st of layout.strips) {
+      if (cy >= st.roomTop && cy <= st.top + st.hCss) {
+        const wx = st.x + cx / st.s;
+        const wy = st.y + (cy - st.roomTop) / st.s;
+        for (const key of BOT_KEYS) {
+          const bot = BOTS[key];
+          const dx = wx - bot.x;
+          const dy = wy - (bot.y - 6);
+          if (Math.sqrt(dx * dx + dy * dy) < 28) return bot;
+        }
+      }
+    }
+    return null;
   }
   const suCss = Math.min(rect.width / BASE_W, rect.height / BASE_H);
-  const wx = effCamX + ((e.clientX - rect.left) - rect.width / 2) / (suCss * cam.zoom);
-  const wy = effCamY + ((e.clientY - rect.top) - rect.height / 2) / (suCss * cam.zoom);
-  let found = null;
+  const wx = effCamX + ((clientX - rect.left) - rect.width / 2) / (suCss * cam.zoom);
+  const wy = effCamY + ((clientY - rect.top) - rect.height / 2) / (suCss * cam.zoom);
   for (const key of BOT_KEYS) {
     const bot = BOTS[key];
     const dx = wx - bot.x;
     const dy = wy - (bot.y - 6);
-    if (Math.sqrt(dx * dx + dy * dy) < 28) { found = bot; break; }
+    if (Math.sqrt(dx * dx + dy * dy) < 28) return bot;
   }
-  hoveredBotId = found ? found.id : null;
-});
-stageEl.addEventListener('mouseleave', () => { par.tx = 0; par.ty = 0; hoveredBotId = null; });
+  return null;
+}
+
+function getBotScreenPos(bot) {
+  if (!canvas) return { x: 0, y: 0 };
+  const rect = canvas.getBoundingClientRect();
+  if (STACKED_ON) {
+    const layout = stackedLayout || computeStackedLayout();
+    for (const st of layout.strips) {
+      if (bot.x >= st.x && bot.x <= st.x + st.w && bot.y >= st.y && bot.y <= st.y + st.h) {
+        const sx = rect.left + (bot.x - st.x) * st.s;
+        const sy = rect.top + st.roomTop + (bot.y - 6 - st.y) * st.s;
+        return { x: sx, y: sy };
+      }
+    }
+  }
+  const suCss = Math.min(rect.width / BASE_W, rect.height / BASE_H);
+  const sx = rect.left + rect.width / 2 + (bot.x - effCamX) * (suCss * cam.zoom);
+  const sy = rect.top + rect.height / 2 + (bot.y - 6 - effCamY) * (suCss * cam.zoom);
+  return { x: sx, y: sy };
+}
+
+let selectedCardBotId = null;
+
+function getOrCreateCard() {
+  let card = document.getElementById('agent-card-popup');
+  if (!card && typeof document !== 'undefined' && typeof document.createElement === 'function') {
+    card = document.createElement('div');
+    card.id = 'agent-card-popup';
+    card.className = 'agent-popup-card';
+    card.setAttribute('dir', 'rtl');
+    card.style.display = 'none';
+    if (stageEl && stageEl.appendChild) {
+      stageEl.appendChild(card);
+    }
+  }
+  return card;
+}
+
+function renderAgentCard(bot) {
+  const card = getOrCreateCard();
+  if (!card || !bot || typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+
+  while (card.firstChild) {
+    card.removeChild(card.firstChild);
+  }
+
+  // Header: Name + Close Button
+  const header = document.createElement('div');
+  header.className = 'agent-card-header';
+  header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid rgba(148,163,184,0.2); padding-bottom:6px;';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'agent-card-name';
+  nameEl.style.cssText = 'font-weight:bold; font-size:14px; color:#f8fafc;';
+  nameEl.textContent = bot.name;
+  header.appendChild(nameEl);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'agent-card-close';
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'إغلاق');
+  closeBtn.style.cssText = 'background:none; border:none; color:#94a3b8; font-size:16px; cursor:pointer; padding:2px 6px; line-height:1; border-radius:4px;';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = function(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    closeAgentCard();
+  };
+  header.appendChild(closeBtn);
+  card.appendChild(header);
+
+  // Status label
+  const statusRow = document.createElement('div');
+  statusRow.className = 'agent-card-status';
+  statusRow.style.cssText = 'font-size:12px; margin-bottom:8px; font-weight:600;';
+  if (bot.status === 'stuck') {
+    statusRow.style.color = '#ef4444';
+    statusRow.textContent = '🔴 متأخر ' + bot.progress + '% ⚠️';
+  } else if (bot.status === 'working') {
+    statusRow.style.color = '#10b981';
+    statusRow.textContent = '🟢 شغال ' + bot.progress + '%';
+  } else {
+    statusRow.style.color = '#94a3b8';
+    statusRow.textContent = '☕ متاح';
+  }
+  card.appendChild(statusRow);
+
+  // If working or stuck, show task, step, %, next, updated
+  if (bot.status !== 'idle') {
+    const details = document.createElement('div');
+    details.className = 'agent-card-details';
+    details.style.cssText = 'font-size:11.5px; display:flex; flex-direction:column; gap:4px; margin-bottom:10px; color:#cbd5e1;';
+
+    const taskTitle = cleanBoardTaskTitle(bot);
+    if (taskTitle) {
+      const taskRow = document.createElement('div');
+      taskRow.className = 'agent-card-task';
+      taskRow.textContent = 'المهمة: ' + taskTitle;
+      details.appendChild(taskRow);
+    }
+
+    if (bot.step) {
+      const stepRow = document.createElement('div');
+      stepRow.className = 'agent-card-step';
+      stepRow.textContent = 'الخطوة: ' + bot.step;
+      details.appendChild(stepRow);
+    }
+
+    const pctRow = document.createElement('div');
+    pctRow.className = 'agent-card-percent';
+    pctRow.textContent = 'الإنجاز: ' + bot.progress + '%';
+    details.appendChild(pctRow);
+
+    if (bot.next) {
+      const nextRow = document.createElement('div');
+      nextRow.className = 'agent-card-next';
+      nextRow.textContent = 'التالي: ' + bot.next;
+      details.appendChild(nextRow);
+    }
+
+    const updateRow = document.createElement('div');
+    updateRow.className = 'agent-card-updated';
+    updateRow.style.cssText = 'color:#64748b; font-size:10.5px; margin-top:2px;';
+    const minsAgo = bot.updatedAt ? formatMinutesAgo(Date.parse(bot.updatedAt)) : 0;
+    updateRow.textContent = 'آخر تحديث منذ ' + minsAgo + ' د';
+    details.appendChild(updateRow);
+
+    card.appendChild(details);
+  }
+
+  // Cheer button
+  const cheerBtn = document.createElement('button');
+  cheerBtn.className = 'agent-card-cheer';
+  cheerBtn.type = 'button';
+  cheerBtn.style.cssText = 'width:100%; background:#f59e0b; color:#0f172a; border:none; border-radius:6px; padding:6px 10px; font-weight:bold; font-size:12px; cursor:pointer; font-family:inherit; transition:background 0.15s;';
+  cheerBtn.textContent = ['\u0634\u062c\u0651\u0639\u0647', '\u{1F44F}'].join(' ');
+  cheerBtn.onclick = function(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    celebrateBot(bot, '👏 برافو!');
+  };
+  card.appendChild(cheerBtn);
+}
+
+function openAgentCard(botId, clickX, clickY) {
+  const bot = BOTS[botId];
+  if (!bot) return;
+  selectedCardBotId = botId;
+  const card = getOrCreateCard();
+  if (!card) return;
+
+  renderAgentCard(bot);
+  card.style.display = 'block';
+
+  if (stageEl) {
+    const stageRect = stageEl.getBoundingClientRect ? stageEl.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 540 };
+    const botPos = getBotScreenPos(bot);
+    let left = botPos.x - stageRect.left + 16;
+    let top = botPos.y - stageRect.top - 20;
+
+    const cardW = 230;
+    const cardH = 180;
+    const maxLeft = (stageEl.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 800)) - cardW - 10;
+    const maxTop = (stageEl.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 540)) - cardH - 10;
+
+    if (left > maxLeft) left = Math.max(10, botPos.x - stageRect.left - cardW - 16);
+    if (left < 10) left = 10;
+    if (top > maxTop) top = Math.max(10, maxTop);
+    if (top < 10) top = 10;
+
+    card.style.left = left + 'px';
+    card.style.top = top + 'px';
+  }
+}
+
+function closeAgentCard() {
+  selectedCardBotId = null;
+  const card = document.getElementById('agent-card-popup');
+  if (card) {
+    card.style.display = 'none';
+  }
+}
+
+if (stageEl) {
+  stageEl.addEventListener('mousemove', (e) => {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (STACKED_ON) { par.tx = 0; par.ty = 0; hoveredBotId = null; return; }
+    if (REDUCED_MOTION || cam.tzoom > 1.05) { par.tx = 0; par.ty = 0; }
+    else {
+      par.tx = (0.5 - (e.clientX - rect.left) / rect.width) * 15;
+      par.ty = (0.5 - (e.clientY - rect.top) / rect.height) * 9;
+    }
+    const found = findBotAtPointer(e.clientX, e.clientY);
+    hoveredBotId = found ? found.id : null;
+  });
+
+  stageEl.addEventListener('mouseleave', () => { par.tx = 0; par.ty = 0; hoveredBotId = null; });
+
+  stageEl.addEventListener('click', (e) => {
+    const card = document.getElementById('agent-card-popup');
+    if (card && card.contains && e.target && card.contains(e.target)) return;
+
+    const found = findBotAtPointer(e.clientX, e.clientY);
+    if (found) {
+      openAgentCard(found.id, e.clientX, e.clientY);
+    } else {
+      closeAgentCard();
+    }
+  });
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('keydown', (e) => {
+    if (e && e.key === 'Escape') closeAgentCard();
+  });
+} else if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('keydown', (e) => {
+    if (e && e.key === 'Escape') closeAgentCard();
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.cleanBoardTaskTitle = cleanBoardTaskTitle;
+  window.fitBoardTitle = fitBoardTitle;
+  window.openAgentCard = openAgentCard;
+  window.closeAgentCard = closeAgentCard;
+  window.renderAgentCard = renderAgentCard;
+  window.findBotAtPointer = findBotAtPointer;
+}
 
 // ---------- Live Feed ----------
 let lastGoodFetchMs = null;
@@ -2247,6 +2557,8 @@ function applyLiveFeed(payload) {
     bot.status = status;
     bot.progress = status === 'idle' ? 0 : pct;
     bot.taskId = taskId;
+    bot.taskTitle = taskTitle;
+    bot.task_title = taskTitle;
     bot.step = step;
     bot.next = next;
     bot.updatedAt = incoming.updated_at || null;
@@ -2291,6 +2603,9 @@ function applyLiveFeed(payload) {
     }
   }
   computeTodayStats(payload);
+  if (selectedCardBotId && BOTS[selectedCardBotId]) {
+    renderAgentCard(BOTS[selectedCardBotId]);
+  }
   feedInitialized = true;
 }
 
