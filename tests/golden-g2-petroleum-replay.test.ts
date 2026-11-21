@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook } from "./helpers/agentReplay";
 import { cell, g1, PHONES } from "./helpers/g1World";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * GOLDEN PROMPT G2 (docs/AUDIT-2026-11.md section 7), OFFLINE REPLAY: «عايز ٥ شركات مصرية في قطاع البترول، ومعاهم صناع القرار: اسم المدير، المسمى الوظيفي، الإيميل، ورقم التليفون» (the second sector; baseline msn_020c92a0bc1cca3a54a7, 9 of 15 delivered).

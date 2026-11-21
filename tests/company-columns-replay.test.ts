@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook } from "./helpers/agentReplay";
 import { cell, g1, PHONES } from "./helpers/g1World";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * GOLDEN PROMPT G1 (docs/AUDIT-2026-11.md section 7), OFFLINE REPLAY, PART b: the company's own e-mail and HQ phone are COLUMNS OF THE COMPANY (reference A, columns 5 and 6, the owner's top priority).

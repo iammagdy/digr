@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, replay } from "./helpers/agentReplay";
 import { request, SLUGS, company, linkedinOf } from "./helpers/a1World";
 import { liveDispatcher, liveFlow } from "./helpers/g1R2World";
@@ -6,6 +6,9 @@ import { stageTruthBodyAr } from "../agent/src/finalize";
 import { buildMethodology, type MissionFacts, type StageRecord } from "../agent/src/methodology";
 import { itemNounOf } from "../src/lib/agentMission/itemNoun";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * GOLDEN RUN ROUND 2, G1, THE LIMITS TEXT (msn_9dc8f2db86bc5cf4959b): the companies source gave 242 companies, OUR place filter left 240 of them out, 2 were delivered, and the closing sentence and the limits row said «سُلّم ٢ من ٥ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب».

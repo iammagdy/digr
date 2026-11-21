@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { SCENARIOS, X_TOPIC, xItem, xPageOf, type Scenario } from "./helpers/contractScenarios";
 import { readSnapshot } from "../agent/src/items/itemStore";
 import { INTERNAL_FAILURE_AR } from "../agent/src/runMission";
 import { buildMissionNotice } from "../src/lib/agentMission/notices";
 import { isInternalEvent } from "../src/lib/agentMission/eventText";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * THE CONTRACT BETWEEN THE PLAN AND THE ENGINE, on four mission types (X posts, Facebook posts and comments, TikTok videos and comments, companies and employees):

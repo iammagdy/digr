@@ -3,7 +3,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
 import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
@@ -79,6 +79,8 @@ describe("the admin page «الوكيل» is for the test account only", () => {
 });
 
 describe("approve reserves through the existing functions and hands the mission to the worker", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   const seedReady = () => db.seed("missions", [{ id: "msn_ready0001", user_id: TEST_USER, status: "plan_ready", updated_at: "2026-11-21T06:00:00.000Z", plan: pricedTwoStagePlan() }]);
 
   it("plan_ready -> approved with the job, the reserve and the unit price computed by code; no money table is written by hand", async () => {
@@ -203,6 +205,8 @@ describe("questions, cancelling, settings, files, the live view", () => {
 });
 
 describe("the routes check the admin and nothing else answers", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   const req = (url: string, body?: unknown) => new Request(url, { method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined }) as any;
   const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 

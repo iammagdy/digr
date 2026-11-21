@@ -352,6 +352,9 @@ describe("3. «عايز ٥٠ شركة مقاولات في مصر، ومن كل �
 import ExcelJS from "exceljs";
 import { buildMissionFiles, withoutDirectionMarks } from "../agent/src/workbook";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 describe("4. invisible direction marks are removed from the cells that hold a name, in the workbook and in the CSV, and nowhere else (live: a person's name wrapped in U+202A / U+202C / U+200F)", () => {
   const MARKS = ["‪", "‫", "‬", "‭", "‮", "‎", "‏", "⁦", "⁧", "⁨", "⁩"];
   const st = (over: Record<string, unknown>) => ({ endpoint_id: "e", expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.0001, ...over });

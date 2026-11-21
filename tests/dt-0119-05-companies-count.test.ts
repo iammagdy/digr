@@ -18,6 +18,9 @@ import type { TregCallOptions } from "../src/functions/shared/tregClient";
 import { tregResult } from "./helpers/agentHarness";
 import { customerPlanView } from "../src/lib/agentMission/plan";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 
 const catalog = loadTregCatalog();

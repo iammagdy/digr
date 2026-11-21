@@ -9,6 +9,9 @@ import { g1 } from "./helpers/g1World";
 import type { MemoryStore } from "../agent/src/memoryStore";
 import { isInternalEvent } from "../src/lib/agentMission/eventText";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 /**
  * S1 PROOF: WITH EVERY FLAG OFF, THE OUTPUT IS BYTE-FOR-BYTE WHAT IT WAS BEFORE THIS PULL REQUEST. Five existing golden worlds (X posts, TikTok videos and comments with replies in two shapes, companies and decision makers in two sectors) are replayed end to end with
  * no flag set; everything the customer or the ledger could see is written down in a normalised form and hashed, section by section: the mission's fields and stored plan, every cell of the workbook, the plan card and the final card, the notices, the customer-visible events,

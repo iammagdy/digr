@@ -269,6 +269,8 @@ describe("approval of the displayed plan (NEW-ISSUES #13)", () => {
 });
 
 describe("approval by the customer", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   it("a guest must sign up first; an unverified account must verify; another customer's mission does not exist", async () => {
     db.seed("missions", [ready()]);
     const { client, money } = makeClient(db);

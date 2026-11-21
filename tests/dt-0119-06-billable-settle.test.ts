@@ -9,6 +9,9 @@ import { unbilledLineAr } from "../src/lib/agentMission/billableRows";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 /**
  * DT-20261119-06 PART B, end to end on the money fake (owner decision D-0117): a mission of 5 companies and 10 people whose finders find a contact for only SOME people delivers the whole file (15 rows) and is charged for the rows
  * that carry a requested contact (the companies and the people with one); the hold is unchanged and the rest is released; the customer is told how many people were not charged. A request that asks for no contact is charged as before.

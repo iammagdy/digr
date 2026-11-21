@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readWorkbook, replay } from "./helpers/agentReplay";
 import { COMPANIES, PEOPLE, SLUGS, company, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
@@ -94,6 +94,9 @@ describe("people are delivered only under the company they currently work at", (
 
 // ------------------------------------------------------------------------------------------------ the pure rules, on the shapes of the owner's benchmark (blitzapi.people.employee-finder rows)
 import { companyIdentityOf, isPlaceholderCompanyUrl, peopleEvidenceOf, personAtCompany, registrableDomain, sameCompanyName } from "../src/lib/agentMission/companyIdentity";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 // CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 describe("placeholder and generic company links", () => {

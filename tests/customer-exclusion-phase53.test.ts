@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { parseExclusionFile } from "../src/lib/server/exclusionFileParser";
 import { compareOrganizations, deduplicateAgainstBaseline } from "../src/lib/server/negativeListEngine";
@@ -36,6 +36,9 @@ const execCalls = (r: Results) => r.filter((x) => x.tool === "treg_call" && x.re
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { COMPANIES as A1_COMPANIES, PEOPLE as A1_PEOPLE, companiesPage as a1CompaniesPage, peopleOfCompany, pickCompany, planFlow as a1PlanFlow, request as a1Request } from "./helpers/a1World";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * PHASE 5.3 (docs/intelligence/PHASE-5-3-AND-6.md): THE CUSTOMER'S EXCLUSION FILE REACHES THE RESULTS, behind `customer_exclusion_files_v1` (OFF by default).

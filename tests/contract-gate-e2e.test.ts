@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runS4 } from "./helpers/s4World";
 import { CONTRACT_SEND_BACKS_MAX } from "../src/lib/agentMission/requestContract";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * THE FINAL GATE IN PLANNING, END TO END (docs/ROOT-CAUSE.md, section 5.2). The exact request of the live rounds («... مع كل التعليقات والردود»); the model proposes the listing stage only, every time (the 19:00 YouTube regression, msn_adcfafabcdebc27ff803, on another platform's world).

@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { dispatcher, planFlow, SECTOR_WORLD } from "./helpers/g1World";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * STAGE 3, FLAGS UNSET, BYTE FOR BYTE (parts A and B): a whole companies and decision-makers mission, planned by today's model path and carried out by today's engine, gives exactly what it gave

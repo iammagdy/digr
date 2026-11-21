@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import { approvingReview, assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, employeesPage, lastOutputId, planningFlow, tregResult, ttCommentsPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import { emailsOf, fakeContextDev, igFeed, linksOf, mapsPlace, mapsReviews, phonesOf, ttFeed } from "./helpers/fakeContextDev";
 import type { FakeStep } from "../agent/src/fakeDriver";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * PHASE 2 REPLAYS (zero provider calls: a fake Context.dev answering in the documented shapes, a fake TREG, a fake model). The page parsers through the ONE gateway tool, the contacts stage with

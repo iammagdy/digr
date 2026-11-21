@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
 import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
@@ -94,6 +94,8 @@ describe("creating a free re-run", () => {
 });
 
 describe("the money of a free re-run: the customer pays nothing", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   it("balance covers the hold: hold, settle, and the charge is given back once, so the customer's balance ends exactly where it started", async () => {
     const { client, money, grants } = makeClient(db, fakeMoneyClient({ balance: 10_000 }));
     const start = money.balance();
@@ -195,6 +197,8 @@ describe("what the customer reads: free, nothing paid", () => {
 });
 
 describe("the admin route", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   const post = (body: unknown, id = ME) => POST(new NextRequest(`http://localhost/api/admin/users/${id}/reruns`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
   const get = (id = ME) => GET(new NextRequest(`http://localhost/api/admin/users/${id}/reruns`), { params: Promise.resolve({ id }) });
 

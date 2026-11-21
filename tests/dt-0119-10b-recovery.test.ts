@@ -1,4 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
+import { approveForCustomer, loadCustomerMission, smallerVersionForCustomer } from "../src/lib/agentMission/customerActions";
+import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
+import { publicPlanOf } from "../src/lib/agentMission/overLimit";
+import { createMemoryDb } from "./helpers/memoryDb";
+import { replayClient } from "./helpers/agentReplay";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { runPlanning, type RunnerDeps } from "../agent/src/runMission";
@@ -23,6 +31,7 @@ import type { TregCallOptions, TregCallResult } from "../src/functions/shared/tr
  * and all counter-cases.
  */
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
+afterEach(() => vi.unstubAllEnvs());
 
 const catalog = loadTregCatalog();
 const COMPANIES_CAP = [...capabilitiesOf(catalog, NOT_ADMIN, "companies")].sort().find((c) => !PEOPLE_OF_COMPANY_CAPABILITIES.has(c))!;
@@ -365,7 +374,8 @@ describe("DT-20261119-10b D-0140 Scale (50, 100, 200 companies × 1–2 managers
     assertCleanPlanCopy(plan);
   });
 
-  it("scale 200 companies × 2 managers + contacts under default markup (hits read-only 25k cap) -> asks 1 capacity question, never INTERNAL_PLANNING_AR", async () => {
+  it("a 200-company recovery saves a locked preview and approves only the capped offer", async () => {
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const req = "عايز 200 شركة برمجيات في القاهرة ومن كل شركة اتنين من المديرين بالإيميل ورقم التليفون";
     const res = await runScenario({
       id: "msn_scale_200_overcap_question",
@@ -389,9 +399,40 @@ describe("DT-20261119-10b D-0140 Scale (50, 100, 200 companies × 1–2 managers
         })),
       ],
     });
-    expect(res.mission.status).toBe("needs_input");
     expect(res.mission.summary_ar ?? "").not.toBe(INTERNAL_PLANNING_AR);
-    expect(res.mission.question_ar).toMatch(/الحد الأقصى/);
+    const plan = res.mission.plan;
+    if (!plan) throw new Error("expected the recovery preview to be saved");
+    expect(res.mission.status).toBe("plan_ready");
+    expect(plan.hold_cap_preview).toBe(true);
+    expect(plan.price.reservePoints).toBeGreaterThan(AGENT_JOB_POINTS_CAP);
+    const db = createMemoryDb();
+    db.seed("missions", [{ ...res.mission, plan_public: publicPlanOf(plan), updated_at: res.mission.created_at }]);
+    const { client } = replayClient(db, res.money);
+    const owner = { id: res.mission.id, userId: USER_ID };
+    const preview = await loadCustomerMission(client, owner);
+    if (!preview.ok || !preview.view.affordability?.offer) throw new Error("expected a valid capped offer for the preview");
+    const offer = preview.view.affordability.offer;
+    expect(offer.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
+    const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: preview.view, isGuest: false, authoritative: true }));
+    expect(html).not.toContain('data-testid="agent-approve"');
+
+    const approve = (approvalVersion: unknown) => approveForCustomer(client, {
+      ...owner, isGuest: false, emailVerified: true, approvalVersion,
+    });
+    const holds = () => res.money.ledger.filter((row) => row.type === "reserve").map((row) => -row.delta);
+    expect(await approve(preview.view.approvalVersion)).toMatchObject({ ok: false, status: 409, code: "affordability_changed" });
+    expect(res.money.quotes.size).toBe(0);
+    expect(res.money.jobs.size).toBe(0);
+    expect(holds()).toEqual([]);
+    const selected = await smallerVersionForCustomer(client, { ...owner, approvalVersion: preview.view.approvalVersion, offer });
+    expect(selected).toMatchObject({ ok: true, status: "plan_ready" });
+    const ready = await loadCustomerMission(client, owner);
+    if (!ready.ok) throw new Error(ready.error);
+    expect(ready.view.affordability).toMatchObject({ mode: "ready", reservePoints: offer.reservePoints });
+    expect(await approve(ready.view.approvalVersion)).toMatchObject({ ok: true, reservePoints: offer.reservePoints });
+    expect(res.money.quotes.size).toBe(1);
+    expect(res.money.jobs.size).toBe(1);
+    expect(holds()).toEqual([offer.reservePoints]);
   });
 
   it("LIVE3 scale repro (msn_02e769c04471282310b5): 100×1 email+phone under default markup -> 1 capacity question, never plan_invalid_after_N / INTERNAL_PLANNING_AR", async () => {

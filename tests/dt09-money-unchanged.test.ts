@@ -4,6 +4,9 @@ import { replay, type ReplayResult } from "./helpers/agentReplay";
 import { dispatcher, planFlow, SECTOR_WORLD } from "./helpers/g1World";
 import { g1 } from "./helpers/g1World";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 /**
  * DT-20261118-09 FIX1, the proof QA asked for: the two company worlds of the byte-identical tests (g1, g2) and the three of the Stage 3 test (g1, g2, the live words of msn_7539) give the SAME money on this branch as on main
  * cb11ecb1 (the code before DT-09). «The same money» is every NUMBER of what the worlds hand to the money functions and store: the quote's items, prices, holds, reserve, unit price, the settlement, the charge, the release, the
