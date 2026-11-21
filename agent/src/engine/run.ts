@@ -749,7 +749,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const cursor = state?.cursor ?? null;
     const paging = spec.catalog_paging === true ? missionPageOf(spec.endpoint_id) : undefined;
     const isCatalogPaging = paging !== undefined;
-    if (cursor !== null && (isCatalogPaging || state?.visitedPositions?.has(cursor))) {
+    if (cursor !== null && state?.visitedPositions?.has(cursor)) {
       return { reason: "source_exhausted", aborted: null };
     }
     const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);

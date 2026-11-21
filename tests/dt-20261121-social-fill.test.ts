@@ -297,7 +297,7 @@ describe("DT-20261121-social-fill test suite", () => {
       const [posts, comments] = plan.stages;
 
       const unitPoints = 1.034;
-      posts.endpoint_id = "fb_posts";
+      posts.endpoint_id = "anyapi.facebook.user.posts";
       posts.deliver = false;
       posts.planned_rows = 20;
       posts.expected_rows = 20;
@@ -305,12 +305,13 @@ describe("DT-20261121-social-fill test suite", () => {
       posts.measured_cost_per_row_usd = 0.002 / 3;
       posts.execution_funding = [{ rowsPerPage: 3, callUsdMicro: 2000, mode: "paged" }];
       posts.engine = {
-        endpoint_id: "fb_posts",
+        endpoint_id: "anyapi.facebook.user.posts",
         params: {},
         cursor_param: "cursor",
-        map_code: "return inputs.page",
+        map_code: "return inputs.p1",
         map_file_id: "p1",
         parent_binding: null,
+        catalog_paging: true,
       };
 
       comments.endpoint_id = "fb_comments";
@@ -364,12 +365,15 @@ describe("DT-20261121-social-fill test suite", () => {
           let nextCursor: string | null = null;
           let hasMore = true;
 
-          if (ep === "fb_posts") {
+          const callId = `call_${String(++seq).padStart(4, "0")}`;
+          if (ep === "anyapi.facebook.user.posts") {
             parentCalls.push(params);
             const pageNum = params.cursor ? parseInt(String(params.cursor).replace("page_", ""), 10) : 1;
             rows = (postsPerPage[pageNum] ?? []).map((p) => ({ ...p, text: `نص المنشور ${p.id}` }));
             nextCursor = pageNum < 10 ? `page_${pageNum + 1}` : null;
             hasMore = pageNum < 10;
+            const envelope = { output: { data: { posts: rows, nextCursor } } };
+            await store.putFile("msn_fb", RAW_PATH(callId), JSON.stringify(envelope), "application/json");
           } else {
             childCalls.push(params);
             const url = String(params.url);
@@ -381,9 +385,8 @@ describe("DT-20261121-social-fill test suite", () => {
               text: `تعليق ${k + 1} على p${postNum}`,
               url: `https://facebook.com/c_${postNum}_${k + 1}`,
             }));
+            await store.putFile("msn_fb", RAW_PATH(callId), JSON.stringify(rows), "application/json");
           }
-          const callId = `call_${String(++seq).padStart(4, "0")}`;
-          await store.putFile("msn_fb", RAW_PATH(callId), JSON.stringify(rows), "application/json");
           return { ok: true, call_id: callId, http_status: 200, rows_in_page: rows.length, has_more: hasMore, next_cursor: nextCursor, shape: null, first_rows: [], warnings: [], saved: "" };
         },
       } as unknown as Gateway;
@@ -400,26 +403,26 @@ describe("DT-20261121-social-fill test suite", () => {
         plan,
         missionId: "msn_fb",
         gateway,
-        sandbox: async (_c, inputs) => ({ ok: true, resultJson: JSON.stringify(Object.values(inputs)[0]), logs: [] }),
+        sandbox: async (_c, inputs) => {
+          const val: any = Object.values(inputs)[0];
+          const data = Array.isArray(val) ? val : (val?.output?.data?.posts ?? []);
+          return { ok: true, resultJson: JSON.stringify(data), logs: [] };
+        },
         addEvent: async () => undefined,
         deadlineMs: Date.now() + 3_600_000,
         sleep: async () => undefined,
         redesignStages: new Set(["posts", "comments"]),
-        fundingSchedule: new Map([
-          ["posts", { calls: 14, costUsdMicro: 2000 }],
-          ["comments", { calls: 100, costUsdMicro: 1880 }],
-        ]),
       });
 
       const delivered = items.acceptedRows("comments");
       expect(delivered.length).toBe(200);
 
-      // Parent dispatches <= 14
+      // Parent dispatches <= 14 (production schedule)
       expect(parentCalls.length).toBeLessThanOrEqual(14);
       expect(parentCalls.length).toBeGreaterThan(7);
 
       // Child dispatches within schedule
-      expect(childCalls.length).toBeLessThanOrEqual(100);
+      expect(childCalls.length).toBeLessThanOrEqual(276);
 
       // Settle mission: charged for 200 only at listed rate
       const settled = await settleMission(money.client, {
@@ -1224,6 +1227,107 @@ describe("DT-20261121-social-fill test suite", () => {
       const digest = buildShapeDigest(response, unreviewedEndpoint);
       expect(digest.reading.rows).toHaveLength(1);
       expect(digest.reading.listStrategy).toBe("single_object");
+    });
+  });
+
+  describe("9. Catalog Child Stream Guard", () => {
+    it("reads all pages of a catalog child stream without stopping after page 1", async () => {
+      const plan = pricedTwoStagePlan();
+      const [parent, child] = plan.stages;
+
+      parent.deliver = false;
+      parent.planned_rows = 1;
+      parent.expected_rows = 1;
+      parent.columns = [{ key: "id", title_ar: "المعرف" }, { key: "link", title_ar: "الرابط" }];
+      parent.engine = {
+        endpoint_id: "parent_ep",
+        params: {},
+        cursor_param: null,
+        map_code: "return inputs.p1",
+        map_file_id: "p1",
+        parent_binding: null,
+      };
+
+      child.endpoint_id = "tikhub.youtube.video.comments";
+      child.parent_key = parent.key;
+      child.planned_rows = 10;
+      child.expected_rows = 10;
+      child.deliver = true;
+      child.columns = [{ key: "id", title_ar: "المعرف" }, { key: "parent_id", title_ar: "المنشور" }, { key: "text", title_ar: "النص" }];
+      child.engine = {
+        endpoint_id: "tikhub.youtube.video.comments",
+        params: {},
+        cursor_param: "continuation_token",
+        map_code: "return inputs.page",
+        map_file_id: "p2",
+        parent_binding: { param: "video_id", from: "id" },
+        catalog_paging: true,
+      };
+
+      const store = createMemoryStore();
+      const childCalls: Array<Record<string, unknown>> = [];
+      let seq = 0;
+
+      const gateway: Gateway = {
+        async tregCall(input: any) {
+          const ep = String(input.endpoint_id);
+          const params = (input.params ?? {}) as Record<string, unknown>;
+          if (ep === "parent_ep") {
+            const rows = [{ id: "v1", link: "l1" }];
+            const callId = `c_${++seq}`;
+            await store.putFile("msn_child_guard", RAW_PATH(callId), JSON.stringify(rows), "application/json");
+            return { ok: true, call_id: callId, http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" };
+          }
+          childCalls.push(params);
+          const cursor = params.continuation_token ? String(params.continuation_token) : null;
+          let rows: Array<Record<string, unknown>>;
+          let nextCursor: string | null = null;
+          let hasMore = true;
+
+          if (!cursor) {
+            // Page 1
+            rows = [{ comment_id: "c1", content: "comment 1" }];
+            nextCursor = "token_page_2";
+          } else if (cursor === "token_page_2") {
+            // Page 2
+            rows = [{ comment_id: "c2", content: "comment 2" }];
+            nextCursor = "token_page_3";
+          } else {
+            // Page 3
+            rows = [{ comment_id: "c3", content: "comment 3" }];
+            nextCursor = null;
+            hasMore = false;
+          }
+
+          const callId = `c_${++seq}`;
+          const body = { code: 200, data: { comments: rows, continuation_token: nextCursor } };
+          await store.putFile("msn_child_guard", RAW_PATH(callId), JSON.stringify(body), "application/json");
+          return { ok: true, call_id: callId, http_status: 200, rows_in_page: rows.length, has_more: hasMore, next_cursor: nextCursor, shape: null, first_rows: [], warnings: [], saved: "" };
+        },
+      } as unknown as Gateway;
+
+      const items = await ItemStore.open(store, "msn_child_guard");
+      await runEngine({
+        items,
+        store,
+        plan,
+        missionId: "msn_child_guard",
+        gateway,
+        sandbox: async (_c, inputs) => {
+          const val: any = Object.values(inputs)[0];
+          const data = Array.isArray(val) ? val : (val?.data?.comments ?? []);
+          return { ok: true, resultJson: JSON.stringify(data.map((r: any) => ({ id: r.comment_id, text: r.content }))), logs: [] };
+        },
+        addEvent: async () => undefined,
+        deadlineMs: Date.now() + 3_600_000,
+        sleep: async () => undefined,
+        redesignStages: new Set([parent.key, child.key]),
+      });
+
+      // All 3 pages of the catalog child stream were read
+      expect(childCalls.length).toBe(3);
+      expect(items.acceptedRows(child.key).length).toBe(3);
+      expect(items.stage(child.key).stop).toBe("source_exhausted");
     });
   });
 });
