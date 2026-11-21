@@ -139,8 +139,15 @@ export function decisionMakersLeftOutAr(people: ReadonlyArray<Record<string, unk
 /** The one line the card shows for a people stage that prefers a role: what is preferred, and that when fewer match the count is completed from the company's other people, with the titles exactly as the source gives them. No number, no provider. */
 export const roleLineAr = (role: RoleKey, parentNounSingularAr: string): string => {
   const def = roleDefOf(role);
-  return `نفضّل في كل ${parentNounSingularAr} من تدل مسمياتهم الوظيفية على أنهم ${def ? def.pluralAr : "المطلوبون"}؛ وإن لم يذكر المصدر عددًا كافيًا منهم يكتمل العدد من بقية موظفي ${parentNounSingularAr === "شركة" ? "الشركة" : `ال${parentNounSingularAr}`} بمسمياتهم كما ذكرها المصدر، ولا نضيف أي مسمى لم يذكره.`;
+  return `نستخرج ${def ? def.pluralAr : "المطلوبين"} في كل ${parentNounSingularAr}؛ وإن لم يتوفر العدد المطلوب بنفس المسمى يُستكمل من أقرب مسمى قيادي متاح في المصدر.`;
 };
+
+/** Shared helper: normalizes third-person customer phrasing (Egyptian or standard) to impersonal card phrasing. */
+export const impersonalAr = (t: string): string =>
+  t.replace(
+    /^\s*(?:ال)?(?:طالب|عميل|باحث|مستخدم)(?:ة)?\s+(?:عايز(?:ة)?|عاوز(?:ة)?|محتاج(?:ة)?|(?:ب)?(?:ي|ت)(?:ريد|طلب|حتاج|رغب|بحث\s+عن))\s+(?:أن\s+)?/u,
+    "المطلوب: "
+  );
 
 /**
  * THE TITLE OF A PEOPLE STAGE DOES NOT PROMISE A ROLE THE STAGE DOES NOT FILTER. The customer's «اتنين من المديرين» only RANKS the people of each company by the job title the source gives (never excludes: when fewer match, the count is completed from
