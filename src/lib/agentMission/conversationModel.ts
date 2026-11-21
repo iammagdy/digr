@@ -22,7 +22,7 @@ import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, re
  * ROUND 57 (13 Nov cosmetics conversation): two types that exist only while the customer HAS an open request. `open_request_question`: a question, a check or a condition about the plan on the card, answered from the plan's own facts with
  * nothing changed («البيانات دي جاية منين؟», «لو مش لاقي رقم سيبه فاضي»); `cancel_open_request`: the customer explicitly cancels the whole request (code cancels only when the words themselves say so, `isExplicitCancel`).
  */
-export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
+export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "privacy_refusal", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
 export type ChatType = (typeof CHAT_TYPES)[number];
 
 export type OpenState = "planning" | "needs_input" | "plan_ready";
@@ -166,6 +166,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- service_question: سؤال عن ديجر أو خدماتها أو أسعارها أو نقاطها أو رصيده أو طريقة العمل أو ما تقدر عليه، ومنه «يعني إيه ديجر الذكي؟».",
     "- methodology_request: يطلب منهجية (جمع البيانات أو منهجية بحث).",
     "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا عن موضوع آخر يختلف عن الطلب المفتوح (رسالة عن نفس الطلب أو خطته ليست data_request). ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
+    "- privacy_refusal: طلب بيانات شخصية خاصة لأفراد بعينهم (مثل: أرقام حساباتهم البنكية الشخصية أو أرصدتهم، أرقامهم القومية، كلمات المرور، ملفاتهم الطبية أو الخاصة، عناوين سكنهم الخاصة، هواتفهم أو بريدهم الشخصي، أو رسائلهم الخاصة). اكتب في reply رفضًا مهذبًا باللغة العربية يوضّح أن الخدمة لا تجمع البيانات الشخصية الخاصة للأفراد، واقترح بديلًا عامًا متاحًا ومفيدًا للبحث (مثل قائمة فروع البنوك وأرقام خدمة العملاء أو جهات اتصال العمل الرسمية للشركات)، بدون سؤال ولا خطة. أما طلب إيميلات أو هواتف العمل لمديري الشركات، أو قائمة فروع البنوك وأرقام خدمة عملائها العامة، فهو data_request وليس privacy_refusal.",
     "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
     "- open_request_question: سؤال أو استفسار أو تأكيد عن الطلب المفتوح وخطته، أو شرط موجود فيها بالفعل (ولا يصح إلا مع وجود طلب مفتوح). لا يغيّر شيئًا.",
     "- cancel_open_request: يطلب صراحةً إلغاء الطلب المفتوح كله (ولا يصح إلا مع وجود طلب مفتوح). أما حذف جزء منه فهو edit_of_open_request.",
@@ -178,7 +179,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
     "count_text: مع count فقط: الكلمات نفسها من رسالة العميل التي كتب بها العدد (مثل «شركتين» أو «اتنين» أو «عشر»)، كما هي في رسالته حرفيًا؛ وإلا null.",
-    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
+    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وprivacy_refusal وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
     "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
     "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
     "",
@@ -410,7 +411,7 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   // ROUND 57: while the customer HAS an open request, only a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) is overruled: the keyword reading of a follow-up
   // («أنا عايز أعرف البيانات دي جاية منين») made it a new mission of that sentence alone, which cancelled the plan the customer was asking about (13 Nov).
   const standalone = !ctx.open || (type !== "open_request_question" && type !== "cancel_open_request" && namesCollectibleData(ctx.message) && !refersToOpenRequest(ctx.message) && planQuestionKind(ctx.message) === null);
-  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
+  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && type !== "privacy_refusal" && classifyMessage(ctx.message) === "data_request";
   if (overruled) type = "data_request";
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
   const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null), ...(ctx.open?.state === "needs_input" ? numbersIn(String(ctx.open.questionAr ?? "")) : [])], facts: ctx.open?.facts ?? null };
