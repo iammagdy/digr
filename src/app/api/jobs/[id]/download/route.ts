@@ -74,9 +74,12 @@ export async function GET(
 
     if (job.endpoint_id === "agent-mission") {
       const unavailable = () => NextResponse.json({ success: false, error: "الملف المطلوب غير جاهز للتحميل بعد أو انتهت صلاحيته." }, { status: 404 });
-      const { data: receipt, error } = await adminClient.from("agent_delivery_receipts")
+      const { data, error } = await adminClient.from("agent_delivery_receipts")
         .select("mission_id,user_id,physical_units,xlsx_sha,xlsx_path,binding").eq("job_id", jobId).maybeSingle();
       if (error) return unavailable();
+      // Some clients retain the zero-row representation of an optional read.
+      // Any nonempty response still has to prove the sealed artifact below.
+      const receipt = Array.isArray(data) && data.length === 0 ? null : data;
       if (receipt) {
         const format = (req.nextUrl.searchParams.get("format") || "xlsx").toLowerCase();
         if ((format !== "xlsx" && format !== "csv") || req.nextUrl.searchParams.has("spec")) {

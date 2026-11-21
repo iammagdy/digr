@@ -32,7 +32,7 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
   const jobs = new Map<string, FakeJob>();
   const ledger: LedgerRow[] = [{ id: "top_1", delta: options.balance ?? 100_000, type: "topup" }];
   const calls: Array<{ name: string; args: any }> = [];
-  const executionCalls: typeof calls = [];
+  const rpcCalls: typeof calls = [];
   const attempts = new Map<string, DeliveryTrial>();
   const receipts = new Map<string, Record<string, unknown>>();
   let deliveryMissions: { get(id: string): { worker_id?: string | null; status?: string } | undefined; park(id: string, due: string): void } | undefined;
@@ -281,13 +281,13 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
     if (reserve?.job_id !== job.id || reserve?.delta !== -job.reserved_credits || ledger.some((row) => row.id === `chg_${job.id}`)) return no("unbound_money");
     const before = { ...job };
     const ledgerLength = ledger.length;
-    const replayLength = executionCalls.length;
+    const replayLength = calls.length;
     const run = (name: string, args: any) => {
       const fault = injected.get(name)?.shift();
       if (fault || (options.withoutPerStageSettlement && name === "settle_job_by_stage_atomic")) throw new Error(`injected failure in ${name}`);
       const result = handlers[name](args);
       if (result.error || result.data?.success !== true) throw new Error(`unconfirmed ${name}`);
-      executionCalls.push({ name, args });
+      calls.push(legacyMoneyCall({ name, args }));
       return result.data;
     };
     const billed = binding?.billable_units ?? 0;
@@ -306,14 +306,15 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
     } catch (error) {
       Object.assign(job, before);
       ledger.splice(ledgerLength);
-      executionCalls.splice(replayLength);
+      calls.splice(replayLength);
       return raise(String(error));
     }
   };
 
   const client = {
     rpc: async (name: string, args: any) => {
-      calls.push({ name, args });
+      rpcCalls.push({ name, args });
+      if (name !== JOURNAL_RPC && name !== FINALIZE_RPC) calls.push({ name, args });
       const h = handlers[name];
       if (options.withoutPerStageSettlement === true && name === "settle_job_by_stage_atomic") return { error: { code: "PGRST202", message: "Could not find the function public.settle_job_by_stage_atomic in the schema cache" } };
       if (!h) return { error: { message: `unknown function ${name}` } };
@@ -330,27 +331,21 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
   /** The NEXT call of `name` fails: "before" = it never ran, "after" = it ran and committed but the caller never got the answer. */
   const inject = (name: string, when: "before" | "after"): void => { injected.set(name, [...(injected.get(name) ?? []), when]); };
   function bindDeliveryMissions(source: NonNullable<typeof deliveryMissions>) { deliveryMissions = source; }
-  function legacyMoneyTrace() {
-    const original = calls.filter((call) => call.name !== JOURNAL_RPC && call.name !== FINALIZE_RPC);
-    return [...original, ...executionCalls.map((call) => {
-      if (call.name === "release_job_atomic") {
-        const { p_force: _force, ...args } = call.args;
-        return { name: call.name, args };
-      }
-      if (call.name === "settle_job_atomic" || call.name === "settle_job_by_stage_atomic") {
-        const path = call.args.p_result_file_id;
-        return { name: call.name, args: { ...call.args, p_result_file_id: typeof path === "string" ? path.replace(/\/sealed\/[a-f0-9]{64}\//, "/") : path } };
-      }
-      return call;
-    })];
+  function legacyMoneyCall(call: (typeof calls)[number]): (typeof calls)[number] {
+    if (call.name === "release_job_atomic") {
+      const { p_force: _force, ...args } = call.args;
+      return { name: call.name, args };
+    }
+    if (call.name === "settle_job_atomic" || call.name === "settle_job_by_stage_atomic") {
+      const path = call.args.p_result_file_id;
+      return { name: call.name, args: { ...call.args, p_result_file_id: typeof path === "string" ? path.replace(/\/sealed\/[a-f0-9]{64}\//, "/") : path } };
+    }
+    return call;
   }
   return {
     client, quotes, jobs, ledger, balance, inject, receipts, attempts, bindDeliveryMissions,
-    rpcCalls: calls,
-    // Existing suites compare the actual financial operations. Delivery-aware
-    // suites also assert the raw RPC journal, owner, permit and receipt.
-    get calls() { return legacyMoneyTrace(); },
-    legacyMoneyTrace,
+    // Keep the shared financial trace live for wrappers that copy this object.
+    calls, rpcCalls, legacyMoneyTrace: () => calls,
   };
 }
 

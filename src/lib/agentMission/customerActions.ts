@@ -1,5 +1,5 @@
 import { stage3QueueOn } from "./stage3/queueView";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, hash, randomBytes } from "node:crypto";
 import { AGENT_BUCKET, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
 import { approveMissionOnce, STALE_MISSION_PLAN_AR, type ApprovalSnapshot } from "./approval";
 import { MISSION_APPROVAL_PENDING_AR, repriceStoredPlan } from "./lifecycle";
@@ -582,7 +582,7 @@ export async function customerCsvFile(client: any, input: { id: string; userId: 
   } catch (e) {
     return isMissingObject(e) ? bad(404, CSV_SOURCE_MISSING_AR) : bad(502, CSV_STORAGE_FAILED_AR);
   }
-  if (sealed && createHash("sha256").update(bytes).digest("hex") !== source.sha256) return bad(500, CSV_UNREADABLE_AR);
+  if (sealed && hash("sha256", bytes) !== source.sha256) return bad(500, CSV_UNREADABLE_AR);
   let exp;
   try { exp = await csvExportFromWorkbook(bytes); } catch { return bad(500, CSV_UNREADABLE_AR); }
   const named = (kind: string) => missionDownloadName({ files: mission.files, kind, plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
