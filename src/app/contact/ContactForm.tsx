@@ -39,7 +39,7 @@ export default function ContactForm({ initialSettings = { supportEmail: "", what
   }
 
   const wa = whatsappHref(settings.whatsappNumber);
-  // The «coming soon» note appears only when NEITHER channel is set; with one set, the other card is simply not shown.
+  // The WhatsApp card renders only when a WhatsApp number is configured; the email card keeps the «coming soon» note when neither channel is set.
   const hasEmail = Boolean(settings.supportEmail);
   const hasAnyChannel = hasEmail || Boolean(wa);
   const field = "min-h-12 w-full rounded-xl border border-ln2 bg-bg px-3.5 text-base text-ink outline-none focus-visible:outline-2";
@@ -58,10 +58,10 @@ export default function ContactForm({ initialSettings = { supportEmail: "", what
               {settings.supportEmail ? <a href={`mailto:${settings.supportEmail}`} className="text-ink">{settings.supportEmail}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
             </p>
           </div>}
-          {(wa || !hasAnyChannel) && <div className="rounded-[18px] border border-ln bg-sf p-4">
+          {wa && <div className="rounded-[18px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">واتساب</p>
             <p className="mb-0 mt-1.5 text-[15px] text-ink" dir="ltr" style={{ textAlign: "right" }}>
-              {wa ? <a href={wa} dir="ltr" className="text-ink" rel="noopener noreferrer" target="_blank">{`+${toArabicDigits(settings.whatsappNumber)}`}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
+              <a href={wa} dir="ltr" className="text-ink" rel="noopener noreferrer" target="_blank">{`+${toArabicDigits(settings.whatsappNumber)}`}</a>
             </p>
           </div>}
         </div>
