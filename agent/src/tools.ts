@@ -1,3 +1,4 @@
+import { effectiveJobPointsCap } from "../../src/lib/jobPointsCap";
 import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
 import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
@@ -330,6 +331,7 @@ function createPlanCoordinator(ctx: ToolContext) {
       ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
       isContactSource,
       pricingSettings: ctx.pricingSettings,
+      holdCapPoints: effectiveJobPointsCap(),
       ...(ctx.understoodPeople ? { understoodPeople: ctx.understoodPeople } : {}),
       childStepSources: (noun: string) => { if (proposalCompaniesOnlyAfterAnswer) return []; const ok = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed; return ctx.understoodPeople ? peopleSourcesForCompanies(ctx.catalog, ok) : childStepSourcesFor(noun, ctx.catalog, ok); },
       contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),

@@ -1,4 +1,3 @@
-import { effectiveJobPointsCap } from "../jobPointsCap";
 import { sampleCellText } from "./sampleLinks";
 import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
@@ -191,6 +190,8 @@ export interface PlanLookup {
   isContactSource?(endpointId: string): boolean;
   /** The markup and the minimum charge in force (the admin's settings); the defaults when absent. */
   pricingSettings?: MissionPricingSettings;
+  /** An active planning flow supplies the current hold cap and can show a locked preview. */
+  holdCapPoints?: number;
   /** The catalog sources that can carry out a step the request asks per parent (the people of a company), cheapest first: a plan may not call such a step «unserved» while one of them was never tried. */
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
   /** THE REQUEST'S STRUCTURE as the planning model understood it (a people step under a companies step), read from its understanding, never from the words: the people of the companies are asked for whatever the customer's wording, so the check below treats them as a step. */
@@ -1030,7 +1031,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const supportsReduction = fixedCountBasket(basket) !== null;
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), {
     settings: lookup.pricingSettings,
-    ...(supportsReduction ? { capPoints: effectiveJobPointsCap() } : {}),
+    ...(supportsReduction && lookup.holdCapPoints !== undefined ? { capPoints: lookup.holdCapPoints } : {}),
   });
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
@@ -1055,7 +1056,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     ok: false,
     issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`],
     ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}),
-    ...(supportsReduction && mediaUnproven.length === 0 ? { overCapPlan: { ...plan, hold_cap_preview: true } } : {}),
+    ...(supportsReduction && lookup.holdCapPoints !== undefined && mediaUnproven.length === 0 ? { overCapPlan: { ...plan, hold_cap_preview: true } } : {}),
   };
   return { ok: true, plan, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }

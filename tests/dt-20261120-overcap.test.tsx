@@ -1,3 +1,4 @@
+import { effectiveJobPointsCap } from "../src/lib/jobPointsCap";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
@@ -32,6 +33,7 @@ function companyPlan() {
     call: () => ({ id: "call_0001", endpointId, ok: true, costUsd: 0.05, rows: 10 }),
     evidenceText: () => `شركة مثال ${timestamp}`,
     endpointAllowed: () => true,
+    holdCapPoints: effectiveJobPointsCap(),
   });
   return checked;
 }
