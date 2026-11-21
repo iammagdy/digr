@@ -96,7 +96,9 @@ const RETRY_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source
 export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
   const { items, plan } = deps;
   const stops: Record<string, StopReason> = {};
-  const schedule = plan.price.listedRate ? executionFundingSchedule(stagePriceInputs(plan.stages)) : null;
+  const schedule = deps.fundingSchedule !== undefined
+    ? deps.fundingSchedule
+    : (plan.price.listedRate ? executionFundingSchedule(stagePriceInputs(plan.stages)) : null);
   for (const stage of plan.stages) {
     if (deps.onlyStages && !deps.onlyStages.has(stage.key)) continue;
     const spec = stage.engine;
