@@ -352,8 +352,8 @@ describe("DT-20261121-social-fill test suite", () => {
         6: [{ id: "p16", link: "l16" }, { id: "p17", link: "l17" }, { id: "p18", link: "l18" }],
         7: [{ id: "p19", link: "l19" }],
         8: [{ id: "p20", link: "l20" }],
-        9: [{ id: "p21", link: "l21" }, { id: "p22", link: "l22" }, { id: "p23", link: "l23" }],
-        10: [{ id: "p24", link: "l24" }, { id: "p25", link: "l25" }, { id: "p26", link: "l26" }],
+        9: [{ id: "p20", link: "l20" }], // Duplicate page: repeats post 20 and points to page 10
+        10: [{ id: "p21", link: "l21" }, { id: "p22", link: "l22" }, { id: "p23", link: "l23" }, { id: "p24", link: "l24" }, { id: "p25", link: "l25" }], // 5 new posts x 8 comments
       };
 
       const gateway: Gateway = {
@@ -448,7 +448,7 @@ describe("DT-20261121-social-fill test suite", () => {
       // stage_1_read >= stage_1_used
       const counts = parentCountsOf(plan, rowsByStage);
       expect(counts.stage_1_read).toBeGreaterThanOrEqual(counts.stage_1_used);
-      expect(counts.stage_1_read).toBe(26);
+      expect(counts.stage_1_read).toBe(25);
       expect(counts.stage_1_used).toBeGreaterThanOrEqual(25);
     });
   });
@@ -585,6 +585,136 @@ describe("DT-20261121-social-fill test suite", () => {
       expect(settled.ok).toBe(true);
       if (!settled.ok) throw new Error(settled.code);
       expect(settled.chargedPoints).toBe(Math.ceil(162 * unitPoints));
+    });
+
+    it("handles repeated-cursor case: page 9 returns the same cursor again without looping endlessly", async () => {
+      const plan = pricedTwoStagePlan();
+      const [posts, comments] = plan.stages;
+
+      const unitPoints = 1.034;
+      posts.endpoint_id = "fb_posts";
+      posts.deliver = false;
+      posts.planned_rows = 20;
+      posts.expected_rows = 20;
+      posts.columns = [{ key: "text", title_ar: "النص" }, { key: "link", title_ar: "الرابط" }];
+      posts.measured_cost_per_row_usd = 0.002 / 3;
+      posts.execution_funding = [{ rowsPerPage: 3, callUsdMicro: 2000, mode: "paged" }];
+      posts.engine = {
+        endpoint_id: "fb_posts",
+        params: {},
+        cursor_param: "cursor",
+        map_code: "return inputs.page",
+        map_file_id: "p1",
+        parent_binding: null,
+      };
+
+      comments.endpoint_id = "fb_comments";
+      comments.parent_key = "posts";
+      comments.planned_rows = 200;
+      comments.expected_rows = 200;
+      comments.deliver = true;
+      comments.columns = [{ key: "id", title_ar: "المعرف" }, { key: "parent_id", title_ar: "المنشور" }, { key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }];
+      comments.measured_cost_per_row_usd = 0.00188 / 2;
+      comments.listed_rate = { unitPoints, nounAr: "تعليق" };
+      comments.execution_funding = [{ rowsPerPage: 2, callUsdMicro: 1880, mode: "paged" }];
+      delete comments.per_parent_rows;
+      comments.engine = {
+        endpoint_id: "fb_comments",
+        params: {},
+        cursor_param: "cursor",
+        map_code: "return inputs.page",
+        map_file_id: "p2",
+        parent_binding: { param: "url", from: "link" },
+        fill_total_across_parents: true,
+        catalog_paging: true,
+      };
+
+      plan.summary_ar = "ستحصل على ٢٠٠ تعليق من فيسبوك.";
+      plan.quantity = { requested: 200, target: 200, stage_key: comments.key, source: "edit" };
+      plan.price = priceMissionByCode(stagePriceInputs(plan.stages));
+
+      const store = createMemoryStore();
+      const parentCalls: Array<Record<string, unknown>> = [];
+      let seq = 0;
+
+      const postsPerPage: Record<number, Array<{ id: string; link: string }>> = {
+        1: [{ id: "p1", link: "l1" }, { id: "p2", link: "l2" }, { id: "p3", link: "l3" }],
+        2: [{ id: "p4", link: "l4" }, { id: "p5", link: "l5" }, { id: "p6", link: "l6" }],
+        3: [{ id: "p7", link: "l7" }, { id: "p8", link: "l8" }, { id: "p9", link: "l9" }],
+        4: [{ id: "p10", link: "l10" }, { id: "p11", link: "l11" }, { id: "p12", link: "l12" }],
+        5: [{ id: "p13", link: "l13" }, { id: "p14", link: "l14" }, { id: "p15", link: "l15" }],
+        6: [{ id: "p16", link: "l16" }, { id: "p17", link: "l17" }, { id: "p18", link: "l18" }],
+        7: [{ id: "p19", link: "l19" }],
+        8: [{ id: "p20", link: "l20" }],
+        9: [{ id: "p20", link: "l20" }],
+      };
+
+      const gateway: Gateway = {
+        async tregCall(input: any) {
+          const ep = String(input.endpoint_id);
+          const params = (input.params ?? {}) as Record<string, unknown>;
+          let rows: Array<Record<string, unknown>>;
+          let nextCursor: string | null = null;
+          let hasMore = true;
+
+          if (ep === "fb_posts") {
+            parentCalls.push(params);
+            const pageNum = params.cursor ? parseInt(String(params.cursor).replace("page_", ""), 10) : 1;
+            rows = (postsPerPage[pageNum] ?? []).map((p) => ({ ...p, text: `منشور ${p.id}` }));
+            if (pageNum === 8) {
+              nextCursor = "page_9";
+              hasMore = true;
+            } else if (pageNum >= 9) {
+              // Page 9 returns the same cursor "page_9" again!
+              nextCursor = "page_9";
+              hasMore = true;
+            } else {
+              nextCursor = `page_${pageNum + 1}`;
+            }
+          } else {
+            const url = String(params.url);
+            const postNum = parseInt(url.replace("l", ""), 10);
+            const count = postNum <= 2 ? 9 : 8;
+            rows = Array.from({ length: count }, (_, k) => ({
+              id: `c_${postNum}_${k + 1}`,
+              parent_id: `p${postNum}`,
+              text: `تعليق ${k + 1}`,
+            }));
+          }
+          const callId = `call_${String(++seq).padStart(4, "0")}`;
+          await store.putFile("msn_rep_cur", RAW_PATH(callId), JSON.stringify(rows), "application/json");
+          return { ok: true, call_id: callId, http_status: 200, rows_in_page: rows.length, has_more: hasMore, next_cursor: nextCursor, shape: null, first_rows: [], warnings: [], saved: "" };
+        },
+      } as unknown as Gateway;
+
+      const money = fakeMoneyClient();
+      const approval = await approveMission(money.client, { id: "msn_rep_cur", user_id: "user1", plan });
+      expect(approval.ok).toBe(true);
+      if (!approval.ok) throw new Error(approval.code);
+
+      const items = await ItemStore.open(store, "msn_rep_cur");
+      await runEngine({
+        items,
+        store,
+        plan,
+        missionId: "msn_rep_cur",
+        gateway,
+        sandbox: async (_c, inputs) => ({ ok: true, resultJson: JSON.stringify(Object.values(inputs)[0]), logs: [] }),
+        addEvent: async () => undefined,
+        deadlineMs: Date.now() + 3_600_000,
+        sleep: async () => undefined,
+        redesignStages: new Set(["posts", "comments"]),
+        fundingSchedule: new Map([
+          ["posts", { calls: 14, costUsdMicro: 2000 }],
+          ["comments", { calls: 100, costUsdMicro: 1880 }],
+        ]),
+      });
+
+      const delivered = items.acceptedRows("comments");
+      expect(delivered.length).toBe(162);
+      expect(items.stage("comments").stop).toBe("source_exhausted");
+      // Call count is bounded: exactly 9 calls dispatched
+      expect(parentCalls.length).toBe(9);
     });
   });
 
@@ -920,7 +1050,7 @@ describe("DT-20261121-social-fill test suite", () => {
           understanding_ar: request,
           steps: [
             { key: "videos", title_ar: "الفيديوهات", platform: "youtube", capability: "youtube.search.videos", parent: null, deliver: false, count: { total: 4, per_parent: null, all: false }, source: null, topic: "الفلك", search_terms: ["الفلك"], period: null },
-            { key: "comments", title_ar: "التعليقات", platform: "youtube", capability: "youtube.video.comments", parent: "videos", deliver: true, count: { total: 20, per_parent: null, all: false }, source: null, topic: null, search_terms: [], period: null },
+            { key: "comments", title_ar: "التعليقات", platform: "youtube", capability: "youtube.video.comments", parent: "videos", deliver: true, count: { total: 8, per_parent: null, all: false }, source: null, topic: null, search_terms: [], period: null },
           ],
         },
       };
@@ -948,7 +1078,7 @@ describe("DT-20261121-social-fill test suite", () => {
         return { input: {}, costUsd: 0 };
       };
 
-      await planWithLlm({ words: ["الفلك"], request }, {
+      const res = await planWithLlm({ words: ["الفلك"], request }, {
         catalog,
         access: null,
         today: "2026-11-21",
@@ -976,6 +1106,76 @@ describe("DT-20261121-social-fill test suite", () => {
 
       // Verify scrapecreators was reached and evaluated thanks to fair probeStep budgeting
       expect(probedEndpoints).toContain("scrapecreators.youtube.video.comments");
+      expect(res.kind).toBe("plan");
+      if (res.kind === "plan") {
+        expect(res.plan.stages[1].endpoint_id).toBe("scrapecreators.youtube.video.comments");
+        expect(res.plan.stages[1].sample_rows).toHaveLength(2);
+        expect(res.plan.stages[1].sample_rows[0].text).toBe("cmt1");
+      }
+    });
+
+    it("offers no plan card when all comment tools return empty or terminal wrappers", async () => {
+      const request = "هات فيديوهات وتعليقات";
+      const answers: Record<string, unknown> = {
+        request_plan: {
+          decision: "plan",
+          understanding_ar: request,
+          steps: [
+            { key: "videos", title_ar: "الفيديوهات", platform: "youtube", capability: "youtube.search.videos", parent: null, deliver: false, count: { total: 4, per_parent: null, all: false }, source: null, topic: "الفلك", search_terms: ["الفلك"], period: null },
+            { key: "comments", title_ar: "التعليقات", platform: "youtube", capability: "youtube.video.comments", parent: "videos", deliver: true, count: { total: 8, per_parent: null, all: false }, source: null, topic: null, search_terms: [], period: null },
+          ],
+        },
+      };
+
+      const model = async ({ tool, user }: any) => {
+        if (tool.name === "request_plan") return { input: answers.request_plan, costUsd: 0 };
+        if (tool.name === "tool_choice") {
+          if (user.includes('"key":"videos"')) {
+            return { input: { options: [{ endpoint_id: "tikhub.youtube.search.videos", params: { keyword: "الفلك" }, cursor_input: null, parent_input: null }] }, costUsd: 0 };
+          }
+          return {
+            input: {
+              options: [
+                { endpoint_id: "tikhub.youtube.video.comments", params: {}, cursor_input: "continuation_token", parent_input: { param: "video_id", from_field: "id" } },
+                { endpoint_id: "crawl4ai.youtube.video.comments", params: {}, cursor_input: null, parent_input: { param: "video", from_field: "id" } },
+                { endpoint_id: "scrapecreators.youtube.video.comments", params: {}, cursor_input: null, parent_input: { param: "url", from_field: "link" } },
+              ],
+            },
+            costUsd: 0,
+          };
+        }
+        if (tool.name === "field_map") {
+          return { input: { fields: { id: ["video_id", "id"], text: ["title", "text"], link: ["url"] }, extra: [] }, costUsd: 0 };
+        }
+        return { input: {}, costUsd: 0 };
+      };
+
+      const res = await planWithLlm({ words: ["الفلك"], request }, {
+        catalog,
+        access: null,
+        today: "2026-11-21",
+        model,
+        probe: async (id, params) => {
+          if (id === "tikhub.youtube.search.videos") {
+            return { ok: true, call_id: "c_v", http_status: 200, rows_in_page: 4, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "c_v" };
+          }
+          if (id === "tikhub.youtube.video.comments") {
+            return { ok: true, call_id: "c_c1", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "c_c1" };
+          }
+          if (id === "crawl4ai.youtube.video.comments") {
+            return { ok: true, call_id: "c_c2", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "c_c2" };
+          }
+          return { ok: true, call_id: "c_c3", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "c_c3" };
+        },
+        readPage: async (callId) => {
+          if (callId === "c_v") return { data: { videos: [{ video_id: "v1", title: "ت1", url: "https://youtube.com/watch?v=v1" }] } };
+          if (callId === "c_c1") return { code: 200, data: { comments: null, continuation_token: null } };
+          if (callId === "c_c2") return [];
+          return [];
+        },
+      });
+
+      expect(res.kind).not.toBe("plan");
     });
   });
 

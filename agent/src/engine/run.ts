@@ -154,6 +154,9 @@ async function expandNextParent(
   if (!parentStream || parentStream.ended || parentStream.barren >= BARREN_PAGES) {
     return { added: 0, stop: "source_exhausted", aborted: null };
   }
+  if (parentStream.cursor !== null && parentStream.visitedPositions.has(parentStream.cursor)) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
   if (parentSpec.sources?.length || !parentSpec.cursor_param) {
     return { added: 0, stop: "source_exhausted", aborted: null };
   }
@@ -166,6 +169,13 @@ async function expandNextParent(
   }
   if (deps.items.stage(parentStage.key).fundedCalls >= parentFunding.calls) {
     return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  if ((deps.now ?? Date.now)() >= deps.deadlineMs) {
+    return { added: 0, stop: "time_limit", aborted: null };
+  }
+  const outside = deps.shouldStop?.() ?? null;
+  if (outside) {
+    return { added: 0, stop: "failed", aborted: outside };
   }
 
   const before = deps.items.counts(parentStage.key).accepted;
@@ -390,24 +400,43 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
       last = expanded.stop;
       break;
     }
-    if (expanded.added === 0) {
-      last = expanded.stop;
+
+    if (expanded.added > 0) {
+      const freshParents = items.acceptedRows(parentKey).slice(-expanded.added);
+      for (const p of freshParents) {
+        if (items.counts(stage.key).accepted >= stage.planned_rows) break;
+        const res = await collectParentChildren(deps, ctx, p, capForParent);
+        if (res.aborted) return { reason: res.stop, aborted: res.aborted };
+        if (FATAL_STOPS.has(res.stop)) return { reason: res.stop, aborted: null };
+        if (res.failed) {
+          failedInARow += 1;
+          anyFailed = true;
+          if (failedInARow >= 3) return { reason: "failed", aborted: null };
+        } else {
+          failedInARow = 0;
+          last = res.stop;
+        }
+      }
+      if (items.counts(stage.key).accepted >= stage.planned_rows) break;
+    }
+
+    if (expanded.stop === "source_exhausted") {
+      last = "source_exhausted";
       break;
     }
-    const freshParents = items.acceptedRows(parentKey).slice(-expanded.added);
-    for (const p of freshParents) {
-      if (items.counts(stage.key).accepted >= stage.planned_rows) break;
-      const res = await collectParentChildren(deps, ctx, p, capForParent);
-      if (res.aborted) return { reason: res.stop, aborted: res.aborted };
-      if (FATAL_STOPS.has(res.stop)) return { reason: res.stop, aborted: null };
-      if (res.failed) {
-        failedInARow += 1;
-        anyFailed = true;
-        if (failedInARow >= 3) return { reason: "failed", aborted: null };
-      } else {
-        failedInARow = 0;
-        last = res.stop;
-      }
+    const parentStream = deps.items.streamState(parentStage.key, "root");
+    if (!parentStream || parentStream.ended || parentStream.barren >= BARREN_PAGES) {
+      last = "source_exhausted";
+      break;
+    }
+    if (parentStream.cursor !== null && parentStream.visitedPositions.has(parentStream.cursor)) {
+      last = "source_exhausted";
+      break;
+    }
+    if (expanded.added === 0) {
+      // Parent page brought no new parents, but parent root stream moved to a new live cursor and barren < BARREN_PAGES.
+      // Keep looping to fetch the next funded parent page.
+      continue;
     }
   }
 
@@ -720,7 +749,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const cursor = state?.cursor ?? null;
     const paging = spec.catalog_paging === true ? missionPageOf(spec.endpoint_id) : undefined;
     const isCatalogPaging = paging !== undefined;
-    if (isCatalogPaging && cursor !== null && state?.visitedPositions?.has(cursor)) {
+    if (cursor !== null && (isCatalogPaging || state?.visitedPositions?.has(cursor))) {
       return { reason: "source_exhausted", aborted: null };
     }
     const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
@@ -771,7 +800,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
     const guaranteeCount = deps.redesignStages?.has(stage.key) === true || isCatalogPaging;
     let ended = pageMode && !reading ? rowsInPage === 0 : !nextCursor || (rowsInPage === 0 && !guaranteeCount) || hasMore === false || !spec.cursor_param;
-    if (isCatalogPaging && nextCursor) {
+    if (nextCursor) {
       if (nextCursor === cursor || state?.visitedPositions?.has(nextCursor)) {
         ended = true;
       }
