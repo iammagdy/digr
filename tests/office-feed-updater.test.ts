@@ -36,7 +36,6 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
       path.join(statusDir, "salem.jsonl"),
       JSON.stringify({
         bot: "salem",
-        state: "working",
         task_id: "DT-WAIT-01",
         updated_at: twoHoursAgo,
         open_order: true,
@@ -157,8 +156,8 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
       nowMs: now,
     });
 
-    // Johnny has exact 72% from status.md
-    expect(feed.bots.johnny.percent).toBe(72);
+    // Johnny has exact 50% from his own line (not 72 from status.md)
+    expect(feed.bots.johnny.percent).toBe(50);
 
     // Nafady has null percent (no percent shown for idle / no task)
     expect(feed.bots.nafady.percent).toBeNull();
@@ -388,5 +387,267 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
       expect(b).toHaveProperty("last_active");
       expect(b.updated_at).toBe(b.last_active);
     }
+  });
+
+  describe("DT-20261121-office-pct: Percent priorities, own states, and alias fixes", () => {
+    it("(a) two bots on the same task with own % 10 and 60 -> feed 10 and 60 (not the task %)", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-a-"));
+      const statusDir = path.join(tmpDir, "status");
+      const tasksDir = path.join(tmpDir, "tasks");
+      fs.mkdirSync(statusDir, { recursive: true });
+      fs.mkdirSync(tasksDir, { recursive: true });
+
+      const now = Date.now();
+      const taskDir = path.join(tasksDir, "DT-SHARED-01");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "status.md"),
+        "state: working\npercent: 55\nstep: shared task\n"
+      );
+
+      // Ashraf: own percent 10
+      fs.writeFileSync(
+        path.join(statusDir, "ashraf.jsonl"),
+        JSON.stringify({
+          bot: "ashraf",
+          state: "working",
+          task_id: "DT-SHARED-01",
+          percent: 10,
+          updated_at: new Date(now).toISOString(),
+          open_order: true,
+        }) + "\n"
+      );
+
+      // Nafady: own percent 60
+      fs.writeFileSync(
+        path.join(statusDir, "nafady.jsonl"),
+        JSON.stringify({
+          bot: "nafady",
+          state: "working",
+          task_id: "DT-SHARED-01",
+          percent: 60,
+          updated_at: new Date(now).toISOString(),
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir,
+        nowMs: now,
+      });
+
+      expect(feed.bots.ashraf.percent).toBe(10);
+      expect(feed.bots.nafady.percent).toBe(60);
+    });
+
+    it("(b) line without percent + task status 45 -> 45", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-b-"));
+      const statusDir = path.join(tmpDir, "status");
+      const tasksDir = path.join(tmpDir, "tasks");
+      fs.mkdirSync(statusDir, { recursive: true });
+      fs.mkdirSync(tasksDir, { recursive: true });
+
+      const now = Date.now();
+      const taskDir = path.join(tasksDir, "DT-FB-01");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "status.md"),
+        "state: working\npercent: 45\nstep: fallback test\n"
+      );
+
+      // Salem line without percent
+      fs.writeFileSync(
+        path.join(statusDir, "salem.jsonl"),
+        JSON.stringify({
+          bot: "salem",
+          state: "working",
+          task_id: "DT-FB-01",
+          updated_at: new Date(now).toISOString(),
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir,
+        nowMs: now,
+      });
+
+      expect(feed.bots.salem.percent).toBe(45);
+    });
+
+    it("(c) line idle while task status says working -> idle, never stuck", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-c-"));
+      const statusDir = path.join(tmpDir, "status");
+      const tasksDir = path.join(tmpDir, "tasks");
+      fs.mkdirSync(statusDir, { recursive: true });
+      fs.mkdirSync(tasksDir, { recursive: true });
+
+      const now = Date.now();
+      const taskDir = path.join(tasksDir, "DT-IDLE-01");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "status.md"),
+        "state: working\npercent: 98\nstep: busy task\n"
+      );
+
+      // Fazza line is idle, 50 min old (older than 45 min stale cutoff)
+      const fiftyMinAgo = new Date(now - 50 * 60 * 1000).toISOString();
+      fs.writeFileSync(
+        path.join(statusDir, "fazza.jsonl"),
+        JSON.stringify({
+          bot: "fazza",
+          state: "idle",
+          task_id: "DT-IDLE-01",
+          updated_at: fiftyMinAgo,
+          open_order: false,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir,
+        nowMs: now,
+      });
+
+      expect(feed.bots.fazza.state).toBe("idle");
+      expect(feed.bots.fazza.state).not.toBe("stuck");
+    });
+
+    it("(d) line working, 50 min old -> stuck; line working 5 min old -> working", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-d-"));
+      const statusDir = path.join(tmpDir, "status");
+      fs.mkdirSync(statusDir, { recursive: true });
+
+      const now = Date.now();
+      const fiftyMinAgo = new Date(now - 50 * 60 * 1000).toISOString();
+      const fiveMinAgo = new Date(now - 5 * 60 * 1000).toISOString();
+
+      // Hagras: working, 50 min old
+      fs.writeFileSync(
+        path.join(statusDir, "hagras.jsonl"),
+        JSON.stringify({
+          bot: "hagras",
+          state: "working",
+          updated_at: fiftyMinAgo,
+          open_order: true,
+        }) + "\n"
+      );
+
+      // Johnny: working, 5 min old
+      fs.writeFileSync(
+        path.join(statusDir, "johnny.jsonl"),
+        JSON.stringify({
+          bot: "johnny",
+          state: "working",
+          updated_at: fiveMinAgo,
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir: tmpDir,
+        workDirs: {},
+        nowMs: now,
+      });
+
+      expect(feed.bots.hagras.state).toBe("stuck");
+      expect(feed.bots.johnny.state).toBe("working");
+    });
+
+    it("(e) line waiting 3 h old -> waiting, never stuck", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-e-"));
+      const statusDir = path.join(tmpDir, "status");
+      fs.mkdirSync(statusDir, { recursive: true });
+
+      const now = Date.now();
+      const threeHoursAgo = new Date(now - 3 * 60 * 60 * 1000).toISOString();
+
+      fs.writeFileSync(
+        path.join(statusDir, "salem.jsonl"),
+        JSON.stringify({
+          bot: "salem",
+          state: "waiting",
+          updated_at: threeHoursAgo,
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir: tmpDir,
+        workDirs: {},
+        nowMs: now,
+      });
+
+      expect(feed.bots.salem.state).toBe("waiting");
+      expect(feed.bots.salem.state).not.toBe("stuck");
+    });
+
+    it("(f) line with keys task + ts -> percent and updated_at read", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-f-"));
+      const statusDir = path.join(tmpDir, "status");
+      fs.mkdirSync(statusDir, { recursive: true });
+
+      const isoTime = "2026-11-21T10:15:30Z";
+      fs.writeFileSync(
+        path.join(statusDir, "marbouha.jsonl"),
+        JSON.stringify({
+          bot: "marbouha",
+          state: "working",
+          task: "DT-ALIAS-01",
+          ts: isoTime,
+          percent: 85,
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir: tmpDir,
+        workDirs: {},
+        nowMs: Date.parse(isoTime) + 60000,
+      });
+
+      expect(feed.bots.marbouha.percent).toBe(85);
+      expect(feed.bots.marbouha.updated_at).toBe(isoTime);
+    });
+
+    it("(g) task_id 'DT-x LIVE check' -> task DT-x", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-test-pct-g-"));
+      const statusDir = path.join(tmpDir, "status");
+      const tasksDir = path.join(tmpDir, "tasks");
+      fs.mkdirSync(statusDir, { recursive: true });
+      fs.mkdirSync(tasksDir, { recursive: true });
+
+      const taskDir = path.join(tasksDir, "DT-X");
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(taskDir, "status.md"),
+        "state: working\npercent: 68\nstep: live check on prod\n"
+      );
+
+      const now = Date.now();
+      fs.writeFileSync(
+        path.join(statusDir, "elkebir.jsonl"),
+        JSON.stringify({
+          bot: "elkebir",
+          state: "working",
+          task_id: "DT-X LIVE check on prod",
+          updated_at: new Date(now).toISOString(),
+          open_order: true,
+        }) + "\n"
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir,
+        nowMs: now,
+      });
+
+      expect(feed.bots.elkebir.percent).toBe(68);
+    });
   });
 });
