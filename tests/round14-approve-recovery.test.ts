@@ -47,7 +47,8 @@ describe("the approve click", () => {
     expect((await approveWithRecovery(waiting.deps)) as { ok: boolean; error: string }).toMatchObject({ ok: false, error: "تعذّر اعتماد الخطة الآن؛ حاول بعد قليل. لم يُخصم شيء." });
     const unknown = make(["throw", "throw"], [null]);
     expect(await approveWithRecovery(unknown.deps)).toEqual({ ok: false, error: APPROVE_UNKNOWN_AR, retriable: true });
-    expect(APPROVE_UNKNOWN_AR).not.toContain("لم يُخصم");
+    expect(APPROVE_UNKNOWN_AR).toContain("وإن بقيت الخطة بانتظار اعتمادك فلم يُخصم شيء ويمكنك الضغط على «اعتمد» مجددًا.");
+    expect(APPROVE_UNKNOWN_AR).not.toContain("لم نستطع تأكيد الاعتماد الآن");
     expect(checkCustomerText(APPROVE_UNKNOWN_AR, { maxChars: 400 }).issues).toEqual([]);
   });
   it("two failed requests but the mission is running: it WAS approved, so it is a success", async () => {

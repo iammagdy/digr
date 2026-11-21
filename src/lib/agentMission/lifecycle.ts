@@ -32,7 +32,7 @@ const APPROVE_FAILURES: Record<string, string> = {
   // a plan with an ESTIMATED people stage is settled per stage (stageUnits.ts): when the database cannot do that yet, nothing is held and nothing is charged
   settle_unavailable: "تعذّر التأكد من جاهزية التسوية لهذه المهمة، ولم يُحجز أي رصيد. حاول بعد قليل.",
 };
-export const MISSION_APPROVAL_PENDING_AR = "نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.";
+export const MISSION_APPROVAL_PENDING_AR = "نتحقق الآن من اعتماد طلبك بعد انقطاع مؤقت، ولن تُحجز نقاطك مرتين. حدّث الصفحة للاطّلاع على أحدث حالة.";
 
 const fail = (code: string): ApproveResult => ({ ok: false, code, messageAr: APPROVE_FAILURES[code] ?? "تعذّر اعتماد المهمة." });
 

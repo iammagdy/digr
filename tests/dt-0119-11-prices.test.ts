@@ -120,7 +120,8 @@ describe("D7: an unapproved card quoted before the correction is refused at appr
     expect(out).toMatchObject({ ok: false, code: "plan_changed" });
     expect(rpc).not.toHaveBeenCalled();
     expect(client.from).not.toHaveBeenCalled();
-    expect(readFileSync(`${process.cwd()}/src/lib/agentMission/customerActions.ts`, "utf8")).toContain("plan_changed: \"تغيّر سعر الخطة؛ اطلب المهمة من جديد ليُحسب لك سعر محدّث.\"");
+    expect(readFileSync(`${process.cwd()}/src/lib/agentMission/customerActions.ts`, "utf8")).toContain("plan_changed: \"تغيّر سعر الخطة في النظام، ولم يُخصم شيء من رصيدك. أعد إرسال الطلب ليُحسب لك بالسعر المحدّث.\"");
+    expect(readFileSync(`${process.cwd()}/src/lib/agentMission/customerActions.ts`, "utf8")).not.toContain("تغيّر سعر الخطة؛ اطلب المهمة من جديد");
   });
 });
 

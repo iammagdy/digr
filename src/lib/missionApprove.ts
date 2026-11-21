@@ -19,7 +19,7 @@ export type ApproveOutcome = { ok: true; viaRead: boolean } | { ok: false; error
 /** Statuses worth one more try with a fresh session: no token (401), the gate or the platform answering for a moment (502, 503, 504), a request that never completed (0). A business answer (402, 403, 409, 429) is final. */
 export const RETRIABLE_APPROVE_STATUSES: ReadonlySet<number> = new Set([0, 401, 502, 503, 504]);
 
-export const APPROVE_UNKNOWN_AR = "لم نستطع تأكيد الاعتماد الآن. حدّث الصفحة وتحقق من «طلباتي»: إن كانت المهمة تعمل فقد اعتُمدت، وإن بقيت الخطة تنتظر اعتمادك فاضغط «اعتمد» مرة أخرى.";
+export const APPROVE_UNKNOWN_AR = "تعذّر تأكيد الاعتماد بسبب انقطاع الاتصال. حدّث الصفحة وتحقق من «طلباتي»: إن كانت المهمة تعمل فقد بدأت، وإن بقيت الخطة بانتظار اعتمادك فلم يُخصم شيء ويمكنك الضغط على «اعتمد» مجددًا.";
 
 export async function approveWithRecovery(deps: ApproveDeps): Promise<ApproveOutcome> {
   let last: { status: number; error: string } = { status: 0, error: "" };
