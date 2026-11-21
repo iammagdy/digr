@@ -102,7 +102,7 @@ describe("DT-20261121-social-fill test suite", () => {
       ];
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           let rows: Array<Record<string, unknown>>;
@@ -240,7 +240,7 @@ describe("DT-20261121-social-fill test suite", () => {
       ];
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           let rows: Array<Record<string, unknown>>;
@@ -357,7 +357,7 @@ describe("DT-20261121-social-fill test suite", () => {
       };
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           let rows: Array<Record<string, unknown>>;
@@ -515,7 +515,7 @@ describe("DT-20261121-social-fill test suite", () => {
       };
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           let rows: Array<Record<string, unknown>>;
@@ -641,7 +641,7 @@ describe("DT-20261121-social-fill test suite", () => {
       };
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           let rows: Array<Record<string, unknown>>;
@@ -721,7 +721,7 @@ describe("DT-20261121-social-fill test suite", () => {
       let seq = 0;
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           if (ep === "fb_posts") {
@@ -784,7 +784,7 @@ describe("DT-20261121-social-fill test suite", () => {
       let seq = 0;
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           const params = (input.params ?? {}) as Record<string, unknown>;
           if (ep === "fb_posts") {
@@ -846,7 +846,7 @@ describe("DT-20261121-social-fill test suite", () => {
       let calls = 0;
 
       const gateway: Gateway = {
-        async tregCall(input) {
+        async tregCall(input: any) {
           const ep = String(input.endpoint_id);
           if (ep === "fb_posts") {
             const rows = [{ id: "p1", link: "l1", text: "post 1" }];
