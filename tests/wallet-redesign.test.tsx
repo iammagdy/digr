@@ -156,7 +156,7 @@ describe("the design's rules for this page", () => {
 
   it("the word «حجز مؤقت مُحرَّر» and the tab «حجز مُحرَّر» are kept; one review sentence only; no Google Fonts; no emoji", () => {
     const page = src(PAGE);
-    expect(page).toContain('["refund", "حجز مُحرَّر"]');
+    expect(page).toContain('["refund", "مسترد للمحفظة"]');
     expect(src("src/lib/creditKinds.ts")).toContain("حجز مؤقت مُحرَّر");
     const form_ = src("src/app/dashboard/topup/TopupForm.tsx");
     expect(form_.match(/topupReviewSentenceAr\(/g)).toHaveLength(1);
@@ -176,7 +176,7 @@ describe("the design's rules for this page", () => {
 
   it("the requests list and the history are full-width cards; the data, the filter tabs and their logic are the same", () => {
     const page = src(PAGE);
-    expect(page).toContain('const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "حجز مُحرَّر"]];');
+    expect(page).toContain('const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "مسترد للمحفظة"]];');
     expect(page).toContain("visibleLedgerRows(ledger, ledFilter)");
     expect(page).toContain("onClick={() => setLedFilter(id)}");
     expect(page.match(/rounded-\[24px\] border border-ln bg-sf/g)?.length).toBeGreaterThanOrEqual(2);

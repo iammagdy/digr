@@ -29,7 +29,7 @@ export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
   done: "مكتمل",
   partial: PARTIAL_STATUS_AR,
   running: "قيد التنفيذ",
-  refunded: "تعذر التنفيذ · حجز مؤقت مُحرَّر",
+  refunded: "تعذر التنفيذ · رصيد مسترد",
 };
 
 const FINISHED = new Set(["done", "completed"]);
@@ -78,4 +78,17 @@ export function collectedBeforeStopText(collected: number, requested: number): s
  */
 export function deliveredNothing(input: { kind: RequestKind; delivered?: number | null; deliveredKnown?: boolean }): boolean {
   return (input.kind === "done" || input.kind === "partial") && input.deliveredKnown === true && (Number(input.delivered) || 0) === 0;
+}
+
+export function deliveredChargedLineAr(input: { delivered: number; charged: number; concise?: boolean }): string {
+  const delivered = Math.max(0, Math.round(input.delivered));
+  const charged = Math.max(0, Math.round(input.charged));
+  const unmatched = Math.max(0, delivered - charged);
+  const dStr = delivered === 1 ? "عنصرًا واحدًا" : delivered === 2 ? "عنصرين" : delivered <= 10 ? `${toArabicDigits(delivered)} عناصر` : `${toArabicDigits(delivered)} عنصرًا`;
+  const uStr = unmatched === 1 ? "عنصرًا واحدًا" : unmatched === 2 ? "عنصرين" : unmatched <= 10 ? `${toArabicDigits(unmatched)} عناصر` : `${toArabicDigits(unmatched)} عنصرًا`;
+  if (input.concise) {
+    return `استلمت ${toArabicDigits(delivered)}، ودُفع ثمن ${toArabicDigits(charged)} لعدم توفر بيانات الاتصال في ${uStr}.`;
+  }
+  const uClause = unmatched === 1 ? "عنصرًا واحدًا لم يحتوِ" : `${uStr} لم تحتوِ`;
+  return `تم تسليم ${dStr}، وحُسبت تكلفة ${toArabicDigits(charged)} فقط لأن ${uClause} على بيانات الاتصال المطلوبة.`;
 }
