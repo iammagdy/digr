@@ -3142,6 +3142,14 @@ function checkBotSleep(bot, nowMs) {
   if (!bot.idleSince) bot.idleSince = idleStart;
 
   if (nowMs - idleStart >= SLEEP_IDLE_THRESHOLD_MS) {
+    if (bot.baseWander && Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) > 6) {
+      bot.wander = false;
+      bot.returningHome = true;
+      setBotRoute(bot, bot.homeX, bot.homeY);
+      bot.isSleeping = false;
+      return false;
+    }
+    bot.isMoving = false;
     bot.isSleeping = true;
     return true;
   }
@@ -3154,6 +3162,9 @@ function wakeUpBot(bot) {
   bot.isSleeping = false;
   bot.lastWokenAt = performance.now();
   bot.wakeAnimStart = performance.now();
+  if (bot.baseWander && bot.feedStatus === 'idle') {
+    bot.wander = true;
+  }
   playWakeSound();
   const apology = WAKE_APOLOGIES[Math.floor(Math.random() * WAKE_APOLOGIES.length)];
   celebrateBot(bot, apology);
@@ -3435,7 +3446,7 @@ function updateWorld(dt, time) {
     }
 
     // Wandering designer (Hazalqom when idle and free)
-    if (!teamMeetingActive && !bot.onTrip && bot.wander && bot.waypoints && bot.waypoints.length) {
+    if (!teamMeetingActive && !bot.onTrip && bot.wander && !bot.isSleeping && bot.waypoints && bot.waypoints.length) {
       if (bot.currentWp === undefined) bot.currentWp = 0;
       if (!bot.waitTimer) bot.waitTimer = 0;
       const wp = bot.waypoints[bot.currentWp];
@@ -3454,6 +3465,8 @@ function updateWorld(dt, time) {
         bot.x += (dx / dist) * speed * dt;
         bot.y += (dy / dist) * speed * dt;
       }
+    } else if (bot.isSleeping) {
+      bot.isMoving = false;
     }
   }
 
@@ -3705,7 +3718,12 @@ function renderAgentCard(bot) {
   else if (bot.status === 'waiting') { stText.style.color = '#7dd3fc'; stText.textContent = '⏳ في الانتظار'; barCol = '#38bdf8'; }
   else if (bot.status === 'meeting') { stText.style.color = '#d8b4fe'; stText.textContent = '👥 في اجتماع'; barCol = '#c084fc'; }
   else if (bot.status === 'working') { stText.style.color = '#86efac'; stText.textContent = '🟢 شغال الآن'; barCol = '#22c55e'; }
-  else { stText.style.color = '#fde68a'; stText.textContent = bot.isSleeping ? '💤 نايم على مكتبه' : '☕ متاح'; barCol = '#f59e0b'; }
+  else {
+    const isSleepingAtDesk = bot.isSleeping && Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) <= 8;
+    stText.style.color = '#fde68a';
+    stText.textContent = isSleepingAtDesk ? '💤 نايم على مكتبه' : '☕ متاح';
+    barCol = '#f59e0b';
+  }
 
   pctBadge.style.color = '#e2e8f0';
   pctBadge.textContent = bot.feedStatus !== 'idle' ? (bot.progress + '%') : bot.dept;
@@ -4266,9 +4284,13 @@ function applyLiveFeed(payload) {
       bot.location = bot.updatedAt ? 'آخر نشاط منذ ' + formatMinutesAgo(Date.parse(bot.updatedAt)) + ' د' : 'متاح';
     }
 
+    if (status !== 'idle' && bot.isSleeping) {
+      bot.isSleeping = false;
+    }
+
     if (bot.baseWander && !teamMeetingActive && !bot.onTrip) {
-      bot.wander = (status === 'idle');
-      if (!bot.wander && Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) > 6) {
+      bot.wander = (status === 'idle') && !bot.isSleeping;
+      if (!bot.wander && !bot.isSleeping && Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) > 6) {
         bot.returningHome = true;
         setBotRoute(bot, bot.homeX, bot.homeY);
       }
