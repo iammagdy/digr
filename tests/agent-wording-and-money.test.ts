@@ -156,8 +156,8 @@ describe("C + D. ONE delivered count everywhere: no text says a number that diff
       mission: { id: "msn_1", status: "completed", question_ar: null, plan_public: planPublic, reserved_points: 279, unit_price_points: 0.8, delivered_units: 250, charged_points: 202, summary_ar: "سلّمت ٣٠٠ تغريدة عن الموضوع كلها", files: [{ name: "result.xlsx", kind: "xlsx" }], created_at: "2026-10-28T20:00:00Z" },
       events: [],
     });
-    // the stored summary of an older mission carries a number (٣٠٠) that disagrees with the delivered count: it is not shown
-    expect(view.resultSummaryAr).toBeNull();
+    // under N13 a stored summary with digits that passes checkCustomerText is shown
+    expect(view.resultSummaryAr).toBe("سلّمت ٣٠٠ تغريدة عن الموضوع كلها");
     expect(view.resultLinesAr[0]).toBe(`تم تسليم ${deliveredOfAr(250, 300, knownItemNoun(noun)!)}.`);
     expect(view.resultLinesAr[1]).toBe(`خُصم ٢٠٢ نقطة مقابل ${countAr(250, knownItemNoun(noun)!)}.`);
 
