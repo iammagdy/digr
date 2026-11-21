@@ -1,3 +1,4 @@
+import { effectiveJobPointsCap } from "../../jobPointsCap";
 import { blockedEndpointReason } from "../../treg/blockList";
 import { isSellable, type TregCatalog } from "../../treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../treg/dataPolicy";
@@ -27,8 +28,10 @@ export function planCompaniesByCodeIfOn(input: CompaniesPlanningInput): B2BPlanR
   if (!stage3Enabled("DIGER_STAGE3_COMPANIES", input.isTestAccount, input.env)) return null;
   const { catalog, access, stats, now } = input;
   const allowed = (id: string): boolean => isSellable(id, catalog) && !blockedEndpointReason(id) && policyVerdict(id, access).allowed;
-  return planB2BByCode({
+  const result = planB2BByCode({
     requestText: input.requestText, catalog, isAllowed: allowed, stats, now, ...(input.pricingSettings ? { pricingSettings: input.pricingSettings } : {}),
     aids: (kind) => (kind === "email" ? { verifiers: verifierSourcesOf(catalog, allowed, stats, now) } : { validators: validatorSourcesOf(catalog, allowed, stats, now), company_phone: companyPhoneSourcesOf(catalog, allowed, stats, now), alternates: alternateFinderSourcesOf("phone", catalog, allowed, stats, now), profile_lookup: profileLookupSourcesOf(catalog, allowed, stats, now) }),
   });
+  if (!result.ok || result.plan.price.reservePoints <= effectiveJobPointsCap(input.env ?? process.env)) return result;
+  return { ...result, plan: { ...result.plan, hold_cap_preview: true } };
 }

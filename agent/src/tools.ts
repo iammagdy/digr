@@ -1098,10 +1098,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               ? [{ reason_ar: "اكتفى الطلب بالشركات فقط بناءً على توضيحك." }]
               : undefined;
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(unservedSteps !== undefined ? { unserved_steps: unservedSteps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
-        if (!checked.ok) {
-          return rejectOrRecover("the plan was not accepted; fix these and propose again", checked.issues, build.inspection.peopleCandidates.length > 0);
+        const candidate = checked.ok ? checked.plan : checked.overCapPlan;
+        if (!candidate) {
+          return rejectOrRecover("the plan was not accepted; fix these and propose again", checked.ok ? [] : checked.issues, build.inspection.peopleCandidates.length > 0);
         }
-        const finalized = await build.finalizeAcceptedPlan(checked.plan, evidence);
+        const finalized = await build.finalizeAcceptedPlan(candidate, evidence);
         if (!finalized.ok) {
           if (finalized.advice) {
             state.peopleSendBacks += 1;

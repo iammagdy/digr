@@ -1,3 +1,4 @@
+import { effectiveJobPointsCap } from "../jobPointsCap";
 import { sampleCellText } from "./sampleLinks";
 import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
@@ -266,6 +267,8 @@ export interface PricedStage extends ProposedStage {
 }
 
 export interface PricedPlan {
+  /** Validated basket shown for review while approval is locked. */
+  hold_cap_preview?: true;
   summary_ar: string;
   /** Honest sentences the customer reads next to the summary (for example: why the e-mails they asked for are not in the plan). */
   notes_ar?: string[];
@@ -345,7 +348,7 @@ export interface PlanQuantity {
 
 /** A stage that promises videos (or images) whose measured page does not prove them: the planner is sent to the catalog's media sources before the card says so. */
 export interface MediaUnproven { stage_key: string; endpoint_id: string; media: MediaKind; why: "no_field" | "no_proof" }
-export type PlanCheck = { ok: true; plan: PricedPlan; mediaUnproven?: MediaUnproven[] } | { ok: false; issues: string[]; /** The plan passes the job limit only with fewer people per company than the default: code tries the next lower count. */ lowerImplied?: boolean };
+export type PlanCheck = { ok: true; plan: PricedPlan; mediaUnproven?: MediaUnproven[] } | { ok: false; issues: string[]; overCapPlan?: PricedPlan; /** The plan passes the job limit only with fewer people per company than the default: code tries the next lower count. */ lowerImplied?: boolean };
 
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const MAX_ASSUMPTIONS = 6;
@@ -1023,8 +1026,12 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
   // THE COMPANY STEPS (the company's own e-mail and HQ phone, reference A): beside the people's, for a delivered company stage with delivered people under it
   const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {}, { email: wants.email, hasEmailColumn: (key) => (priced.find((s) => s.key === key)?.columns ?? []).some(isEmailColumn) })];
-  const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
-  if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
+  const basket = { stages: priced, quantity, unserved_steps: unserved };
+  const supportsReduction = fixedCountBasket(basket) !== null;
+  const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), {
+    settings: lookup.pricingSettings,
+    ...(supportsReduction ? { capPoints: effectiveJobPointsCap() } : {}),
+  });
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   // THE HEADLINE too: a sentence of the summary that names the role the people are only ranked by is replaced by the code's own (roles.ts, DT-20261118-09 item 7)
@@ -1043,7 +1050,14 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // an estimated people stage says so on the card, in the code's own words (peopleEstimate.ts)
   if (priced.some((st) => st.estimated === true) && !assumptions.includes(PEOPLE_ESTIMATE_NOTE_AR)) assumptions.push(PEOPLE_ESTIMATE_NOTE_AR);
   notes.push(...languageOffNotes);
-  return { ok: true, plan: { summary_ar: summaryText, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
+  const plan: PricedPlan = { summary_ar: summaryText, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) };
+  if (price.overCap) return {
+    ok: false,
+    issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`],
+    ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}),
+    ...(supportsReduction && mediaUnproven.length === 0 ? { overCapPlan: { ...plan, hold_cap_preview: true } } : {}),
+  };
+  return { ok: true, plan, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
@@ -1099,6 +1113,22 @@ export const deliveryDenominatorOf = (delivered: number, cardTotal: number, requ
 export const requestedRowsOf = (plan: Pick<PricedPlan, "stages" | "quantity">): number => plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0) + (plan.quantity ? Math.max(0, plan.quantity.requested - plan.quantity.target) : 0);
 
 /** The stage the quantity counts (the one whose target the customer may change): the quantity's own, else the first delivered stage. */
+/** A reduction keeps the same root and at most one fixed-ratio delivered child. */
+export function fixedCountBasket(plan: Pick<PricedPlan, "stages" | "quantity" | "unserved_steps" | "compiled" | "replies_off">): { root: PricedStage; child?: PricedStage } | null {
+  if (plan.stages.length < 1 || plan.stages.length > 2 || plan.unserved_steps?.length || plan.compiled || plan.replies_off) return null;
+  if (plan.stages.some((stage) => !stage.deliver || stage.replies_of || stage.replies_open || stage.all_children
+    || stage.pinned_rows?.length || stage.promise_total !== undefined || stage.estimated || stage.unresolved_sources?.length
+    || stage.engine?.parent_binding?.fallbacks?.length || !Number.isFinite(stage.measured_cost_per_row_usd)
+    || stage.measured_cost_per_row_usd <= 0 || !Number.isSafeInteger(stage.planned_rows) || stage.planned_rows < 1)) return null;
+
+  const root = plan.stages.find((stage) => stage.key === targetStageKey(plan) && stage.parent_key === null);
+  if (!root) return null;
+  const child = plan.stages.find((stage) => stage.key !== root.key);
+  if (child && (child.parent_key !== root.key || !Number.isSafeInteger(child.per_parent_rows) || !child.per_parent_rows
+    || child.per_parent_rows < 1 || child.planned_rows !== root.planned_rows * child.per_parent_rows)) return null;
+  return child ? { root, child } : { root };
+}
+
 export function targetStageKey(plan: Pick<PricedPlan, "stages" | "quantity">): string | null {
   return plan.quantity?.stage_key ?? plan.stages.find((s) => s.deliver)?.key ?? null;
 }
