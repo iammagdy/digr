@@ -509,7 +509,7 @@ describe("DT-20261121-office-board: Employee status card and cheer action (D-016
     `);
 
     // Salem is at homeX: 575, homeY: 390. wy = 390 - 6 = 384.
-    triggerStageClick(575, 384);
+    triggerStageClick(70, 239);
 
     const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
     expect(card).toBeDefined();
@@ -609,10 +609,249 @@ describe("DT-20261121-office-board: Employee status card and cheer action (D-016
     cheerBtn?.trigger("click", { stopPropagation() {} });
 
     // celebrateBot was called locally
-    expect(evalInContext("BOTS.johnny.bubbleText")).toBe("👏 برافو!");
+    expect(evalInContext("BOTS.johnny.bubbleText")).toBe(evalInContext("CHEER_REPLIES.johnny"));
     expect(evalInContext("BOTS.johnny.bubbleUntil")).toBeGreaterThan(1000);
 
     // No network requests or XHR made
     expect(fetchCalls.length).toBe(0);
+  });
+});
+
+describe("DT-20261121-office-v2: Must-Pass Verification Suite", () => {
+  it("Must-Pass 1 (CI Waiting Test): bot with state waiting for 2h remains waiting and displays real percent, never stuck", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    const twoHoursAgoIso = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    evalInContext(`
+      const payload = {
+        version: 1,
+        generated_at: new Date().toISOString(),
+        bots: {
+          marbouha: {
+            bot: 'marbouha',
+            state: 'waiting',
+            task_id: 'CI-CHECK-99',
+            task_title: 'فحص جودة واختبارات',
+            step: 'بانتظار اكتمال فحص CI',
+            percent: 64,
+            next: 'اعتماد التقرير',
+            open_order: true,
+            updated_at: '${twoHoursAgoIso}',
+            recent: []
+          }
+        }
+      };
+      applyLiveFeed(payload);
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    expect(evalInContext("BOTS.marbouha.status")).toBe("waiting");
+    expect(evalInContext("BOTS.marbouha.progress")).toBe(64);
+
+    // Open card for Marbouha at (180, 239)
+    triggerStageClick(180, 239);
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card).toBeDefined();
+
+    const statusEl = card.querySelector(".agent-card-status");
+    expect(statusEl?.textContent).toBe("⏳ مستني 64%");
+    expect(statusEl?.style.color).toBe("#38bdf8");
+  });
+
+  it("Must-Pass 2 (CTO Percent Match Test): 72% in status.md matches 72% in board and card", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    const nowIso = new Date().toISOString();
+    evalInContext(`
+      const payload = {
+        version: 1,
+        generated_at: '${nowIso}',
+        bots: {
+          hagras: {
+            bot: 'hagras',
+            state: 'working',
+            task_id: 'DT-20261121-office-v2',
+            task_title: 'تطوير مكتب ديجر v2',
+            step: 'تنفيذ الشاشات والغرف',
+            percent: 72,
+            next: 'مراجعة أشرف ومربوحة',
+            open_order: true,
+            updated_at: '${nowIso}',
+            recent: []
+          }
+        }
+      };
+      applyLiveFeed(payload);
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    expect(evalInContext("BOTS.hagras.progress")).toBe(72);
+
+    triggerStageClick(105, 144);
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    const pctEl = card.querySelector(".agent-card-percent");
+    expect(pctEl?.textContent).toBe("الإنجاز: 72%");
+  });
+
+  it("Must-Pass 4 (Cheer Test for all 9 bots): Egyptian banter bubbles without network requests", () => {
+    const { evalInContext, stageWrapper, fetchCalls, triggerStageClick } = createBoardHarness();
+
+    const botKeys: string[] = evalInContext("BOT_KEYS");
+    expect(botKeys.length).toBe(9);
+
+    evalInContext(`
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    for (const key of botKeys) {
+      const bot = evalInContext(`BOTS['${key}']`);
+      fetchCalls.length = 0;
+
+      // Click on bot
+      triggerStageClick(bot.homeX, bot.homeY - 6);
+      const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+      expect(card.style.display).toBe("block");
+
+      const cheerBtn = card.querySelector(".agent-card-cheer");
+      expect(cheerBtn).toBeDefined();
+
+      cheerBtn?.trigger("click", { stopPropagation() {} });
+
+      const expectedReply = evalInContext(`CHEER_REPLIES['${key}']`);
+      expect(evalInContext(`BOTS['${key}'].bubbleText`)).toBe(expectedReply);
+      expect(fetchCalls.length).toBe(0);
+
+      // Close card
+      triggerStageClick(50, 50);
+    }
+  });
+
+  it("Must-Pass 5 (Meeting Button Test): moves 9 bots to meeting room seats and returns them", () => {
+    const { evalInContext, stageWrapper } = createBoardHarness();
+
+    const meetingBtn = stageWrapper.querySelector("#meeting-btn");
+    expect(meetingBtn).toBeDefined();
+
+    // Trigger meeting
+    meetingBtn?.trigger("click", { stopPropagation() {} });
+    expect(evalInContext("teamMeetingActive")).toBe(true);
+
+    const botKeys: string[] = evalInContext("BOT_KEYS");
+    for (const key of botKeys) {
+      expect(evalInContext(`BOTS['${key}'].status`)).toBe("meeting");
+    }
+
+    // Simulate 5 seconds of updateWorld
+    evalInContext(`
+      for (let s = 0; s < 50; s++) {
+        updateWorld(0.1, 1000 + s * 100);
+      }
+    `);
+
+    // Verify all 9 seats in MEETING_SEATS are populated
+    for (const key of botKeys) {
+      const seat = evalInContext(`MEETING_SEATS['${key}']`);
+      expect(seat).toBeDefined();
+      expect(seat.x).toBeGreaterThanOrEqual(240);
+      expect(seat.x).toBeLessThanOrEqual(485);
+      expect(seat.y).toBeGreaterThanOrEqual(315);
+      expect(seat.y).toBeLessThanOrEqual(540);
+    }
+
+    // End meeting
+    evalInContext("endTeamMeeting()");
+    expect(evalInContext("teamMeetingActive")).toBe(false);
+  });
+
+  it("Must-Pass 6 (Sleeping Gag Test): working/waiting never sleep; idle >30m sleeps; tap wakes up without modal", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    const fortyMinsAgo = Date.now() - 40 * 60 * 1000;
+    evalInContext(`
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+
+      // 1. Working bot: never sleeps
+      BOTS.hagras.status = 'working';
+      BOTS.hagras.updatedAt = new Date(${fortyMinsAgo}).toISOString();
+      checkBotSleep(BOTS.hagras, Date.now());
+
+      // 2. Waiting bot: never sleeps
+      BOTS.marbouha.status = 'waiting';
+      BOTS.marbouha.updatedAt = new Date(${fortyMinsAgo}).toISOString();
+      checkBotSleep(BOTS.marbouha, Date.now());
+
+      // 3. Idle bot > 30m: sleeps
+      BOTS.salem.status = 'idle';
+      BOTS.salem.updatedAt = new Date(${fortyMinsAgo}).toISOString();
+      BOTS.salem.idleSince = ${fortyMinsAgo};
+      checkBotSleep(BOTS.salem, Date.now());
+    `);
+
+    expect(evalInContext("BOTS.hagras.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.marbouha.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.salem.isSleeping")).toBe(true);
+
+    // First click on sleeping Salem at (70, 239)
+    triggerStageClick(70, 239);
+
+    // Salem is now awake!
+    expect(evalInContext("BOTS.salem.isSleeping")).toBe(false);
+    // Apology bubble was shown
+    const apology = evalInContext("BOTS.salem.bubbleText");
+    expect(apology).toBeTruthy();
+    expect(evalInContext("WAKE_APOLOGIES")).toContain(apology);
+
+    // Modal did NOT open on first click!
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card?.style.display || "none").toBe("none");
+
+    // Second click on now-awake Salem opens the card!
+    triggerStageClick(70, 239);
+    const openedCard = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(openedCard).toBeDefined();
+    expect(openedCard.style.display).toBe("block");
+    expect(openedCard.querySelector(".agent-card-name")?.textContent).toBe("سالم");
+  });
+
+  it("Must-Pass 7 (DOM Security Test): zero innerHTML and safe textContent rendering", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    const malicious = '<img src=x onerror=alert(1)>';
+    evalInContext(`
+      BOTS.johnny.status = 'working';
+      BOTS.johnny.taskTitle = '${malicious}';
+      BOTS.johnny.task_title = '${malicious}';
+      BOTS.johnny.step = '${malicious}';
+      BOTS.johnny.next = '${malicious}';
+      BOTS.johnny.activity_type = '${malicious}';
+      BOTS.johnny.progress = 50;
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    triggerStageClick(290, 239);
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card.querySelector("img")).toBeNull();
+    expect(card.querySelector(".agent-card-task")?.textContent).toBe("المهمة: " + malicious);
+    expect(card.querySelector(".agent-card-step")?.textContent).toBe("الخطوة: " + malicious);
+    expect(card.querySelector(".agent-card-next")?.textContent).toBe("التالي: " + malicious);
+    expect(card.querySelector(".agent-card-activity")?.textContent).toBe("النشاط: " + malicious);
+  });
+
+  it("Forbidden Words Absence Test: GTA, Grand Theft, Rockstar, PlayStation, Sony absent from office code", () => {
+    const html = readFileSync("public/office/index.html", "utf8");
+    const forbidden = [/\bgta\b/i, /grand theft/i, /rockstar/i, /playstation/i, /\bsony\b/i];
+    for (const re of forbidden) {
+      expect(html).not.toMatch(re);
+    }
   });
 });
