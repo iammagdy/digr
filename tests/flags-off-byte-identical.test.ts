@@ -39,6 +39,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // DT-20261119-07 B: the two people worlds store e-mail alternates and test the second pass; the workbook has unavailable contact cells.
 // DT-20261119-13 CHANGED (D-0133, D-0134, D-0140, C1-C7): only the `notices` digests of the five worlds were re-pinned: bounded <=45 status subjects, real stage nouns, and single-placement money in detail1. All other sections byte-identical.
 // DT-20261120-emails CHANGED: only the `notices` digests of the five worlds were re-pinned (unit noun from catalog capability, one-sentence failure lead, title prefix fix); every other section is byte-identical to main.
+// DT-20261121-audit/FX-02 CHANGED: only `g4_live_world.finalView` and `g4_full_world.finalView` were re-pinned for N4 partial shortage reason & refund line; `planView`, all non-partial sections, and the other three worlds are byte-identical to main.
 // Only mission, providerCalls and workbook are re-pinned for those worlds. The existing ledger, planView, finalView, notices and visible event hashes still apply.
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
 const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);

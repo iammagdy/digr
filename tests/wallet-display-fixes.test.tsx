@@ -135,9 +135,9 @@ describe("2. the month card no longer calls lifted holds a refund", () => {
 
   it("the card is worded «محجوز ومُحرَّر» with no refund wording, no plus sign, Arabic only and no emoji", () => {
     const page = readFileSync("src/app/dashboard/topup/page.tsx", "utf8");
-    expect(page).toContain("رصيد مسترد للمحفظة</p>"); // the panel heading «هذا الشهر» and its rows now carry the old card's words
+    expect(page).toContain("محجوز ومُحرَّر</p>"); // the panel heading «هذا الشهر» and its rows now carry the old card's words
     expect(page).toContain("هذا الشهر</p>");
-    expect(page).toContain("رصيد محجوز عاد لمحفظتك دون خصم");
+    expect(page).toContain("حجز مؤقت رُفع ولم يُخصم");
     expect(page).not.toContain("رجع لرصيدك");
     expect(page).not.toContain("فرق الحجز");
     expect(page).not.toContain("stats.refunded");
@@ -151,7 +151,7 @@ describe("2. the month card no longer calls lifted holds a refund", () => {
   it("the history labels a release row as a lifted hold, not a refund", () => {
     expect(CREDIT_KIND_LABEL_AR.release).toBe("حجز مؤقت مُحرَّر");
     expect(CREDIT_KIND_LABEL_AR.release).not.toContain("استرداد");
-    expect(readFileSync("src/app/dashboard/topup/page.tsx", "utf8")).toContain('["refund", "مسترد للمحفظة"]');
+    expect(readFileSync("src/app/dashboard/topup/page.tsx", "utf8")).toContain('["refund", "حجز مُحرَّر"]');
   });
 });
 

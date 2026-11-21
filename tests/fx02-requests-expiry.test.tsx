@@ -1,29 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { checkCustomerText } from "@/lib/agentMission/text";
-import { deliveredChargedLineAr, REQUEST_STATUS_LABEL_AR } from "@/lib/jobs/requestStatus";
+import { deliveredChargedLineAr } from "@/lib/jobs/requestStatus";
 import { extractDraftFromQuery } from "@/app/dashboard/chat/page";
 
 describe("FX-02 Phase B: Requests list, details consistency and chat draft prefill", () => {
-  const requestsSrc = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
   const detailsSrc = readFileSync("src/app/dashboard/requests/[id]/page.tsx", "utf8");
   const chatSrc = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
 
-  it("requests page tab 5 is «المبالغ المستردة» and explain line is natural Arabic without internal ledger terms", () => {
-    expect(requestsSrc).toContain('["refunded", "المبالغ المستردة"]');
-    expect(requestsSrc).toContain('refunded: "طلبات أُلغيت وأُعيد رصيدها المحجوز كاملًا إلى محفظتك دون أي خصم."');
-    expect(requestsSrc).not.toContain('["refunded", "حجز مؤقت مُحرَّر"]');
-    expect(requestsSrc).not.toContain('["refunded", "حجز مُحرَّر"]');
-
-    const tabExplain = "طلبات أُلغيت وأُعيد رصيدها المحجوز كاملًا إلى محفظتك دون أي خصم.";
-    expect(checkCustomerText(tabExplain).issues).toEqual([]);
-  });
-
-  it("formatRefundedNote says «أُعيد الرصيد المحجوز كاملًا إلى محفظتك... ولم يُخصم منك شيء»", () => {
-    expect(requestsSrc).toContain("أُعيد الرصيد المحجوز كاملًا إلى محفظتك");
-    expect(requestsSrc).not.toMatch(/حجز مؤقت مُحرَّر: \$\{pointsAr\(reservedCredits\)\}/);
-    const refundSentence = "أُعيد الرصيد المحجوز كاملًا إلى محفظتك (١٠٠ نقطة)، ولم يُخصم منك شيء.";
-    expect(checkCustomerText(refundSentence).issues).toEqual([]);
+  it("buildIndex.ts uses updated N9 expired note", () => {
+    const code = readFileSync("src/lib/requests/buildIndex.ts", "utf8");
+    expect(code).toContain('expired: "انتهت مهلة اعتماد الخطة (٧٢ ساعة) دون تأكيد، ولم يُخصم أي رصيد من محفظتك."');
+    expect(checkCustomerText("انتهت مهلة اعتماد الخطة (٧٢ ساعة) دون تأكيد، ولم يُخصم أي رصيد من محفظتك.").issues).toEqual([]);
   });
 
   it("N2: deliveredChargedLineAr formats correct singular/dual/plural without using «صف» or «سجل»", () => {

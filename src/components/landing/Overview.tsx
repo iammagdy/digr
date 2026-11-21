@@ -13,7 +13,7 @@ export const OVERVIEW_STEPS_AR = [
 ] as const;
 
 /** What the customer pays, in one place (the sentence that nothing is charged before approval is the hero's alone). */
-export const OVERVIEW_PAYMENT_AR = "تدفع مقابل ما يُسلَّم لك فعلًا فقط: يُحجز المبلغ مؤقتًا عند الاعتماد، ويُخصم منه ثمن ما استلمته، وما تبقّى يعود تلقائيًا إلى محفظتك.";
+export const OVERVIEW_PAYMENT_AR = "تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط. يُحجز مبلغ مؤقت يشمل احتياطيًا، وما لا يُستخدم منه حجز مؤقت مُحرَّر.";
 
 /** Two small requests and their price, computed by the same estimate as the pricing page (nothing typed by hand). Static HTML. */
 export function PriceStrip() {

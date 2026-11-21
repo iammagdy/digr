@@ -145,7 +145,7 @@ describe("FX-02 Phase C: customer view and mission card fixes (N9, N4, N2, N12, 
     });
 
     expect(view.phase).toBe("partial");
-    expect(view.partialRefundAr).toBeNull();
+    expect(view.partialRefundAr).toBeUndefined();
   });
 
   it("N2: completed mission with charged_units < delivered_units emits unified delivered/charged sentence", () => {

@@ -634,8 +634,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     lastEventAt: Number.isFinite(lastAt) ? lastAt : null,
     savedSoFar,
     ...(expired ? { expired: true, expiredNoteAr: EXPIRED_PLAN_NOTE_AR } : {}),
-    partialReasonAr: partialReasonAr ?? null,
-    partialRefundAr: partialRefundAr ?? null,
+    ...(partialReasonAr ? { partialReasonAr } : {}),
+    ...(partialRefundAr ? { partialRefundAr } : {}),
   };
   // the limit is a key of the view ONLY when the plan carries one (a Facebook, Instagram or YouTube compiled plan): every other view is byte for byte what it was
   const limit = phase === "plan" ? limitViewOf(plan) : null;
@@ -688,8 +688,8 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     currentLineAr: m(v.currentLineAr), delayAr: nm(v.delayAr), remainingAr: nm(v.remainingAr), closePageAr: nm(v.closePageAr),
     resultLinesAr: list(v.resultLinesAr), resultSummaryAr: nm(v.resultSummaryAr), endLineAr: nm(v.endLineAr),
     ...(v.expired ? { expired: true, expiredNoteAr: nm(v.expiredNoteAr) } : {}),
-    partialReasonAr: v.partialReasonAr ? nm(v.partialReasonAr) : null,
-    partialRefundAr: v.partialRefundAr ? nm(v.partialRefundAr) : null,
+    ...(v.partialReasonAr ? { partialReasonAr: nm(v.partialReasonAr) } : {}),
+    ...(v.partialRefundAr ? { partialRefundAr: nm(v.partialRefundAr) } : {}),
     ...(v.limit ? { limit: { ...v.limit, sentenceAr: nm(v.limit.sentenceAr), rowsAr: nm(v.limit.rowsAr) } } : {}),
     // the plan editor: titles, labels and the filter lines all go through m (a filter line is built from what the customer gave, so a word they wrote stays; any other Latin word or source label does not)
     edit: v.edit ? { ...v.edit, stages: v.edit.stages.map((s) => ({

@@ -80,9 +80,9 @@ describe("the page orders its rows: running first, then the one line, then the r
   });
   it("the tab that is a ledger state says what it is, and no longer reads like a line of the list", () => {
     // the approved word of the tab stays (small-fix-batch-2); it is EXPLAINED under the tabs when selected
-    expect(page).toContain('["refunded", "المبالغ المستردة"]');
-    expect(page).toContain("طلبات أُلغيت وأُعيد رصيدها المحجوز كاملًا إلى محفظتك دون أي خصم.");
+    expect(page).toContain('["refunded", "حجز مؤقت مُحرَّر"]');
+    expect(page).toContain("طلبات رُفع حجزها المؤقت كاملًا ولم يُخصم منك شيء.");
     expect(page).toContain('data-testid="tab-explain"');
-    expect(checkCustomerText("طلبات أُلغيت وأُعيد رصيدها المحجوز كاملًا إلى محفظتك دون أي خصم.", { maxChars: 400 }).issues).toEqual([]);
+    expect(checkCustomerText("طلبات رُفع حجزها المؤقت كاملًا ولم يُخصم منك شيء.", { maxChars: 400 }).issues).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { pluralizeStoredCountsAr } from "@/lib/planCounts";
 import { openJobHref } from "@/lib/requestLinks";
 import { isDeterministicFailureAr } from "@/lib/providerFailureText";
@@ -73,10 +74,10 @@ const TABS: Array<[RequestTab, string]> = [
   ["running", "قيد التنفيذ"],
   ["done", "مكتملة"],
   ["ended", "فشلت أو أُلغيت"],
-  ["refunded", "المبالغ المستردة"],
+  ["refunded", "حجز مؤقت مُحرَّر"],
 ];
-/** What a tab that is not self-evident says under the tabs (round 14: «المبالغ المستردة ٦٤» read as an item of the list, not a tab). */
-const TAB_EXPLAIN_AR: Partial<Record<RequestTab, string>> = { refunded: "طلبات أُلغيت وأُعيد رصيدها المحجوز كاملًا إلى محفظتك دون أي خصم." };
+/** What a tab that is not self-evident says under the tabs (round 14: «حجز مؤقت مُحرَّر ٦٤» read as an item of the list, not a tab). */
+const TAB_EXPLAIN_AR: Partial<Record<RequestTab, string>> = { refunded: "طلبات رُفع حجزها المؤقت كاملًا ولم يُخصم منك شيء." };
 /** The chip of a request that never became a job, by how it ended. */
 const ENDED_CHIP_AR: Record<string, string> = { cancelled: "أُلغيت", expired: "انتهت صلاحية الخطة", failed: "فشلت", unserved: "لم تُنفَّذ" };
 const chunksOf = <T,>(items: T[], size: number): T[][] => { const out: T[][] = []; for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size)); return out; };
@@ -90,10 +91,9 @@ function targetOf(params?: string): string {
   return "طلب بحث";
 }
 
-/** What a request card says about a request that did not run: customer-clear refunded wording. */
+/** What a request card says about a request that did not run: always «حجز مؤقت مُحرَّر», never «أُعيد / استرداد / إرجاع». */
 function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
-  const pointsStr = reservedCredits > 0 ? ` (${formatAr(reservedCredits)} نقطة)` : "";
-  const released = `أُعيد الرصيد المحجوز كاملًا إلى محفظتك${pointsStr}، ولم يُخصم منك شيء.`;
+  const released = `حجز مؤقت مُحرَّر: ${pointsAr(reservedCredits)} كاملة، ولم يُخصم منك شيء.`;
   if (!rawError) {
     return `لم تتوفر سجلات كافية — ${released}`;
   }
@@ -112,12 +112,13 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     cleaned.includes("لتأخر التنفيذ") ||
     cleaned.includes("تلقائياً")
   ) {
-    return `تم إلغاء الطلب تلقائياً لتأخر التنفيذ، وأُعيد الرصيد المحجوز كاملًا إلى محفظتك دون أي خصم.`;
+    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
   }
 
   // the render-time guard: an English or internal phrase stored with an older request (a release reason written by the system) is shown as its Arabic meaning, never as it was stored
   cleaned = customerSafeText(cleaned, "تعذر إكمال البحث");
-  if (cleaned.includes("أُعيد الرصيد المحجوز")) return cleaned;
+  cleaned = normalizeReleaseWording(cleaned);
+  if (cleaned.includes("حجز مؤقت مُحرَّر")) return cleaned;
 
   return `${cleaned} — ${released}`;
 }
@@ -521,12 +522,12 @@ export default function RequestsPage() {
                   type="button"
                   data-testid="request-title"
                   // Opening a request shows its own page; a retry is the «إعادة المحاولة» button below, never a tap on the title.
-                  onClick={() => openDetails({ id: j.$id, title, stateAr: st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null })}
+                  onClick={() => openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null })}
                   className="m-0 min-w-0 flex-1 cursor-pointer truncate border-0 bg-transparent p-0 text-right text-[14px] font-medium text-ink hover:underline focus-visible:outline-2"
                 >
                   {title}
                 </button>
-                <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{st.label}</span>
+                <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label}</span>
               </div>
               <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-mut">
                 <span>{dayLabel(j.createdAt)}</span>
@@ -555,7 +556,7 @@ export default function RequestsPage() {
                   onClick={() => {
                     // a retry is the only button that goes to the chat; «التفاصيل» and «متابعة التقدم» open the request's own page
                     if (k === "refunded" && !isDeterministicFailureAr(j.errorAr)) return void openFile(j, true);
-                    openDetails({ id: j.$id, title, stateAr: st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null });
+                    openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0), billable: j.billableUnits ?? null });
                   }}
                   className={`min-h-11 cursor-pointer rounded-full border-0 px-4 text-xs font-medium transition-colors ${
                     k === "running" ? "bg-ac text-onac hover:opacity-90" : "bg-sf2 text-ink hover:bg-sf"

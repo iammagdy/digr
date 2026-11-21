@@ -62,7 +62,7 @@ describe("audit phase 3: a released hold is «حجز مؤقت مُحرَّر», 
     for (const [, answer] of FAQS) expect(answer).not.toMatch(REFUND_STYLE);
     expect(FAQS[0][1]).toBe(PRICING_FAQ_AR[0][1]);
     expect(FAQS[2][1]).toBe(PRICING_FAQ_AR[1][1]);
-    expect(OVERVIEW_PAYMENT_AR).toContain("يعود تلقائيًا إلى محفظتك");
+    expect(OVERVIEW_PAYMENT_AR).toContain("حجز مؤقت مُحرَّر");
   });
 
   it("notices stored BEFORE this rule are read through the normalizer, so an old bell row shows the new wording", () => {

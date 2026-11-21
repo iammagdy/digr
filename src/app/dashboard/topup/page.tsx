@@ -30,7 +30,7 @@ import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./ty
 
 const isMethodologyRow = (row: LedgerRow): boolean => isMethodologyChargeId(row.id ?? row.$id);
 const ledgerLabel = (row: LedgerRow): string => (isMethodologyRow(row) ? methodologyPurchaseLineAr(row.delta) : walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]));
-const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "مسترد للمحفظة"]];
+const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "حجز مُحرَّر"]];
 
 
 const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
@@ -357,8 +357,8 @@ export default function WalletPage() {
               <p className="m-0 pb-0.5 pt-2.5 text-xs text-wallet-ondark-faint">هذا الشهر</p>
               <div className="flex items-center justify-between gap-3 border-b border-wallet-line py-3">
                 <div className="min-w-0">
-                  <p className="m-0 flex items-center gap-2 whitespace-nowrap text-[13px] text-wallet-ondark"><span className="h-2 w-2 shrink-0 rounded-full bg-wallet-amber" />رصيد مسترد للمحفظة</p>
-                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady ? `رصيد محجوز عاد لمحفظتك دون خصم، من ${searchesAr(stats.releasedJobs)}.` : ledgerFailed ? "تعذّر تحميل الأرقام" : "رصيد محجوز عاد لمحفظتك دون خصم."}</p>
+                  <p className="m-0 flex items-center gap-2 whitespace-nowrap text-[13px] text-wallet-ondark"><span className="h-2 w-2 shrink-0 rounded-full bg-wallet-amber" />محجوز ومُحرَّر</p>
+                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady ? `حجز مؤقت رُفع ولم يُخصم، من ${searchesAr(stats.releasedJobs)}` : ledgerFailed ? "تعذّر تحميل الأرقام" : "حجز مؤقت رُفع ولم يُخصم"}</p>
                 </div>
                 {monthReady ? <p className="m-0 text-xl font-bold text-wallet-amber">{formatAr(stats.releasedHold)}</p> : ledgerFailed ? <p className="m-0 text-xl font-bold text-white">—</p> : <Skeleton className="h-7 w-16 !bg-none bg-white/10" />}
               </div>
@@ -382,7 +382,7 @@ export default function WalletPage() {
             <p className="m-0">الأرقام تقدير بسعر السجل المُسلَّم نفسه، دون احتياطي الحجز؛ وسعر خطتك الدقيق يظهر قبل أن توافق.</p>
             {monthReady && stats.releasedGross > 0 ? (
               <p data-testid="wallet-released-explainer" className="m-0">
-                يُحجز الرصيد مؤقتًا عند بدء الطلب، ويُخصم منه ثمن ما استلمته فقط، ثم يعود باقي الرصيد المحجوز إلى محفظتك فور التسليم.
+                في سجل الحركات يظهر الحجز المُحرَّر كاملًا قبل الخصم ({formatAr(stats.releasedGross)} نقطة هذا الشهر)، ثم يظهر الخصم في سطر مستقل. الرقم أعلاه هو الباقي بعد خصم ثمن ما سُلِّم، أي ما رُفع ولم يُخصم ({formatAr(stats.releasedHold)} نقطة).
               </p>
             ) : null}
           </div>
