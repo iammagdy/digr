@@ -143,6 +143,26 @@ describe.skipIf(!replicaAvailable())("FX-M1 delivery journal and finalization in
     expect(await ledger()).toEqual([{ type: "release", delta: "1067" }, { type: "reserve", delta: "-1067" }]);
   });
 
+  it.each(["staged counts", "missing counts"] as const)("an estimated quote with %s uses the staged rule or refuses before debit", async (variant) => {
+    await db.pool.query(`UPDATE plans_quotes SET items =
+      jsonb_set(jsonb_set(items,'{0,stageUnitsPoints}','{"base":170,"estimated":200}'),
+      '{0,stageRowsPlanned}','{"base":5,"estimated":7}') WHERE id=$1`, [quote]);
+    const staged = { ...binding, stage_units: variant === "staged counts" ? { base: 3, estimated: 2 } : null };
+    await journal("begin");
+    const trial = randomUUID();
+    await journal("claim", trial);
+    await journal("bind_candidate", trial, candidate);
+    await journal("bind_snapshot", trial, staged);
+    const done = await finalize(trial, staged);
+    if (variant === "missing counts") {
+      expect(done).toMatchObject({ success: false, error: "invalid_stage_counts" });
+      expect(await ledger()).toEqual([{ type: "reserve", delta: "-1067" }]);
+    } else {
+      expect(done).toMatchObject({ success: true, charged_credits: 774, refunded_credits: 293 });
+      expect(await ledger()).toEqual([{ type: "charge", delta: "-774" }, { type: "release", delta: "1067" }, { type: "reserve", delta: "-1067" }]);
+    }
+  });
+
   it("rolls back the chunk and all ledger writes if the database rejects the debit", async () => {
     const trial = await verifyTrial();
     await db.pool.query(`CREATE FUNCTION reject_fixture_charge() RETURNS trigger LANGUAGE plpgsql AS $$

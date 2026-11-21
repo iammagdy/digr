@@ -237,19 +237,17 @@ describe("Gate 1 P1-2: the inventory of every route that settles a job", () => {
     // verify script: a manual check on a scratch job
     expect(callers("settle_job_atomic")).toEqual(["scripts/verify/verify-settle-job.ts", "src/app/api/worker/chunk/route.ts", "src/lib/agentMission/lifecycle.ts"]);
   });
-  it("the agent's own settlement call sites: every settleMission call of the runner passes the stage, or delivers zero (a release); the add-on settles its own job with no stage", () => {
+  it("the ordinary finalizer requires per-stage units for estimated work, and the add-on settles its own job without them", () => {
     const run = readFileSync(path.join(ROOT, "agent/src/runMission.ts"), "utf8");
-    const calls = run.split("settleMission(deps.client, {").slice(1).map((c) => c.slice(0, c.indexOf("});") + 3));
-    expect(calls.length).toBe(3);
-    for (const c of calls) expect(/deliveredUnits: 0,/.test(c) || /stageUnits && stageCounts/.test(c), c.slice(0, 120)).toBe(true);
+    const worker = readFileSync(path.join(ROOT, "agent/src/missionSettlement.ts"), "utf8");
+    const sql = readFileSync(path.join(ROOT, "supabase/migrations/20261122010000_finalize_agent_delivery_atomic.sql"), "utf8");
+    expect(run).not.toMatch(/settleMission\(/);
+    expect(worker).toMatch(/if \(group.size > 0 && !units\) throw new DeliveryFault\("binding_mismatch"\)/);
+    expect(worker).toMatch(/stage_units: billed.counts/);
+    expect(worker).toMatch(/await ensureOwned\(deps, mission.id\);\s*const result = await bounded\(\(\) => deps.client.rpc\("finalize_agent_delivery_atomic"/);
+    expect(sql).toMatch(/IF v_price IS NOT NULL AND v_billed > 0 THEN\s*IF NOT COALESCE\(v_stage ->> 'base'/);
+    expect(sql).toMatch(/IF v_stage IS NOT NULL THEN\s*v_result := public.settle_job_by_stage_atomic\(v_job_id,v_stage,v_cap,v_csv_path\);\s*ELSE\s*v_result := public.settle_job_atomic\(v_job_id,v_cap,v_csv_path\);/);
     expect(readFileSync(path.join(ROOT, "src/lib/agentMission/addonSettlement.ts"), "utf8")).not.toMatch(/stageUnits/);
-    // a plan with an estimated stage and no units is never settled by the one-unit function; that refusal is decided BEFORE the ownership check, so the check is the very line before the settlement call (tests/worker-ownership.test.ts guards that line)
-    const lines = run.split("\n");
-    const at = lines.findIndex((l) => l.includes("const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, {"));
-    expect(at).toBeGreaterThan(0);
-    expect(lines[at - 1].trim()).toBe("await ensureOwned(deps, mission.id);");
-    expect(run).toMatch(/const stageUnavailable: SettleResult \| null = hasEstimate && !stageUnits \? \{ ok: false, code: "stage_units_unavailable"/);
-    // every route of a mission's end (normal end, run failed too often, worker restarted too often, recovery after an error) goes through the one settleExecution
     expect(run.match(/settleExecution\(/g)!.length).toBeGreaterThanOrEqual(3);
   });
 });

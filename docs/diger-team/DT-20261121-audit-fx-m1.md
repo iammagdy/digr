@@ -15,6 +15,24 @@ PostgreSQL records the first attempt before workbook storage is opened. Verifica
 
 The replay cases use synthetic accepted quotes. The contact case includes an email-only contact and an office line. A workbook with physical rows and zero billable rows stays downloadable. The existing minimum policy, caps, quote amounts and ledger identifiers carry forward. Paid add-on publication and compensation belong to FX-M1b.
 
+## Existing regression coverage updated
+
+The changes below preserve the original ledger, amount, workbook cell and customer metadata assertions. Both new RPC paths are also covered on scratch PostgreSQL.
+
+- `tests/agent-mission-run.test.ts`
+- `tests/dt-0119-01-stage-units.test.ts`
+- `tests/dt-0119-06-billable-settle.test.ts`
+- `tests/dt09-money-unchanged.test.ts`
+- `tests/engine-settlement.test.ts`
+- `tests/flags-off-byte-identical.test.ts`
+- `tests/helpers/agentMoney.ts`
+- `tests/helpers/agentReplay.ts`
+- `tests/methodology-section.test.ts`
+- `tests/ownership-fail-closed.test.ts`
+- `tests/stage2-live-writer.test.ts`
+- `tests/stage4-first-version.test.ts`
+- `tests/worker-ownership.test.ts`
+
 ## Rollout and rollback
 
 Additive migration `20261122010000_finalize_agent_delivery_atomic.sql` with SHA-256 `9b1bd72e33cbca995b518ff757f9bd73b35592c4975b2688e68839f72254b013`.

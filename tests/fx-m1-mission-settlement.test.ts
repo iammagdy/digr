@@ -92,13 +92,17 @@ async function actualSheetRows(bytes: Buffer): Promise<number[]> {
 }
 
 describe("ordinary mission settlement uses the downloadable artifact", () => {
-  it.each([
+  const cases: Array<{
+    label: string; plan: PricedPlan; data: Record<string, Array<Record<string, unknown>>> | null;
+    physical: number[]; billed: number; charge: number;
+  }> = [
     { label: "two valid contacts and one unbilled person", plan: CONTACT_PLAN, data: CONTACT_ROWS, physical: [3, 3], billed: 5, charge: 774 },
     { label: "six of twelve", plan: PARTIAL, data: { items: rows(6) }, physical: [6], billed: 6, charge: 241 },
     { label: "empty", plan: PARTIAL, data: null, physical: [], billed: 0, charge: 0 },
     { label: "social 30 of 30", plan: SOCIAL, data: { comments: rows(30) }, physical: [30], billed: 30, charge: 200 },
     { label: "file delivered without a billable person", plan: priced([{ ...people, parent_key: null }], 154.62, 553, contacts), data: { people: rows(3) }, physical: [3], billed: 0, charge: 0 },
-  ])("$label", async ({ plan, data, physical, billed, charge }) => {
+  ];
+  it.each(cases)("$label", async ({ plan, data, physical, billed, charge }) => {
     const w = await world(plan);
     const total = physical.reduce((sum, n) => sum + n, 0);
     const output = data ? await buildMissionFiles(plan, data) : null;
