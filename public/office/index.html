@@ -189,11 +189,6 @@
     <div class="canvas-stage" id="stage-wrapper">
       <canvas id="office-canvas"></canvas>
 
-      <!-- Stage Controls Overlay -->
-      <div class="stage-controls">
-        <button id="meeting-btn" class="stage-control-btn" type="button" aria-label="اجتماع الفريق">👥 اجتماع الفريق</button>
-      </div>
-
       <!-- Room Labels Overlay — floats over the scene, constant size -->
       <div class="room-tags" aria-hidden="true">
         <div class="room-tag tag-tr" style="border-color: rgba(242,179,61,.55); color: #ffd97a;"><span class="tag-full">👑 غرفة المدير «الكبير»</span><span class="tag-short">👑 غرفة المدير</span></div>
@@ -2889,23 +2884,7 @@ function openAgentCard(botId, clickX, clickY) {
   renderAgentCard(bot);
   card.style.display = 'block';
 
-  let meetingBtn = document.getElementById('meeting-btn');
-if (!meetingBtn && stageEl && typeof document !== 'undefined' && typeof document.createElement === 'function') {
-  meetingBtn = document.createElement('button');
-  meetingBtn.id = 'meeting-btn';
-  meetingBtn.className = 'stage-control-btn';
-  meetingBtn.type = 'button';
-  meetingBtn.textContent = '👥 اجتماع الفريق';
-  stageEl.appendChild(meetingBtn);
-}
-if (meetingBtn) {
-  meetingBtn.onclick = function(e) {
-    if (e && e.stopPropagation) e.stopPropagation();
-    triggerTeamMeeting();
-  };
-}
-
-if (stageEl) {
+  if (stageEl) {
     const stageRect = stageEl.getBoundingClientRect ? stageEl.getBoundingClientRect() : { left: 0, top: 0, width: 800, height: 540 };
     const botPos = getBotScreenPos(bot);
     let left = botPos.x - stageRect.left + 16;
@@ -2932,22 +2911,6 @@ function closeAgentCard() {
   if (card) {
     card.style.display = 'none';
   }
-}
-
-let meetingBtn = document.getElementById('meeting-btn');
-if (!meetingBtn && stageEl && typeof document !== 'undefined' && typeof document.createElement === 'function') {
-  meetingBtn = document.createElement('button');
-  meetingBtn.id = 'meeting-btn';
-  meetingBtn.className = 'stage-control-btn';
-  meetingBtn.type = 'button';
-  meetingBtn.textContent = '👥 اجتماع الفريق';
-  stageEl.appendChild(meetingBtn);
-}
-if (meetingBtn) {
-  meetingBtn.onclick = function(e) {
-    if (e && e.stopPropagation) e.stopPropagation();
-    triggerTeamMeeting();
-  };
 }
 
 if (stageEl) {
@@ -3050,7 +3013,8 @@ function computeTodayStats(payload) {
     for (const k of BOT_KEYS) {
       const e = payload.bots[k];
       if (!e) continue;
-      const t = e.updated_at ? Date.parse(e.updated_at) : NaN;
+      const dateVal = e.updated_at || e.last_active || null;
+      const t = dateVal ? Date.parse(dateVal) : NaN;
       if (!Number.isFinite(t) || t < dayStart) continue;
       events.push({ t: t, status: computeEffectiveStatus(e, Date.now()) });
       if (Array.isArray(e.recent)) done += e.recent.length;
@@ -3099,7 +3063,8 @@ function computeTodayStats(payload) {
 }
 
 function computeEffectiveStatus(entry, nowMs) {
-  const updatedMs = entry && entry.updated_at ? Date.parse(entry.updated_at) : NaN;
+  const dateVal = entry && (entry.updated_at || entry.last_active || entry.updatedAt);
+  const updatedMs = dateVal ? Date.parse(dateVal) : NaN;
   const openOrder = Boolean(entry && entry.open_order);
   const rawState = String((entry && entry.state) || 'idle').toLowerCase();
   if (rawState === 'stuck') return 'stuck';
@@ -3135,7 +3100,7 @@ function applyLiveFeed(payload) {
     bot.activity_type = incoming.activity_type ? String(incoming.activity_type) : '';
     bot.step = step;
     bot.next = next;
-    bot.updatedAt = incoming.updated_at || null;
+    bot.updatedAt = incoming.updated_at || incoming.last_active || null;
     bot.openOrder = Boolean(incoming.open_order);
     bot.recent = Array.isArray(incoming.recent) ? incoming.recent.slice(0, 3).map(String) : [];
 
@@ -3186,6 +3151,7 @@ function applyLiveFeed(payload) {
         bot.y = bot.homeY;
       }
     }
+    checkBotSleep(bot, nowMs);
   }
   computeTodayStats(payload);
   if (selectedCardBotId && BOTS[selectedCardBotId]) {

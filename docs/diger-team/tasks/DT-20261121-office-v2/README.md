@@ -32,7 +32,7 @@ This release revamps the office canvas with dedicated rooms, meeting mechanics, 
   - Presentation screen on top wall (`325, 322, 74x32`) with animated sprint charts and flow diagrams.
   - Large oval conference table (`cx = 362, cy = 425`) with green leather desk pad and speakerphone.
   - 8 conference chairs around table perimeter.
-  - Team Meeting Button (`#meeting-btn`) in `.stage-controls`: smoothly moves all 9 bots to `MEETING_SEATS`, runs dialogue sequence (`TEAM_MEETING_SCRIPT`), and returns everyone to their desks.
+  - Meeting Room coordination & seats (`MEETING_SEATS`, `TEAM_MEETING_SCRIPT`): no UI meeting button per Megz/CTO direction (zero buttons in stage controls).
 - **Games Corner & Lounge (`x: 0..240, y: 315..540`):**
   - Floor: teal lounge rug with geometric accents (`drawLoungeFloor`).
   - Wall TV (`22, 322, 86x42`): generic pixel sports car driving on night city asphalt road with skyline, window lights, radar, and energy bar.

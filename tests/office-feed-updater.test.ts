@@ -345,4 +345,48 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
     expect(res.stderr).toContain("office-feed-error");
     expect(res.stderr).toContain("Missing OFFICE_UPLOAD_URL or OFFICE_UPLOAD_KEY");
   });
+
+  it("Must-Pass (e): updater output has updated_at === last_active for every bot", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-ts-"));
+    const statusDir = path.join(tmpDir, "status");
+    const tasksDir = path.join(tmpDir, "tasks");
+    fs.mkdirSync(statusDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+
+    const now = Date.now();
+    const fourHoursAgo = new Date(now - 4 * 60 * 60 * 1000).toISOString();
+
+    fs.writeFileSync(
+      path.join(statusDir, "hazalqom.jsonl"),
+      JSON.stringify({
+        bot: "hazalqom",
+        state: "idle",
+        updated_at: fourHoursAgo,
+        open_order: false,
+      }) + "\n"
+    );
+    fs.writeFileSync(
+      path.join(statusDir, "johnny.jsonl"),
+      JSON.stringify({
+        bot: "johnny",
+        state: "working",
+        updated_at: fourHoursAgo,
+        open_order: true,
+      }) + "\n"
+    );
+
+    const feed = (buildOfficeFeed as any)({
+      statusDir,
+      tasksDir,
+      nowMs: now,
+    });
+
+    for (const botKey of CANONICAL_BOTS) {
+      const b = feed.bots[botKey];
+      expect(b).toBeDefined();
+      expect(b).toHaveProperty("updated_at");
+      expect(b).toHaveProperty("last_active");
+      expect(b.updated_at).toBe(b.last_active);
+    }
+  });
 });

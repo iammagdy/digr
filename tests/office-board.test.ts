@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { buildOfficeFeed } from "../scripts/office-feed-updater.mjs";
 
 class MockElement {
   tagName: string;
@@ -732,14 +735,24 @@ describe("DT-20261121-office-v2: Must-Pass Verification Suite", () => {
     }
   });
 
-  it("Must-Pass 5 (Meeting Button Test): moves 9 bots to meeting room seats and returns them", () => {
+  it("Must-Pass 5 (Meeting Button Removed): #meeting-btn does not exist after load and no code path creates it", () => {
     const { evalInContext, stageWrapper } = createBoardHarness();
 
     const meetingBtn = stageWrapper.querySelector("#meeting-btn");
-    expect(meetingBtn).toBeDefined();
+    expect(meetingBtn).toBeNull();
+    expect(evalInContext("document.getElementById('meeting-btn')")).toBeNull();
 
-    // Trigger meeting
-    meetingBtn?.trigger("click", { stopPropagation() {} });
+    // Verify opening agent card or closing it does not create #meeting-btn
+    evalInContext("openAgentCard('elkebir')");
+    expect(stageWrapper.querySelector("#meeting-btn")).toBeNull();
+    expect(evalInContext("document.getElementById('meeting-btn')")).toBeNull();
+
+    evalInContext("closeAgentCard()");
+    expect(stageWrapper.querySelector("#meeting-btn")).toBeNull();
+    expect(evalInContext("document.getElementById('meeting-btn')")).toBeNull();
+
+    // Trigger meeting programmatically (meeting room seats and drawing stay)
+    evalInContext("triggerTeamMeeting()");
     expect(evalInContext("teamMeetingActive")).toBe(true);
 
     const botKeys: string[] = evalInContext("BOT_KEYS");
@@ -866,5 +879,123 @@ describe("DT-20261121-office-v2: Must-Pass Verification Suite", () => {
     for (const re of forbidden) {
       expect(html).not.toMatch(re);
     }
+  });
+
+  it("Must-Pass: real feed timestamps and sleep integration tests (a)-(d)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-realfeed-"));
+    const statusDir = path.join(tmpDir, "status");
+    const tasksDir = path.join(tmpDir, "tasks");
+    const workDir = path.join(tmpDir, "work");
+    fs.mkdirSync(statusDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+    fs.mkdirSync(workDir, { recursive: true });
+
+    const workDirs: Record<string, string> = {};
+    for (const b of ["elkebir", "johnny", "nafady", "hagras", "salem", "hazalqom", "fazza", "ashraf", "marbouha"]) {
+      workDirs[b] = path.join(workDir, b);
+      fs.mkdirSync(workDirs[b], { recursive: true });
+    }
+
+    const now = Date.now();
+    const fourHoursAgo = new Date(now - 4 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+    // (a) Hazalqom: status line 4h old, state idle
+    fs.writeFileSync(
+      path.join(statusDir, "hazalqom.jsonl"),
+      JSON.stringify({
+        bot: "hazalqom",
+        state: "idle",
+        updated_at: fourHoursAgo,
+        open_order: false,
+      }) + "\n"
+    );
+
+    // (b) Johnny: status line 4h old, state working with open order
+    fs.writeFileSync(
+      path.join(statusDir, "johnny.jsonl"),
+      JSON.stringify({
+        bot: "johnny",
+        state: "working",
+        task_id: "DT-TASK-01",
+        updated_at: fourHoursAgo,
+        open_order: true,
+      }) + "\n"
+    );
+
+    // (c) Salem: status line 4h old, state waiting
+    fs.writeFileSync(
+      path.join(statusDir, "salem.jsonl"),
+      JSON.stringify({
+        bot: "salem",
+        state: "waiting",
+        task_id: "DT-TASK-02",
+        percent: 85,
+        updated_at: fourHoursAgo,
+        open_order: true,
+      }) + "\n"
+    );
+
+    // (d) Nafady: no status line -> null last_active
+
+    const feed = (buildOfficeFeed as any)({
+      statusDir,
+      tasksDir,
+      workDirs,
+      nowMs: now,
+    });
+
+    expect(feed.bots.hazalqom.last_active).toBe(fourHoursAgo);
+    expect(feed.bots.hazalqom.updated_at).toBe(fourHoursAgo);
+    expect(feed.bots.hazalqom.state).toBe("idle");
+
+    expect(feed.bots.johnny.state).toBe("stuck");
+    expect(feed.bots.salem.state).toBe("waiting");
+    expect(feed.bots.nafady.last_active).toBeNull();
+    expect(feed.bots.nafady.updated_at).toBeNull();
+
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+      applyLiveFeed(${JSON.stringify(feed)});
+      updateWorld(0.016, 1000);
+    `);
+
+    // (a) Hazalqom: idle for 4h -> isSleeping true on first load
+    expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(true);
+
+    // Shows «نايم» in drawWorld
+    evalInContext("drawWorld(ctx)");
+    expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(true);
+
+    // Tap Hazalqom to wake up -> spin + apology
+    const hazalqomPos = evalInContext("getBotScreenPos(BOTS.hazalqom)");
+    triggerStageClick(hazalqomPos.x, hazalqomPos.y);
+
+    expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.hazalqom.wakeAnimStart")).toBeGreaterThan(0);
+    const apology = evalInContext("BOTS.hazalqom.bubbleText");
+    expect(apology).toBeTruthy();
+    expect(evalInContext("WAKE_APOLOGIES")).toContain(apology);
+
+    // Card popup was NOT opened on wake-up click
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card?.style.display || "none").toBe("none");
+
+    // (b) Counter: Johnny working with 4h old line -> never نايم
+    expect(evalInContext("BOTS.johnny.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.johnny.status")).toBe("stuck");
+
+    // (c) Counter: Salem waiting with 4h old line -> never نايم and never «متأخر»
+    expect(evalInContext("BOTS.salem.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.salem.status")).toBe("waiting");
+    expect(evalInContext("BOTS.salem.statusLabel")).not.toContain("متأخر");
+    expect(evalInContext("BOTS.salem.statusLabel")).toContain("في الانتظار");
+
+    // (d) Counter: Nafady with null last_active -> not sleeping on load, no crash
+    expect(evalInContext("BOTS.nafady.isSleeping")).toBe(false);
+    expect(evalInContext("BOTS.nafady.updatedAt")).toBeNull();
   });
 });

@@ -206,6 +206,7 @@ export function buildOfficeFeed({
         activity_type: resolveActivityType(botId, "idle"),
         percent: null,
         last_active: null,
+        updated_at: null,
       };
       continue;
     }
@@ -277,6 +278,7 @@ export function buildOfficeFeed({
       activity_type: activityType,
       percent,
       last_active: lastActiveIso,
+      updated_at: lastActiveIso,
     };
   }
 
