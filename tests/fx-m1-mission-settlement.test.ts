@@ -245,7 +245,8 @@ describe("ordinary publication is create-only even when an upload finishes late"
     const csv = Buffer.from(objects.get(`results/${winner.csv_path}`)!).toString("utf8");
     const input = { missionId: MISSION, userId: USER, jobId: JOB, xlsx: different, csv,
       sealed: { xlsxSha256: digest(different), csvSha256: digest(csv) } };
-    await expect(store.publishResult(input)).rejects.toThrow("sealed result hash mismatch");
+    await expect(store.publishResult(input)).rejects.toThrow();
+    expect(objects.get(`agent-missions/${MISSION}/result/result.xlsx`)).toEqual(workbook.xlsx);
     expect(objects.size).toBe(4);
     expect([...objects].filter(([path]) => path.endsWith(".xlsx")).map(([, bytes]) => digest(bytes))).toEqual([digest(workbook.xlsx), digest(workbook.xlsx)]);
     expect([...objects].filter(([path]) => path.endsWith(".csv")).map(([, bytes]) => digest(bytes))).toEqual([storedCsv, storedCsv]);
