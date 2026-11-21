@@ -57,3 +57,9 @@ The shared runner still uses 600 points. Each file below scopes the default sett
 - `tests/stage4-first-version.test.ts`. Approve the original plans before checking stored version one.
 - `tests/truthful-limits-text.test.ts`. Original approval and delivery evidence for the customer-facing limit text.
 - `tests/unified-capability-discovery.test.ts`. Normal end-to-end approval for the original validated capability plans.
+
+## D-0175 wallet decimal precision resolution
+
+- `src/lib/agentMission/customerActions.ts`: `readVerifiedWallet` parses arbitrary-precision NUMERIC ledger deltas and sums them using exact scaled BigInt arithmetic, preventing floating-point drift on exact boundary evaluations. Rejects non-numeric/non-finite values as unavailable (409) with zero writes.
+- `tests/dt-20261120-overcap.test.tsx`: Adds explicit test cases for (a) 715.5 approval with 214.5 active hold, (b) 714.5 rejection with 402, (c) preserved integer controls, (d) float drift boundary prevention (715.3 - 0.1 - 0.2 = 715.0), and (e) malformed row delta rejection with 409 and 0 writes.
+- Tested against scratch PostgreSQL on socket `/tmp/digr-issue13-pg` port `55131` with identical results.

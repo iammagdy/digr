@@ -145,13 +145,78 @@ const AFFORDABILITY_CHANGED_AR = "تغيّر الرصيد أو الخطة. را�
 const affordabilityChanged = (status: 402 | 409, error = AFFORDABILITY_CHANGED_AR) =>
   ({ ...bad(status, error), code: "affordability_changed" as const });
 
-async function readVerifiedWallet(client: any, userId: string): Promise<number | null> {
+type VerifiedWallet = {
+  points: number;
+  num: bigint;
+  denExp: number;
+  lt: (points: number) => boolean;
+  gte: (points: number) => boolean;
+};
+
+function parseDecimal(raw: unknown): { num: bigint; denExp: number } | null {
+  if (typeof raw !== "number" && typeof raw !== "string") return null;
+  if (typeof raw === "number" && !Number.isFinite(raw)) return null;
+  let str = String(raw).trim();
+  if (str === "") return null;
+  if (/[eE]/.test(str)) {
+    const [coeff, expStr] = str.split(/[eE]/);
+    const exp = Number(expStr);
+    if (!Number.isSafeInteger(exp)) return null;
+    const sign = coeff.startsWith("-") ? "-" : "";
+    const cleanCoeff = coeff.replace(/^[+-]/, "");
+    const parts = cleanCoeff.split(".");
+    if (parts.length > 2) return null;
+    const intPart = parts[0] || "0";
+    const fracPart = parts[1] || "";
+    if (exp >= 0) {
+      if (exp >= fracPart.length) {
+        str = sign + intPart + fracPart + "0".repeat(exp - fracPart.length);
+      } else {
+        str = sign + intPart + fracPart.slice(0, exp) + "." + fracPart.slice(exp);
+      }
+    } else {
+      const absExp = -exp;
+      if (absExp <= intPart.length) {
+        str = sign + intPart.slice(0, intPart.length - absExp) + "." + intPart.slice(intPart.length - absExp) + fracPart;
+      } else {
+        str = sign + "0." + "0".repeat(absExp - intPart.length) + intPart + fracPart;
+      }
+    }
+  }
+  if (!/^[+-]?\d+(\.\d+)?$/.test(str)) return null;
+  const isNegative = str.startsWith("-");
+  const clean = str.replace(/^[+-]/, "");
+  let [intStr, fracStr = ""] = clean.split(".");
+  while (fracStr.endsWith("0")) fracStr = fracStr.slice(0, -1);
+  const digits = intStr + fracStr;
+  let num = BigInt(digits);
+  if (isNegative) num = -num;
+  return { num, denExp: fracStr.length };
+}
+
+const ZERO_BIG = BigInt(0);
+const TEN_BIG = BigInt(10);
+const pow10Big = (exp: number): bigint => TEN_BIG ** BigInt(exp);
+
+function compareDecimal(num1: bigint, exp1: number, num2: bigint, exp2: number): number {
+  if (exp1 === exp2) return num1 === num2 ? 0 : num1 < num2 ? -1 : 1;
+  if (exp1 < exp2) {
+    const scaled = num1 * pow10Big(exp2 - exp1);
+    return scaled === num2 ? 0 : scaled < num2 ? -1 : 1;
+  } else {
+    const scaled = num2 * pow10Big(exp1 - exp2);
+    return num1 === scaled ? 0 : num1 < scaled ? -1 : 1;
+  }
+}
+
+async function readVerifiedWallet(client: any, userId: string): Promise<VerifiedWallet | null> {
   const countRows = () => client.from(CREDIT_LEDGER_TABLE).select("id", { count: "exact", head: true }).eq("user_id", userId);
   try {
     const first = await countRows();
     if (first.error || !Number.isSafeInteger(first.count) || first.count < 0) return null;
     const ids = new Set<unknown>();
-    let total = 0;
+    let totalNum = ZERO_BIG;
+    let totalExp = 0;
     for (let offset = 0; offset < first.count; offset += 1000) {
       const length = Math.min(1000, first.count - offset);
       const page = await client.from(CREDIT_LEDGER_TABLE).select("id,delta").eq("user_id", userId)
@@ -159,14 +224,38 @@ async function readVerifiedWallet(client: any, userId: string): Promise<number |
       if (page.error || !Array.isArray(page.data) || page.data.length !== length) return null;
       for (const row of page.data) {
         if (!row || (typeof row.id !== "string" && !Number.isSafeInteger(row.id)) || row.id === ""
-          || ids.has(row.id) || !Number.isSafeInteger(row.delta)) return null;
+          || ids.has(row.id)) return null;
         ids.add(row.id);
-        total += row.delta;
-        if (!Number.isSafeInteger(total)) return null;
+        const parsed = parseDecimal(row.delta);
+        if (!parsed) return null;
+        if (parsed.denExp > totalExp) {
+          totalNum = totalNum * pow10Big(parsed.denExp - totalExp) + parsed.num;
+          totalExp = parsed.denExp;
+        } else {
+          totalNum = totalNum + parsed.num * pow10Big(totalExp - parsed.denExp);
+        }
       }
     }
     const last = await countRows();
-    return !last.error && last.count === first.count ? Math.max(0, total) : null;
+    if (last.error || last.count !== first.count) return null;
+    if (totalNum <= ZERO_BIG) {
+      totalNum = ZERO_BIG;
+      totalExp = 0;
+    }
+    const points = totalNum === ZERO_BIG ? 0 : Number(totalNum) / Number(pow10Big(totalExp));
+    return {
+      points,
+      num: totalNum,
+      denExp: totalExp,
+      lt: (p: number) => {
+        const target = parseDecimal(p);
+        return target !== null && compareDecimal(totalNum, totalExp, target.num, target.denExp) < 0;
+      },
+      gte: (p: number) => {
+        const target = parseDecimal(p);
+        return target !== null && compareDecimal(totalNum, totalExp, target.num, target.denExp) >= 0;
+      },
+    };
   } catch {
     return null;
   }
@@ -191,16 +280,17 @@ async function affordabilityOf(client: any, userId: string, plan: PricedPlan): P
   const capPoints = effectiveJobPointsCap();
   const base = { capPoints, availablePoints: null, reservePoints: price?.reservePoints ?? null, limitedBy: null };
   if (!price) return { view: { ...base, mode: "edit" } };
-  const availablePoints = await readVerifiedWallet(client, userId);
-  if (availablePoints === null) return { view: { ...base, mode: "unavailable" } };
+  const wallet = await readVerifiedWallet(client, userId);
+  if (!wallet) return { view: { ...base, mode: "unavailable" } };
+  const availablePoints = wallet.points;
   const limit = Math.min(availablePoints, capPoints);
   const info = { ...base, availablePoints };
   const minimum = price.settings?.minChargePoints ?? DEFAULT_MISSION_PRICING_SETTINGS.minChargePoints;
-  if (availablePoints < minimum) return { view: { ...info, mode: "top_up", limitedBy: "wallet" } };
-  const fits = !price.overCap && price.reservePoints <= limit;
+  if (wallet.lt(minimum)) return { view: { ...info, mode: "top_up", limitedBy: "wallet" } };
+  const fits = !price.overCap && wallet.gte(price.reservePoints) && price.reservePoints <= capPoints;
   if (fits && !plan.hold_cap_preview) return { view: { ...info, mode: "ready" } };
 
-  const limitedBy = availablePoints < capPoints && price.reservePoints > availablePoints ? "wallet" : "cap";
+  const limitedBy = wallet.lt(capPoints) && wallet.lt(price.reservePoints) ? "wallet" : "cap";
   const root = fits && plan.hold_cap_preview ? fixedCountBasket(plan)?.root : undefined;
   const candidate = root
     ? { kind: "count" as const, count: root.planned_rows, plan, countAr: countAr(root.planned_rows, itemNounOf(root.title_ar)) }
@@ -289,9 +379,9 @@ export async function approveForCustomer(client: any, input: { id: string; userI
   const price = checkedPrice(snapshot.plan);
   if (!price) return bad(409, APPROVE_MESSAGES.plan_changed);
   if (snapshot.plan.hold_cap_preview || price.overCap || price.reservePoints > effectiveJobPointsCap()) return affordabilityChanged(409);
-  const available = await readVerifiedWallet(client, input.userId);
-  if (available === null) return affordabilityChanged(409);
-  if (available < price.reservePoints) return affordabilityChanged(402, APPROVE_MESSAGES.insufficient_balance);
+  const wallet = await readVerifiedWallet(client, input.userId);
+  if (!wallet) return affordabilityChanged(409);
+  if (wallet.lt(price.reservePoints)) return affordabilityChanged(402, APPROVE_MESSAGES.insufficient_balance);
   const r = await approveMissionOnce(client, { id: input.id, actorId: input.userId, expectUserId: input.userId, snapshot, messages: APPROVE_MESSAGES });
   if (!r.ok) {
     if (r.code === "stale_plan") return staleApproval();

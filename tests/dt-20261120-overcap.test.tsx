@@ -122,6 +122,70 @@ describe("the owned plan's affordability and approval", () => {
     expect(await fixture.approve(card.approvalVersion)).toMatchObject({ ok: true, reservePoints: 715 });
     expect(fixture.holds()).toEqual([715]);
   });
+
+  it.each([
+    { remaining: 715.5, earlierHold: 214.5, topup: 930, expectApprove: true, label: "D-0175 (a) 715.5 approve" },
+    { remaining: 714.5, earlierHold: 214.5, topup: 929, expectApprove: false, label: "D-0175 (b) 714.5 402" },
+  ])("handles fractional ledger balances per D-0175 with $remaining points ($label)", async ({ remaining, earlierHold, topup, expectApprove }) => {
+    const fixture = world(topup);
+    fixture.money.ledger.push({ id: "res_prior_frac", delta: -earlierHold, type: "reserve" });
+    fixture.money.quotes.set("quote_prior", { id: "quote_prior", user_id: owner, hash: "h", items: [], total: earlierHold, status: "accepted", expires: Date.now() + 3600_000, formats: ["xlsx"] });
+    fixture.money.jobs.set("job_prior", { id: "job_prior", user_id: owner, status: "running", reserved_credits: earlierHold, unit_price: 1, delivered_units: 0, target_volume_max: 10, step: 0, lease_until: null, charged_credits: null, result_file_id: null, accumulated_cost_usd: 0, current_cursor: null, endpoint_id: "test", target_volume_min: 1, error_message: null });
+    fixture.db.tables.set("credit_ledger", [
+      { id: "topup_1", user_id: owner, delta: topup },
+      { id: "res_prior_frac", user_id: owner, delta: -earlierHold },
+      { id: "other_wallet", user_id: "other-owner", delta: 100_000 },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.availablePoints).toBe(remaining);
+    if (expectApprove) {
+      expect(card.affordability?.mode).toBe("ready");
+      const app = await fixture.approve(card.approvalVersion);
+      expect(app).toMatchObject({ ok: true, reservePoints: 715 });
+      expect(await fixture.approve(card.approvalVersion)).toMatchObject({ ok: false, status: 409 });
+      expect(fixture.holds()).toEqual([earlierHold, 715]);
+    } else {
+      expect(card.affordability?.mode).toBe("offer");
+      expect(card.affordability?.limitedBy).toBe("wallet");
+      const app = await fixture.approve(card.approvalVersion);
+      expect(app).toMatchObject({ ok: false, status: 402, code: "affordability_changed" });
+      expect(fixture.holds()).toEqual([earlierHold]);
+    }
+  });
+
+  it("prevents float drift from rejecting an exact boundary balance (D-0175 case d)", async () => {
+    // In IEEE 754: 715.3 - 0.1 - 0.2 = 714.9999999999999.
+    // If readVerifiedWallet used binary float summation, available points would be < 715,
+    // causing mode to become "offer" and approve to be rejected with 402.
+    // With exact decimal arithmetic, the sum is exactly 715.000, mode is "ready", and approve succeeds.
+    const fixture = world(715);
+    fixture.db.tables.set("credit_ledger", [
+      { id: "topup_float", user_id: owner, delta: 715.3 },
+      { id: "debit_1", user_id: owner, delta: -0.1 },
+      { id: "debit_2", user_id: owner, delta: -0.2 },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.availablePoints).toBe(715);
+    expect(card.affordability?.mode).toBe("ready");
+    const app = await fixture.approve(card.approvalVersion);
+    expect(app).toMatchObject({ ok: true, reservePoints: 715 });
+    expect(fixture.holds()).toEqual([715]);
+  });
+
+  it("refuses malformed row deltas with 409 and zero writes (D-0175 case e)", async () => {
+    const fixture = world(1000);
+    fixture.db.tables.set("credit_ledger", [
+      { id: "topup_1", user_id: owner, delta: 1000 },
+      { id: "corrupt_row", user_id: owner, delta: "invalid_numeric_delta" },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability).toMatchObject({ mode: "unavailable", availablePoints: null });
+    const app = await fixture.approve(card.approvalVersion);
+    expect(app).toMatchObject({ ok: false, status: 409, code: "affordability_changed" });
+    expect(fixture.holds()).toEqual([]);
+    expect(fixture.money.quotes.size).toBe(0);
+    expect(fixture.money.jobs.size).toBe(0);
+  });
 });
 
 describe("a cap-limited proposal is a priced preview", () => {
