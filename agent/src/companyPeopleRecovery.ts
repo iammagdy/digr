@@ -701,6 +701,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   assumptionsHint?: unknown;
   understoodCompanies?: UnderstoodCompaniesSummary;
   understoodPeople?: UnderstoodPeopleSummary;
+  peopleRoleTitleAr?: string | null;
   runSandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   loadEvidenceMap: (stagesList: Array<Record<string, unknown>>) => Promise<Map<string, string | null>>;
   makeLookup: (evMap: Map<string, string | null>) => Parameters<typeof validateAndPricePlan>[1];
@@ -709,7 +710,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   inspection?: SavedEvidenceInspection;
   log?: (line: string) => void;
 }): Promise<RecoveryResult> {
-  const { mission, store, catalog, access, capabilities, gateway, forceCompaniesOnly, isRecoveryRetry, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
+  const { mission, store, catalog, access, capabilities, gateway, forceCompaniesOnly, isRecoveryRetry, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, peopleRoleTitleAr, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
   let calls = params.calls;
   let inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
 
@@ -1046,10 +1047,10 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   }
 
   const wants = requestWantsContacts(requestText);
-  const asksManagerRole = roleEval.isManagerAsk || (typeof ctx.peopleRoleTitleAr === "string" && /مدير/.test(ctx.peopleRoleTitleAr));
+  const asksManagerRole = roleEval.isManagerAsk || (typeof peopleRoleTitleAr === "string" && /مدير/.test(peopleRoleTitleAr));
   const rawPeopleTitle = understoodPeople?.noun_ar?.trim()
     ? `${understoodPeople.noun_ar.trim()} كل شركة`
-    : (typeof ctx.peopleRoleTitleAr === "string" && ctx.peopleRoleTitleAr.trim() ? (ctx.peopleRoleTitleAr.includes("كل") ? ctx.peopleRoleTitleAr.trim() : `${ctx.peopleRoleTitleAr.trim()} كل شركة`) : "مسؤولو كل شركة");
+    : (typeof peopleRoleTitleAr === "string" && peopleRoleTitleAr.trim() ? (peopleRoleTitleAr.includes("كل") ? peopleRoleTitleAr.trim() : `${peopleRoleTitleAr.trim()} كل شركة`) : "مسؤولو كل شركة");
   const peopleTitle = asksManagerRole
     ? rawPeopleTitle
     : neutralPeopleTitleAr(rawPeopleTitle, "manager", "شركة");

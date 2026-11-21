@@ -15,6 +15,8 @@ interface RoleDef {
   nounStems: string[];
   /** The plural as a subject, for the card's sentence. */
   pluralAr: string;
+  /** Singular role noun for singular stage title («مدير», «مهندس»). */
+  singularAr: string;
   /** Title words (Arabic and Latin, lower case) that name the role. */
   words: string[];
   /** Phrases (several words) that name the role. */
@@ -23,11 +25,11 @@ interface RoleDef {
 
 const ROLES: ReadonlyArray<RoleDef> = [
   // the DECISION MAKERS («صناع القرار») are this role: the owner, the founders, the chairman, the chiefs, the general manager, the directors, the managers and the heads
-  { key: "manager", nounStems: ["مدير", "مدرا", "مسؤول", "مسئول", "رئيس", "قيادي", "صناع", "صانع", "manager", "director", "decision"], pluralAr: "مديرون", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "owner", "owners", "founder", "founders", "cofounder", "co-founder", "chairman", "chairwoman", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام", "مالك", "مالكة", "صاحب", "صاحبة", "مؤسس", "مؤسسة"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
-  { key: "engineer", nounStems: ["مهندس", "engineer"], pluralAr: "مهندسون", words: ["engineer", "engineers", "engineering", "مهندس", "مهندسة", "مهندسين"] },
-  { key: "sales", nounStems: ["مبيع", "مندوب", "sales"], pluralAr: "مسؤولو مبيعات", words: ["sales", "salesman", "salesperson", "مبيعات", "مندوب", "business development"] },
-  { key: "hr", nounStems: ["موارد", "hr"], pluralAr: "مسؤولو موارد بشرية", words: ["hr", "recruiter", "recruitment", "talent", "موارد", "توظيف"], phrases: ["human resources"] },
-  { key: "accountant", nounStems: ["محاسب", "accountant"], pluralAr: "محاسبون", words: ["accountant", "accounting", "finance", "financial", "محاسب", "محاسبة", "حسابات"] },
+  { key: "manager", nounStems: ["مدير", "مدرا", "مسؤول", "مسئول", "رئيس", "قيادي", "صناع", "صانع", "manager", "director", "decision"], pluralAr: "مديرون", singularAr: "مدير", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "owner", "owners", "founder", "founders", "cofounder", "co-founder", "chairman", "chairwoman", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام", "مالك", "مالكة", "صاحب", "صاحبة", "مؤسس", "مؤسسة"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
+  { key: "engineer", nounStems: ["مهندس", "engineer"], pluralAr: "مهندسون", singularAr: "مهندس", words: ["engineer", "engineers", "engineering", "مهندس", "مهندسة", "مهندسين"] },
+  { key: "sales", nounStems: ["مبيع", "مندوب", "sales"], pluralAr: "مسؤولو مبيعات", singularAr: "مسؤول مبيعات", words: ["sales", "salesman", "salesperson", "مبيعات", "مندوب", "business development"] },
+  { key: "hr", nounStems: ["موارد", "hr"], pluralAr: "مسؤولو موارد بشرية", singularAr: "مسؤول موارد بشرية", words: ["hr", "recruiter", "recruitment", "talent", "موارد", "توظيف"], phrases: ["human resources"] },
+  { key: "accountant", nounStems: ["محاسب", "accountant"], pluralAr: "محاسبون", singularAr: "محاسب", words: ["accountant", "accounting", "finance", "financial", "محاسب", "محاسبة", "حسابات"] },
 ];
 
 /** Titles that do not say what the person does (a person of such a title may or may not hold the role): unclear, never «other». */

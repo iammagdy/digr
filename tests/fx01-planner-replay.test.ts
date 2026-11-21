@@ -52,10 +52,10 @@ describe("FX-01B: Planner Replay & Prompt Faithfulness", () => {
       },
     };
 
-    const checked = withCheckedPerCompany(rawUnderstand, ["مدير من كل شركة من ٣ شركات تسويق في القاهرة"]);
-    expect(checked.people_of_companies.per_company).toBe(1);
+    const checked = withCheckedPerCompany(rawUnderstand as any, ["مدير من كل شركة من ٣ شركات تسويق في القاهرة"]);
+    expect(checked.people_of_companies?.per_company).toBe(1);
 
-    const checkedCompanies = withCheckedCompaniesCount(rawUnderstand, ["مدير من كل شركة من ٣ شركات تسويق في القاهرة"]);
+    const checkedCompanies = withCheckedCompaniesCount(rawUnderstand as any, ["مدير من كل شركة من ٣ شركات تسويق في القاهرة"]);
     expect(checkedCompanies.companies_count).toBe(3);
   });
 
@@ -82,10 +82,10 @@ describe("FX-01B: Planner Replay & Prompt Faithfulness", () => {
       },
     };
 
-    const checked = withCheckedPerCompany(rawUnderstand, ["٣ مديرين من كل شركة من ٥ شركات"]);
-    expect(checked.people_of_companies.per_company).toBe(3);
+    const checked = withCheckedPerCompany(rawUnderstand as any, ["٣ مديرين من كل شركة من ٥ شركات"]);
+    expect(checked.people_of_companies?.per_company).toBe(3);
 
-    const checkedCompanies = withCheckedCompaniesCount(rawUnderstand, ["٣ مديرين من كل شركة من ٥ شركات"]);
+    const checkedCompanies = withCheckedCompaniesCount(rawUnderstand as any, ["٣ مديرين من كل شركة من ٥ شركات"]);
     expect(checkedCompanies.companies_count).toBe(5);
   });
 

@@ -127,7 +127,7 @@ const COLUMN_TITLES: Record<string, string> = {
 };
 const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link", "likes", "comments_count", "replies_count", "shares", "views", "language", "country"];
 
-import { impersonalAr } from "../../src/lib/agentMission/roles";
+import { impersonalAr } from "../../../src/lib/agentMission/roles";
 export { impersonalAr };
 
 /** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */

@@ -542,7 +542,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // a default language the measured page could not show is left OFF, and the card says so (one line per language)
   const languageOffNotes = new Set<string>();
   if (stagesIn.length < 1 || stagesIn.length > MAX_PLAN_STAGES) return { ok: false, issues: [`a plan has 1 to ${MAX_PLAN_STAGES} stages`] };
-  const summary = checkCustomerText(impersonalAr(input.summary_ar), { maxChars: 600 });
+  const rawSummary = typeof (input as any)?.summary_ar === "string" ? (input as any).summary_ar : String((input as any)?.summary_ar ?? "");
+  const summary = checkCustomerText(impersonalAr(rawSummary), { maxChars: 600 });
   if (summary.issues.length) issues.push(`summary_ar: ${summary.issues.join("; ")}`);
 
   const keys = new Set<string>();
@@ -1042,7 +1043,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
         const roleNoun = roleDef ? roleDef.pluralAr : "المطلوبين";
         if (!namesRoleAr(st.title_ar, st.role_preference.role)) {
           const perP = Number(st.per_parent_rows) || 1;
-          st.title_ar = perP === 1 ? `${roleDef ? roleDef.singularAr : "مدير"} في كل ${parentNoun}` : `${roleNoun} في كل ${parentNoun}`;
+          const singRole = roleDef?.singularAr || "مدير";
+          st.title_ar = perP === 1 ? `${singRole} في كل ${parentNoun}` : `${roleNoun} في كل ${parentNoun}`;
         }
       } else if (isPeopleStage(st)) {
         st.title_ar = neutralPeopleTitleAr(st.title_ar, "manager", parentNoun);

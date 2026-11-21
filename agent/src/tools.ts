@@ -465,6 +465,7 @@ function createPlanCoordinator(ctx: ToolContext) {
       calls, callParams: state.callParams, codeRuns: state.codeRuns, outSeq: state.outSeq,
       stagesIn, summaryHint: opts.summaryHint, assumptionsHint: opts.assumptionsHint,
       understoodCompanies: ctx.understoodCompanies, understoodPeople: ctx.understoodPeople,
+      peopleRoleTitleAr: ctx.peopleRoleTitleAr,
       runSandbox, loadEvidenceMap, makeLookup: build.makeLookup,
       finalizePlan: (p, ev, o) => build.finalizeAcceptedPlan(p, ev, { ...o, persist: false }),
       onCallsRefreshed: build.refreshCalls,
