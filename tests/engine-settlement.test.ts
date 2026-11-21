@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { tregResult, callIds, lastOutputId, planningFlow, type Results } from "./helpers/agentFakeWorld";
 import { ENDPOINT, PER_PAGE, TOPIC, page, pages, planning } from "./helpers/engineXScenario";
@@ -7,7 +7,6 @@ import { readSnapshot } from "../agent/src/items/itemStore";
 import { runExecution, type RunnerDeps } from "../agent/src/runMission";
 import { abortActiveRuns } from "../agent/src/sessions";
 import { createFakeDriver } from "../agent/src/fakeDriver";
-import { createMemoryStore, type MemoryStore } from "../agent/src/memoryStore";
 import type { ModelDriver } from "../agent/src/driver";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 
@@ -18,11 +17,21 @@ const REQUEST = "هات ٣٠٠ تغريدة عن محمد صلاح";
 
 describe("B. settle from the file: the number in the file is the delivered count and the charge basis; any other number is flagged, never shown", () => {
   it("the file the customer will download holds 77 items while the log holds 300 (the live run's shape): charged for 77, flagged for the admin, and every text says 77", async () => {
-    const r = await replay({
-      request: REQUEST, planning: planning(), execution: () => [], answers: [pages(1)[0], ...pages(30)],
-      // the storage serves, for the delivered file, a workbook of 77 items (a stale or wrong object): the read-back is what the customer would get
-      makeStore: storeWithWrongFile,
+    const writer = Object.getPrototypeOf(new ExcelJS.Workbook().xlsx) as ExcelJS.Workbook["xlsx"];
+    const serialize = writer.writeBuffer;
+    // Alter the serializer's output before the worker hashes it. A substitution
+    // after the hash is recorded is an integrity fault, covered by FX-M1.
+    const shorten = vi.spyOn(writer, "writeBuffer").mockImplementation(async function (this: ExcelJS.Workbook["xlsx"], ...args) {
+      const original = await serialize.apply(this, args);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(original as never);
+      const sheet = workbook.worksheets.slice(1).find((entry) => entry.rowCount === 301);
+      if (!sheet) return original;
+      for (let row = 79; row <= 301; row += 1) sheet.getRow(row).values = [];
+      return serialize.call(workbook.xlsx);
     });
+    const r = await replay({ request: REQUEST, planning: planning(), execution: () => [], answers: [pages(1)[0], ...pages(30)] })
+      .finally(() => shorten.mockRestore());
     const m = r.mission;
     // the log had all 300; the read-back file had 77: the customer is charged for what the FILE holds
     expect((await readSnapshot(r.store, r.missionId)).counts("tweets").accepted).toBe(300);
@@ -48,24 +57,6 @@ describe("B. settle from the file: the number in the file is the delivered count
     expect(r.store.events.some((e) => e.counts && "adm_flag" in e.counts)).toBe(false);
   });
 });
-
-/** A memory store whose read-back of the delivered workbook is a DIFFERENT workbook (77 items): what a stale or wrong object would give. */
-function storeWithWrongFile(): MemoryStore {
-  const store = createMemoryStore();
-  const real = store.getFileBytes.bind(store);
-  store.getFileBytes = async (missionId, rel) => {
-    const bytes = await real(missionId, rel);
-    if (rel !== "result/result.xlsx" || !bytes) return bytes;
-    // a workbook with the same sheets and 77 items instead of 300
-    const wb = new ExcelJS.Workbook();
-    wb.addWorksheet("ملخص المهمة").addRow(["المرحلة"]);
-    const sheet = wb.addWorksheet("التغريدات");
-    sheet.addRow(["نص التغريدة"]);
-    for (let i = 0; i < 77; i += 1) sheet.addRow([`تغريدة ${i}`]);
-    return Buffer.from(await wb.xlsx.writeBuffer());
-  };
-  return store;
-}
 
 describe("the engine never restarts a source: a mission put back in the queue resumes from the cursor its log recorded", () => {
   it("stopped after 8 pages (the memory guard), taken again: 19 pages in all, no page read twice, 300 delivered, the file and the charge are one number", async () => {

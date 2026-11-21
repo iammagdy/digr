@@ -12,7 +12,8 @@ import { deliveredNothing, NO_RELEASABLE_RESULT_AR, resultsReleasable } from "@/
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { missionDownloadName } from "@/lib/agentMission/fileNames";
-import { fileResponseFromUrl } from "@/lib/server/fileResponse";
+import { csvExportFromWorkbook, packageCsvExport } from "@/lib/server/csvFromExcel";
+import { fileResponseFromBytes, fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { excelFromCsv } from "@/lib/server/excelFromCsv";
@@ -69,6 +70,41 @@ export async function GET(
     const isAdmin = user.app_metadata?.role === "admin";
     if (job.user_id !== user.id && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
+    }
+
+    if (job.endpoint_id === "agent-mission") {
+      const unavailable = () => NextResponse.json({ success: false, error: "الملف المطلوب غير جاهز للتحميل بعد أو انتهت صلاحيته." }, { status: 404 });
+      const { data: receipt, error } = await adminClient.from("agent_delivery_receipts")
+        .select("mission_id,user_id,physical_units,xlsx_sha,xlsx_path,binding").eq("job_id", jobId).maybeSingle();
+      if (error) return unavailable();
+      if (receipt) {
+        const format = (req.nextUrl.searchParams.get("format") || "xlsx").toLowerCase();
+        if ((format !== "xlsx" && format !== "csv") || req.nextUrl.searchParams.has("spec")) {
+          return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
+        }
+        const hash = receipt.xlsx_sha;
+        if (receipt.user_id !== job.user_id || receipt.physical_units <= 0 || !hash || !/^[a-f0-9]{64}$/.test(hash)
+            || receipt.xlsx_path !== `${job.user_id}/${jobId}/sealed/${hash}/result.xlsx`) return unavailable();
+        const bucket = adminClient.storage.from("results");
+        const stored = await bucket.download(receipt.xlsx_path);
+        if (stored.error || !stored.data) return unavailable();
+        const bytes = Buffer.from(await stored.data.arrayBuffer());
+        if (createHash("sha256").update(bytes).digest("hex") !== hash) return unavailable();
+        const binding = receipt.binding as { files?: Array<{ kind: string; name: string; download_name?: string }> } | null;
+        const named = (kind: "xlsx" | "csv") => missionDownloadName({ files: binding?.files, kind, deliveredUnits: receipt.physical_units });
+        if (format === "csv") {
+          const packaged = packageCsvExport(await csvExportFromWorkbook(bytes));
+          const download = packaged.kind === "zip" ? named("csv").replace(/\.csv$/i, ".zip") : named("csv");
+          return fileResponseFromBytes(packaged.body, download);
+        }
+        const downloadFileName = named("xlsx");
+        if (req.nextUrl.searchParams.get("stream") === "1") return fileResponseFromBytes(bytes, downloadFileName);
+        const signed = await bucket.createSignedUrl(receipt.xlsx_path, 300, { download: downloadFileName });
+        if (signed.error || !signed.data?.signedUrl) return unavailable();
+        const signedUrl = signed.data.signedUrl;
+        if (req.nextUrl.searchParams.get("redirect") === "true") return NextResponse.redirect(signedUrl, 302);
+        return NextResponse.json({ success: true, jobId, format, downloadFileName, signedUrl, expiresInSeconds: 300 });
+      }
     }
 
     // A failed request that delivered no record has no file: say so plainly, before anything is read, created or priced.

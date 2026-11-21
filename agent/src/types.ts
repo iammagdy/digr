@@ -28,7 +28,7 @@ export interface MissionRecord {
   charged_points: number | null;
   summary_ar: string | null;
   error: string | null;
-  files: Array<{ name: string; path: string; kind: string; /** The name the customer's download carries (built from the mission). */ download_name?: string }> | null;
+  files: Array<{ name: string; path: string; kind: string; sha256?: string; /** The name the customer's download carries (built from the mission). */ download_name?: string }> | null;
   worker_id: string | null;
   lease_until: string | null;
   created_at: string;
@@ -112,5 +112,5 @@ export interface AgentStore {
    * Saves the result files of a settled mission: in the mission's own prefix of the private bucket, and where the website's results screen looks for a job's files
    * (results/<user>/<job>/result.xlsx|csv) with the artifact_versions row the website reads them through. Returns the path settle_job_atomic stores as the result file.
    */
-  publishResult(input: { missionId: string; userId: string; jobId: string; xlsx: Buffer; csv: string }): Promise<{ resultPath: string; files: Array<{ name: string; path: string; kind: string }> }>;
+  publishResult(input: { missionId: string; userId: string; jobId: string; xlsx: Buffer; csv: string; sealed?: { xlsxSha256: string; csvSha256: string } }): Promise<{ resultPath: string; files: NonNullable<MissionRecord["files"]> }>;
 }

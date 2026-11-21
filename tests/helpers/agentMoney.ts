@@ -18,11 +18,28 @@ export interface FakeQuote { id: string; user_id: string; hash: string; items: a
 
 export const quoteJobId = (quoteId: string): string => `job_quote_${createHash("md5").update(quoteId).digest("hex")}`;
 
+type DeliveryTrial = {
+  started: number; due: number; phase: "verifying" | "release_only";
+  verify_count: number; release_count: number; candidate: any; delivery: any;
+  id: string | null; worker: string | null; verified: boolean;
+};
+
+const JOURNAL_RPC = "claim_agent_delivery_attempt_atomic";
+const FINALIZE_RPC = "finalize_agent_delivery_atomic";
+
 export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a database where the per-stage settlement was not applied yet: PostgREST answers PGRST202 */ withoutPerStageSettlement?: boolean } = {}) {
   const quotes = new Map<string, FakeQuote>();
   const jobs = new Map<string, FakeJob>();
   const ledger: LedgerRow[] = [{ id: "top_1", delta: options.balance ?? 100_000, type: "topup" }];
   const calls: Array<{ name: string; args: any }> = [];
+  const executionCalls: typeof calls = [];
+  const attempts = new Map<string, DeliveryTrial>();
+  const receipts = new Map<string, Record<string, unknown>>();
+  let deliveryMissions: { get(id: string): { worker_id?: string | null; status?: string } | undefined; park(id: string, due: string): void } | undefined;
+  const deliveryJob = (id: string) => {
+    const quote = [...quotes.values()].find((candidate) => candidate.status === "accepted" && candidate.items[0]?.missionId === id);
+    return quote ? jobs.get(quoteJobId(quote.id)) : undefined;
+  };
   const injected = new Map<string, Array<"before" | "after">>();
   const balance = () => ledger.reduce((n, r) => n + r.delta, 0);
   const cap = options.cap ?? 25_000;
@@ -172,6 +189,128 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
     },
   };
 
+  function currentDeliveryJob(a: any) {
+    const row = deliveryMissions?.get(a.p_mission_id);
+    if (deliveryMissions && (!row || !a.p_worker_id || row.worker_id !== a.p_worker_id || row.status !== "executing")) return undefined;
+    return deliveryJob(a.p_mission_id);
+  }
+
+  handlers[JOURNAL_RPC] = (a) => {
+    const job = currentDeliveryJob(a);
+    const error = (reason: string) => ok({ kind: "error", error: reason });
+    if (!job) return error("unowned_or_unlinked");
+    const receipt = receipts.get(job.id);
+    if (receipt) return ok({ kind: "receipt", receipt });
+    if (job.status === "completed" || ledger.some((row) => row.id === `chg_${job.id}`)) return error("unbound_money");
+    const legacy = job.status !== "running" || job.step !== 0;
+    const now = Date.now();
+    let progress = attempts.get(job.id);
+    const id = a.p_trial_id;
+    const operation = a.p_operation;
+    if (operation === "status") return ok(progress ? { kind: "progress", progress } : { kind: legacy ? "legacy_mismatch" : "not_started" });
+    if (operation === "begin") {
+      if (progress) return ok({ kind: "progress", progress, began: false });
+      progress = { started: now, due: now, phase: legacy ? "release_only" : "verifying",
+        verify_count: 0, release_count: 0, candidate: null, delivery: null, id: null, worker: null, verified: false };
+      attempts.set(job.id, progress);
+      return ok({ kind: "progress", progress, began: !legacy });
+    }
+    if (!progress) return error("missing_journal");
+    const next = () => new Date(progress!.due).toISOString();
+    const exhausted = progress.phase === "release_only" && progress.release_count === 2;
+    if (operation === "park") {
+      if (exhausted) return ok({ kind: "exhausted", progress });
+      deliveryMissions?.park(a.p_mission_id, next());
+      return ok({ kind: "parked", next_at: next() });
+    }
+    if (operation === "claim") {
+      const issued = () => ok({ kind: "attempt", mode: progress!.phase === "verifying" ? "verify" : "release_unsettled",
+        progress: structuredClone(progress), trial_id: id, next_at: next() });
+      if (!id) return error("missing_trial");
+      if (progress.id === id) return progress.worker === a.p_worker_id ? issued() : error("expired_trial");
+      if (exhausted) return ok({ kind: "exhausted", progress });
+      if (now < progress.due) return ok({ kind: "wait", progress, next_at: next() });
+      if (progress.phase === "release_only" || progress.verify_count === 4 || legacy) {
+        progress.phase = "release_only";
+        progress.release_count += 1;
+        progress.due = Math.max(progress.started + 225000, now + 15000);
+      } else {
+        const offset = [15000, 60000, 150000, 165000][progress.verify_count];
+        progress.verify_count += 1;
+        progress.due = Math.max(progress.started + offset, now + 15000);
+      }
+      Object.assign(progress, { id, worker: a.p_worker_id, verified: false });
+      return issued();
+    }
+    if (!id || progress.id !== id || progress.worker !== a.p_worker_id || progress.phase !== "verifying") return error("expired_trial");
+    const value = a.p_binding;
+    if (operation === "bind_candidate") {
+      if (progress.candidate && !isDeepStrictEqual(progress.candidate, value)) return error("candidate_conflict");
+      progress.candidate = structuredClone(value);
+    } else if (operation === "bind_snapshot") {
+      if (!progress.candidate || value.xlsx_sha !== (progress.candidate.xlsx_sha ?? null) ||
+          (progress.delivery && !isDeepStrictEqual(progress.delivery, value))) return error("snapshot_conflict");
+      progress.delivery = structuredClone(value);
+      progress.verified = true;
+    } else if (operation === "unreadable") {
+      progress.verified = false;
+      if (value.code === "binding_mismatch") {
+        progress.phase = "release_only";
+        progress.due = now;
+      } else progress.due = Math.max(progress.due, now + 15000);
+      return ok({ kind: "recorded", next_at: next() });
+    } else return error("invalid_operation");
+    return ok({ kind: "bound" });
+  };
+
+  handlers[FINALIZE_RPC] = (a) => {
+    const job = currentDeliveryJob(a);
+    if (!job) return no("unowned_or_unlinked");
+    const existing = receipts.get(job.id);
+    const binding = a.p_delivery;
+    const release = a.p_mode === "release_unsettled";
+    if (existing) {
+      if ((release && binding === null) || (!release && isDeepStrictEqual(attempts.get(job.id)?.delivery, binding))) return ok({ success: true, replayed: true, receipt: existing });
+      return no("receipt_conflict");
+    }
+    const progress = attempts.get(job.id);
+    if (!progress || !a.p_trial_id || progress.id !== a.p_trial_id || progress.worker !== a.p_worker_id) return no("expired_trial");
+    if (release ? (binding !== null || progress.phase !== "release_only")
+      : (!progress.verified || progress.phase !== "verifying" || !isDeepStrictEqual(progress.delivery, binding))) return no("delivery_binding_mismatch");
+    const reserve = ledger.find((row) => row.id === `res_${job.id}`);
+    if (reserve?.job_id !== job.id || reserve?.delta !== -job.reserved_credits || ledger.some((row) => row.id === `chg_${job.id}`)) return no("unbound_money");
+    const before = { ...job };
+    const ledgerLength = ledger.length;
+    const replayLength = executionCalls.length;
+    const run = (name: string, args: any) => {
+      const fault = injected.get(name)?.shift();
+      if (fault || (options.withoutPerStageSettlement && name === "settle_job_by_stage_atomic")) throw new Error(`injected failure in ${name}`);
+      const result = handlers[name](args);
+      if (result.error || result.data?.success !== true) throw new Error(`unconfirmed ${name}`);
+      executionCalls.push({ name, args });
+      return result.data;
+    };
+    const billed = binding?.billable_units ?? 0;
+    try {
+      if (!release) run("complete_chunk", { p_job_id: job.id, p_expected_step: 0, p_new_cursor: "completed", p_new_delivered_units: billed, p_cost_usd: Number(binding.cost_usd) });
+      const result = billed > 0
+        ? run(binding.stage_units ? "settle_job_by_stage_atomic" : "settle_job_atomic", {
+          p_job_id: job.id, ...(binding.stage_units ? { p_units: binding.stage_units } : {}), p_points_cap: 25000, p_result_file_id: binding.csv_path,
+        })
+        : run("release_job_atomic", { p_job_id: job.id, p_error_message: binding?.release_reason ?? "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا.", p_force: true });
+      const charged = result.charged_credits ?? 0;
+      const receipt = { ...binding, job_id: job.id, mission_id: a.p_mission_id, kind: billed > 0 ? "settled" : "released",
+        physical_units: binding?.physical_units ?? 0, billable_units: billed, charged_credits: charged, refunded_credits: job.reserved_credits - charged };
+      receipts.set(job.id, receipt);
+      return ok({ success: true, replayed: false, receipt });
+    } catch (error) {
+      Object.assign(job, before);
+      ledger.splice(ledgerLength);
+      executionCalls.splice(replayLength);
+      return raise(String(error));
+    }
+  };
+
   const client = {
     rpc: async (name: string, args: any) => {
       calls.push({ name, args });
@@ -190,7 +329,22 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
   };
   /** The NEXT call of `name` fails: "before" = it never ran, "after" = it ran and committed but the caller never got the answer. */
   const inject = (name: string, when: "before" | "after"): void => { injected.set(name, [...(injected.get(name) ?? []), when]); };
-  return { client, quotes, jobs, ledger, calls, balance, inject };
+  function bindDeliveryMissions(source: NonNullable<typeof deliveryMissions>) { deliveryMissions = source; }
+  function legacyMoneyTrace() {
+    const original = calls.filter((call) => call.name !== JOURNAL_RPC && call.name !== FINALIZE_RPC);
+    return [...original, ...executionCalls.map((call) => {
+      if (call.name === "release_job_atomic") {
+        const { p_force: _force, ...args } = call.args;
+        return { name: call.name, args };
+      }
+      if (call.name === "settle_job_atomic" || call.name === "settle_job_by_stage_atomic") {
+        const path = call.args.p_result_file_id;
+        return { name: call.name, args: { ...call.args, p_result_file_id: typeof path === "string" ? path.replace(/\/sealed\/[a-f0-9]{64}\//, "/") : path } };
+      }
+      return call;
+    })];
+  }
+  return { client, quotes, jobs, ledger, calls, balance, inject, receipts, attempts, bindDeliveryMissions, legacyMoneyTrace };
 }
 
 /** The application fake for the atomic wrapper. Transaction/lock semantics are proved separately on PostgreSQL. */

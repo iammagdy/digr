@@ -497,17 +497,33 @@ export async function answerForCustomer(client: any, input: { id: string; userId
   return { ok: true };
 }
 
+type CustomerFileDescriptor = { name: string; path: string; kind?: string; sha256?: unknown };
+
+function isSealedWorkbook(file: CustomerFileDescriptor): boolean {
+  return file.kind === "xlsx" && file.name === "result.xlsx" && file.path === "result/result.xlsx"
+    && typeof file.sha256 === "string" && /^[a-f0-9]{64}$/.test(file.sha256);
+}
+
 /** A short-lived link to a result file of the customer's own mission. */
 export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string; /** ROUND 20: the name the file is saved under (the route that serves the file itself writes it into its own header) */ download: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   // a review request has no file of its own to hand out here: the published versions of the delivered file are served by their own route
   if (!mission || mission.user_id !== input.userId || hasAddonMarker(mission)) return bad(404, "الملف غير موجود.");
-  const files = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>) : [];
+  const files = Array.isArray(mission.files) ? (mission.files as CustomerFileDescriptor[]) : [];
   // ROUND 32: a CSV is never a stored file's link (the stored CSV is the deepest stage only) and never silently the Excel: a customer's CSV is built from the mission's Excel by `customerCsvFile`, which the route calls for a CSV name.
   // A mission that has only a CSV (the oldest) still gets an Excel built from it, saved in the mission's own folder
   if (input.name.toLowerCase().endsWith(".csv")) return bad(400, CSV_REQUEST_INVALID_AR);
   const customerName = input.name;
   let file = files.find((f) => f.name === customerName && f.kind !== "csv") ?? null;
+  if (files.some((descriptor) => descriptor && Object.hasOwn(descriptor, "sha256"))) {
+    if (!file || !isSealedWorkbook(file)) return bad(404, "الملف غير موجود.");
+    try {
+      const { data, error } = await client.storage.from(AGENT_BUCKET).download(`${input.id}/${file.path}`);
+      if (error || !data || createHash("sha256").update(Buffer.from(await data.arrayBuffer())).digest("hex") !== file.sha256) {
+        return bad(404, "الملف غير موجود.");
+      }
+    } catch { return bad(500, "تعذّر إنشاء رابط الملف."); }
+  }
   if (!file && /^result\.(xlsx|csv)$/.test(input.name)) {
     const csv = files.find((f) => f.kind === "csv" || f.name.toLowerCase().endsWith(".csv"));
     if (csv) {
@@ -553,9 +569,11 @@ export async function customerCsvFile(client: any, input: { id: string; userId: 
   if (!CUSTOMER_CSV_NAMES.includes(input.name)) return bad(400, CSV_REQUEST_INVALID_AR);
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
-  const files = Array.isArray(mission.files) ? (mission.files as Array<{ name?: string; path?: string; kind?: string }>) : [];
+  const files = Array.isArray(mission.files) ? (mission.files as CustomerFileDescriptor[]) : [];
   const source = files.find((f) => typeof f?.path === "string" && (f.kind === "xlsx" || String(f.name ?? "").toLowerCase().endsWith(".xlsx")));
   if (!source) return bad(404, files.length === 0 ? CSV_NOT_READY_AR : CSV_SOURCE_MISSING_AR);
+  const sealed = files.some((file) => file && Object.hasOwn(file, "sha256"));
+  if (sealed && !isSealedWorkbook(source)) return bad(404, CSV_SOURCE_MISSING_AR);
   let bytes: Buffer;
   try {
     const { data, error } = await client.storage.from(AGENT_BUCKET).download(`${input.id}/${source.path}`);
@@ -564,6 +582,7 @@ export async function customerCsvFile(client: any, input: { id: string; userId: 
   } catch (e) {
     return isMissingObject(e) ? bad(404, CSV_SOURCE_MISSING_AR) : bad(502, CSV_STORAGE_FAILED_AR);
   }
+  if (sealed && createHash("sha256").update(bytes).digest("hex") !== source.sha256) return bad(500, CSV_UNREADABLE_AR);
   let exp;
   try { exp = await csvExportFromWorkbook(bytes); } catch { return bad(500, CSV_UNREADABLE_AR); }
   const named = (kind: string) => missionDownloadName({ files: mission.files, kind, plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });

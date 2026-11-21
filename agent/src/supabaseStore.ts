@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../../src/lib/agentMission/constants";
 import { guardEvent } from "../../src/lib/agentMission/eventText";
 import { artifactVersionRowId } from "../../src/functions/shared/artifactVersions";
@@ -135,8 +136,38 @@ export function createSupabaseStore(client: any): AgentStore {
       return Array.isArray(res.data) ? (res.data as Array<{ id: unknown }>).map((r) => String(r.id)) : undefined;
     },
     async writeHeartbeat(row: HeartbeatRow) { must(await client.from(AGENT_HEARTBEAT_TABLE).upsert(wellFormedDeep(row), { onConflict: "worker_id" }), "heartbeat"); },
-    async publishResult({ missionId, userId, jobId, xlsx, csv }) {
+    async publishResult({ missionId, userId, jobId, xlsx, csv, sealed }) {
       const csvBuf = Buffer.from(csv, "utf8");
+      if (sealed) {
+        const missionBucket = bucket();
+        const results = client.storage.from("results");
+        const prefix = `${userId}/${jobId}/sealed/${sealed.xlsxSha256}`;
+        const xlsxPath = `${prefix}/result.xlsx`;
+        const csvPath = `${prefix}/result.csv`;
+        const files = [
+          { name: "result.xlsx", path: "result/result.xlsx", kind: "xlsx", sha256: sealed.xlsxSha256 },
+          { name: "result.csv", path: "result/result.csv", kind: "csv", sha256: sealed.csvSha256 },
+        ];
+        const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+        if (digest(xlsx) !== sealed.xlsxSha256 || digest(csvBuf) !== sealed.csvSha256) throw new Error("sealed source hash mismatch");
+        const objects = [
+          { storage: missionBucket, key: path(missionId, files[0].path), data: xlsx, type: XLSX_TYPE, hash: sealed.xlsxSha256 },
+          { storage: missionBucket, key: path(missionId, files[1].path), data: csvBuf, type: "text/csv", hash: sealed.csvSha256 },
+          { storage: results, key: xlsxPath, data: xlsx, type: XLSX_TYPE, hash: sealed.xlsxSha256 },
+          { storage: results, key: csvPath, data: csvBuf, type: "text/csv", hash: sealed.csvSha256 },
+        ];
+        for (const object of objects) {
+          await object.storage.upload(object.key, object.data, { contentType: object.type, upsert: false });
+          const stored = must<Blob>(await object.storage.download(object.key), "sealed result readback");
+          if (!stored || digest(Buffer.from(await stored.arrayBuffer())) !== object.hash) throw new Error("sealed result hash mismatch");
+        }
+        const artifact = { id: artifactVersionRowId(jobId, 1), job_id: jobId, user_id: userId, version_number: 1, file_id_xlsx: xlsxPath, file_id_pdf: null, file_id_csv: csvPath };
+        const insert = await client.from("artifact_versions").insert({ ...artifact, created_at: new Date().toISOString() });
+        if (insert.error && insert.error.code !== "23505") must(insert, "sealed artifact insert");
+        const stored = must<Record<string, unknown> | null>(await client.from("artifact_versions").select(Object.keys(artifact).join(",")).eq("id", artifact.id).maybeSingle(), "sealed artifact readback");
+        if (!stored || !Object.entries(artifact).every(([key, value]) => stored[key] === value)) throw new Error("sealed artifact binding mismatch");
+        return { resultPath: csvPath, files };
+      }
       must(await bucket().upload(path(missionId, "result/result.xlsx"), xlsx, { contentType: XLSX_TYPE, upsert: true }), "result xlsx");
       must(await bucket().upload(path(missionId, "result/result.csv"), csvBuf, { contentType: "text/csv", upsert: true }), "result csv");
       const results = client.storage.from("results");

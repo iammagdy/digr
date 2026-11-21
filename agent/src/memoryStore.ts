@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AGENT_BUCKET_ALLOWED_MIME } from "../../src/lib/agentMission/constants";
 import { guardEvent } from "../../src/lib/agentMission/eventText";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
@@ -84,7 +85,23 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
     async writeHeartbeat(row) { heartbeats.push(row); },
     async readSettings() { return settings; },
     async readUserEmail(userId) { return userEmails.get(userId) ?? null; },
-    async publishResult({ missionId, userId, jobId, xlsx, csv }) {
+    async publishResult({ missionId, userId, jobId, xlsx, csv, sealed }) {
+      if (sealed) {
+        const prefix = `${userId}/${jobId}/sealed/${sealed.xlsxSha256}`;
+        const descriptors = [
+          { name: "result.xlsx", path: "result/result.xlsx", kind: "xlsx", sha256: sealed.xlsxSha256 },
+          { name: "result.csv", path: "result/result.csv", kind: "csv", sha256: sealed.csvSha256 },
+        ];
+        for (const [descriptor, bytes] of [[descriptors[0], xlsx], [descriptors[1], Buffer.from(csv)]] as const) {
+          for (const key of [`${missionId}/${descriptor.path}`, `results/${prefix}/${descriptor.name}`]) {
+            if (!files.has(key)) files.set(key, Buffer.from(bytes));
+            const stored = files.get(key);
+            if (stored === undefined || createHash("sha256").update(stored).digest("hex") !== descriptor.sha256) throw new Error("sealed result hash mismatch");
+          }
+        }
+        published.push({ missionId, userId, jobId });
+        return { resultPath: `${prefix}/result.csv`, files: descriptors };
+      }
       files.set(`${missionId}/result/result.xlsx`, xlsx);
       files.set(`${missionId}/result/result.csv`, csv);
       published.push({ missionId, userId, jobId });
