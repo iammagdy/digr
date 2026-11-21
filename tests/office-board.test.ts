@@ -1023,4 +1023,219 @@ describe("DT-20261121-office-v47: Must-Pass Verification Suite", () => {
     expect(evalInContext("BOTS.nafady.isSleeping")).toBe(false);
     expect(evalInContext("BOTS.nafady.updatedAt")).toBeNull();
   });
+
+  describe("DT-20261121-office-sleep: Hazalqom wandering designer sleep mechanics (Must-Pass a-g)", () => {
+    it("case a: hazalqom idle < 30 min -> wanders, label '☕ متاح', isSleeping false", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.updatedAt = new Date(now - 10 * 60 * 1000).toISOString();
+        BOTS.hazalqom.idleSince = now - 10 * 60 * 1000;
+        BOTS.hazalqom.x = 582;
+        BOTS.hazalqom.y = 205;
+        checkBotSleep(BOTS.hazalqom, now);
+        openAgentCard('hazalqom');
+      `);
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(true);
+      const cardText = evalInContext("document.getElementById('agent-card-popup').textContent");
+      expect(cardText).toContain("☕ متاح");
+      expect(cardText).not.toContain("نايم");
+    });
+
+    it("case b: idle >= 30 min while away from desk -> walks home with label still متاح, then at desk isSleeping true, Zzz, no movement", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.updatedAt = new Date(now - 35 * 60 * 1000).toISOString();
+        BOTS.hazalqom.idleSince = now - 35 * 60 * 1000;
+        // Away from desk:
+        BOTS.hazalqom.x = 582;
+        BOTS.hazalqom.y = 205;
+        BOTS.hazalqom.wander = true;
+        BOTS.hazalqom.returningHome = false;
+        BOTS.hazalqom.isSleeping = false;
+
+        // Check sleep while away from desk
+        checkBotSleep(BOTS.hazalqom, now);
+        openAgentCard('hazalqom');
+      `);
+
+      // 1. Away from desk: must NOT sleep yet! Must start returning home, wander = false
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.returningHome")).toBe(true);
+      const cardTextWalking = evalInContext("document.getElementById('agent-card-popup').textContent");
+      expect(cardTextWalking).toContain("☕ متاح");
+      expect(cardTextWalking).not.toContain("نايم");
+
+      // 2. Simulate arrival at desk
+      evalInContext(`
+        BOTS.hazalqom.x = BOTS.hazalqom.homeX;
+        BOTS.hazalqom.y = BOTS.hazalqom.homeY;
+        BOTS.hazalqom.returningHome = false;
+        checkBotSleep(BOTS.hazalqom, now);
+        openAgentCard('hazalqom');
+      `);
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(true);
+      expect(evalInContext("BOTS.hazalqom.isMoving")).toBe(false);
+      const cardTextAtDesk = evalInContext("document.getElementById('agent-card-popup').textContent");
+      expect(cardTextAtDesk).toContain("💤 نايم على مكتبه");
+
+      // 3. updateWorld must NOT move sleeping bot
+      evalInContext(`
+        const prevX = BOTS.hazalqom.x;
+        const prevY = BOTS.hazalqom.y;
+        updateWorld(0.1, 2000);
+      `);
+      expect(evalInContext("BOTS.hazalqom.x")).toBe(evalInContext("BOTS.hazalqom.homeX"));
+      expect(evalInContext("BOTS.hazalqom.y")).toBe(evalInContext("BOTS.hazalqom.homeY"));
+      expect(evalInContext("BOTS.hazalqom.isMoving")).toBe(false);
+    });
+
+    it("case c: Several feed polls while asleep -> does not start walking again, stays asleep at desk", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.x = BOTS.hazalqom.homeX;
+        BOTS.hazalqom.y = BOTS.hazalqom.homeY;
+        BOTS.hazalqom.isSleeping = true;
+        BOTS.hazalqom.wander = false;
+        BOTS.hazalqom.isMoving = false;
+
+        const payload = {
+          version: 1,
+          bots: {
+            hazalqom: {
+              bot: "hazalqom",
+              state: "idle",
+              percent: null,
+              updated_at: new Date(now - 40 * 60 * 1000).toISOString()
+            }
+          }
+        };
+
+        // Poll 1
+        applyLiveFeed(payload);
+        // Poll 2
+        applyLiveFeed(payload);
+        // Poll 3
+        applyLiveFeed(payload);
+      `);
+
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(true);
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.isMoving")).toBe(false);
+    });
+
+    it("case d: Click to wake -> awake, wanders again; no sleep during the 10-min cooldown", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.x = BOTS.hazalqom.homeX;
+        BOTS.hazalqom.y = BOTS.hazalqom.homeY;
+        BOTS.hazalqom.isSleeping = true;
+        BOTS.hazalqom.wander = false;
+
+        wakeUpBot(BOTS.hazalqom);
+      `);
+
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(true);
+
+      // During cooldown (e.g. 5 min after wake-up, even though idleSince is 50 min ago)
+      evalInContext(`
+        checkBotSleep(BOTS.hazalqom, now + 5 * 60 * 1000);
+      `);
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(true);
+    });
+
+    it("case e: Feed changes him to working -> wakes, goes to desk (existing behaviour unchanged)", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.x = 582;
+        BOTS.hazalqom.y = 205;
+        BOTS.hazalqom.isSleeping = true;
+
+        const workingPayload = {
+          version: 1,
+          bots: {
+            hazalqom: {
+              bot: "hazalqom",
+              state: "working",
+              task_title: "تصميم واجهة جديدة",
+              percent: 40,
+              updated_at: new Date(now).toISOString()
+            }
+          }
+        };
+
+        applyLiveFeed(workingPayload);
+      `);
+
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+      expect(evalInContext("BOTS.hazalqom.feedStatus")).toBe("working");
+      expect(evalInContext("BOTS.hazalqom.wander")).toBe(false);
+      // Since he was away from desk (582, 205), returningHome is triggered to take him back
+      expect(evalInContext("BOTS.hazalqom.returningHome")).toBe(true);
+    });
+
+    it("case f: Desk bots (all others, baseWander false) -> sleep behaviour exactly as today", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.johnny.status = 'idle';
+        BOTS.johnny.feedStatus = 'idle';
+        BOTS.johnny.updatedAt = new Date(now - 35 * 60 * 1000).toISOString();
+        BOTS.johnny.idleSince = now - 35 * 60 * 1000;
+        BOTS.johnny.baseWander = false;
+
+        checkBotSleep(BOTS.johnny, now);
+      `);
+
+      expect(evalInContext("BOTS.johnny.isSleeping")).toBe(true);
+      expect(evalInContext("BOTS.johnny.isMoving")).toBe(false);
+    });
+
+    it("case g: Team meeting while asleep/returning -> meeting walk-in/walk-back unchanged; no sleep during meeting", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+      evalInContext(`
+        const now = ${now};
+        BOTS.hazalqom.status = 'idle';
+        BOTS.hazalqom.feedStatus = 'idle';
+        BOTS.hazalqom.isSleeping = true;
+        BOTS.hazalqom.wander = false;
+
+        triggerTeamMeeting();
+      `);
+
+      expect(evalInContext("teamMeetingActive")).toBe(true);
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+
+      // During meeting, checkBotSleep should never sleep
+      evalInContext(`
+        checkBotSleep(BOTS.hazalqom, now);
+      `);
+      expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
+    });
+  });
 });
