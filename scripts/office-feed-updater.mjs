@@ -98,7 +98,9 @@ export function getNewestFileMtime(dirPath, maxDepth = 2) {
 
 export function readTaskStatus(tasksDir, taskId) {
   if (!tasksDir || !taskId || typeof taskId !== "string") return null;
-  const cleanId = path.basename(taskId.trim());
+  const token = taskId.trim().split(/\s+/)[0];
+  if (!token) return null;
+  const cleanId = path.basename(token);
   const statusFile = path.join(tasksDir, cleanId, "status.md");
   try {
     if (!fs.existsSync(statusFile)) return null;
@@ -211,9 +213,14 @@ export function buildOfficeFeed({
       continue;
     }
 
-    const updatedAt = normalizeIsoUtc(latest.updated_at);
+    const rawUpdatedAt = latest.updated_at ?? latest.ts;
+    const updatedAt = normalizeIsoUtc(rawUpdatedAt);
     const jsonlUpdatedMs = updatedAt ? Date.parse(updatedAt) : 0;
-    const workDir = (workDirs && workDirs[botId]) || DEFAULT_BOT_WORK_DIRS[botId];
+    const workDir = workDirs
+      ? botId in workDirs
+        ? workDirs[botId]
+        : null
+      : DEFAULT_BOT_WORK_DIRS[botId];
     const folderMtimeMs = getNewestFileMtime(workDir);
     const lastActiveMs = Math.max(jsonlUpdatedMs, folderMtimeMs);
     const lastActiveIso =
@@ -221,47 +228,82 @@ export function buildOfficeFeed({
         ? new Date(lastActiveMs).toISOString().replace(/\.\d{3}Z$/, "Z")
         : updatedAt || null;
 
-    const taskId = latest.task_id ? String(latest.task_id).trim() : null;
+    const rawTaskId = latest.task_id ?? latest.task;
+    let taskId = null;
+    if (rawTaskId !== undefined && rawTaskId !== null) {
+      const trimmed = String(rawTaskId).trim();
+      if (trimmed) {
+        taskId = trimmed.split(/\s+/)[0] || null;
+      }
+    }
     const taskStatus = taskId ? readTaskStatus(tasksDir, taskId) : null;
 
-    // 1. Determine percent (CTO correction 3)
+    // 1. Determine percent (CTO DT-20261121-office-pct)
+    // Bot line percent (clamped 0-100) when present; ONLY if the line has no percent, fall back to task status.md percent; else null.
     let percent = null;
+    const hasLinePercent =
+      latest.percent !== undefined &&
+      latest.percent !== null &&
+      latest.percent !== "" &&
+      Number.isFinite(Number(latest.percent));
+
     if (taskId) {
-      if (taskStatus && taskStatus.percent !== null) {
-        percent = taskStatus.percent;
-      } else if (latest.percent !== undefined && latest.percent !== null) {
+      if (hasLinePercent) {
+        percent = clampPercent(latest.percent);
+      } else if (taskStatus && taskStatus.percent !== null && taskStatus.percent !== undefined) {
+        percent = clampPercent(taskStatus.percent);
+      }
+    } else if (hasLinePercent) {
+      const checkState = String(latest.state || "").trim().toLowerCase();
+      if (checkState !== "idle" && checkState !== "done") {
         percent = clampPercent(latest.percent);
       }
     }
 
-    // 2. Determine base state (CTO correction 2)
+    // 2. Determine base state (CTO DT-20261121-office-pct)
+    // The bot line's own state (working | waiting | meeting | idle; "stuck"/done -> treat as working/idle).
+    // Task status.md state is used ONLY when the line has no state.
+    // An idle line is idle, always. "stuck" only when the bot's OWN state is working and last activity > 45 min.
     let baseState = "idle";
-    const explicitTaskState = taskStatus?.state;
-    const rawJsonlState = String(latest.state || "idle").toLowerCase();
+    const rawLineState =
+      latest.state !== undefined && latest.state !== null
+        ? String(latest.state).trim().toLowerCase()
+        : "";
 
-    if (explicitTaskState === "waiting" || (!explicitTaskState && rawJsonlState === "waiting")) {
-      baseState = "waiting";
-    } else if (explicitTaskState === "meeting" || (!explicitTaskState && rawJsonlState === "meeting")) {
-      baseState = "meeting";
-    } else if (explicitTaskState === "done") {
-      baseState = "idle";
-    } else if (explicitTaskState === "working") {
-      baseState = "working";
-    } else if (rawJsonlState === "working" || rawJsonlState === "stuck" || latest.open_order) {
+    if (rawLineState) {
+      if (rawLineState === "waiting") {
+        baseState = "waiting";
+      } else if (rawLineState === "meeting") {
+        baseState = "meeting";
+      } else if (rawLineState === "idle" || rawLineState === "done") {
+        baseState = "idle";
+      } else if (rawLineState === "working" || rawLineState === "stuck") {
+        baseState = "working";
+      } else {
+        baseState = "idle";
+      }
+    } else if (taskStatus?.state) {
+      const rawTaskState = String(taskStatus.state).trim().toLowerCase();
+      if (rawTaskState === "waiting") {
+        baseState = "waiting";
+      } else if (rawTaskState === "meeting") {
+        baseState = "meeting";
+      } else if (rawTaskState === "working" || rawTaskState === "stuck") {
+        baseState = "working";
+      } else if (rawTaskState === "idle" || rawTaskState === "done") {
+        baseState = "idle";
+      } else {
+        baseState = "idle";
+      }
+    } else if (latest.open_order) {
       baseState = "working";
     } else {
       baseState = "idle";
     }
 
-    // 3. Resolve final state (CTO correction 2)
+    // 3. Resolve final state (CTO DT-20261121-office-pct)
     let state = baseState;
-    if (baseState === "waiting") {
-      state = "waiting";
-    } else if (baseState === "meeting") {
-      state = "meeting";
-    } else if (baseState === "idle") {
-      state = "idle";
-    } else if (baseState === "working") {
+    if (baseState === "working") {
       const isStale =
         !Number.isFinite(lastActiveMs) ||
         lastActiveMs <= 0 ||
