@@ -100,6 +100,10 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   const money = fakeMoneyClient({ balance: input.balance });
   const initialBalance = money.balance();
   const store = input.makeStore ? input.makeStore() : createMemoryStore();
+  money.bindDeliveryMissions({
+    get: (id) => store.missions.get(id),
+    park: (id, due) => Object.assign(store.missions.get(id)!, { status: "approved", worker_id: null, lease_until: due }),
+  });
   const { client } = replayClient(db, money);
   const rec = fakeRecorder({ dailyCapUsd: 5 });
   const queue = [...input.answers];
@@ -228,12 +232,13 @@ export function assertReplayInvariants(r: ReplayResult, options: { expectDeliver
   expect(price.unitPricePoints).toBeGreaterThanOrEqual(ruleUnit);
   expect(price.reservePoints).toBe(Math.max(price.minChargePoints ?? 0, Math.ceil(Math.round(price.deliveredRows * ruleUnit * 1e6 * 1.15) / 1e6 - 1e-9)));
   expect(price.reservePoints).toBeLessThanOrEqual(25_000);
-  expect(new Set(r.money.calls.map((c) => c.name))).toEqual(new Set(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk", "complete_chunk", "settle_job_atomic", ...(m.status === "unserved" ? ["release_job_atomic"] : [])]));
+  expect(new Set(r.money.calls.map((c) => c.name))).toEqual(new Set(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk", "claim_agent_delivery_attempt_atomic", "finalize_agent_delivery_atomic"]));
+  assertBoundReplay(r);
   const delivered = Number(m.delivered_units);
   if (options.expectDelivered !== undefined) expect(delivered).toBe(options.expectDelivered);
   expect(delivered).toBeLessThanOrEqual(price.deliveredRows);
   // D-0117 (DT-20261119-06 PART B): the settlement charges the BILLABLE rows (a person with none of the asked contacts is delivered but not charged); the count recorded for the job is the last complete_chunk's. It is never above the delivered rows
-  const completed = [...r.money.calls].reverse().find((c) => c.name === "complete_chunk");
+  const completed = [...r.money.legacyMoneyTrace()].reverse().find((c) => c.name === "complete_chunk");
   const billable = completed ? Number((completed.args as Record<string, unknown>).p_new_delivered_units) : delivered;
   expect(billable).toBeLessThanOrEqual(delivered);
   const expectedCharge = Math.min(Math.ceil(Math.round(billable * price.unitPricePoints * 1e6) / 1e6 - 1e-9), price.reservePoints);
@@ -286,4 +291,27 @@ function nextStoredName(testName: string): string {
   const n = (replaysSeen.get(testName) ?? 0) + 1;
   replaysSeen.set(testName, n);
   return `${testName}#${n}`;
+}
+
+
+export function assertBoundReplay(r: ReplayResult): void {
+  const mission = r.mission;
+  const job = r.money.jobs.get(mission.job_id!);
+  const receipt = r.money.receipts.get(mission.job_id!);
+  const call = r.money.calls.find((entry) => entry.name === "finalize_agent_delivery_atomic");
+  expect(receipt).toMatchObject({ job_id: mission.job_id, mission_id: mission.id, physical_units: mission.delivered_units, billable_units: job?.delivered_units, charged_credits: mission.charged_points });
+  const permit = r.money.calls.find((entry) => entry.name === "claim_agent_delivery_attempt_atomic" &&
+    entry.args.p_operation === "claim" && entry.args.p_trial_id === call?.args.p_trial_id);
+  expect(permit?.args.p_worker_id).toMatch(/\S/);
+  expect(call?.args).toMatchObject({ p_mission_id: mission.id, p_worker_id: permit?.args.p_worker_id, p_mode: "deliver", p_delivery: { job_id: mission.job_id, physical_units: mission.delivered_units, billable_units: job?.delivered_units } });
+  expect(call?.args.p_trial_id).toMatch(/^[a-f0-9-]{36}$/);
+  const xlsx = r.store.files.get(`${mission.id}/result/result.xlsx`);
+  if (xlsx) {
+    const hash = createHash("sha256").update(xlsx).digest("hex");
+    const prefix = `${mission.user_id}/${mission.job_id}/sealed/${hash}`;
+    expect(call?.args.p_delivery).toMatchObject({ xlsx_sha: hash, xlsx_path: `${prefix}/result.xlsx`, csv_path: `${prefix}/result.csv` });
+  }
+  const ledger = r.money.ledger.filter((row) => row.job_id === mission.job_id).map((row) => [row.type, row.delta]);
+  expect(ledger).toEqual([["reserve", -Number(mission.reserved_points)], ["release", mission.reserved_points],
+    ...(mission.charged_points ? [["charge", -mission.charged_points]] : [])]);
 }

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
+import { assertBoundReplay, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { ENDPOINT, pages, planning } from "./helpers/engineXScenario";
 import { FULL_WORLD, LIVE_WORLD, runG4 } from "./helpers/g4RepliesWorld";
 import { g1 } from "./helpers/g1World";
@@ -85,7 +85,7 @@ async function sectionsOf(r: ReplayResult): Promise<Record<string, string>> {
     notices: hash(r.notices),
     events: hash(visibleEvents),
     providerCalls: hash(r.call.mock.calls.map((c) => [(c[0] as { endpointId: string }).endpointId, (c[0] as { params: unknown }).params])),
-    ledger: hash(r.money.calls.map(preserveAcceptArgumentOrder)),
+    ledger: hash(r.money.legacyMoneyTrace().map(preserveAcceptArgumentOrder)),
   };
 }
 
@@ -104,6 +104,7 @@ describe("every flag off: byte-identical to the code before this pull request", 
   for (const [name, make] of Object.entries(SCENARIOS)) {
     it(`${name}`, async () => {
       const result = await make();
+      assertBoundReplay(result);
       if (name === "g1_electromechanical" || name === "g2_petroleum") {
         const people = (await readWorkbook(result)).worksheets[2];
         const header = people.getRow(1).values as string[];
