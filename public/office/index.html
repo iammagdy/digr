@@ -107,8 +107,40 @@
   .room-tag.tag-tl { top: 9.5%; left: 12px; }
   .room-tag.tag-br { bottom: 10px; right: 12px; }
   .room-tag.tag-bl { bottom: 10px; left: 12px; }
+  .room-tag.tag-bc { bottom: 10px; left: 50%; transform: translateX(-50%); }
+
+  .stage-controls {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    z-index: 50;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .stage-control-btn {
+    background: rgba(15, 23, 42, 0.85);
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 6px;
+    padding: 5px 11px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: 'IBM Plex Sans Arabic', Tahoma, sans-serif;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: all 0.15s ease;
+  }
+  .stage-control-btn:hover {
+    background: rgba(30, 41, 59, 0.95);
+    border-color: #38bdf8;
+    color: #38bdf8;
+  }
 
   @media (max-width: 640px) {
+    .stage-controls { top: 6px; left: 8px; }
+    .stage-control-btn { padding: 4px 8px; font-size: 10.5px; }
+    .room-tag.tag-bc { bottom: 8px; left: 50%; transform: translateX(-50%); }
     .room-tag { max-width: 47%; padding: 4px 9px; font-size: 11px; }
     .room-tag .tag-full { display: none; }
     .room-tag .tag-short { display: inline; }
@@ -162,7 +194,8 @@
         <div class="room-tag tag-tr" style="border-color: rgba(242,179,61,.55); color: #ffd97a;"><span class="tag-full">👑 غرفة المدير «الكبير»</span><span class="tag-short">👑 غرفة المدير</span></div>
         <div class="room-tag tag-tl" style="border-color: rgba(56,189,248,.5); color: #7dd3fc;"><span class="tag-full">💻 صالة التطوير الرئيسية</span><span class="tag-short">💻 صالة التطوير</span></div>
         <div class="room-tag tag-br" style="border-color: rgba(245,166,35,.5); color: #fbbf24;"><span class="tag-full">☕ ركن القهوة والمطبخ</span><span class="tag-short">☕ ركن القهوة</span></div>
-        <div class="room-tag tag-bl" style="border-color: rgba(45,212,191,.5); color: #5eead4;"><span class="tag-full">🛋️ ركن الاستراحة والألعاب</span><span class="tag-short">🛋️ ركن الاستراحة</span></div>
+        <div class="room-tag tag-bl" style="border-color: rgba(45,212,191,.5); color: #5eead4;"><span class="tag-full">🎮 ركن الألعاب والاستراحة</span><span class="tag-short">🎮 ركن الألعاب</span></div>
+        <div class="room-tag tag-bc" style="border-color: rgba(168,85,247,.5); color: #c084fc;"><span class="tag-full">👥 قاعة الاجتماعات</span><span class="tag-short">👥 قاعة الاجتماعات</span></div>
       </div>
     </div>
   </main>
@@ -192,10 +225,10 @@ const BOTS = {
   hagras: { id: "hagras", name: "هجرس", title: "المنفّذ الأول", role: "المنفّذ الأول", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب التنفيذ ١", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#ea580c", pantsColor: "#1e293b", accentColor: "#38bdf8", homeX: 105, homeY: 150, x: 105, y: 150, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
   nafady: { id: "nafady", name: "نفادي", title: "المعماري التاني (الشغل اللي مش فلوس)", role: "المعماري التاني (الشغل اللي مش فلوس)", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب التخطيط ٢", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#475569", pantsColor: "#0f172a", accentColor: "#a855f7", homeX: 235, homeY: 150, x: 235, y: 150, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
   ashraf: { id: "ashraf", name: "أشرف", title: "صائد الأخطاء التاني", role: "صائد الأخطاء التاني", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب المراجعة ٣", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#0284c7", pantsColor: "#1e293b", accentColor: "#10b981", homeX: 365, homeY: 150, x: 365, y: 150, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
-  marbouha: { id: "marbouha", name: "مربوحة", title: "الجودة والاختبار", role: "الجودة والاختبار", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب الجودة ٤", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#db2777", pantsColor: "#374151", accentColor: "#f472b6", homeX: 170, homeY: 245, x: 170, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
-  johnny: { id: "johnny", name: "جوني", title: "المعماري (خطط وكود الفلوس)", role: "المعماري (خطط وكود الفلوس)", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب الفلوس والـ SQL ٥", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#dc2626", pantsColor: "#1d4ed8", accentColor: "#ef4444", homeX: 300, homeY: 245, x: 300, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
-  salem: { id: "salem", name: "سالم", title: "المنفّذ التاني", role: "المنفّذ التاني", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "ركن التنفيذ التاني", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#0f766e", pantsColor: "#1e293b", accentColor: "#f59e0b", homeX: 575, homeY: 390, x: 575, y: 390, isDesk: false, baseWander: true, wander: true, waypoints: [{x:575,y:390,wait:4000},{x:670,y:390,wait:3000},{x:620,y:450,wait:2500},{x:540,y:440,wait:3500}], recent: [] },
-  fazza: { id: "fazza", name: "فزاع", title: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)", role: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "ركن مراجعة الفلوس", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#78350f", pantsColor: "#451a03", accentColor: "#10b981", homeX: 230, homeY: 420, x: 230, y: 420, isDesk: false, baseWander: true, wander: true, waypoints: [{x:230,y:420,wait:6000},{x:180,y:440,wait:3000},{x:380,y:380,wait:4000},{x:250,y:460,wait:3000}], recent: [] },
+  salem: { id: "salem", name: "سالم", title: "المنفّذ التاني", role: "المنفّذ التاني", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب التنفيذ التاني", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#0f766e", pantsColor: "#1e293b", accentColor: "#f59e0b", homeX: 70, homeY: 245, x: 70, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, waypoints: [], recent: [] },
+  marbouha: { id: "marbouha", name: "مربوحة", title: "الجودة والاختبار", role: "الجودة والاختبار", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب الجودة ٤", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#db2777", pantsColor: "#374151", accentColor: "#f472b6", homeX: 180, homeY: 245, x: 180, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
+  johnny: { id: "johnny", name: "جوني", title: "المعماري (خطط وكود الفلوس)", role: "المعماري (خطط وكود الفلوس)", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب الفلوس والـ SQL ٥", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#dc2626", pantsColor: "#1d4ed8", accentColor: "#ef4444", homeX: 290, homeY: 245, x: 290, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, recent: [] },
+  fazza: { id: "fazza", name: "فزاع", title: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)", role: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "مكتب مراجعة الفلوس", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#78350f", pantsColor: "#451a03", accentColor: "#10b981", homeX: 400, homeY: 245, x: 400, y: 245, isDesk: true, deskType: "dev", baseWander: false, wander: false, waypoints: [], recent: [] },
   hazalqom: { id: "hazalqom", name: "حزلقوم", title: "المصمم", role: "المصمم", status: "idle", statusLabel: "في انتظار التحديث", shortTask: "بانتظار البث", location: "ركن التصميم والواجهة", taskId: "", task: "في انتظار البث المباشر...", step: "", next: "", progress: 0, updatedAt: null, openOrder: false, shirtColor: "#d97706", pantsColor: "#9a3412", accentColor: "#fbbf24", homeX: 440, homeY: 280, x: 440, y: 280, isDesk: false, baseWander: true, wander: true, waypoints: [{x:440,y:280,wait:2000},{x:480,y:180,wait:3000},{x:440,y:380,wait:2500},{x:330,y:320,wait:3000},{x:460,y:460,wait:2500}], recent: [] }
 };
 const BOT_KEYS = Object.keys(BOTS);
@@ -263,8 +296,9 @@ const ROOMS = {
   full:    { name: 'full',    x: 400, y: 270, zoom: 1 },
   manager: { name: 'manager', x: 655, y: 185, zoom: 2.1 },
   dev:     { name: 'dev',     x: 258, y: 190, zoom: 1.8 },
+  meeting: { name: 'meeting', x: 362, y: 425, zoom: 2.0 },
   coffee:  { name: 'coffee',  x: 645, y: 425, zoom: 2.0 },
-  lounge:  { name: 'lounge',  x: 248, y: 425, zoom: 1.9 }
+  lounge:  { name: 'lounge',  x: 120, y: 425, zoom: 1.9 }
 };
 
 function setCamTarget(x, y, zoom, roomName) {
@@ -495,26 +529,58 @@ function drawLoungeFloor(x, y, w, h) {
     ctx.fill();
   }
 
-  const rx = x + 30;
-  const ry = y + 25;
-  const rw = w - 60;
-  const rh = h - 45;
+  const rx = x + 20;
+  const ry = y + 20;
+  const rw = w - 40;
+  const rh = h - 40;
   ctx.fillStyle = PAL.loungeRug;
   ctx.fillRect(rx, ry, rw, rh);
   ctx.strokeStyle = PAL.loungeLine;
   ctx.lineWidth = 2;
   ctx.strokeRect(rx + 4, ry + 4, rw - 8, rh - 8);
+}
 
-  ctx.fillStyle = '#5eead4';
-  const bs = 12;
-  ctx.fillRect(rx + 8, ry + 8, bs, 3);
-  ctx.fillRect(rx + 8, ry + 8, 3, bs);
-  ctx.fillRect(rx + rw - 8 - bs, ry + 8, bs, 3);
-  ctx.fillRect(rx + rw - 11, ry + 8, 3, bs);
-  ctx.fillRect(rx + 8, ry + rh - 11, bs, 3);
-  ctx.fillRect(rx + 8, ry + rh - 8 - bs, 3, bs);
-  ctx.fillRect(rx + rw - 8 - bs, ry + rh - 11, bs, 3);
-  ctx.fillRect(rx + rw - 11, ry + rh - 8 - bs, 3, bs);
+// 4b. Meeting Room Slate & Carpet Floor
+function drawMeetingFloor(x, y, w, h) {
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(x, y, w, h);
+
+  const tileSize = 20;
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.6)';
+  ctx.lineWidth = 1;
+  for (let px = x; px <= x + w; px += tileSize) {
+    ctx.beginPath();
+    ctx.moveTo(px, y);
+    ctx.lineTo(px, y + h);
+    ctx.stroke();
+  }
+  for (let py = y; py <= y + h; py += tileSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, py);
+    ctx.lineTo(x + w, py);
+    ctx.stroke();
+  }
+
+  const rx = x + 18;
+  const ry = y + 22;
+  const rw = w - 36;
+  const rh = h - 44;
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(rx, ry, rw, rh);
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(rx + 4, ry + 4, rw - 8, rh - 8);
+
+  ctx.fillStyle = '#f59e0b';
+  const bs = 8;
+  ctx.fillRect(rx + 6, ry + 6, bs, 2);
+  ctx.fillRect(rx + 6, ry + 6, 2, bs);
+  ctx.fillRect(rx + rw - 6 - bs, ry + 6, bs, 2);
+  ctx.fillRect(rx + rw - 8, ry + 6, 2, bs);
+  ctx.fillRect(rx + 6, ry + rh - 8, bs, 2);
+  ctx.fillRect(rx + 6, ry + rh - 6 - bs, 2, bs);
+  ctx.fillRect(rx + rw - 6 - bs, ry + rh - 8, bs, 2);
+  ctx.fillRect(rx + rw - 8, ry + rh - 6 - bs, 2, bs);
 }
 
 // Clean and format sprint board task titles
@@ -647,7 +713,7 @@ function drawWalls() {
   ctx.fillRect(wbx + 4, wby + 12, wbw - 8, 1);
   ctx.fillRect(wbx + wbw / 2 + 5, wby + 13, 1, wbh - 15);
 
-  const activeBots = BOT_KEYS.map(k => BOTS[k]).filter(b => b.status === 'stuck' || b.status === 'working');
+  const activeBots = BOT_KEYS.map(k => BOTS[k]).filter(b => b.status === 'stuck' || b.status === 'working' || b.status === 'waiting');
   ctx.font = 'bold 7.5px "IBM Plex Sans Arabic", Tahoma, sans-serif';
   if (activeBots.length === 0) {
     ctx.fillStyle = '#475569';
@@ -663,7 +729,7 @@ function drawWalls() {
     activeBots.slice(0, 4).forEach((b, idx) => {
       const slot = slots[idx];
       const rawTitle = cleanBoardTaskTitle(b);
-      const pctText = b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : '');
+      const pctText = b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : (b.status === 'waiting' ? ' ⏳' : ''));
       const percentWidth = ctx.measureText(pctText).width;
       const availWidth = (slot.tx - slot.px) - percentWidth - 6;
       const titleText = fitBoardTitle(ctx, b.name, rawTitle, availWidth);
@@ -676,7 +742,7 @@ function drawWalls() {
       ctx.direction = prevDir;
 
       ctx.textAlign = 'left';
-      ctx.fillStyle = b.status === 'stuck' ? '#ef4444' : '#10b981';
+      ctx.fillStyle = b.status === 'stuck' ? '#ef4444' : (b.status === 'waiting' ? '#38bdf8' : '#10b981');
       ctx.fillText(pctText, slot.px, slot.y);
     });
   }
@@ -693,16 +759,38 @@ function drawWalls() {
   ctx.fillStyle = '#d4af37';
   ctx.fillRect(gpx - 6, wallH + 180, 12, 4);
 
-  // Partition Wall between Bullpen and Lounge / Coffee
+  // Partition Wall between Bullpen and bottom rooms
   const pwy = 315;
   ctx.fillStyle = PAL.wall;
-  ctx.fillRect(0, pwy, 420, 10);
+  ctx.fillRect(0, pwy, 350, 10);
+  ctx.fillRect(374, pwy, 510 - 374, 10);
   ctx.fillStyle = PAL.trim;
-  ctx.fillRect(0, pwy, 420, 2);
+  ctx.fillRect(0, pwy, 350, 2);
+  ctx.fillRect(374, pwy, 510 - 374, 2);
   ctx.fillStyle = PAL.wallDark;
-  ctx.fillRect(0, pwy + 8, 420, 2);
+  ctx.fillRect(0, pwy + 8, 350, 2);
+  ctx.fillRect(374, pwy + 8, 510 - 374, 2);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.fillRect(0, pwy + 10, 420, 6);
+  ctx.fillRect(0, pwy + 10, 350, 6);
+  ctx.fillRect(374, pwy + 10, 510 - 374, 6);
+
+  // Door posts for Meeting Room entrance
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(348, pwy, 2, 10);
+  ctx.fillRect(374, pwy, 2, 10);
+
+  // Glass Partitions for Meeting Room:
+  // Left partition between Games Corner and Meeting Room at x = 240
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(239, pwy, 3, 225);
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+  ctx.fillRect(238, pwy, 5, 225);
+
+  // Right partition between Meeting Room and Coffee Corner at x = 485
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(484, pwy, 3, 225);
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+  ctx.fillRect(483, pwy, 5, 225);
 
   drawTodayBoard();
 }
@@ -920,8 +1008,10 @@ function drawOfficeFurniture(time) {
     { x: 75,  y: 130, botId: 'hagras' },
     { x: 205, y: 130, botId: 'nafady' },
     { x: 335, y: 130, botId: 'ashraf' },
-    { x: 140, y: 225, botId: 'marbouha' },
-    { x: 270, y: 225, botId: 'johnny' }
+    { x: 40,  y: 225, botId: 'salem' },
+    { x: 150, y: 225, botId: 'marbouha' },
+    { x: 260, y: 225, botId: 'johnny' },
+    { x: 370, y: 225, botId: 'fazza' }
   ];
 
   for (const desk of devDesks) {
@@ -1004,10 +1094,294 @@ function drawOfficeFurniture(time) {
   ctx.fillStyle = '#7dd3fc';
   ctx.fillRect(wdx + 4, wdy + 2, 4, 14);
 
-  // --- C. Coffee Bar & Kitchen ---
-  const cbx = 540;
+  // --- C. Meeting Room (Center Bottom: x: 240..485, y: 315..540) ---
+  // Presentation screen on top wall
+  const msx = 325;
+  const msy = 322;
+  const msw = 74;
+  const msh = 32;
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(msx - 2, msy - 2, msw + 4, msh + 4);
+  ctx.fillStyle = '#0b1a28';
+  ctx.fillRect(msx, msy, msw, msh);
+  // Animated sprint charts on screen
+  const b1 = 6 + Math.abs(Math.sin(time * 0.003)) * 14;
+  const b2 = 5 + Math.abs(Math.sin(time * 0.0022 + 1)) * 16;
+  const b3 = 8 + Math.abs(Math.sin(time * 0.0026 + 2)) * 12;
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(msx + 8, msy + msh - 4 - b1, 6, b1);
+  ctx.fillStyle = '#2dd4bf';
+  ctx.fillRect(msx + 18, msy + msh - 4 - b2, 6, b2);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(msx + 28, msy + msh - 4 - b3, 6, b3);
+  ctx.strokeStyle = '#a855f7';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(msx + 40, msy + msh - 8);
+  ctx.lineTo(msx + 50, msy + msh - 18);
+  ctx.lineTo(msx + 62, msy + msh - 12);
+  ctx.stroke();
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(msx + 49, msy + msh - 19, 3, 3);
+  ctx.fillRect(msx + 61, msy + msh - 13, 3, 3);
+
+  // Large Oval Conference Table
+  const tcx = 362;
+  const tcy = 425;
+  softContactShadow(tcx, tcy + 4, 68, 34, 0.45);
+
+  ctx.fillStyle = '#3b1d11';
+  ctx.beginPath();
+  ctx.ellipse(tcx, tcy, 62, 32, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#5c2e1b';
+  ctx.beginPath();
+  ctx.ellipse(tcx, tcy - 2, 60, 30, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#783b23';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Inset leather pad with gold border
+  ctx.fillStyle = '#14532d';
+  ctx.beginPath();
+  ctx.ellipse(tcx, tcy - 2, 44, 20, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#d4af37';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Speakerphone / mic unit in table center
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(tcx - 5, tcy - 6, 10, 8);
+  ctx.fillStyle = '#10b981';
+  ctx.fillRect(tcx - 1.5, tcy - 3, 3, 2);
+
+  // 8 Conference Chairs around the table
+  const chairPositions = [
+    { x: 362, y: 388, rot: 0 },
+    { x: 315, y: 398, rot: 0.3 },
+    { x: 410, y: 398, rot: -0.3 },
+    { x: 290, y: 425, rot: 0.5 },
+    { x: 435, y: 425, rot: -0.5 },
+    { x: 315, y: 452, rot: -0.3 },
+    { x: 410, y: 452, rot: 0.3 },
+    { x: 362, y: 462, rot: 0 }
+  ];
+  for (const ch of chairPositions) {
+    ctx.save();
+    ctx.translate(ch.x, ch.y);
+    if (ctx.rotate) ctx.rotate(ch.rot);
+    softContactShadow(0, 4, 11, 4, 0.3);
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.arc(0, 0, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // --- D. Games Corner & Lounge (Left Bottom: x: 0..240, y: 315..540) ---
+  // Wall TV with generic pixel sports car in night city
+  const tvX = 22;
+  const tvY = 322;
+  const tvW = 86;
+  const tvH = 42;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fillRect(tvX + 3, tvY + tvH + 2, tvW, 4);
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(tvX, tvY, tvW, tvH);
+  // Screen
+  const scX = tvX + 3;
+  const scY = tvY + 3;
+  const scW = tvW - 6;
+  const scH = tvH - 6;
+  ctx.fillStyle = '#0a0f1d';
+  ctx.fillRect(scX, scY, scW, scH);
+
+  // Distant pixel skyscrapers with glowing windows
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(scX + 4, scY + 6, 14, 18);
+  ctx.fillRect(scX + 22, scY + 4, 18, 20);
+  ctx.fillRect(scX + 44, scY + 8, 16, 16);
+  ctx.fillRect(scX + 63, scY + 5, 13, 19);
+  // Windows
+  ctx.fillStyle = '#fde047';
+  ctx.fillRect(scX + 7, scY + 9, 2, 2);
+  ctx.fillRect(scX + 13, scY + 14, 2, 2);
+  ctx.fillRect(scX + 26, scY + 8, 2, 2);
+  ctx.fillRect(scX + 34, scY + 12, 2, 2);
+  ctx.fillRect(scX + 48, scY + 11, 2, 2);
+  ctx.fillRect(scX + 66, scY + 9, 2, 2);
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(scX + 9, scY + 18, 2, 2);
+  ctx.fillRect(scX + 28, scY + 16, 2, 2);
+  ctx.fillRect(scX + 54, scY + 15, 2, 2);
+
+  // Asphalt road
+  const rdY = scY + scH - 12;
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(scX, rdY, scW, 12);
+  ctx.fillStyle = '#64748b';
+  ctx.fillRect(scX, rdY, scW, 1);
+  // Dashed road center line
+  ctx.fillStyle = '#f8fafc';
+  for (let rx = scX + 2; rx < scX + scW - 6; rx += 10) {
+    ctx.fillRect(rx, rdY + 6, 5, 1);
+  }
+
+  // Generic pixel sports car moving horizontally
+  const carOffset = (time * 0.04) % (scW - 20);
+  const carX = scX + 2 + carOffset;
+  const carY = rdY + 2;
+  // Car chassis & body
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(carX, carY + 2, 16, 5);
+  ctx.fillStyle = '#991b1b';
+  ctx.fillRect(carX + 1, carY + 6, 14, 1.5);
+  // Cabin
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(carX + 4, carY, 8, 3);
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(carX + 5, carY + 0.8, 6, 1.4);
+  // Wheels
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(carX + 2, carY + 6, 3, 2);
+  ctx.fillRect(carX + 11, carY + 6, 3, 2);
+  // Headlight beam
+  ctx.fillStyle = '#fef08a';
+  ctx.fillRect(carX + 16, carY + 3, 6, 2);
+  // Taillight
+  ctx.fillStyle = '#f87171';
+  ctx.fillRect(carX - 1, carY + 3, 1, 2);
+
+  // Mini radar circle in corner
+  ctx.strokeStyle = 'rgba(34, 197, 94, 0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(scX + 9, scY + 9, 5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(scX + 8, scY + 8, 2, 2);
+
+  // Top health / energy bar
+  ctx.fillStyle = '#15803d';
+  ctx.fillRect(scX + scW - 24, scY + 3, 20, 2.5);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(scX + scW - 24, scY + 3, 15, 2.5);
+
+  // TV bracket / stand
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(tvX + tvW / 2 - 5, tvY + tvH, 10, 4);
+
+  // Console shelf under TV
+  const csX = tvX + 22;
+  const csY = tvY + tvH + 5;
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(csX, csY, 42, 7);
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(csX + 6, csY + 1.5, 12, 4);
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillRect(csX + 15, csY + 2.5, 2, 2);
+  // Controller cables leading toward cushions
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(csX + 8, csY + 5);
+  ctx.lineTo(csX - 5, csY + 25); ctx.lineTo(42, 410);
+  ctx.moveTo(csX + 12, csY + 5);
+  ctx.lineTo(csX + 20, csY + 25); ctx.lineTo(88, 410);
+  ctx.stroke();
+
+  // Floor Cushions (Bean Bags)
+  softContactShadow(42, 418, 14, 5, 0.35);
+  ctx.fillStyle = '#0284c7';
+  ctx.beginPath();
+  ctx.ellipse(42, 414, 13, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#38bdf8';
+  ctx.beginPath();
+  ctx.ellipse(42, 412, 9, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  softContactShadow(88, 418, 14, 5, 0.35);
+  ctx.fillStyle = '#7c3aed';
+  ctx.beginPath();
+  ctx.ellipse(88, 414, 13, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#a855f7';
+  ctx.beginPath();
+  ctx.ellipse(88, 412, 9, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lounge Sofa
+  const lx = 20;
+  const ly = 445;
+  softContactShadow(lx + 52, ly + 40, 58, 8, 0.42);
+  ctx.fillStyle = '#9a3412';
+  ctx.fillRect(lx, ly, 104, 14);
+  ctx.fillStyle = '#c2410c';
+  ctx.fillRect(lx, ly + 14, 104, 20);
+  ctx.fillStyle = '#7c2d12';
+  ctx.fillRect(lx + 34, ly + 14, 2, 20);
+  ctx.fillRect(lx + 68, ly + 14, 2, 20);
+  ctx.fillRect(lx - 3, ly + 5, 6, 29);
+  ctx.fillRect(lx + 101, ly + 5, 6, 29);
+  ctx.fillStyle = '#1e3a8a';
+  ctx.fillRect(lx + 8, ly + 10, 12, 8);
+  ctx.fillStyle = '#0d9488';
+  ctx.fillRect(lx + 84, ly + 10, 12, 8);
+
+  // Coffee Table
+  const cfx = 40;
+  const cfy = 490;
+  softContactShadow(cfx + 30, cfy + 16, 32, 5, 0.35);
+  ctx.fillStyle = '#451a03';
+  ctx.fillRect(cfx, cfy, 60, 16);
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(cfx + 2, cfy + 2, 56, 12);
+
+  // Retro Arcade Cabinet (at arx = 185)
+  const arx = 185;
+  const ary = 340;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(arx + 2, ary + 65, 36, 8);
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(arx, ary, 36, 65);
+  ctx.fillStyle = '#581c87';
+  ctx.fillRect(arx + 2, ary + 2, 32, 61);
+  ctx.fillStyle = '#facc15';
+  ctx.fillRect(arx + 4, ary + 4, 28, 10);
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold 6px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('DIGER', arx + 8, ary + 12);
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(arx + 5, ary + 18, 26, 22);
+  const invaderX = arx + 10 + Math.floor(Math.sin(time * 0.005) * 6 + 6);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(invaderX, ary + 24, 6, 4);
+  ctx.fillRect(invaderX + 1, ary + 22, 4, 2);
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(arx + 4, ary + 44, 28, 10);
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath();
+  ctx.arc(arx + 10, ary + 48, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(arx + 18, ary + 47, 3, 3);
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillRect(arx + 23, ary + 47, 3, 3);
+
+  // --- E. Coffee Corner & Kitchen (Right Bottom: x: 485..800, y: 315..540) ---
+  const cbx = 520;
   const cby = 330;
-  const cbw = 150;
+  const cbw = 210;
   const cbh = 36;
   softContactShadow(cbx + cbw / 2, cby + cbh + 2, cbw / 2 + 7, 8.5, 0.4);
 
@@ -1054,29 +1428,26 @@ function drawOfficeFurniture(time) {
   ctx.fillStyle = '#f59e0b';
   ctx.fillRect(cbx + 122, cby + 6, 8, 4);
 
-  // Dining Table
-  const tx = 715;
-  const ty = 370;
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(tx - 12, ty + 24, 24, 5);
-  ctx.fillStyle = '#78350f';
-  ctx.beginPath();
-  ctx.arc(tx, ty, 18, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#9a3412';
-  ctx.beginPath();
-  ctx.arc(tx, ty, 15, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#dc2626';
-  ctx.beginPath();
-  ctx.arc(tx - 26, ty, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(tx + 26, ty, 8, 0, Math.PI * 2);
-  ctx.fill();
+  // 3 Bar Stools in front of Coffee Bar
+  const coffeeStools = [550, 630, 710];
+  for (const stX of coffeeStools) {
+    const stY = 390;
+    softContactShadow(stX, stY + 6, 10, 3.5, 0.35);
+    ctx.fillStyle = '#64748b';
+    ctx.fillRect(stX - 1.5, stY - 6, 3, 12);
+    ctx.fillRect(stX - 5, stY + 5, 10, 2);
+    ctx.fillStyle = '#78350f';
+    ctx.beginPath();
+    ctx.arc(stX, stY - 6, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#9a3412';
+    ctx.beginPath();
+    ctx.arc(stX, stY - 7, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  // Pendant lamps hanging over the coffee bar, warm glow on the counter
-  for (const px of [648, 706]) {
+  // Pendant lamps hanging over the coffee bar
+  for (const px of [560, 625, 690]) {
     ctx.fillStyle = 'rgba(245, 158, 11, 0.19)';
     ctx.beginPath();
     ctx.arc(px, 340, 21, 0, Math.PI * 2);
@@ -1089,7 +1460,7 @@ function drawOfficeFurniture(time) {
     ctx.fillRect(px - 4, 329, 8, 2.5);
   }
 
-  // Chalkboard menu by the dining table
+  // Chalkboard menu by coffee bar
   const mbx = 748;
   const mby = 322;
   ctx.fillStyle = '#5c2e1b';
@@ -1109,132 +1480,21 @@ function drawOfficeFurniture(time) {
   ctx.fillText('كرواسون 🥐', mbx + 21, mby + 40);
   ctx.fillText('كيكة 🍰', mbx + 21, mby + 49);
 
-  // --- D. Lounge & Chill Area ---
-  const lx = 60;
-  const ly = 370;
-  softContactShadow(lx + 70, ly + 48, 80, 9, 0.42);
-
-  ctx.fillStyle = '#9a3412';
-  ctx.fillRect(lx, ly, 140, 16);
-  ctx.fillStyle = '#c2410c';
-  ctx.fillRect(lx, ly + 16, 140, 24);
-  ctx.fillStyle = '#7c2d12';
-  ctx.fillRect(lx + 46, ly + 16, 2, 24);
-  ctx.fillRect(lx + 92, ly + 16, 2, 24);
-  ctx.fillRect(lx - 4, ly + 6, 8, 34);
-  ctx.fillRect(lx + 136, ly + 6, 8, 34);
-
-  // Throw Pillows
-  ctx.fillStyle = '#1e3a8a';
-  ctx.fillRect(lx + 10, ly + 12, 14, 10);
-  ctx.fillStyle = '#0d9488';
-  ctx.fillRect(lx + 115, ly + 12, 14, 10);
-
-  // Coffee Table
-  const cfx = 95;
-  const cfy = 435;
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fillRect(cfx + 2, cfy + 20, 70, 6);
-  ctx.fillStyle = '#451a03';
-  ctx.fillRect(cfx, cfy, 74, 22);
+  // Dining Table
+  const tx = 750;
+  const ty = 430;
+  softContactShadow(tx, ty + 18, 20, 5, 0.3);
   ctx.fillStyle = '#78350f';
-  ctx.fillRect(cfx + 2, cfy + 2, 70, 18);
-  ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
-  ctx.fillRect(cfx + 6, cfy + 5, 40, 12);
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillRect(cfx + 8, cfy + 7, 12, 8);
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(cfx + 9, cfy + 8, 10, 4);
-  ctx.fillStyle = '#ec4899';
-  ctx.fillRect(cfx + 50, cfy + 6, 14, 10);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(cfx + 52, cfy + 8, 10, 2);
-
-  // Wall TV above the sofa, animated bars on screen
-  const tvX = 128;
-  const tvY = 322;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(tvX + 3, tvY + 48, 90, 5);
-  ctx.fillStyle = '#0b1220';
-  ctx.fillRect(tvX, tvY, 96, 46);
-  ctx.fillStyle = '#062a33';
-  ctx.fillRect(tvX + 3, tvY + 3, 90, 40);
-  for (let i = 0; i < 6; i++) {
-    const bhgt = 8 + Math.abs(Math.sin(time * 0.0022 + i * 1.3)) * 20;
-    ctx.fillStyle = i % 2 === 0 ? '#2dd4bf' : '#38bdf8';
-    ctx.fillRect(tvX + 10 + i * 13, tvY + 40 - bhgt, 8, bhgt);
-  }
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(tvX + 42, tvY + 46, 12, 3);
-
-  // Floor lamp with a warm pool of light
-  const flX = 240;
-  const flY = 350;
-  const lampGlow = ctx.createRadialGradient(flX, flY + 4, 2, flX, flY + 4, 38);
-  lampGlow.addColorStop(0, 'rgba(253, 224, 130, 0.23)');
-  lampGlow.addColorStop(1, 'rgba(253, 224, 130, 0)');
-  ctx.fillStyle = lampGlow;
-  ctx.fillRect(flX - 38, flY - 34, 76, 76);
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(flX - 1, flY, 2, 34);
-  ctx.fillRect(flX - 6, flY + 34, 12, 3);
-  ctx.fillStyle = '#b45309';
-  ctx.fillRect(flX - 8, flY - 10, 16, 10);
-  ctx.fillStyle = '#fde68a';
-  ctx.fillRect(flX - 6, flY - 3, 12, 3);
-
-  // Single armchair next to the sofa
-  const acX = 292;
-  const acY = 402;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(acX + 2, acY + 36, 44, 6);
-  ctx.fillStyle = '#7c2d12';
-  ctx.fillRect(acX, acY, 46, 14);
-  ctx.fillStyle = '#9a3412';
-  ctx.fillRect(acX + 3, acY + 14, 40, 20);
-  ctx.fillStyle = '#7c2d12';
-  ctx.fillRect(acX - 3, acY + 8, 8, 26);
-  ctx.fillRect(acX + 41, acY + 8, 8, 26);
-  ctx.fillStyle = '#0d9488';
-  ctx.fillRect(acX + 14, acY + 16, 18, 12);
-
-  // Retro Arcade Cabinet
-  const arx = 380;
-  const ary = 340;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(arx + 2, ary + 65, 36, 8);
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(arx, ary, 36, 65);
-  ctx.fillStyle = '#581c87';
-  ctx.fillRect(arx + 2, ary + 2, 32, 61);
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(arx + 4, ary + 4, 28, 10);
-  ctx.fillStyle = '#000000';
-  ctx.font = 'bold 6px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('DIGER', arx + 8, ary + 12);
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(arx + 5, ary + 18, 26, 22);
-  const invaderX = arx + 10 + Math.floor(Math.sin(time * 0.005) * 6 + 6);
-  ctx.fillStyle = '#22c55e';
-  ctx.fillRect(invaderX, ary + 24, 6, 4);
-  ctx.fillRect(invaderX + 1, ary + 22, 4, 2);
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(arx + 4, ary + 44, 28, 10);
-  ctx.fillStyle = '#ef4444';
   ctx.beginPath();
-  ctx.arc(arx + 10, ary + 48, 2.5, 0, Math.PI * 2);
+  ctx.arc(tx, ty, 18, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(arx + 18, ary + 47, 3, 3);
-  ctx.fillStyle = '#3b82f6';
-  ctx.fillRect(arx + 23, ary + 47, 3, 3);
+  ctx.fillStyle = '#9a3412';
+  ctx.beginPath();
+  ctx.arc(tx, ty, 15, 0, Math.PI * 2);
+  ctx.fill();
 
-  // --- E. Workstations for the roaming bots (Salem / Fazza / Hazalqom) ---
-  drawWorkDesk(539, 372, '#0f766e', '#2dd4bf', false, 'salem'); // Salem — coffee corner
-  drawWorkDesk(200, 392, '#b45309', '#f59e0b', false, 'fazza'); // Fazza — lounge review desk
-  drawWorkDesk(404, 252, '#d97706', '#ec4899', true, 'hazalqom');  // Hazalqom — design desk
-
+  // Hazalqom Design Desk
+  drawWorkDesk(404, 252, '#d97706', '#ec4899', true, 'hazalqom');
   // Plants
   drawPixelPlant(30, 460);
   drawPixelPlant(545, 75);
@@ -1440,12 +1700,26 @@ function drawBotBubble(bot, hx, hy, r, time) {
     bg = 'rgba(69, 10, 10, 0.95)';
     border = '#ef4444';
     textColor = '#fecaca';
+  } else if (bot.status === 'waiting') {
+    bg = 'rgba(8, 30, 50, 0.95)';
+    border = '#38bdf8';
+    textColor = '#bae6fd';
+  } else if (bot.status === 'meeting') {
+    bg = 'rgba(30, 20, 50, 0.96)';
+    border = '#c084fc';
+    textColor = '#f3e8ff';
   } else if (bot.status === 'working') {
     border = '#10b981';
     textColor = '#a7f3d0';
   } else if (bot.status === 'idle') {
     border = '#f59e0b';
     textColor = '#fef3c7';
+  }
+  if (bot.isSleeping && !celebrating && !chatting) {
+    bg = 'rgba(15, 23, 42, 0.95)';
+    border = '#64748b';
+    textColor = '#94a3b8';
+    text = '💤 نايم';
   }
   if (bot.id === 'elkebir') {
     border = '#fbbf24';
@@ -1498,9 +1772,19 @@ function drawBotEntity(bot, time) {
   const bx = Math.floor(bot.x);
   const by = Math.floor(bot.y);
 
+  // Waking Jump + Spin Animation (0.75s)
+  if (bot.wakeAnimStart && (time - bot.wakeAnimStart < 750)) {
+    const wProg = (time - bot.wakeAnimStart) / 750;
+    const jumpY = -14 * Math.sin(wProg * Math.PI);
+    const spinAngle = wProg * Math.PI * 2;
+    ctx.translate(bx, by + jumpY);
+    if (ctx.rotate) ctx.rotate(spinAngle);
+    ctx.translate(-bx, -by);
+  }
+
   // Desk bots always sit; roaming bots sit at their own desk while on a task.
   // A bot out on a coffee trip stands and walks instead.
-  const seated = !bot.onTrip && (bot.isDesk || (bot.baseWander && !bot.wander));
+  const seated = !bot.onTrip && (bot.isDesk || (bot.baseWander && !bot.wander) || (teamMeetingActive && bot.isAtMeetingSeat));
   const headR = 13;
   let headCenterY;
 
@@ -1543,7 +1827,7 @@ function drawBotEntity(bot, time) {
     // Subtle working bob — each employee has his own rhythm
     const bob = (bot.status === 'working' && !REDUCED_MOTION) ? Math.sin(time * 0.005 * (bot.rhythm || 1) + bx) * 0.8 : 0;
     const torsoTop = by - 6 + bob;
-    headCenterY = torsoTop - headR - 1;
+    headCenterY = torsoTop - headR - 1 + (bot.isSleeping ? 3 : 0);
 
     // Torso with shoulders
     ctx.fillStyle = bot.shirtColor;
@@ -1684,6 +1968,9 @@ function drawBotEntity(bot, time) {
   if (bot.status === 'working') borderColor = '#10b981';
   if (bot.status === 'idle') borderColor = '#f59e0b';
   if (bot.status === 'stuck') borderColor = '#ef4444';
+  if (bot.status === 'waiting') borderColor = '#38bdf8';
+  if (bot.status === 'meeting') borderColor = '#c084fc';
+  if (bot.isSleeping) borderColor = '#64748b';
   if (bot.id === 'elkebir') borderColor = '#fbbf24';
 
   ctx.strokeStyle = borderColor;
@@ -1700,6 +1987,20 @@ function drawBotEntity(bot, time) {
     ctx.beginPath();
     ctx.arc(headCenterX, headCenterY, headR + 2 + pulse * 5, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  // Floating Zzz particles when sleeping
+  if (bot.isSleeping) {
+    for (let zi = 0; zi < 3; zi++) {
+      const zPhase = ((time * 0.0016 + zi * 0.8) % 2.5);
+      const zAlpha = Math.max(0, 1 - (zPhase / 2.5));
+      const zx = headCenterX + 8 + zPhase * 5;
+      const zy = headCenterY - 8 - zPhase * 14;
+      const zSize = 7 + zi * 2;
+      ctx.font = 'bold ' + zSize + 'px sans-serif';
+      ctx.fillStyle = 'rgba(147, 197, 253, ' + zAlpha.toFixed(2) + ')';
+      ctx.fillText('Z', zx, zy);
+    }
   }
 
   // Floating Speech/Task Bubble
@@ -1959,10 +2260,11 @@ function updateInteractions(dt, time) {
 // strip, so each room is rendered as its own full-width strip, stacked top to
 // bottom, and the page scrolls. Landscape (laptop / TV) is untouched.
 const STACKED_STRIPS = [
-  { key: 'dev',     x: 0,   y: 0,   w: 540, h: 315, label: '\uD83D\uDCBB \u0635\u0627\u0644\u0629 \u0627\u0644\u062A\u0637\u0648\u064A\u0631 \u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629', color: '#7dd3fc', border: 'rgba(56,189,248,.5)' },
-  { key: 'manager', x: 490, y: 0,   w: 310, h: 315, label: '\uD83D\uDC51 \u063A\u0631\u0641\u0629 \u0627\u0644\u0645\u062F\u064A\u0631 \u00AB\u0627\u0644\u0643\u0628\u064A\u0631\u00BB', color: '#ffd97a', border: 'rgba(242,179,61,.55)' },
-  { key: 'lounge',  x: 0,   y: 315, w: 490, h: 225, label: '\uD83D\uDECB\uFE0F \u0631\u0643\u0646 \u0627\u0644\u0627\u0633\u062A\u0631\u0627\u062D\u0629 \u0648\u0627\u0644\u0623\u0644\u0639\u0627\u0628', color: '#5eead4', border: 'rgba(45,212,191,.5)' },
-  { key: 'coffee',  x: 490, y: 315, w: 310, h: 225, label: '\u2615 \u0631\u0643\u0646 \u0627\u0644\u0642\u0647\u0648\u0629 \u0648\u0627\u0644\u0645\u0637\u0628\u062E', color: '#fbbf24', border: 'rgba(245,166,35,.5)' }
+  { key: 'dev',     x: 0,   y: 0,   w: 510, h: 315, label: '\uD83D\uDCBB \u0635\u0627\u0644\u0629 \u0627\u0644\u062A\u0637\u0648\u064A\u0631 \u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629', color: '#7dd3fc', border: 'rgba(56,189,248,.5)' },
+  { key: 'manager', x: 510, y: 0,   w: 290, h: 315, label: '\uD83D\uDC51 \u063A\u0631\u0641\u0629 \u0627\u0644\u0645\u062F\u064A\u0631 \u00AB\u0627\u0644\u0643\u0628\u064A\u0631\u00BB', color: '#ffd97a', border: 'rgba(242,179,61,.55)' },
+  { key: 'lounge',  x: 0,   y: 315, w: 240, h: 225, label: '\uD83C\uDFAE \u0631\u0643\u0646 \u0627\u0644\u0623\u0644\u0639\u0627\u0628 \u0648\u0627\u0644\u0627\u0633\u062A\u0631\u0627\u062D\u0629', color: '#5eead4', border: 'rgba(45,212,191,.5)' },
+  { key: 'meeting', x: 240, y: 315, w: 245, h: 225, label: '\uD83D\uDC65 \u0642\u0627\u0639\u0629 \u0627\u0644\u0627\u062c\u062a\u0645\u0627\u0639\u0627\u062a', color: '#c084fc', border: 'rgba(168,85,247,.5)' },
+  { key: 'coffee',  x: 485, y: 315, w: 315, h: 225, label: '\u2615 \u0631\u0643\u0646 \u0627\u0644\u0642\u0647\u0648\u0629 \u0648\u0627\u0644\u0645\u0637\u0628\u062E', color: '#fbbf24', border: 'rgba(245,166,35,.5)' }
 ];
 const STACKED_BAND = 36; // px title band above each strip
 const STACKED_GAP = 10;  // px gap between strips
@@ -2064,6 +2366,197 @@ function renderStacked(time) {
   ctx.restore();
 }
 
+// 6. Egyptian Banter, Cheer Replies, Sleep Gag & Team Meeting Mechanics
+const EGYPTIAN_OFFICE_BANTER = {
+  busy: [
+    "يا عم ما توجعش دماغي دلوقتي، روح مكتبك!",
+    "سيبني في حالي يا ابني، الكود هيفرقع في وشي 💥",
+    "ثواني بس هخلص السطر ده وأرد عليك",
+    "حبيبي والله.. بس عيني مش شايفة غير الشاشة من التركيز"
+  ],
+  coffee: [
+    "مين يشرب معايا قهوة مظبوط يا شباب؟ ☕",
+    "القهوة دي هي اللي مصحيانا وربنا!",
+    "حد معاه حاجة حلوة تتاكل مع الشاي؟",
+    "أنا هاخد بريك ٥ دقايق بس عشان دماغي متسوحش"
+  ],
+  hallway: [
+    "صباح الفل يا هندسة.. منور الصالة",
+    "طب ما تشد حيلك شوية يا فنان!",
+    "عاش يا وحش، شايفك غاطس في الشغل",
+    "يا مسهل الحال يا رب.. هانت أهو"
+  ],
+  finished: [
+    "يا مسهل! عدت على خير الحمد لله ✅",
+    "أخيراً.. التيست كله أخضر زي الفل",
+    "الله ينور يا رجالة، تسلم إيديكم والله",
+    "كده قفلنا الجزء ده، عقبال اللي جاي 🚀"
+  ],
+  mood: [
+    "هو النهاردة إيه في الأسبوع؟ الواحد تاه في الأيام",
+    "ريحة الويك إند بدأت تظهر خلاص 😉",
+    "يلا نخلص بدري النهاردة من غير مفاجآت",
+    "الشغل مبيخلصش يا جماعة، أهم حاجة البركة والروقان"
+  ]
+};
+
+const CHEER_REPLIES = {
+  elkebir: "تسلم يا ريس، الشغل ماشي على قدم وساق 🫡",
+  johnny: "حبيبي يا ريس، كود الفلوس في الحفظ والصون 💰",
+  nafady: "يا باشا تشجيعك ده بالدنيا، شغالين أهو 👌",
+  hagras: "تسلم يا كبير، هخلص التاسك دي قبل الشاي ما يبرد ☕",
+  salem: "الله يعزك يا غالي، شغالين فورمة 🚀",
+  fazza: "ولا بجاية هتعدي من تحت إيدي، اعتبره حصل 🔍",
+  ashraf: "حبيبي تسلم، الكود متفصص حتة حتة ✨",
+  marbouha: "التيستات كلها هتعدي خضرا بإذن الله 🧪",
+  hazalqom: "الله عليك يا فنان! الديزاين هيطلع تحفة إيطالي 🎨"
+};
+
+const WAKE_APOLOGIES = [
+  "آسف يا كبير!",
+  "والله ما كنت نايم يا كبير، كنت بفكر بعمق بس!",
+  "أنا صاحي أهو وسامع كل حاجة يا ريس!",
+  "ثانية واحدة وهكون مخلص الشغل يا هندسة!"
+];
+
+const SLEEP_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const AWAKE_COOLDOWN_MS = 10 * 60 * 1000;
+
+function checkBotSleep(bot, nowMs) {
+  if (!bot) return false;
+  if (bot.status === 'working' || bot.status === 'waiting' || bot.status === 'stuck' || bot.status === 'meeting') {
+    bot.isSleeping = false;
+    bot.idleSince = null;
+    return false;
+  }
+  if (bot.status !== 'idle' || bot.onTrip || teamMeetingActive) {
+    bot.isSleeping = false;
+    return false;
+  }
+  const lastWoken = bot.lastWokenAt || -AWAKE_COOLDOWN_MS;
+  if (performance.now() - lastWoken < AWAKE_COOLDOWN_MS) {
+    bot.isSleeping = false;
+    return false;
+  }
+  const updatedMs = bot.updatedAt ? Date.parse(bot.updatedAt) : NaN;
+  const idleStart = Number.isFinite(updatedMs) ? updatedMs : (bot.idleSince || nowMs);
+  if (!bot.idleSince) bot.idleSince = idleStart;
+
+  if (nowMs - idleStart >= SLEEP_IDLE_THRESHOLD_MS) {
+    bot.isSleeping = true;
+    return true;
+  }
+  bot.isSleeping = false;
+  return false;
+}
+
+function wakeUpBot(bot) {
+  if (!bot) return;
+  bot.isSleeping = false;
+  bot.lastWokenAt = performance.now();
+  bot.wakeAnimStart = performance.now();
+  for (const k of BOT_KEYS) {
+    if (BOTS[k] !== bot) clearChat(BOTS[k]);
+  }
+  const apology = WAKE_APOLOGIES[Math.floor(Math.random() * WAKE_APOLOGIES.length)];
+  celebrateBot(bot, apology);
+}
+
+function updateBotSleep(time) {
+  const nowMs = Date.now();
+  for (const k of BOT_KEYS) {
+    checkBotSleep(BOTS[k], nowMs);
+  }
+}
+
+// Team Meeting
+const MEETING_SEATS = {
+  elkebir:  { x: 362, y: 388 },
+  johnny:   { x: 315, y: 398 },
+  nafady:   { x: 410, y: 398 },
+  hagras:   { x: 290, y: 425 },
+  salem:    { x: 435, y: 425 },
+  ashraf:   { x: 315, y: 452 },
+  fazza:    { x: 410, y: 452 },
+  marbouha: { x: 345, y: 462 },
+  hazalqom: { x: 380, y: 462 }
+};
+
+const TEAM_MEETING_SCRIPT = [
+  { botId: 'elkebir', text: 'يا رجالة، نراجع أولويات السبرنت بسرعة 🫡' },
+  { botId: 'johnny', text: 'كود الفلوس والـ SQL متراجع وجاهز 💰' },
+  { botId: 'nafady', text: 'الخطوات واضحة ومتقسمة بالترتيب 👌' },
+  { botId: 'fazza', text: 'مراجعة الثغرات تمام ومفيش تسريب 🔍' },
+  { botId: 'ashraf', text: 'الاختبارات مغطية الحالات الحدية ✨' },
+  { botId: 'marbouha', text: 'الـ CI هيعدي أخضر من أول مرة 🧪' },
+  { botId: 'hagras', text: 'تمام، هخلص الشغل قبل الشاي ما يبرد ☕' },
+  { botId: 'salem', text: 'جاهز للتنفيذ والدمج فوراً 🚀' },
+  { botId: 'hazalqom', text: 'والديزاين مظبوط على الشعرة 🎨' }
+];
+
+let teamMeetingActive = false;
+let teamMeetingStart = 0;
+let teamMeetingDone = false;
+
+function triggerTeamMeeting() {
+  if (teamMeetingActive) {
+    endTeamMeeting();
+    return;
+  }
+  teamMeetingActive = true;
+  teamMeetingStart = performance.now();
+  teamMeetingDone = false;
+  for (const k of BOT_KEYS) {
+    const b = BOTS[k];
+    b.prevHomeX = b.homeX;
+    b.prevHomeY = b.homeY;
+    b.prevStatus = b.status;
+    b.isSleeping = false;
+    b.status = 'meeting';
+    b.isAtMeetingSeat = false;
+  }
+}
+
+function endTeamMeeting() {
+  teamMeetingActive = false;
+  for (const k of BOT_KEYS) {
+    const b = BOTS[k];
+    b.isAtMeetingSeat = false;
+    if (b.prevStatus) b.status = b.prevStatus;
+    clearChat(b);
+    b.bubbleUntil = 0;
+    b.bubbleText = '';
+  }
+}
+
+function updateTeamMeeting(dt, time) {
+  if (!teamMeetingActive) return;
+  const elapsed = time - teamMeetingStart;
+  for (const k of BOT_KEYS) {
+    const b = BOTS[k];
+    const seat = MEETING_SEATS[k];
+    if (!seat) continue;
+    const reached = stepToward(b, seat.x, seat.y, 70, dt);
+    if (reached) {
+      b.isAtMeetingSeat = true;
+    }
+  }
+
+  const lineIdx = Math.floor(elapsed / 2400);
+  if (lineIdx < TEAM_MEETING_SCRIPT.length) {
+    const item = TEAM_MEETING_SCRIPT[lineIdx];
+    const speaker = BOTS[item.botId];
+    if (speaker && (!speaker.bubbleUntil || speaker.bubbleUntil < time + 400)) {
+      celebrateBot(speaker, item.text);
+    }
+  }
+
+  if (elapsed >= 25000 && !teamMeetingDone) {
+    teamMeetingDone = true;
+    endTeamMeeting();
+  }
+}
+
 function updateWorld(dt, time) {
   // 3. Update Wandering Bots
   for (const key of BOT_KEYS) {
@@ -2093,9 +2586,11 @@ function updateWorld(dt, time) {
     }
   }
 
-  // 3b. Coffee trips, employee interactions, code typing
+  // 3b. Coffee trips, employee interactions, team meetings, sleep, code typing
   updateCoffeeTrip(dt, time);
   updateInteractions(dt, time);
+  updateTeamMeeting(dt, time);
+  updateBotSleep(time);
   for (const key of BOT_KEYS) updateBotCode(BOTS[key], dt);
 
   // 4. Particles (spawn + update; drawn in drawWorld)
@@ -2108,8 +2603,9 @@ function drawWorld(time, withVignette) {
   ctx.imageSmoothingEnabled = false;
   drawParquetFloor(0, 45, 510, 270);
   drawExecutiveFloor(510, 45, 290, 270);
-  drawLoungeFloor(0, 315, 490, 225);
-  drawCheckeredFloor(490, 315, 310, 225);
+  drawLoungeFloor(0, 315, 240, 225);
+  drawMeetingFloor(240, 315, 245, 225);
+  drawCheckeredFloor(485, 315, 315, 225);
 
   // 2. Walls and Props
   drawWalls();
@@ -2299,6 +2795,12 @@ function renderAgentCard(bot) {
   if (bot.status === 'stuck') {
     statusRow.style.color = '#ef4444';
     statusRow.textContent = '🔴 متأخر ' + bot.progress + '% ⚠️';
+  } else if (bot.status === 'waiting') {
+    statusRow.style.color = '#38bdf8';
+    statusRow.textContent = '⏳ مستني ' + bot.progress + '%';
+  } else if (bot.status === 'meeting') {
+    statusRow.style.color = '#c084fc';
+    statusRow.textContent = '👥 في اجتماع';
   } else if (bot.status === 'working') {
     statusRow.style.color = '#10b981';
     statusRow.textContent = '🟢 شغال ' + bot.progress + '%';
@@ -2320,6 +2822,13 @@ function renderAgentCard(bot) {
       taskRow.className = 'agent-card-task';
       taskRow.textContent = 'المهمة: ' + taskTitle;
       details.appendChild(taskRow);
+    }
+
+    if (bot.activity_type) {
+      const actRow = document.createElement('div');
+      actRow.className = 'agent-card-activity';
+      actRow.textContent = 'النشاط: ' + bot.activity_type;
+      details.appendChild(actRow);
     }
 
     if (bot.step) {
@@ -2359,7 +2868,8 @@ function renderAgentCard(bot) {
   cheerBtn.textContent = ['\u0634\u062c\u0651\u0639\u0647', '\u{1F44F}'].join(' ');
   cheerBtn.onclick = function(e) {
     if (e && e.stopPropagation) e.stopPropagation();
-    celebrateBot(bot, '👏 برافو!');
+    const reply = CHEER_REPLIES[bot.id] || '👏 عاش يا وحش!';
+    celebrateBot(bot, reply);
   };
   card.appendChild(cheerBtn);
 }
@@ -2419,12 +2929,28 @@ if (stageEl) {
 
   stageEl.addEventListener('mouseleave', () => { par.tx = 0; par.ty = 0; hoveredBotId = null; });
 
+  stageEl.addEventListener('touchstart', (e) => {
+    if (!e.touches || !e.touches[0]) return;
+    const t = e.touches[0];
+    const card = document.getElementById('agent-card-popup');
+    if (card && card.contains && e.target && card.contains(e.target)) return;
+    const found = findBotAtPointer(t.clientX, t.clientY);
+    if (found && found.isSleeping) {
+      if (e.preventDefault) e.preventDefault();
+      wakeUpBot(found);
+    }
+  }, { passive: false });
+
   stageEl.addEventListener('click', (e) => {
     const card = document.getElementById('agent-card-popup');
     if (card && card.contains && e.target && card.contains(e.target)) return;
 
     const found = findBotAtPointer(e.clientX, e.clientY);
     if (found) {
+      if (found.isSleeping) {
+        wakeUpBot(found);
+        return;
+      }
       openAgentCard(found.id, e.clientX, e.clientY);
     } else {
       closeAgentCard();
@@ -2449,6 +2975,13 @@ if (typeof window !== 'undefined') {
   window.closeAgentCard = closeAgentCard;
   window.renderAgentCard = renderAgentCard;
   window.findBotAtPointer = findBotAtPointer;
+  window.triggerTeamMeeting = triggerTeamMeeting;
+  window.endTeamMeeting = endTeamMeeting;
+  window.wakeUpBot = wakeUpBot;
+  window.checkBotSleep = checkBotSleep;
+  window.CHEER_REPLIES = CHEER_REPLIES;
+  window.EGYPTIAN_OFFICE_BANTER = EGYPTIAN_OFFICE_BANTER;
+  window.MEETING_SEATS = MEETING_SEATS;
 }
 
 // ---------- Live Feed ----------
@@ -2480,7 +3013,8 @@ function computeTodayStats(payload) {
     for (const k of BOT_KEYS) {
       const e = payload.bots[k];
       if (!e) continue;
-      const t = e.updated_at ? Date.parse(e.updated_at) : NaN;
+      const dateVal = e.updated_at || e.last_active || null;
+      const t = dateVal ? Date.parse(dateVal) : NaN;
       if (!Number.isFinite(t) || t < dayStart) continue;
       events.push({ t: t, status: computeEffectiveStatus(e, Date.now()) });
       if (Array.isArray(e.recent)) done += e.recent.length;
@@ -2529,11 +3063,15 @@ function computeTodayStats(payload) {
 }
 
 function computeEffectiveStatus(entry, nowMs) {
-  const updatedMs = entry && entry.updated_at ? Date.parse(entry.updated_at) : NaN;
+  const dateVal = entry && (entry.updated_at || entry.last_active || entry.updatedAt);
+  const updatedMs = dateVal ? Date.parse(dateVal) : NaN;
   const openOrder = Boolean(entry && entry.open_order);
   const rawState = String((entry && entry.state) || 'idle').toLowerCase();
-  const isStale = openOrder && (!Number.isFinite(updatedMs) || (nowMs - updatedMs) > STALE_AFTER_MS);
-  if (rawState === 'stuck' || isStale) return 'stuck';
+  if (rawState === 'stuck') return 'stuck';
+  if (rawState === 'waiting') return 'waiting';
+  if (rawState === 'meeting') return 'meeting';
+  const isStale = openOrder && rawState === 'working' && (!Number.isFinite(updatedMs) || (nowMs - updatedMs) > STALE_AFTER_MS);
+  if (isStale) return 'stuck';
   if (rawState === 'working') return 'working';
   return 'idle';
 }
@@ -2559,9 +3097,10 @@ function applyLiveFeed(payload) {
     bot.taskId = taskId;
     bot.taskTitle = taskTitle;
     bot.task_title = taskTitle;
+    bot.activity_type = incoming.activity_type ? String(incoming.activity_type) : '';
     bot.step = step;
     bot.next = next;
-    bot.updatedAt = incoming.updated_at || null;
+    bot.updatedAt = incoming.updated_at || incoming.last_active || null;
     bot.openOrder = Boolean(incoming.open_order);
     bot.recent = Array.isArray(incoming.recent) ? incoming.recent.slice(0, 3).map(String) : [];
 
@@ -2581,6 +3120,17 @@ function applyLiveFeed(payload) {
       bot.statusLabel = '🔴 متأخر (' + bot.progress + '%)';
       bot.task = taskTitle || taskId || 'مهمة مفتوحة بدون تحديث لأكثر من ٤٥ دقيقة';
       bot.location = 'تحديث متأخر > ٤٥ دقيقة';
+    } else if (status === 'waiting') {
+      const labelTitle = taskTitle || taskId || 'في الانتظار';
+      bot.shortTask = labelTitle.slice(0, 20) + ' ⏳ مستني';
+      bot.statusLabel = '⏳ في الانتظار (' + bot.progress + '%)';
+      bot.task = taskTitle || taskId || 'في انتظار الفحص أو المراجعة';
+      bot.location = bot.updatedAt ? 'آخر تحديث ' + formatMinutesAgo(Date.parse(bot.updatedAt)) + ' د' : 'في الانتظار';
+    } else if (status === 'meeting') {
+      bot.shortTask = '👥 في اجتماع';
+      bot.statusLabel = '👥 في اجتماع';
+      bot.task = 'اجتماع تنسيقي للفريق';
+      bot.location = 'قاعة الاجتماعات';
     } else if (status === 'working') {
       const labelTitle = taskTitle || taskId || 'شغل جاري';
       bot.shortTask = labelTitle.slice(0, 22) + ' ' + bot.progress + '%';
@@ -2601,6 +3151,7 @@ function applyLiveFeed(payload) {
         bot.y = bot.homeY;
       }
     }
+    checkBotSleep(bot, nowMs);
   }
   computeTodayStats(payload);
   if (selectedCardBotId && BOTS[selectedCardBotId]) {
@@ -2632,7 +3183,18 @@ async function fetchLiveFeed() {
 // A finished task earns a little celebration bubble above the bot,
 // drawn inside the scene itself.
 function celebrateBot(bot, text) {
-  bot.bubbleText = String(text).slice(0, 42);
+  if (!bot) return;
+  if (typeof BOT_KEYS !== 'undefined' && typeof BOTS !== 'undefined') {
+    for (const k of BOT_KEYS) {
+      const other = BOTS[k];
+      if (other && other !== bot) {
+        other.bubbleUntil = 0;
+        other.bubbleText = '';
+        if (typeof clearChat === 'function') clearChat(other);
+      }
+    }
+  }
+  bot.bubbleText = Array.from(String(text)).slice(0, 50).join("");
   bot.bubbleUntil = performance.now() + 5200;
 }
 
