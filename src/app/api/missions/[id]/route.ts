@@ -20,7 +20,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const auth = await resolveMissionViewer(req);
   if (!auth.ok) return auth.response;
   const client = createAdminClient();
-  const r = await loadCustomerMission(client, { id, userId: auth.viewer.userId });
+  const r = await loadCustomerMission(client, { id, userId: auth.viewer.userId, isGuest: auth.viewer.isGuest });
   if (!r.ok) return NextResponse.json({ success: false, error: r.error }, { status: r.status });
   // ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was already bought); every other mission's answer is what it was
   let methodology: { jobId: string; titleAr: string; purchased: boolean } | undefined;
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   try { body = await req.json(); } catch { /* bad input below */ }
   const client = createAdminClient();
   const { viewer } = auth;
-  const fail = (r: { status: number; error: string }) => NextResponse.json({ success: false, error: r.error }, { status: r.status });
+  const fail = (r: { status: number; error: string; code?: string }) => NextResponse.json({ success: false, ...(r.code ? { code: r.code } : {}), error: r.error }, { status: r.status });
 
   if (body?.action === "approve") {
     const r = await approveForCustomer(client, {
@@ -67,7 +67,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       onApproved: async ({ jobId }) => { await sendMissionNotice(client, { userId: viewer.userId, missionId: id, jobId, kind: "started", facts: { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: true } }); },
     });
     if (r.ok) return NextResponse.json({ success: true, jobId: r.jobId });
-    if (r.code === "stale_plan") return NextResponse.json({ success: false, code: r.code, error: r.error }, { status: 409 });
     return fail(r);
   }
   // ROUND 57: «اكتب الطلب من جديد» only reads the words back; the plan stays until the new request is sent
@@ -80,11 +79,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return r.ok ? NextResponse.json({ success: true, ...(body.action === "edit" ? { requestText: r.requestText } : {}) }) : fail(r);
   }
   if (body?.action === "edit_plan") {
-    const r = await editPlanForCustomer(client, { id, userId: viewer.userId, edits: body.edits });
+    const r = await editPlanForCustomer(client, { id, userId: viewer.userId, edits: body.edits, approvalVersion: body.approvalVersion, requireApprovalVersion: true });
     return r.ok ? NextResponse.json({ success: true }) : fail(r);
   }
   if (body?.action === "smaller") {
-    const r = await smallerVersionForCustomer(client, { id, userId: viewer.userId, ...(Number.isFinite(Number(body.maxHoldPoints)) ? { maxHoldPoints: Number(body.maxHoldPoints) } : {}) });
+    if (viewer.isGuest) return NextResponse.json({ success: false, error: "سجّل الدخول لتجهيز نسخة جديدة من الخطة." }, { status: 401 });
+    const r = await smallerVersionForCustomer(client, { id, userId: viewer.userId, approvalVersion: body.approvalVersion, offer: body.offer });
     return r.ok ? NextResponse.json({ success: true }) : fail(r);
   }
   // STAGE 2 S3 (docs/STAGE-2.md): an edit of the «فهمنا طلبك» card, only behind DIGER_STAGE2_ASK_CARD (unset: not found, as before this action existed). No money line is touched.

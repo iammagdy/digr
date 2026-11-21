@@ -1,17 +1,22 @@
 import { stage3QueueOn } from "./stage3/queueView";
 import { createHash, randomBytes } from "node:crypto";
-import { AGENT_BUCKET, AGENT_JOB_POINTS_CAP, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
+import { AGENT_BUCKET, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
 import { approveMissionOnce, STALE_MISSION_PLAN_AR, type ApprovalSnapshot } from "./approval";
-import { MISSION_APPROVAL_PENDING_AR } from "./lifecycle";
+import { MISSION_APPROVAL_PENDING_AR, repriceStoredPlan } from "./lifecycle";
+import { CREDIT_LEDGER_TABLE } from "../supabase/ledger";
+import { effectiveJobPointsCap } from "../jobPointsCap";
+import { DEFAULT_MISSION_PRICING_SETTINGS } from "../missionPricing";
+import { planNeedsRequote } from "./catalogPriceGuard";
+import { countAr, itemNounOf } from "./itemNoun";
 import { EXPIRED_SOCIAL_PLAN_AR, isStaleSocialPlan } from "./staleSocialPlan";
 import { modelPlanningForTests } from "./testSeam";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
-import { type PricedPlan, type PricedStage } from "./plan";
+import { fixedCountBasket, type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
 import { resealCapabilitySelection } from "./capabilities/selection";
-import { publicPlanOf, smallerVersionOf } from "./overLimit";
+import { affordableVersionOf, publicPlanOf } from "./overLimit";
 import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
 import { excelFromCsv } from "../server/excelFromCsv";
@@ -23,7 +28,7 @@ import { sensitiveRequestRefusalAr } from "./guardRules";
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
  * holds the service key). The agent plans and works in the worker; the site creates the mission, shows it, approves it through the existing money functions, and cancels or answers it.
  */
-export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; code?: "stale_plan"; blockers?: OpenMissionView[]; /** MULTI-OBJECTIVE RELIABILITY: the id the caller chose already exists (another turn created it); nothing was written. */ conflict?: true };
+export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; code?: "stale_plan" | "affordability_changed" | "approval_pending"; blockers?: OpenMissionView[]; /** MULTI-OBJECTIVE RELIABILITY: the id the caller chose already exists (another turn created it); nothing was written. */ conflict?: true };
 const bad = (status: number, error: string): { ok: false; status: number; error: string } => ({ ok: false, status, error });
 
 const MIN_TEXT = 3;
@@ -126,8 +131,93 @@ function approvalStateOf(mission: { status: string; job_id?: unknown; quote_id?:
 
 const staleApproval = () => ({ ...bad(409, STALE_MISSION_PLAN_AR), code: "stale_plan" as const });
 
+type OfferSelection = { kind: "count" | "per_post"; count: number; reservePoints: number };
+export type CustomerAffordability = {
+  mode: "ready" | "offer" | "top_up" | "unavailable" | "edit";
+  capPoints: number;
+  availablePoints: number | null;
+  reservePoints: number | null;
+  limitedBy: "wallet" | "cap" | null;
+  offer?: OfferSelection & { maxChargePoints: number; countAr: string };
+};
+
+const AFFORDABILITY_CHANGED_AR = "تغيّر الرصيد أو الخطة. راجع العدد والحجز المؤقت ثم حاول مرة أخرى.";
+const affordabilityChanged = (status: 402 | 409, error = AFFORDABILITY_CHANGED_AR) =>
+  ({ ...bad(status, error), code: "affordability_changed" as const });
+
+async function readVerifiedWallet(client: any, userId: string): Promise<number | null> {
+  const countRows = () => client.from(CREDIT_LEDGER_TABLE).select("id", { count: "exact", head: true }).eq("user_id", userId);
+  try {
+    const first = await countRows();
+    if (first.error || !Number.isSafeInteger(first.count) || first.count < 0) return null;
+    const ids = new Set<unknown>();
+    let total = 0;
+    for (let offset = 0; offset < first.count; offset += 1000) {
+      const length = Math.min(1000, first.count - offset);
+      const page = await client.from(CREDIT_LEDGER_TABLE).select("id,delta").eq("user_id", userId)
+        .order("id", { ascending: true }).range(offset, offset + length - 1);
+      if (page.error || !Array.isArray(page.data) || page.data.length !== length) return null;
+      for (const row of page.data) {
+        if (!row || (typeof row.id !== "string" && !Number.isSafeInteger(row.id)) || row.id === ""
+          || ids.has(row.id) || !Number.isSafeInteger(row.delta)) return null;
+        ids.add(row.id);
+        total += row.delta;
+        if (!Number.isSafeInteger(total)) return null;
+      }
+    }
+    const last = await countRows();
+    return !last.error && last.count === first.count ? Math.max(0, total) : null;
+  } catch {
+    return null;
+  }
+}
+
+function checkedPrice(plan: PricedPlan) {
+  try {
+    if (planNeedsRequote(plan)) return null;
+    const price = repriceStoredPlan(plan);
+    return price.reservePoints === plan.price.reservePoints && price.unitPricePoints === plan.price.unitPricePoints
+      && price.deliveredRows === plan.price.deliveredRows ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+async function affordabilityOf(client: any, userId: string, plan: PricedPlan): Promise<{
+  view: CustomerAffordability;
+  candidate?: PricedPlan;
+}> {
+  const price = checkedPrice(plan);
+  const capPoints = effectiveJobPointsCap();
+  const base = { capPoints, availablePoints: null, reservePoints: price?.reservePoints ?? null, limitedBy: null };
+  if (!price) return { view: { ...base, mode: "edit" } };
+  const availablePoints = await readVerifiedWallet(client, userId);
+  if (availablePoints === null) return { view: { ...base, mode: "unavailable" } };
+  const limit = Math.min(availablePoints, capPoints);
+  const info = { ...base, availablePoints };
+  const minimum = price.settings?.minChargePoints ?? DEFAULT_MISSION_PRICING_SETTINGS.minChargePoints;
+  if (availablePoints < minimum) return { view: { ...info, mode: "top_up", limitedBy: "wallet" } };
+  const fits = !price.overCap && price.reservePoints <= limit;
+  if (fits && !plan.hold_cap_preview) return { view: { ...info, mode: "ready" } };
+
+  const limitedBy = availablePoints < capPoints && price.reservePoints > availablePoints ? "wallet" : "cap";
+  const root = fits && plan.hold_cap_preview ? fixedCountBasket(plan)?.root : undefined;
+  const candidate = root
+    ? { kind: "count" as const, count: root.planned_rows, plan, countAr: countAr(root.planned_rows, itemNounOf(root.title_ar)) }
+    : affordableVersionOf(plan, limit);
+  if (!candidate) return { view: { ...info, limitedBy, mode: "edit" } };
+  return {
+    view: {
+      ...info, limitedBy, mode: "offer",
+      offer: { kind: candidate.kind, count: candidate.count, countAr: candidate.countAr,
+        reservePoints: candidate.plan.price.reservePoints, maxChargePoints: candidate.plan.price.maxChargePoints },
+    },
+    candidate: candidate.plan,
+  };
+}
+
 /** One mission as the customer reads it (never the plan's endpoints, costs, errors or workers): the view the card and the live panel draw. */
-export async function loadCustomerMission(client: any, input: { id: string; userId: string; now?: number }) {
+export async function loadCustomerMission(client: any, input: { id: string; userId: string; now?: number; isGuest?: boolean }) {
   // STAGE 3 S5: the approval time is read only when DIGER_STAGE3_QUEUE is on (unset: the select is exactly what it was)
   const stage3Queue = stage3QueueOn();
   const { data: mission } = await client.from(MISSION_TABLE).select(`${SAFE_COLUMNS},plan,updated_at,quote_id${stage3Queue ? ",approved_at" : ""}`).eq("id", input.id).eq("user_id", input.userId).maybeSingle();
@@ -150,9 +240,12 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   }
   const view = customerMissionView({ mission: row, requestText: String(mission.request_text ?? ""), events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) });
   const approvalVersion = mission.status === "plan_ready" ? approvalVersionOf(mission) : null;
+  const approvalState = approvalStateOf(mission);
+  const affordability = !input.isGuest && approvalVersion && approvalState === "unapproved"
+    ? (await affordabilityOf(client, input.userId, mission.plan)).view : undefined;
   return {
     ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""),
-    view: { ...view, approvalState: approvalStateOf(mission), ...(approvalVersion ? { approvalVersion } : {}) },
+    view: { ...view, approvalState, ...(approvalVersion ? { approvalVersion } : {}), ...(affordability ? { affordability } : {}) },
   };
 }
 
@@ -193,8 +286,19 @@ export async function approveForCustomer(client: any, input: { id: string; userI
     const gate = await input.precheck();
     if (!gate.ok) return bad(gate.status, gate.error);
   }
+  const price = checkedPrice(snapshot.plan);
+  if (!price) return bad(409, APPROVE_MESSAGES.plan_changed);
+  if (snapshot.plan.hold_cap_preview || price.overCap || price.reservePoints > effectiveJobPointsCap()) return affordabilityChanged(409);
+  const available = await readVerifiedWallet(client, input.userId);
+  if (available === null) return affordabilityChanged(409);
+  if (available < price.reservePoints) return affordabilityChanged(402, APPROVE_MESSAGES.insufficient_balance);
   const r = await approveMissionOnce(client, { id: input.id, actorId: input.userId, expectUserId: input.userId, snapshot, messages: APPROVE_MESSAGES });
-  if (!r.ok) return r.code === "stale_plan" ? staleApproval() : bad(r.status, r.error);
+  if (!r.ok) {
+    if (r.code === "stale_plan") return staleApproval();
+    if (r.code === "approval_pending") return { ...bad(r.status, r.error), code: "approval_pending" };
+    if (r.code === "insufficient_balance") return affordabilityChanged(402, r.error);
+    return bad(r.status, r.error);
+  }
   try { await input.onApproved?.({ jobId: r.jobId }); } catch { /* the notice never changes the approval */ }
   return { ok: true, jobId: r.jobId, reservePoints: r.reservePoints };
 }
@@ -241,43 +345,65 @@ async function readYieldRows(client: any, missionId: string, plan: PricedPlan): 
  * THE CUSTOMER EDITS THE PLAN (the number of items, the period, the language, each exclusion, the main columns) while it waits for approval: applied to the stored plan by code, priced again by code (the model never decides a price),
  * stored with the card's own view, and shown again. Only a plan that is still «plan_ready» changes; once approved, the plan is what was priced and held. Nothing is held or charged here.
  */
-export async function editPlanForCustomer(client: any, input: { id: string; userId: string; edits: unknown }): Promise<CustomerResult<{ status: string; requestText: string }>> {
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,request_text").eq("id", input.id).maybeSingle();
+export async function editPlanForCustomer(client: any, input: { id: string; userId: string; edits: unknown; approvalVersion?: unknown; requireApprovalVersion?: boolean }): Promise<CustomerResult<{ status: string; requestText: string }>> {
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,request_text,updated_at").eq("id", input.id).eq("user_id", input.userId).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
+  const version = approvalVersionOf(mission);
+  if (input.requireApprovalVersion && !matchesApprovalVersion(input.approvalVersion, version)) return staleApproval();
   const plan = mission.plan as PricedPlan;
   const rows = await readYieldRows(client, input.id, plan);
   const r = applyPlanEdits(plan, input.edits, { yieldRows: (s: PricedStage) => rows.get(s.key) ?? null });
   if (!r.ok) return bad(400, r.errorAr);
   // capability_discovery_v1 plans only: the customer's edit is the one change of the stored parameters allowed before approval; the record of the approved scope follows it (no record: unchanged)
   const edited = resealCapabilitySelection(r.plan);
-  const upd = await client.from(MISSION_TABLE).update({ plan: edited as any, plan_public: publicPlanOf(edited) as any, unit_price_points: edited.price.unitPricePoints, reserved_points: edited.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  const upd = await saveReadyPlan(client, mission, edited);
   if (upd.error) return bad(500, "تعذّر حفظ تعديلك.");
-  // approved or cancelled in the meantime: the stored plan is the one that was priced and held
-  if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
+  if (!Array.isArray(upd.data) || upd.data.length !== 1) return staleApproval();
   await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "حدّثنا الخطة بحسب تعديلك، والسعر محسوب من جديد.", counts: { stages: edited.stages.length, rows: edited.price.deliveredRows, unit_points_x1000: Math.round(edited.price.unitPricePoints * 1000), reserve_points: edited.price.reservePoints } });
   return { ok: true, status: "plan_ready", requestText: String(mission.request_text ?? "") };
 }
 
-/**
- * THE SMALLER VERSION OF A PLAN THAT IS ABOVE THE LIMIT (live round 11): the most comments per post whose hold fits the job cap (or the customer's balance, when the card names a lower one), built and priced again BY CODE on the stored plan; the server recomputes it itself
- * (the client only names its balance, which can only make the plan smaller, never larger than the cap). Only a plan that is still «plan_ready» changes; nothing is held or charged here.
- */
-export async function smallerVersionForCustomer(client: any, input: { id: string; userId: string; maxHoldPoints?: number }): Promise<CustomerResult<{ status: string }>> {
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
+function saveReadyPlan(client: any, mission: ApprovalSnapshot, plan: PricedPlan) {
+  const previous = Date.parse(mission.updated_at);
+  const next = new Date(Number.isFinite(previous) ? Math.max(Date.now(), previous + 1) : Date.now()).toISOString();
+  const update = client.from(MISSION_TABLE).update({
+    plan, plan_public: publicPlanOf(plan), unit_price_points: plan.price.unitPricePoints,
+    reserved_points: plan.price.reservePoints, updated_at: next,
+  }).eq("id", mission.id).eq("user_id", mission.user_id).eq("status", "plan_ready");
+  return (mission.updated_at == null ? update.is("updated_at", null) : update.eq("updated_at", mission.updated_at)).select("id");
+}
+
+function matchesOffer(supplied: unknown, offer: OfferSelection): boolean {
+  if (!supplied || typeof supplied !== "object") return false;
+  const candidate = supplied as Partial<OfferSelection>;
+  return candidate.kind === offer.kind && candidate.count === offer.count && candidate.reservePoints === offer.reservePoints;
+}
+
+/** Select the server's current offer for this exact owned plan. Nothing is held here. */
+export async function smallerVersionForCustomer(client: any, input: { id: string; userId: string; approvalVersion: unknown; offer: unknown }): Promise<CustomerResult<{ status: string }>> {
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,updated_at").eq("id", input.id).eq("user_id", input.userId).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
-  const plan = mission.plan as PricedPlan;
-  const balanceLimit = Number.isFinite(Number(input.maxHoldPoints)) ? Math.max(0, Math.floor(Number(input.maxHoldPoints))) : AGENT_JOB_POINTS_CAP;
-  const smaller = smallerVersionOf(plan, Math.min(AGENT_JOB_POINTS_CAP, balanceLimit));
-  if (!smaller) return bad(400, "لا توجد نسخة أصغر تناسب الحد المسموح أو رصيدك. غيّر طلبك أو ألغِ المهمة؛ ولم يُخصم شيء.");
-  const next = resealCapabilitySelection(smaller.plan);
-  const upd = await client.from(MISSION_TABLE).update({ plan: next as any, plan_public: publicPlanOf(next) as any, unit_price_points: next.price.unitPricePoints, reserved_points: next.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  if (!matchesApprovalVersion(input.approvalVersion, approvalVersionOf(mission))) return staleApproval();
+  const { view, candidate } = await affordabilityOf(client, input.userId, mission.plan);
+  if (!candidate || !view.offer) {
+    if (input.offer != null || view.mode === "unavailable") return affordabilityChanged(409);
+    return bad(400, "لا توجد نسخة أصغر تناسب الحد المسموح أو رصيدك. غيّر طلبك أو ألغِ المهمة؛ ولم يُخصم شيء.");
+  }
+  if (!matchesOffer(input.offer, view.offer)) return affordabilityChanged(409);
+  const { hold_cap_preview: _preview, ...selected } = candidate;
+  const next = resealCapabilitySelection(selected);
+  const price = checkedPrice(next);
+  if (!price || price.overCap || price.reservePoints !== view.offer.reservePoints
+    || price.reservePoints > Math.min(view.capPoints, view.availablePoints ?? 0)
+    || (view.offer.kind === "count" && fixedCountBasket(next)?.root.planned_rows !== view.offer.count)) return affordabilityChanged(409);
+  const upd = await saveReadyPlan(client, mission, next);
   if (upd.error) return bad(500, "تعذّر حفظ النسخة الأصغر.");
-  if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
-  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "جهّزنا نسخة أصغر من الخطة تناسب الحد المسموح، والسعر محسوب من جديد.", counts: { stages: next.stages.length, rows: next.price.deliveredRows, unit_points_x1000: Math.round(next.price.unitPricePoints * 1000), reserve_points: next.price.reservePoints, smaller_per_post: smaller.per_post } });
+  if (!Array.isArray(upd.data) || upd.data.length !== 1) return staleApproval();
+  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "جهّزنا نسخة أصغر من الخطة تناسب الحد المسموح، والسعر محسوب من جديد.", counts: { stages: next.stages.length, rows: next.price.deliveredRows, unit_points_x1000: Math.round(next.price.unitPricePoints * 1000), reserve_points: next.price.reservePoints, ...(view.offer.kind === "per_post" ? { smaller_per_post: view.offer.count } : {}) } });
   return { ok: true, status: "plan_ready" };
 }
 
