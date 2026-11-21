@@ -1,7 +1,8 @@
 import { stage3QueueOn } from "./stage3/queueView";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { AGENT_BUCKET, AGENT_JOB_POINTS_CAP, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
-import { approveMissionOnce } from "./approval";
+import { approveMissionOnce, STALE_MISSION_PLAN_AR, type ApprovalSnapshot } from "./approval";
+import { MISSION_APPROVAL_PENDING_AR } from "./lifecycle";
 import { EXPIRED_SOCIAL_PLAN_AR, isStaleSocialPlan } from "./staleSocialPlan";
 import { modelPlanningForTests } from "./testSeam";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
@@ -22,7 +23,7 @@ import { sensitiveRequestRefusalAr } from "./guardRules";
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
  * holds the service key). The agent plans and works in the worker; the site creates the mission, shows it, approves it through the existing money functions, and cancels or answers it.
  */
-export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; blockers?: OpenMissionView[]; /** MULTI-OBJECTIVE RELIABILITY: the id the caller chose already exists (another turn created it); nothing was written. */ conflict?: true };
+export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; code?: "stale_plan"; blockers?: OpenMissionView[]; /** MULTI-OBJECTIVE RELIABILITY: the id the caller chose already exists (another turn created it); nothing was written. */ conflict?: true };
 const bad = (status: number, error: string): { ok: false; status: number; error: string } => ({ ok: false, status, error });
 
 const MIN_TEXT = 3;
@@ -89,11 +90,47 @@ export async function readQueue(client: any, mission: { id: string; created_at: 
   return { ahead: typeof ahead?.count === "number" ? ahead.count : 0, running: typeof running?.count === "number" ? running.count : 0, workerAlive: workerAlive(latestBeat(rows), now).alive, ...(typeof aheadOwn?.count === "number" ? { aheadOwn: aheadOwn.count } : {}), ...(typeof runningOwn?.count === "number" ? { runningOwn: runningOwn.count } : {}) };
 }
 
+type ApprovalVersion = Readonly<{ updatedAt: string; planHash: string }>;
+
+function approvalVersionOf(snapshot: ApprovalSnapshot): ApprovalVersion | null {
+  if (!snapshot.plan || typeof snapshot.plan !== "object" || Array.isArray(snapshot.plan)
+    || Object.keys(snapshot.plan).length === 0 || typeof snapshot.updated_at !== "string"
+    || !Number.isFinite(Date.parse(snapshot.updated_at))) return null;
+
+  const plan = JSON.stringify([snapshot.user_id, snapshot.id, snapshot.plan], (_key, value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const fields = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(fields).sort().map((key) => [key, fields[key]]));
+  });
+  return { updatedAt: snapshot.updated_at, planHash: createHash("sha256").update(plan).digest("hex") };
+}
+
+function matchesApprovalVersion(supplied: unknown, version: ApprovalVersion | null): boolean {
+  if (!version || supplied === null || typeof supplied !== "object" || Array.isArray(supplied)) return false;
+  const { updatedAt, planHash } = supplied as Partial<ApprovalVersion>;
+  return updatedAt === version.updatedAt && typeof planHash === "string"
+    && /^[0-9a-f]{64}$/.test(planHash) && planHash === version.planHash;
+}
+
+function hasApprovalLink(row: { job_id?: unknown; quote_id?: unknown }): boolean {
+  return typeof row.job_id === "string" && row.job_id.length > 0
+    && typeof row.quote_id === "string" && row.quote_id.length > 0;
+}
+
+type CustomerApprovalState = "confirmed" | "pending" | "unapproved";
+
+function approvalStateOf(mission: { status: string; job_id?: unknown; quote_id?: unknown }): CustomerApprovalState {
+  if (hasApprovalLink(mission) && ["approved", "executing", "completed", "failed", "unserved"].includes(mission.status)) return "confirmed";
+  return ["approved", "executing"].includes(mission.status) ? "pending" : "unapproved";
+}
+
+const staleApproval = () => ({ ...bad(409, STALE_MISSION_PLAN_AR), code: "stale_plan" as const });
+
 /** One mission as the customer reads it (never the plan's endpoints, costs, errors or workers): the view the card and the live panel draw. */
 export async function loadCustomerMission(client: any, input: { id: string; userId: string; now?: number }) {
   // STAGE 3 S5: the approval time is read only when DIGER_STAGE3_QUEUE is on (unset: the select is exactly what it was)
   const stage3Queue = stage3QueueOn();
-  const { data: mission } = await client.from(MISSION_TABLE).select(stage3Queue ? `${SAFE_COLUMNS},approved_at` : SAFE_COLUMNS).eq("id", input.id).maybeSingle();
+  const { data: mission } = await client.from(MISSION_TABLE).select(`${SAFE_COLUMNS},plan,updated_at,quote_id${stage3Queue ? ",approved_at" : ""}`).eq("id", input.id).eq("user_id", input.userId).maybeSingle();
   if (!mission || mission.user_id !== input.userId || hasAddonMarker(mission)) return bad(404, "المهمة غير موجودة.");
   const [events, calls, queue] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).order("id", { ascending: true }).limit(500),
@@ -111,7 +148,12 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   if (mission.status === "approved" || mission.status === "executing") {
     try { emailWillBeSent = userWillBeEmailed((await client.auth?.admin?.getUserById?.(input.userId))?.data?.user); } catch { emailWillBeSent = false; }
   }
-  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, requestText: String(mission.request_text ?? ""), events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) }) };
+  const view = customerMissionView({ mission: row, requestText: String(mission.request_text ?? ""), events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) });
+  const approvalVersion = mission.status === "plan_ready" ? approvalVersionOf(mission) : null;
+  return {
+    ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""),
+    view: { ...view, approvalState: approvalStateOf(mission), ...(approvalVersion ? { approvalVersion } : {}) },
+  };
 }
 
 const APPROVE_MESSAGES: Record<string, string> = {
@@ -121,7 +163,6 @@ const APPROVE_MESSAGES: Record<string, string> = {
   plan_changed: "تغيّر سعر الخطة؛ اطلب المهمة من جديد ليُحسب لك سعر محدّث.",
   quote_failed: "المهمة أكبر من الحد المسموح للحجز الواحد. قلّل العدد المطلوب ثم أعد الطلب؛ لم يُخصم شيء.",
   accept_failed: "تعذّر حجز الرصيد الآن؛ حاول بعد قليل ولم يُخصم شيء.",
-  claim_failed: "تعذّر بدء المهمة الآن؛ حجز مؤقت مُحرَّر ولم يُخصم شيء.",
 };
 
 /**
@@ -130,22 +171,30 @@ const APPROVE_MESSAGES: Record<string, string> = {
  */
 const NOT_A_MISSION_AR = "هذا طلب على ملف سُلّم من قبل، وليس طلب بيانات جديدًا؛ لا يُعتمد من هنا.";
 
-export async function approveForCustomer(client: any, input: { id: string; userId: string; isGuest: boolean; emailVerified: boolean; precheck?: () => Promise<{ ok: true } | { ok: false; status: number; error: string }>; onApproved?: (r: { jobId: string }) => Promise<void> }): Promise<CustomerResult<{ jobId: string; reservePoints: number }>> {
+export async function approveForCustomer(client: any, input: { id: string; userId: string; isGuest: boolean; emailVerified: boolean; approvalVersion?: unknown; precheck?: () => Promise<{ ok: true } | { ok: false; status: number; error: string }>; onApproved?: (r: { jobId: string }) => Promise<void> }): Promise<CustomerResult<{ jobId: string; reservePoints: number }>> {
   if (input.isGuest) return bad(401, SIGNUP_TO_APPROVE_AR);
   if (!input.emailVerified) return bad(403, "فعّل بريدك الإلكتروني أولًا ثم اعتمد المهمة.");
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,updated_at,job_id,quote_id")
+    .eq("id", input.id).eq("user_id", input.userId).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
-  if (mission.status !== "plan_ready") return bad(409, mission.status === "approved" || mission.status === "executing" ? "هذه المهمة معتمدة وتعمل بالفعل." : "لا توجد خطة جاهزة للاعتماد.");
+  if (mission.status === "approved" || mission.status === "executing") {
+    return bad(409, hasApprovalLink(mission) ? "هذه المهمة معتمدة وتعمل بالفعل." : MISSION_APPROVAL_PENDING_AR);
+  }
+  if (mission.status !== "plan_ready") return bad(409, "لا توجد خطة جاهزة للاعتماد.");
   // MONEY PR 7d: a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a mission plan. It is approved by its own function (a later task), never here: refused BEFORE anything is read or held
   if (hasAddonMarker(mission)) return bad(409, NOT_A_MISSION_AR);
   // PR B: a social plan the compiler did not build is refused BEFORE the reserve (nothing is held, no money function is called)
   if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
+  const snapshot: ApprovalSnapshot = {
+    id: mission.id, user_id: mission.user_id, status: mission.status, plan: mission.plan, updated_at: mission.updated_at,
+  };
+  if (!matchesApprovalVersion(input.approvalVersion, approvalVersionOf(snapshot))) return staleApproval();
   if (input.precheck) {
     const gate = await input.precheck();
     if (!gate.ok) return bad(gate.status, gate.error);
   }
-  const r = await approveMissionOnce(client, { id: input.id, actorId: input.userId, expectUserId: input.userId, messages: APPROVE_MESSAGES });
-  if (!r.ok) return bad(r.status, r.error);
+  const r = await approveMissionOnce(client, { id: input.id, actorId: input.userId, expectUserId: input.userId, snapshot, messages: APPROVE_MESSAGES });
+  if (!r.ok) return r.code === "stale_plan" ? staleApproval() : bad(r.status, r.error);
   try { await input.onApproved?.({ jobId: r.jobId }); } catch { /* the notice never changes the approval */ }
   return { ok: true, jobId: r.jobId, reservePoints: r.reservePoints };
 }
