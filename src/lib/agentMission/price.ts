@@ -1,9 +1,10 @@
 import { unitPricePointsFromCost, UNIT_SCALE, type PricingBasis } from "../recordPricing";
 import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, type MissionPricingSettings } from "../missionPricing";
+import { effectiveJobPointsCap } from "../jobPointsCap";
 import { holdValueUsd } from "../server/callBudget";
 import { CATALOG_PRICE_REV } from "../treg/priceRev";
 import {
-  AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
+  AGENT_COLLECT_MAX_PAGES, AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
   AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
 } from "./constants";
 
@@ -45,6 +46,23 @@ export interface StagePriceInput {
   reviewShare?: number;
   /** A stage that CODE adds (the replies of the comments, replies.ts): the model plans and executes nothing for it, so it adds no planning and no execution estimate. Its provider cost and its rows count as any stage's. */
   codeOnly?: boolean;
+  /** Sealed by the planner from the reviewed tariff and checked execution recipes. */
+  listedRate?: ListedMissionRate;
+  stageKey?: string;
+  parentKey?: string | null;
+  maxPages?: number;
+  executionFunding?: readonly ExecutionFundingRoute[];
+}
+
+export interface ListedMissionRate {
+  unitPoints: number;
+  nounAr: string;
+}
+
+export interface ExecutionFundingRoute {
+  rowsPerPage: number;
+  callUsdMicro: number;
+  mode: "paged" | "one_shot";
 }
 
 export interface MissionPriceOptions {
@@ -88,6 +106,8 @@ export interface MissionPriceResult {
   minApplied?: boolean;
   /** The markup and the minimum this price was computed with (kept so the approval prices the SAME plan the customer saw). */
   settings?: MissionPricingSettings;
+  listedRate?: ListedMissionRate;
+  executionFundingApplied?: true;
   overCap: boolean;
 }
 
@@ -132,6 +152,73 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
 /** The revision to carry through a re-pricing that reuses the saved costs of `price` (F2). */
 export const carriedRevision = (price: { pricedUnder?: number } | null | undefined): { pricedUnder: number | null } => ({ pricedUnder: typeof price?.pricedUnder === "number" ? price.pricedUnder : null });
 
+/** Round a checked call's cost upward, ignoring only sub-micro floating-point noise. */
+export function fundingCallUsdMicro(usd: number): number {
+  const micro = usd * 1_000_000;
+  if (!Number.isFinite(micro)) return 0;
+  const nearest = Math.round(micro);
+  return Math.abs(micro - nearest) < 1e-6 ? nearest : Math.ceil(micro);
+}
+
+/** Shared safety limits for paged execution and funded quotes. */
+export const ENGINE_MAX_PAGES_PER_STAGE = Math.max(AGENT_COLLECT_MAX_PAGES, 400);
+export const enginePageCapFor = (rows: number): number => Math.max(ENGINE_MAX_PAGES_PER_STAGE, Math.floor(rows) * 2);
+export const BARREN_PAGES = 2;
+
+function executionCallsForFunding(route: ExecutionFundingRoute, rows: number, parents: number, primary: boolean): number | null {
+  if (!Number.isSafeInteger(route.rowsPerPage) || route.rowsPerPage < 1 ||
+      !Number.isSafeInteger(route.callUsdMicro) || route.callUsdMicro <= 0) return null;
+  if (route.mode === "paged") {
+    // Each parent can use a partial productive page. Before each productive page
+    // there can be one paid barren page. Each unfinished parent can also end with two.
+    const productive = Math.min(rows, Math.ceil(rows / route.rowsPerPage) + parents - 1);
+    return BARREN_PAGES * (productive + parents - 1);
+  }
+  if (route.mode !== "one_shot" || (primary && Math.ceil(rows / parents) > route.rowsPerPage)) return null;
+  return parents;
+}
+
+/** The calls the worker is allowed to dispatch, and the price of the most expensive allowed call. */
+export function executionFundingSchedule(stages: ReadonlyArray<StagePriceInput>): Map<string, { calls: number; costUsdMicro: number }> | null {
+  const rowsByStage = new Map(stages.map(({ stageKey, rows }) => [stageKey, rows]));
+  const schedule = new Map<string, { calls: number; costUsdMicro: number }>();
+  for (const stage of stages) {
+    if (!stage.stageKey || stage.parentKey === undefined || !stage.executionFunding?.length) return null;
+    const parents = stage.parentKey === null ? 1 : rowsByStage.get(stage.parentKey);
+    if (parents === undefined || !Number.isSafeInteger(parents) || parents < 1 ||
+        !Number.isSafeInteger(stage.rows) || stage.rows < 1) return null;
+    let calls = 0;
+    let maxCallUsdMicro = 0;
+    for (const [index, route] of stage.executionFunding.entries()) {
+      const count = executionCallsForFunding(route, stage.rows, parents, index === 0);
+      if (count === null) return null;
+      calls += count;
+      maxCallUsdMicro = Math.max(maxCallUsdMicro, route.callUsdMicro);
+    }
+    const costUsdMicro = calls * maxCallUsdMicro;
+    if (!Number.isSafeInteger(costUsdMicro) || calls > Math.min(stage.maxPages ?? Infinity, enginePageCapFor(stage.rows))) return null;
+    schedule.set(stage.stageKey, { calls, costUsdMicro });
+  }
+  return schedule;
+}
+
+function fundingReservePoints(stages: ReadonlyArray<StagePriceInput>, capPoints: number): number | null {
+  const schedule = executionFundingSchedule(stages);
+  if (!schedule) return null;
+  const forecastMicro = [...schedule.values()].reduce((sum, stage) => sum + stage.costUsdMicro, 0);
+  if (!Number.isSafeInteger(forecastMicro)) return null;
+  const forecast = forecastMicro / 1_000_000;
+  if (executionBudgetUsd(capPoints) < forecast) return null;
+  let low = 0;
+  let high = capPoints;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (executionBudgetUsd(mid) >= forecast) high = mid;
+    else low = mid + 1;
+  }
+  return low;
+}
+
 export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, options: MissionPriceOptions = {}): MissionPriceResult {
   if (stages.length === 0) throw new Error("a mission has at least one stage");
   const settings = options.settings ?? DEFAULT_MISSION_PRICING_SETTINGS;
@@ -148,11 +235,22 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
   const total = provider + model;
   const costPerFinal = total / delivered;
   if (!(costPerFinal > 0)) throw new Error("the measured cost per final row is not positive");
-  const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints: options.capPoints ?? AGENT_JOB_POINTS_CAP });
+  const deliveredStages = stages.filter((s) => s.deliver);
+  const rate = deliveredStages.length === 1 ? deliveredStages[0].listedRate : undefined;
+  const listedMicro = typeof rate?.unitPoints === "number" ? unitMicro(rate.unitPoints) : 0;
+  const listedRate = rate && Number.isSafeInteger(listedMicro) && listedMicro > 0 ? rate : undefined;
+  const capPoints = listedRate
+    ? Math.min(Math.floor(options.capPoints ?? AGENT_JOB_POINTS_CAP), effectiveJobPointsCap())
+    : options.capPoints ?? AGENT_JOB_POINTS_CAP;
+  const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints, listedUnitPoints: listedRate?.unitPoints });
+  const funding = listedRate ? fundingReservePoints(stages, capPoints) : 0;
+  const reservePoints = Math.max(rule.reservePoints, funding ?? capPoints + 1);
   return {
     rule: 2, ...(options.pricedUnder === undefined ? { pricedUnder: CATALOG_PRICE_REV } : options.pricedUnder === null ? {} : { pricedUnder: options.pricedUnder }), totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
-    ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints: rule.reservePoints, maxChargePoints: rule.chargeAtFullPoints,
-    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap,
+    ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints, maxChargePoints: rule.chargeAtFullPoints,
+    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap || funding === null,
+    ...(listedRate ? { listedRate: { ...listedRate, unitPoints: rule.unitPoints } } : {}),
+    ...(funding !== null && funding > rule.reservePoints ? { executionFundingApplied: true } : {}),
     reviewBudgetUsd: reviewBudgetUsdFor(rule.chargeAtFullPoints),
   };
 }

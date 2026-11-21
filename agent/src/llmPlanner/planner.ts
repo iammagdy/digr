@@ -1,7 +1,14 @@
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
+import { hintsOf, missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
 import { buildShapeDigest, digestValue } from "../../../src/lib/modelPlanner/digest";
-import { priceMissionByCode } from "../../../src/lib/agentMission/price";
+import { fundingCallUsdMicro, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate } from "../../../src/lib/agentMission/price";
+import { normalizeMissionPricingSettings, type MissionPricingSettings } from "../../../src/lib/missionPricing";
+import { AGENT_MAX_DELIVERED_ROWS } from "../../../src/lib/agentMission/constants";
+import providerMetadata from "../../../data/capabilities/provider-metadata.json";
+import { APPROVED_CAPABILITY_CATALOG } from "../../../src/functions/shared/capabilityRegistry";
+import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../../src/functions/shared/quotes";
+import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
@@ -13,7 +20,7 @@ export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
-import type { GatewayCallResult } from "../gateway";
+import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
@@ -43,6 +50,8 @@ export interface LlmPlannerDeps {
   /** The full raw page a successful probe saved. */
   readPage: (callId: string) => Promise<unknown | null>;
   pricingSettings?: unknown;
+  /** Read immediately before offering a funded quote. Null means the wallet could not be checked. */
+  availablePoints?: () => Promise<number | null>;
   /** Today, for the model's dates (Cairo calendar day, YYYY-MM-DD). */
   today: string;
   /** What the customer reads while the plan is prepared (one short Arabic line per phase). Absent: nothing is said. */
@@ -255,8 +264,13 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
     if (!isObj(o)) continue;
     const endpoint = candidates.find((e) => e.id === str(o.endpoint_id));
     if (!endpoint || out.some((x) => x.endpoint.id === endpoint.id)) continue;
+    const cfg = missionPageOf(endpoint.id);
     const names = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
-    const cursor = str(o.cursor_input) && names.has(str(o.cursor_input)) ? str(o.cursor_input) : null;
+    let cursor = str(o.cursor_input) && names.has(str(o.cursor_input)) ? str(o.cursor_input) : null;
+    if (cfg) {
+      if (!endpoint.pagination?.includes(cfg.cursorParam) || !endpoint.inputs.some((input) => input.name === cfg.cursorParam && input.type === cfg.cursorType)) continue;
+      cursor = cfg.cursorParam;
+    }
     const clean = (p: unknown): Record<string, unknown> => {
       const res: Record<string, unknown> = {};
       if (!isObj(p)) return res;
@@ -273,11 +287,14 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
     };
     const parent = isChild && isObj(o.parent_input) && names.has(str(o.parent_input.param)) && str(o.parent_input.from_field) ? { param: str(o.parent_input.param), from: str(o.parent_input.from_field) } : null;
     if (isChild && !parent) continue;
+    if (parent && cursor && parent.param === cursor) continue;
     const params = clean(o.params ?? jsonObject(o.params_json));
     if (parent) delete params[parent.param];
+    if (cursor) delete params[cursor];
     const missing = endpoint.inputs.filter((i) => i.required && !filled(params[i.name]) && i.name !== parent?.param && i.name !== cursor);
     if (missing.length > 0) continue;
     const more = (Array.isArray(o.more_params) ? o.more_params : Array.isArray(o.more_params_json) ? o.more_params_json.map(jsonObject) : []).map(clean).filter((p) => Object.keys(p).length > 0 && JSON.stringify(p) !== JSON.stringify(params)).slice(0, 6);
+    if (cfg && parent) for (const m of more) delete m[parent.param];
     const notCarried = (Array.isArray(o.conditions_not_carried) ? o.conditions_not_carried : []).map(str).filter((c) => CONDITION_AR[c] !== undefined);
     out.push({ endpoint, params, cursor, parent, more, notCarried: [...new Set(notCarried)] });
   }
@@ -429,10 +446,18 @@ export function runMap(code: string, page: unknown): Array<Record<string, unknow
 // THE PLANNER
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+interface PageSample {
+  rowsPerPage: number;
+  chargedUsd: number;
+  checkedParams: Record<string, unknown>;
+}
+
 interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
-  second?: { option: ToolOption; mapCode: string };
+  second?: { option: ToolOption; mapCode: string; sample?: PageSample };
+  sample?: PageSample;
+  variantSamples?: Map<Record<string, unknown>, PageSample>;
   /** OUR OWN WEB SEARCH (Firecrawl / Context.dev) as the last fallback of a web or news search, proven on a real page: execution reads it after the catalog's tools run out. */
   webFallbacks?: Array<{ option: ToolOption; mapCode: string }>;
   /** A lookup step resolved to the one named thing: its children are bound to that thing's own value, and it is not a stage of the plan. */
@@ -581,7 +606,18 @@ export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyAr
   const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
-  return { candidates, options: checkOptions(choice, candidates, parentSample !== null) };
+  const options = checkOptions(choice, candidates, parentSample !== null);
+  if (step.parent && (step.count.total !== null || step.count.per_parent !== null) && options.length > 1) {
+    const prefIdx = options.findIndex((o) => {
+      const cfg = missionPageOf(o.endpoint.id);
+      return cfg?.preferForCount === true && o.cursor !== null;
+    });
+    if (prefIdx > 0) {
+      const [pref] = options.splice(prefIdx, 1);
+      options.unshift(pref);
+    }
+  }
+  return { candidates, options };
 }
 
 const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
@@ -637,11 +673,11 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const { candidates, options } = await chooseTools(step, parent ? parent.sampleRows : null, deps, cost);
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
-    const trace = { empties: 0, failures: 0 };
+    const trace = { empties: 0, failures: 0, uncertain: false };
     const got = await probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace);
     // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
     // (a tool that answered empty on its searches is evidence even when another option of the step failed to answer at all: live 16 Nov, the second option was refused)
-    if (!got && !step.parent && trace.empties > 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
+    if (!got && !step.parent && trace.empties > 0 && !trace.uncertain) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
     if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
     const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
@@ -653,21 +689,30 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const mapCode = cardMapCode(card);
     const sampleRows = runMap(mapCode, got.page);
     if (sampleRows.length === 0) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
+    const sample = pageSample(sampleRows, got.checkedParams, got.chargedUsd);
+    const variantSamples = new Map<Record<string, unknown>, PageSample>();
     const columns: PlanColumn[] = [...COLUMN_ORDER.filter((k) => map.fields[k] || (k === "link" && map.linkTemplate)).map((k) => ({ key: k, title_ar: COLUMN_TITLES[k] })), ...map.extra.map((e) => ({ key: e.key, title_ar: e.title_ar }))];
     step.title_ar = customerSafe(step.title_ar, 60, said) ?? "العناصر";
     // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
     let second: BuiltStep["second"];
     const secondRows: Array<Record<string, unknown>> = [];
     let secondMore = false;
-    const next = !step.parent && step.topic ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && !o.parent) : undefined;
+    const configuredChild = Boolean(parent && missionPageOf(got.option.endpoint.id));
+    const canTryChildAlternate = configuredChild && (parent?.lookup || step.count.per_parent !== null);
+    const next = canTryChildAlternate || (!step.parent && step.topic)
+      ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && Boolean(o.parent) === Boolean(parent)
+        && (!configuredChild || (o.endpoint.capability === step.capability && parent?.sampleRows.some((row) => filled(row[o.parent!.from])))))
+      : undefined;
     if (next) {
-      const got2 = await probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP });
+      const got2 = configuredChild
+        ? await probeStep(step, [next], parent, deps, { left: MAX_PROBES_PER_STEP - got.callIds.length })
+        : await probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP });
       if (got2) {
         const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
         if (map2) {
           const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
           const rows2 = runMap(code2, got2.page);
-          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2 }; secondRows.push(...rows2); secondMore = got2.hasMore && rows2.length >= Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS); }
+          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2, sample: pageSample(rows2, got2.checkedParams, got2.chargedUsd) }; secondRows.push(...rows2); secondMore = got2.hasMore && rows2.length >= Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS); }
         }
       }
     }
@@ -729,7 +774,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability, said)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [ANY_RESULT_OPTION_AR], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, sample, variantSamples, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     // THE ITEMS OF ONE FOUND THING (the reviews of the one product the lookup found) are a top-level request in all but name: a source that answered them all on one page, with no next page, is what exists
     // (live, 16 Nov 2026: 10 Amazon reviews with no next page were planned silently as 20, and 10 were delivered)
@@ -739,7 +784,18 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
     }
     if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total }, deps);
+      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total,
+        onSample: (params, rows, chargedUsd) => {
+          const observed = pageSample(rows, params, chargedUsd);
+          if (!observed.rowsPerPage) return;
+          if (params === got.option.params) {
+            sample.rowsPerPage = Math.min(sample.rowsPerPage, observed.rowsPerPage);
+            sample.chargedUsd = Math.max(sample.chargedUsd, observed.chargedUsd);
+          } else {
+            variantSamples.set(params, observed);
+          }
+        },
+      }, deps);
       deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
       findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
     }
@@ -767,8 +823,26 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   }
   // 5. PRICE
   await say("بنجهز العدد والسعر من العينة الحقيقية.");
-  const plan = assemblePlan(u, bindLookups([...built.values()]), unserved, deps.pricingSettings, said);
-  return { kind: "plan", plan, understanding: u, costUsd };
+  const original = [...built.values()];
+  const bound = bindLookups(original);
+  const delivered = bound.filter((b) => b.step.deliver);
+  if (delivered.length === 0) return { kind: "cannot", reason_ar: "لم نجد مصدرًا متاحًا الآن يعطي ما طلبته.", understanding: u, costUsd, detail: "no_step_served" };
+  const listed = unserved.length === 0 ? listedQuoteOf(original, deps.pricingSettings) : undefined;
+  const quoted = listed ? checkedFundingSteps(bound) : bound;
+  const plan = assemblePlan(u, quoted, unserved, deps.pricingSettings, said, listed && { ...listed, catalog: deps.catalog });
+  if (!listed) return { kind: "plan", plan, understanding: u, costUsd };
+  const balance = deps.availablePoints ? await deps.availablePoints() : undefined;
+  const available = balance === undefined ? Infinity : balance ?? 0;
+  if (fundedPlanFits(plan.stages, plan.price) && plan.price.reservePoints <= available) return { kind: "plan", plan, understanding: u, costUsd };
+
+  // Try an independently measured route on its own before offering a smaller total.
+  for (const step of quoted) {
+    if (!step.second) continue;
+    const alternate = { ...step, ...step.second, rowsPerPage: step.second.sample!.rowsPerPage, second: undefined, variantSamples: undefined };
+    const candidate = assemblePlan(u, quoted.map((b) => b === step ? alternate : b), unserved, deps.pricingSettings, said, { ...listed, catalog: deps.catalog });
+    if (fundedPlanFits(candidate.stages, candidate.price) && candidate.price.reservePoints <= available) return { kind: "plan", plan: candidate, understanding: u, costUsd };
+  }
+  return { ...fundedCountQuestion(plan, u, balance === undefined ? undefined : available), understanding: u, costUsd };
 }
 
 /** The model's map with the standard columns it left out filled from the common names (a thin map, id and link only, made a file a researcher cannot use: live TikTok, 15 Nov 2026). */
@@ -810,12 +884,13 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
   return fields.id ? { fields, linkTemplate: null, extra: [] } : null;
 }
 
-interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null }
+interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null; checkedParams: Record<string, unknown>; chargedUsd: number }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
-async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number }): Promise<Probed | null> {
+async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }): Promise<Probed | null> {
   const callIds: string[] = [];
   for (const option of options) {
+    const reviewed = missionPageOf(option.endpoint.id);
     const sets = [option.params, ...option.more];
     // a child is tried on up to PARENTS_TRIED parents, the most commented first (the newest post may have no comment yet): the first input set only
     const parentValues = option.parent && parent ? parentValuesOf(parent.sampleRows, option.parent.from) : [null];
@@ -831,19 +906,39 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       callIds.push(r.call_id);
       if (!r.ok) {
         deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
-        if (trace) trace.failures += 1;
+        if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
         // a refusal, or a provider that is not paid or not allowed (401/402/403: live, 16 Nov 2026, one news tool answered 402 to eight calls in a row): its other input sets are not tried, the next tool is
         if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) break;
         continue;
       }
-      if (r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
+      if (!reviewed && r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
       const page = await deps.readPage(r.call_id);
       if (page === null) { if (trace) trace.failures += 1; continue; }
-      const { reading } = buildShapeDigest(page, option.endpoint);
-      if (reading.rows.length === 0) { if (trace) trace.empties += 1; continue; }
+      const reading = reviewed
+        ? readShape(page, { ...hintsOf(option.endpoint), missionPage: reviewed })
+        : buildShapeDigest(page, option.endpoint).reading;
+      if (reviewed && (reading.listStrategy === "declared_missing" || (reading.warnings.length > 0 && reading.rows.length === 0))) {
+        if (trace) { trace.failures += 1; trace.uncertain = true; }
+        continue;
+      }
+      if (reading.rows.length === 0) {
+        if (reviewed && (reading.nextCursor || reading.hasMore === true)) {
+          if (trace) trace.uncertain = true;
+          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} open_empty`);
+          continue;
+        }
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`);
+        if (trace) trace.empties += 1;
+        continue;
+      }
       // the input set that answered becomes the first one, the others follow it
       const reordered: ToolOption = i === 0 ? option : { ...option, params: sets[i], more: sets.filter((_, j) => j !== i) };
-      return { option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds, hasMore: Boolean(r.next_cursor) || r.has_more === true, nextCursor: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
+      return {
+        option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds,
+        hasMore: reviewed ? Boolean(reading.nextCursor) && reading.hasMore !== false : Boolean(r.next_cursor) || r.has_more === true,
+        nextCursor: reviewed ? reading.nextCursor : typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null,
+        checkedParams: params, chargedUsd: r.charge_usd ?? 0,
+      };
     }
     if (budget.left <= 0) break;
   }
@@ -859,51 +954,179 @@ export interface ScoutFinding { step: UnderstoodStep; requested: number; found: 
 
 const rowKeyOf = (row: Record<string, unknown>): string => String(row.id ?? row.link ?? JSON.stringify(row));
 
+function pageSample(rows: ReadonlyArray<Record<string, unknown>>, checkedParams: Record<string, unknown>, chargedUsd: number): PageSample {
+  return {
+    rowsPerPage: new Set(rows.filter((row) => filled(row.id ?? row.link)).map(rowKeyOf)).size,
+    chargedUsd: Number.isFinite(chargedUsd) && chargedUsd > 0 ? chargedUsd : 0,
+    checkedParams,
+  };
+}
+
+type ListedSelector = { slug: string; nounAr: string; knownParentCapability?: string };
+type ListedQuote = { stageKey: string; rate: ListedMissionRate; settings: MissionPricingSettings };
+
+function listedQuoteOf(steps: ReadonlyArray<BuiltStep>, rawSettings: unknown): ListedQuote | undefined {
+  const delivered = steps.filter((b) => b.step.deliver);
+  if (delivered.length !== 1) return undefined;
+  const { step, option } = delivered[0];
+  const selectors = (providerMetadata.treg as { missionListedServices?: Record<string, ListedSelector> }).missionListedServices ?? {};
+  const selector = Object.hasOwn(selectors, step.capability) ? selectors[step.capability] : undefined;
+  if (!selector || option.endpoint.capability !== step.capability) return undefined;
+  const parent = step.parent ? steps.find((b) => b.step.key === step.parent) : undefined;
+  const knownPage = (b: BuiltStep, capability: string): boolean => b.step.capability === capability
+    && b.option.endpoint.capability === capability && Boolean(b.step.source?.value.trim());
+  if (selector.knownParentCapability) {
+    if (parent) {
+      if (!knownPage(parent, selector.knownParentCapability) && (!parent.lookup || !parent.step.source?.value.trim())) return undefined;
+    } else {
+      const value = step.source?.value.trim();
+      if (!value || !/^https?:\/\//i.test(value) || !Object.values(option.params).includes(value)) return undefined;
+    }
+  }
+  if (Object.values(selectors).some((value) => value.knownParentCapability === step.capability) && !knownPage(delivered[0], step.capability)) return undefined;
+  const capability = APPROVED_CAPABILITY_CATALOG.find((cap) => cap.slug === selector.slug && cap.enabled);
+  if (!capability) return undefined;
+  const settings = normalizeMissionPricingSettings(rawSettings);
+  const unitPoints = unitPricePointsForCapability(capability, { ...DEFAULT_PRICING_SETTINGS, markup: settings.markup });
+  if (!Number.isFinite(unitPoints) || unitPoints <= 0) return undefined;
+  return { stageKey: step.key, rate: { unitPoints, nounAr: selector.nounAr }, settings };
+}
+
+function checkedFundingSteps(steps: ReadonlyArray<BuiltStep>): BuiltStep[] {
+  return steps.map((step) => ({
+    ...step,
+    option: { ...step.option, more: step.option.more.filter((params) => step.variantSamples?.has(params)) },
+    second: step.second?.sample?.rowsPerPage && step.second.option.endpoint.capability === step.option.endpoint.capability
+      ? { ...step.second, option: { ...step.second.option, more: [] } }
+      : undefined,
+    webFallbacks: undefined,
+  }));
+}
+
+function sealedFunding(
+  step: BuiltStep,
+  alternatives: NonNullable<NonNullable<PricedStage["engine"]>["alternatives"]>,
+  catalog: TregCatalog,
+): ExecutionFundingRoute[] | undefined {
+  const fundingFor = (endpointId: string, cursor: string | null, sample?: PageSample): ExecutionFundingRoute | null => {
+    const endpoint = catalog.byId.get(endpointId);
+    if (!endpoint || !sample?.rowsPerPage) return null;
+    const bound = tregCallBoundOf(endpointId, sample.checkedParams, catalog);
+    if (bound === null) return null;
+    const usd = Math.max(bound, estimateCallUsd(endpoint, sample.checkedParams, catalog), sample.chargedUsd);
+    if (!Number.isFinite(usd) || usd <= 0) return null;
+    return { rowsPerPage: sample.rowsPerPage, callUsdMicro: fundingCallUsdMicro(usd), mode: cursor ? "paged" : "one_shot" };
+  };
+  const primary = fundingFor(step.option.endpoint.id, step.option.cursor, step.sample);
+  if (!primary) return undefined;
+  const routes = [primary];
+  for (const alt of alternatives) {
+    const sample = alt.endpoint_id === step.option.endpoint.id ? step.variantSamples?.get(alt.params) : step.second?.sample;
+    const funded = fundingFor(alt.endpoint_id, alt.cursor_param, sample);
+    if (!funded) return undefined;
+    routes.push(funded);
+  }
+  return routes;
+}
+
+function fundedPlanFits(stages: ReadonlyArray<PricedStage>, price: PricedPlan["price"]): boolean {
+  return Boolean(price.listedRate && !price.overCap && price.deliveredRows <= AGENT_MAX_DELIVERED_ROWS &&
+    stages.every((stage) => stage.parent_key === null || Boolean(stage.engine?.parent_binding)));
+}
+
+function fundedCountQuestion(plan: PricedPlan, understanding: Understanding, capPoints?: number): {
+  kind: "question"; question_ar: string; options_ar: string[];
+} {
+  const stage = plan.stages.find((s) => s.deliver);
+  const requested = understanding.steps.find((s) => s.key === stage?.key)?.count;
+  const smaller = stage && requested && !requested.all && requested.per_parent === null ? smallerFundedTarget(plan, stage, capPoints) : null;
+  if (!smaller) return { kind: "question", question_ar: "اكتب عددًا أقل لنحسب لك الحجز المؤقت.", options_ar: [] };
+  const countAr = toArabicDigits(smaller.rows);
+  return { kind: "question", question_ar: `الحجز المطلوب لهذا العدد يتجاوز الحد المتاح. نقدر نجهّز حتى ${countAr} بحجز مؤقت ${pointsAr(smaller.hold)}. تحب نجهّز العدد ده؟`, options_ar: [`جهّز ${countAr}`] };
+}
+
+function smallerFundedTarget(plan: PricedPlan, stage: PricedStage, capPoints?: number): { rows: number; hold: number } | null {
+  let low = 1;
+  let high = Math.min(stage.planned_rows - 1, AGENT_MAX_DELIVERED_ROWS);
+  let best = null;
+  while (low <= high) {
+    const rows = Math.floor((low + high) / 2);
+    const stages = plan.stages.map((s) => s === stage ? { ...s, planned_rows: rows, expected_rows: rows } : s);
+    const price = priceMissionByCode(stagePriceInputs(stages), { settings: plan.price.settings, capPoints });
+    if (fundedPlanFits(stages, price)) {
+      best = { rows, hold: price.reservePoints };
+      low = rows + 1;
+    } else {
+      high = rows - 1;
+    }
+  }
+  return best;
+}
+
 /**
  * The yield of one step, measured with real calls: when the first page has no next page, the model's other input sets are read once each (page one only), and the different items are counted. Any further page
  * (a next cursor) means the source holds more than a page: nothing to report, execution pages through it. A failed call makes the answer uncertain (not exhausted): the customer is never asked on a guess.
  */
 export async function scoutYield(
-  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; nextCursor?: string | null; otherHasMore?: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number },
+  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; nextCursor?: string | null; otherHasMore?: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number;
+       onSample?: (firstParams: Record<string, unknown>, rows: ReadonlyArray<Record<string, unknown>>, chargedUsd: number) => void },
   deps: Pick<LlmPlannerDeps, "probe" | "readPage" | "log">,
 ): Promise<{ found: number; exhausted: boolean; sets: number }> {
   const ids = new Set<string>([...a.firstRows, ...(a.extraRows ?? [])].map(rowKeyOf));
+  const reviewed = missionPageOf(a.option.endpoint.id);
   const healthy = Math.min(THIN_PAGE_ROWS, a.requested);
   let sets = 1;
   let measured = 0;
   // a FULL first page with a next page, or another tool's: the source holds more than a page: nothing to report, execution pages through it
   if (a.otherHasMore || (a.hasMore && a.firstRows.length >= healthy)) return { found: ids.size, exhausted: false, sets };
   // a refused or failed measurement (the gateway lets planning sample a source twice) ends the measuring: what was gathered before it decides, provided at least one more search was read than the first
-  const stopped = (): { found: number; exhausted: boolean; sets: number } => ({ found: ids.size, exhausted: measured >= 1 && ids.size < Math.max(1, Math.ceil(a.requested * SCOUT_SHORT_SHARE)), sets });
-  const read = async (params: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false }> => {
+  const stopped = (): { found: number; exhausted: boolean; sets: number } => ({ found: ids.size, exhausted: !reviewed && measured >= 1 && ids.size < Math.max(1, Math.ceil(a.requested * SCOUT_SHORT_SHARE)), sets });
+  const read = async (params: Record<string, unknown>, firstParams: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false }> => {
     const r = await deps.probe(a.option.endpoint.id, params);
     sets += 1;
     if (!r.ok) return { ok: false };
-    if (r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: null }; }
+    const legacyNext = typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null;
+    if (!reviewed && r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: null }; }
     const page = await deps.readPage(r.call_id);
     if (page === null) return { ok: false };
+    const reading = reviewed ? readShape(page, { ...hintsOf(a.option.endpoint), missionPage: reviewed }) : null;
+    if (reading && (reading.listStrategy === "declared_missing" || (reading.hasMore === true && !reading.nextCursor))) return { ok: false };
+    const next = reading ? reading.nextCursor : legacyNext;
     measured += 1;
-    return { ok: true, rows: runMap(a.mapCode, page), next: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
+    if (reading && reading.rows.length === 0) return { ok: true, rows: [], next };
+    const rows = runMap(a.mapCode, page);
+    a.onSample?.(firstParams, rows, r.charge_usd ?? 0);
+    return { ok: true, rows, next };
   };
   // a THIN first page with a next page: follow the cursor for a few pages and count (the provider may page through a filtered, almost empty list)
   if (a.hasMore && a.nextCursor && a.option.cursor) {
     let cursor: string | null = a.nextCursor;
+    const visited = new Set<string>();
+    if (cursor) visited.add(cursor);
     for (let i = 0; i < MAX_SCOUT_PAGES && cursor && ids.size < a.requested; i += 1) {
-      const got = await read({ ...a.option.params, [a.option.cursor]: cursor });
+      const inputCursor = reviewed ? pageInputValue(cursor, reviewed) : cursor;
+      if (inputCursor === null) return stopped();
+      const got = await read({ ...a.option.params, [a.option.cursor]: inputCursor }, a.option.params);
       if (!got.ok) return stopped();
+      if (reviewed && got.rows.length === 0 && got.next) {
+        return { found: ids.size, exhausted: false, sets };
+      }
       const before = ids.size;
       for (const row of got.rows) ids.add(rowKeyOf(row));
+      if (reviewed && got.next && visited.has(got.next)) return stopped();
       cursor = got.next;
+      if (cursor) visited.add(cursor);
       // a followed page that is full again: the source holds more
       if (got.rows.length >= healthy && ids.size > before) return { found: ids.size, exhausted: false, sets };
     }
+    if (reviewed && cursor) return { found: ids.size, exhausted: false, sets };
   }
   for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
     if (ids.size >= a.requested) break;
-    const got = await read(params);
+    const got = await read(params, params);
     if (!got.ok) return stopped();
     for (const row of got.rows) ids.add(rowKeyOf(row));
-    if (got.rows.length >= healthy) return { found: ids.size, exhausted: false, sets };
+    if (got.rows.length >= healthy || (reviewed && got.next)) return { found: ids.size, exhausted: false, sets };
   }
   return { found: ids.size, exhausted: ids.size < a.requested, sets };
 }
@@ -980,16 +1203,51 @@ export function bindLookups(steps: ReadonlyArray<BuiltStep>): BuiltStep[] {
     const parent = b.step.parent ? steps.find((x) => x.step.key === b.step.parent) : undefined;
     if (b.lookup) continue;
     if (!parent?.lookup || !b.option.parent) { out.push(b); continue; }
-    const value = parent.sampleRows[0]?.[b.option.parent.from];
-    if (!filled(value)) { out.push(b); continue; }
-    const fix = (params: Record<string, unknown>): Record<string, unknown> => ({ ...params, [b.option.parent!.param]: value });
-    out.push({ ...b, step: { ...b.step, parent: null }, option: { ...b.option, params: fix(b.option.params), more: b.option.more.map(fix), parent: null }, ...(b.second ? { second: { ...b.second, option: { ...b.second.option, params: fix(b.second.option.params), more: b.second.option.more.map(fix), parent: null } } } : {}) });
+    const parentRow = parent.sampleRows[0];
+    if (!parentRow) { if (!missionPageOf(b.option.endpoint.id)) out.push(b); continue; }
+    const primaryVal = parentRow[b.option.parent.from];
+    if (!filled(primaryVal) || b.option.parent.param === b.option.cursor) { if (!missionPageOf(b.option.endpoint.id)) out.push(b); continue; }
+    const fixPrimary = (params: Record<string, unknown>): Record<string, unknown> => ({ ...params, [b.option.parent!.param]: primaryVal });
+
+    let second: BuiltStep["second"] = undefined;
+    if (b.second) {
+      const altParent = b.second.option.parent;
+      if (altParent) {
+        const altVal = parentRow[altParent.from];
+        if (filled(altVal) && altParent.param !== b.second.option.cursor) {
+          const fixAlt = (params: Record<string, unknown>): Record<string, unknown> => ({ ...params, [altParent.param]: altVal });
+          second = {
+            ...b.second,
+            option: {
+              ...b.second.option,
+              params: fixAlt(b.second.option.params),
+              more: b.second.option.more.map(fixAlt),
+              parent: null,
+            },
+          };
+        }
+      } else if (!missionPageOf(b.option.endpoint.id)) {
+        second = b.second;
+      }
+    }
+
+    out.push({
+      ...b,
+      step: { ...b.step, parent: null },
+      option: {
+        ...b.option,
+        params: fixPrimary(b.option.params),
+        more: b.option.more.map(fixPrimary),
+        parent: null,
+      },
+      second,
+    });
   }
   return out;
 }
 
 /** The plan in the shape every later part already reads (the card, the price, approval, the engine, the file, settlement). */
-export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown, said: ReadonlyArray<string> = []): PricedPlan {
+export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown, said: ReadonlyArray<string> = [], listed?: ListedQuote & { catalog: TregCatalog }): PricedPlan {
   const stages: PricedStage[] = [];
   const notes: string[] = [];
   const assumptions = (u.assumptions_ar ?? []).map((a) => customerSafe(a, 300, said)).filter((a): a is string => a !== null);
@@ -997,13 +1255,20 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   for (const b of steps) {
     const s = b.step;
     const parentRows = s.parent ? plannedOf.get(s.parent) ?? 0 : 0;
+    const isConfiguredPaging = Boolean(missionPageOf(b.option.endpoint.id));
+    const isTotalOnlyChild = Boolean(s.parent && s.count.total !== null && !s.count.per_parent && !s.count.all && isConfiguredPaging);
+
     let planned: number;
     let perParent: number | undefined;
     if (s.parent) {
-      perParent = s.count.per_parent ?? (s.count.all ? ALL_CHILDREN_CAP : s.count.total ? Math.max(1, Math.ceil(s.count.total / Math.max(1, parentRows))) : DEFAULT_PER_PARENT);
-      planned = s.count.total ?? perParent * Math.max(1, parentRows);
-      if (s.count.all) notes.push(`${s.title_ar}: نقرأ كل ما يعرضه المصدر لكل عنصر، بحد أقصى ${toArabicDigits(perParent)} لكل عنصر، ولا ندفع إلا مقابل ما يُسلَّم.`);
-      else if (!s.count.per_parent && !s.count.total) assumptions.push(`لم تحدد عدد ${s.title_ar} لكل عنصر، فاخترنا ${toArabicDigits(perParent)}؛ يمكنك تعديله قبل الموافقة.`);
+      if (isTotalOnlyChild) {
+        perParent = undefined;
+      } else {
+        perParent = s.count.per_parent ?? (s.count.all ? ALL_CHILDREN_CAP : s.count.total ? Math.max(1, Math.ceil(s.count.total / Math.max(1, parentRows))) : DEFAULT_PER_PARENT);
+      }
+      planned = s.count.total ?? (perParent ?? DEFAULT_PER_PARENT) * Math.max(1, parentRows);
+      if (s.count.all) notes.push(`${s.title_ar}: نقرأ كل ما يعرضه المصدر لكل عنصر، بحد أقصى ${toArabicDigits(perParent ?? ALL_CHILDREN_CAP)} لكل عنصر، ولا ندفع إلا مقابل ما يُسلَّم.`);
+      else if (!s.count.per_parent && !s.count.total && perParent !== undefined) assumptions.push(`لم تحدد عدد ${s.title_ar} لكل عنصر، فاخترنا ${toArabicDigits(perParent)}؛ يمكنك تعديله قبل الموافقة.`);
     } else {
       planned = s.count.total ?? DEFAULT_COUNT;
       if (s.count.total === null) assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ${toArabicDigits(DEFAULT_COUNT)}؛ يمكنك تعديله قبل الموافقة.`);
@@ -1015,39 +1280,54 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
-    const alternatives = [
-      ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
-      ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page" })) : []),
-      ...(b.webFallbacks ?? []).flatMap((w) => [w.option.params, ...w.option.more].map((params) => ({ endpoint_id: w.option.endpoint.id, params, cursor_param: null, map_code: w.mapCode, map_file_id: "page" }))),
-    ];
+    const alternatives = isTotalOnlyChild
+      ? []
+      : [
+          ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
+          ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page", ...(b.second!.option.parent ? { parent_binding: { param: b.second!.option.parent.param, from: b.second!.option.parent.from } } : {}) })) : []),
+          ...(b.webFallbacks ?? []).flatMap((w) => [w.option.params, ...w.option.more].map((params) => ({ endpoint_id: w.option.endpoint.id, params, cursor_param: null, map_code: w.mapCode, map_file_id: "page" }))),
+        ];
+    const funding = listed ? sealedFunding(b, alternatives, listed.catalog) : undefined;
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
       expected_rows: planned, planned_rows: planned, parent_key: s.parent, ...(perParent !== undefined ? { per_parent_rows: perParent } : {}),
       ...(s.parent && s.count.all ? { children_cap_per_parent: perParent } : {}),
       deliver: s.deliver, columns: b.columns, sample_rows: b.sampleRows.slice(0, 3), measured_by: b.callIds, measured_from_calls: b.callIds, measured_cost_per_row_usd: costPerRow,
       yield_share: 1, review_share: 0,
+      ...(listed?.stageKey === s.key ? { listed_rate: listed.rate } : {}),
+      ...(funding ? { execution_funding: funding } : {}),
       ...(b.carryKeys.length > 0 ? { carry_keys: [...b.carryKeys] } : {}),
       engine: {
         endpoint_id: b.option.endpoint.id, params: b.option.params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page",
         parent_binding: b.option.parent ? { param: b.option.parent.param, from: b.option.parent.from } : null, built_by: "code",
+        ...(isConfiguredPaging || alternatives.some((alt) => missionPageOf(alt.endpoint_id)) ? { catalog_paging: true as const } : {}),
+        ...(isTotalOnlyChild ? { fill_total_across_parents: true as const } : {}),
         ...(alternatives.length > 0 ? { alternatives } : {}),
       },
     } as unknown as PricedStage);
   }
   // a child binds to a field of its parent's row: that field is kept on the stored parent row even when it is not a column
   for (const st of stages) {
-    const bind = st.engine?.parent_binding;
-    if (!bind || !st.parent_key) continue;
+    if (!st.parent_key) continue;
     const p = stages.find((x) => x.key === st.parent_key);
-    if (p && !p.columns.some((c) => c.key === bind.from) && bind.from !== "id") p.carry_keys = [...new Set([...(p.carry_keys ?? []), bind.from])];
+    if (!p) continue;
+    const bindings = [
+      st.engine?.parent_binding,
+      ...((st.engine as any)?.alternatives ?? []).map((a: any) => a.parent_binding),
+    ].filter(Boolean);
+    for (const bind of bindings) {
+      if (bind && !p.columns.some((c) => c.key === bind.from) && bind.from !== "id") {
+        p.carry_keys = [...new Set([...(p.carry_keys ?? []), bind.from])];
+      }
+    }
   }
   for (const st of stages) if (st.carry_keys && st.carry_keys.length === 0) delete st.carry_keys;
-  const price = priceMissionByCode(stagePriceInputs(stages), { settings: pricingSettings as never });
+  const price = priceMissionByCode(stagePriceInputs(stages), { settings: listed?.settings ?? pricingSettings as MissionPricingSettings | undefined });
   const counts = stages.filter((s) => s.deliver).map((s) => `${s.title_ar}: ${toArabicDigits(s.planned_rows)}`).join("، ");
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability, said)))].join(" و");
   const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300, said) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
-  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined || (b.webFallbacks?.length ?? 0) > 0);
+  const widened = listed ? stages.some((s) => s.engine?.alternatives?.length) : steps.some((b) => b.option.more.length > 0 || b.second !== undefined || (b.webFallbacks?.length ?? 0) > 0);
   notes.push(widened
     ? "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
     : "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة حتى نصل إليه أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");

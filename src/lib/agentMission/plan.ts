@@ -7,7 +7,7 @@ import { isPeopleStage, stageKindByCapability } from "./people";
 import { buildCompanySteps, buildContactSteps, isEmailColumn, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { PEOPLE_ESTIMATE_NOTE_AR, type PeopleEstimate } from "./peopleEstimate";
-import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
+import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate, type MissionPriceResult, type StagePriceInput } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
@@ -61,6 +61,10 @@ export interface EngineSpec {
   params: Record<string, unknown>;
   /** The endpoint's own paging input, or null when it has none (one page). */
   cursor_param: string | null;
+  /** The recipe uses the reviewed catalog paging contract. */
+  catalog_paging?: true;
+  /** A global target can be filled across parents unless an explicit per-parent count is present. */
+  fill_total_across_parents?: true;
   /** The agent's mapping code: the body of a function over `inputs`, turning ONE saved page into the stage's final rows. */
   map_code: string;
   /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
@@ -215,6 +219,9 @@ export interface PricedStage extends ProposedStage {
   /** Measured cost per row of this stage, USD (internal). */
   measured_cost_per_row_usd: number;
   measured_from_calls: string[];
+  /** Code-owned rate and page evidence carried unchanged into edits and approval. */
+  listed_rate?: ListedMissionRate;
+  execution_funding?: ExecutionFundingRoute[];
   /** How long the measuring calls took per row they returned (ms), when known (internal; the expected time is computed from it). */
   measured_ms_per_row?: number;
   /** Share of the sampled rows that match the request (1 when the stage has no relevance check) and of them the share the model must review: what the price rests on (internal). */
@@ -348,7 +355,18 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share, ...(s.replies_of !== undefined ? { codeOnly: true } : {}) }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}): StagePriceInput[] => stages.map((s) => ({
+  rows: s.planned_rows,
+  costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true)
+    + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0)
+    + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0),
+  deliver: s.deliver,
+  yield: s.yield_share,
+  reviewShare: s.review_share,
+  ...(s.replies_of !== undefined ? { codeOnly: true } : {}),
+  ...(s.listed_rate ? { listedRate: s.listed_rate } : {}),
+  ...(s.execution_funding ? { stageKey: s.key, parentKey: s.parent_key, maxPages: s.max_pages, executionFunding: s.execution_funding } : {}),
+}));
 /** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
 export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";
 /** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
@@ -1242,7 +1260,16 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),
       };
     }),
-    price: { unit_price_points: plan.price.unitPricePoints, reserve_points: plan.price.reservePoints, max_charge_points: plan.price.maxChargePoints, delivered_rows: plan.price.deliveredRows, ...(split ? { counted_rows: split.countedRows, counted_max_points: split.countedMaxPoints, open_rows: split.openRows, open_max_points: split.openMaxPoints } : {}), ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings) } : {}) },
+    price: {
+      unit_price_points: plan.price.unitPricePoints,
+      reserve_points: plan.price.reservePoints,
+      max_charge_points: plan.price.maxChargePoints,
+      delivered_rows: plan.price.deliveredRows,
+      ...(split ? { counted_rows: split.countedRows, counted_max_points: split.countedMaxPoints, open_rows: split.openRows, open_max_points: split.openMaxPoints } : {}),
+      ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings) } : {}),
+      ...(plan.price.listedRate ? { listed_rate: { unit_points: plan.price.listedRate.unitPoints, noun_ar: plan.price.listedRate.nounAr } } : {}),
+      ...(plan.price.executionFundingApplied ? { execution_funding_applied: true } : {}),
+    },
     expected_minutes: estimateMissionMinutes(plan.stages.map((s) => ({ rows: s.planned_rows, msPerRow: s.measured_ms_per_row ?? null }))),
     edit: planEditorView(plan),
   };

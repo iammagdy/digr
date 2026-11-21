@@ -1,3 +1,4 @@
+import { getBalance } from "../../src/lib/supabase/ledger";
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
 import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
 import { topicRelationAnswerOf } from "../../src/lib/agentMission/stage2/questionCards";
@@ -669,7 +670,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     try {
       // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
       const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
-      r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(web ? { web, webAvailable } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
+      r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(web ? { web, webAvailable } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, availablePoints: async () => { const balance = await getBalance(deps.client, mission.user_id).catch(() => null); return typeof balance === "number" && Number.isFinite(balance) ? Math.max(0, Math.floor(balance)) : null; }, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }

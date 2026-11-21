@@ -116,6 +116,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     for (let guard = 0; child.parent_key !== null && guard < 8; guard += 1) {
       const parent = plan.stages.find((s) => s.key === child.parent_key);
       if (!parent) break;
+      if (child.engine?.fill_total_across_parents === true && child.per_parent_rows === undefined) break;
       const per = Math.max(1, child.per_parent_rows ?? 1);
       if (parent.planned_rows * per < child.planned_rows) setRows(parent, Math.ceil(child.planned_rows / per));
       child = parent;
@@ -127,7 +128,9 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
       const ratio = changed.get(s.parent_key);
       if (ratio === undefined) continue;
       const parent = plan.stages.find((p) => p.key === s.parent_key)!;
-      const rows = Math.max(1, Math.min(parent.planned_rows * Math.max(1, s.per_parent_rows ?? 1), Math.round(s.planned_rows * ratio)));
+      const proportional = Math.round(s.planned_rows * ratio);
+      const unbounded = s.engine?.fill_total_across_parents === true && s.per_parent_rows === undefined;
+      const rows = Math.max(1, unbounded ? proportional : Math.min(parent.planned_rows * Math.max(1, s.per_parent_rows ?? 1), proportional));
       changed.set(s.key, rows / Math.max(1, s.planned_rows));
       setRows(s, rows);
     }
@@ -303,6 +306,12 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   if (delivered > AGENT_MAX_DELIVERED_ROWS) return fail("العدد أكبر من الحد المسموح لمهمة واحدة.");
   const price = priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: plan.price.settings, ...carriedRevision(plan.price) });
   if (price.overCap) return fail("هذا العدد يتجاوز الحد المسموح لحجز واحد. قلّله ثم أعد المحاولة.");
+  if (!price.listedRate && plan.price.listedRate) {
+    for (const stage of plan.stages) {
+      delete stage.listed_rate;
+      delete stage.execution_funding;
+    }
+  }
   plan.price = price;
   return { ok: true, plan };
 }

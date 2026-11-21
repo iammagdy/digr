@@ -49,6 +49,7 @@ export interface StoredItem {
 }
 
 export type Op =
+  | { t: "funded_call"; stage: string }
   | { t: "page"; stage: string; stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** Pages this record stands for (default 1: a source read by collect_pages writes one record for a whole call). */ pages?: number; /** The oldest moment (ms since 1970) among the source rows of this page, read from the stage's period field: where a read that walks back through date windows has got to. */ oldest_ms?: number; /** The keys of the raw rows this record added to the stream (collect_pages: a later call returns only new rows). */ keys?: string[] }
   | { t: "item"; stage: string; id: string; state: ItemState; by?: "rule" | "model" | "legacy"; basis?: RuleBasis; reason?: ItemReason; row: Row | null }
   | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason; /** P0 (15 Nov 2026): cells the decision writes on an accepted row (the research verdict's topic mark). Absent in older logs. */ marks?: Record<string, string> }
@@ -63,10 +64,11 @@ export type Op =
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
 
-export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string>; /** The oldest moment of the source rows the stream has read (a stage read in date windows), or null. */ oldest: number | null }
+export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string>; /** The oldest moment of the source rows the stream has read (a stage read in date windows), or null. */ oldest: number | null; visitedPositions: Set<string | null> }
 
 export interface StageLog {
   items: Map<string, StoredItem>;
+  fundedCalls: number;
   duplicates: number;
   pages: number;
   /** Rows of every source page read (with or without an id): what the source returned. */
@@ -75,7 +77,7 @@ export interface StageLog {
   streams: Map<string, StreamState>;
   stop: StopReason | null;
 }
-const newStageLog = (): StageLog => ({ items: new Map(), duplicates: 0, pages: 0, sourceRows: 0, excludedRowsKept: 0, streams: new Map(), stop: null });
+const newStageLog = (): StageLog => ({ items: new Map(), fundedCalls: 0, duplicates: 0, pages: 0, sourceRows: 0, excludedRowsKept: 0, streams: new Map(), stop: null });
 
 export interface StageCounts {
   found: number;
@@ -104,17 +106,19 @@ const RELEVANCE_REASONS: ReadonlyArray<string> = [...RELEVANCE_REASON_LIST, ...F
 function applyOp(logs: Map<string, StageLog>, op: Op): void {
   const log = logs.get(op.stage) ?? (logs.set(op.stage, newStageLog()), logs.get(op.stage)!);
   switch (op.t) {
+    case "funded_call": log.fundedCalls += 1; return;
     case "page": {
       const n = op.pages === undefined ? 1 : Math.max(0, Math.floor(op.pages) || 0);
       log.pages += n;
       log.sourceRows += Math.max(0, Math.floor(op.rows_in_page) || 0);
-      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>(), oldest: null };
+      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>(), oldest: null, visitedPositions: new Set<string | null>() };
       s.pages += n;
       if (typeof op.oldest_ms === "number" && Number.isFinite(op.oldest_ms)) s.oldest = s.oldest === null ? op.oldest_ms : Math.min(s.oldest, op.oldest_ms);
       for (const k of op.keys ?? []) s.seen.add(k);
       s.rows += Math.max(0, Math.floor(op.rows_in_page) || 0);
       s.cursor = op.cursor_next;
       s.ended = op.ended;
+      s.visitedPositions.add(op.cursor_in ?? null);
       log.streams.set(op.stream, s);
       return;
     }
@@ -164,7 +168,7 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
 }
 
 /** Every barren-page counter is derived from the log (a page that added no new item), so a resumed run counts them as the first run did. The page op carries no «new items» field: the engine writes its items in the SAME segment. */
-function foldSegments(segments: ReadonlyArray<Segment>): Map<string, StageLog> {
+export function foldSegments(segments: ReadonlyArray<Segment>): Map<string, StageLog> {
   const logs = new Map<string, StageLog>();
   for (const seg of segments) {
     const itemsInSegment = new Map<string, number>();

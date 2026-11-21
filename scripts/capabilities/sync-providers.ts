@@ -120,13 +120,15 @@ async function pool<T, R>(items: ReadonlyArray<T>, size: number, fn: (x: T) => P
   return out;
 }
 
+import type { MissionPageMetadata } from "../../src/lib/treg/shapeReader";
+
 // ------------------------------------------------------------------------------------------------ the baseline (last known-good metadata)
-export type BaselineContract = EndpointContract & { policy: "public" | "b2b_contact" | "sensitive" | "blocked" };
+export type BaselineContract = EndpointContract & { policy: "public" | "b2b_contact" | "sensitive" | "blocked"; missionPage?: MissionPageMetadata };
 export interface WebBaseline { summary: OpenApiSummary; changelog_latest: string | null }
 export interface ProviderBaseline {
   version: 1;
   synced_at: string;
-  treg: { treg_version: string | null; paused_providers: string[]; contracts: Record<string, BaselineContract> };
+  treg: { treg_version: string | null; paused_providers: string[]; contracts: Record<string, BaselineContract>; missionListedServices?: Record<string, unknown> };
   web: { firecrawl: WebBaseline | null; contextdev: WebBaseline | null };
 }
 export const emptyBaseline = (): ProviderBaseline => ({ version: 1, synced_at: "", treg: { treg_version: null, paused_providers: [], contracts: {} }, web: { firecrawl: null, contextdev: null } });
@@ -179,7 +181,7 @@ export async function runProviderSync(input: SyncInput): Promise<SyncReport> {
   const policyBefore = new Map<string, BaselineContract["policy"]>();
   for (const id of tregIds) {
     const b = baseline?.treg.contracts[id];
-    if (comparedWith === "baseline" && b) { const { policy, ...c } = b; before.set(id, c); policyBefore.set(id, policy); continue; }
+    if (comparedWith === "baseline" && b) { const { policy, missionPage, ...c } = b; before.set(id, c); policyBefore.set(id, policy); continue; }
     const raw = snapshotById.get(id);
     if (raw) { before.set(id, contractFromSnapshot(raw, new Set(baseline?.treg.paused_providers ?? []))); policyBefore.set(id, policyOfRaw(raw, writeIds)); }
   }
@@ -259,11 +261,20 @@ export async function runProviderSync(input: SyncInput): Promise<SyncReport> {
   next.synced_at = date;
   next.treg.treg_version = metaFetched ? String(metaJson.treg_version ?? "") || null : (baseline?.treg.treg_version ?? null);
   next.treg.paused_providers = [...paused].sort();
+  if (baseline?.treg.missionListedServices) next.treg.missionListedServices = baseline.treg.missionListedServices;
   for (const id of tregIds) {
     const live = after.get(id);
     const raw = rawAfter.get(id);
-    if (live && raw) next.treg.contracts[id] = { ...live, policy: policyOfRaw(raw, writeIds) };
-    else { const was = before.get(id); if (was) next.treg.contracts[id] = { ...was, policy: policyBefore.get(id) ?? "public" }; }
+    const prevMissionPage = baseline?.treg.contracts[id]?.missionPage;
+    if (live && raw) next.treg.contracts[id] = { ...live, policy: policyOfRaw(raw, writeIds), ...(prevMissionPage ? { missionPage: prevMissionPage } : {}) };
+    else { const was = before.get(id); if (was) next.treg.contracts[id] = { ...was, policy: policyBefore.get(id) ?? "public", ...(prevMissionPage ? { missionPage: prevMissionPage } : {}) }; }
+  }
+  if (baseline?.treg.contracts) {
+    for (const [id, contract] of Object.entries(baseline.treg.contracts)) {
+      if (!next.treg.contracts[id] && contract.missionPage) {
+        next.treg.contracts[id] = contract;
+      }
+    }
   }
   const pinKeep = (summary: OpenApiSummary | null, pointer?: string): OpenApiSummary | null => summary && { ...summary, enums: pointer && summary.enums[pointer] ? { [pointer]: summary.enums[pointer] } : {} };
   for (const w of web) {
