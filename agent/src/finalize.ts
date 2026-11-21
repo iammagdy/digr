@@ -71,8 +71,11 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
  * THE REASON A CHILD STAGE FELL SHORT WHILE EVERY PARENT WAS READ: some parents have fewer children than the number asked for each («بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو»). No language, topic or text rule is ever the reason: the children are delivered as
  * the source gives them. No number in it.
  */
-export function childShortfallClauseAr(parentSingular: string, parentPlural: string, childPlural: string): string {
+export function childShortfallClauseAr(parentSingular: string, parentPlural: string, childPlural: string, isFillTotal?: boolean): string {
   const withArticle = (w: string): string => (w.startsWith("ال") ? w : `ال${w}`);
+  if (isFillTotal) {
+    return `لأن ${withArticle(parentPlural)} المتاحة لم تحتوِ على عدد ${childPlural} كافٍ لبلوغ إجمالي المطلوب`;
+  }
   // ROUND 58 (live, msn_088c): a detail step whose items have no noun of their own (the published e-mail and phone of each company) is said as what it is, never as «عليها منشورات/عناصر أقل»
   if (childPlural === GENERIC_ITEM_NOUN.plural) return `لأن بعض ${withArticle(parentPlural)} لم نجد لها في المصدر ما طُلب لكل ${parentSingular}`;
   return `لأن بعض ${withArticle(parentPlural)} عليها ${childPlural} أقل من العدد المطلوب لكل ${parentSingular}`;

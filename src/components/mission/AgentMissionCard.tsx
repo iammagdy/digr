@@ -324,7 +324,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (v.approvalState === "pending") {
     return (
       <div dir="rtl" role="status" data-testid="agent-approval-pending" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-ink">
-        نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.
+        نتحقق الآن من اعتماد طلبك بعد انقطاع مؤقت، ولن تُحجز نقاطك مرتين. حدّث الصفحة للاطّلاع على أحدث حالة.
       </div>
     );
   }
@@ -465,7 +465,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
       {showAffordability ? (
         <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="status" data-testid="agent-over-limit">
           {pendingProof ? (
-            <p>نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.</p>
+            <p>نتحقق الآن من اعتماد طلبك بعد انقطاع مؤقت، ولن تُحجز نقاطك مرتين. حدّث الصفحة للاطّلاع على أحدث حالة.</p>
           ) : affordability?.mode === "top_up" ? (
             <><p>رصيدك أقل من الحد الأدنى لحجز المهمة.</p><a className={BTN_PRIMARY} href="/dashboard/topup">اشحن رصيدك</a></>
           ) : affordability?.mode === "unavailable" ? (

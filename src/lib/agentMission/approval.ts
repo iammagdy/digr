@@ -10,7 +10,7 @@ export type ApprovalResult =
   | { ok: true; jobId: string; reservePoints: number; unitPricePoints: number }
   | { ok: false; status: number; error: string; code?: string };
 
-export const STALE_MISSION_PLAN_AR = "راجع الخطة والسعر قبل تأكيد الاعتماد مرة أخرى.";
+export const STALE_MISSION_PLAN_AR = "تغيّرت الخطة أو السعر أثناء مراجعتك، وجرى تحديث البطاقة بالسعر الجديد؛ لم يُخصم شيء من رصيدك. راجع الخطة واضغط «اعتمد» للمتابعة.";
 
 const bad = (status: number, error: string, code?: string): ApprovalResult => ({ ok: false, status, error, ...(code ? { code } : {}) });
 

@@ -1507,7 +1507,9 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // the reason is about the stage that fell short: the language rule only ever applies to a stage of top-level items (a child stage is delivered raw), and a child stage that fell short while its parents were read says so
   const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
   const childShareClause = (() => {
-    if (!shortStage || !parentOfShort || parentsBelowShare(plan, shortStage.key, rowsByStage) <= 0) return null;
+    if (!shortStage || !parentOfShort) return null;
+    const isFillTotal = shortStage.engine?.fill_total_across_parents === true && shortStage.per_parent_rows === undefined;
+    if (!isFillTotal && parentsBelowShare(plan, shortStage.key, rowsByStage) <= 0) return null;
     const pNoun = itemNounOf(parentOfShort.title_ar);
     const cNoun = itemNounOf(shortStage.title_ar);
     const epCap = deps.catalog.byId.get(shortStage.endpoint_id)?.capability ?? "";
@@ -1519,7 +1521,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     if (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(shortStage.endpoint_id) || cNoun.key === pNoun.key || cNoun.key === GENERIC_ITEM_NOUN.key) {
       return `لأن بعض ${withArticle(pNoun.plural)} لم نجد لها بيانات تواصل منشورة`;
     }
-    return childShortfallClauseAr(pNoun.singular, pNoun.plural, cNoun.plural);
+    return childShortfallClauseAr(pNoun.singular, pNoun.plural, cNoun.plural, isFillTotal);
   })();
   const checkedForShort = {
     ...checked,
