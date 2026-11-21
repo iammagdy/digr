@@ -889,13 +889,16 @@ interface Probed { option: ToolOption; page: unknown; items: Array<Record<string
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
 async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }): Promise<Probed | null> {
   const callIds: string[] = [];
-  for (const option of options) {
+  for (let optIdx = 0; optIdx < options.length; optIdx += 1) {
+    const option = options[optIdx];
     const reviewed = missionPageOf(option.endpoint.id);
     const sets = [option.params, ...option.more];
     // a child is tried on up to PARENTS_TRIED parents, the most commented first (the newest post may have no comment yet): the first input set only
     const parentValues = option.parent && parent ? parentValuesOf(parent.sampleRows, option.parent.from) : [null];
     if (option.parent && parent && parentValues.length === 0) continue;
-    const attempts: Array<{ set: number; parentValue: unknown }> = option.parent && parent ? parentValues.map((v) => ({ set: 0, parentValue: v })) : sets.map((_, i) => ({ set: i, parentValue: null }));
+    const allAttempts: Array<{ set: number; parentValue: unknown }> = option.parent && parent ? parentValues.map((v) => ({ set: 0, parentValue: v })) : sets.map((_, i) => ({ set: i, parentValue: null }));
+    const childCap = option.parent && parent && options.length > 2 ? Math.max(1, Math.floor(budget.left / (options.length - optIdx))) : allAttempts.length;
+    const attempts = allAttempts.slice(0, childCap);
     for (const a of attempts) {
       if (budget.left <= 0) break;
       const i = a.set;
