@@ -371,7 +371,8 @@ export async function uploadFeed({ feedJson, uploadUrl, uploadKey, fetchImpl = g
   }
 }
 
-async function main() {
+export async function main(argv = process.argv.slice(2)) {
+  const isDryRun = argv.includes("--dry-run");
   const statusDir = process.env.OFFICE_STATUS_DIR || "/srv/diger-team/shared/office-status";
   const tasksDir = process.env.OFFICE_TASKS_DIR || "/srv/diger-team/commander/tasks";
   const repo = process.env.OFFICE_GITHUB_REPO || "iammagdy/digr";
@@ -381,6 +382,12 @@ async function main() {
 
   const openPrCount = await fetchOpenPrs({ repo, cachePath });
   const feed = buildOfficeFeed({ statusDir, tasksDir, openPrs: openPrCount });
+
+  if (isDryRun) {
+    console.log(JSON.stringify(feed, null, 2));
+    return;
+  }
+
   await uploadFeed({ feedJson: feed, uploadUrl, uploadKey });
   console.log(`office-feed-updated bots=${Object.keys(feed.bots).length} prs=${feed.open_prs} at=${feed.generated_at}`);
 }

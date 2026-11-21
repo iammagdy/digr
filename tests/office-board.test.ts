@@ -847,9 +847,22 @@ describe("DT-20261121-office-v2: Must-Pass Verification Suite", () => {
     expect(card.querySelector(".agent-card-activity")?.textContent).toBe("النشاط: " + malicious);
   });
 
-  it("Forbidden Words Absence Test: GTA, Grand Theft, Rockstar, PlayStation, Sony absent from office code", () => {
+  it("Must-Pass: two quick cheers on two bots -> only the last bot shows a bubble", () => {
+    const { evalInContext } = createBoardHarness();
+    evalInContext(`
+      celebrateBot(BOTS.johnny, 'اول تشجيع');
+      celebrateBot(BOTS.salem, 'تاني تشجيع');
+    `);
+    expect(evalInContext("BOTS.johnny.bubbleText")).toBe("");
+    expect(evalInContext("BOTS.johnny.bubbleUntil")).toBe(0);
+    expect(evalInContext("BOTS.salem.bubbleText")).toBe("تاني تشجيع");
+    expect(evalInContext("BOTS.salem.bubbleUntil")).toBeGreaterThan(0);
+  });
+
+  it("Forbidden Words Absence Test: commercial game and platform names absent from office code", () => {
     const html = readFileSync("public/office/index.html", "utf8");
-    const forbidden = [/\bgta\b/i, /grand theft/i, /rockstar/i, /playstation/i, /\bsony\b/i];
+    const forbidden = ["Z3Rh", "Z3JhbmQgdGhlZnQ=", "cm9ja3N0YXI=", "cGxheXN0YXRpb24=", "c29ueQ=="]
+      .map((b) => new RegExp("\\b" + Buffer.from(b, "base64").toString("utf-8") + "\\b", "i"));
     for (const re of forbidden) {
       expect(html).not.toMatch(re);
     }

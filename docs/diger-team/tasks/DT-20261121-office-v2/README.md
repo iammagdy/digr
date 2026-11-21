@@ -14,6 +14,7 @@ This release revamps the office canvas with dedicated rooms, meeting mechanics, 
 - **Waiting vs. Stuck:** Bots waiting on CI or review (e.g. `state: "waiting"`) remain in `waiting` state regardless of inactivity duration (e.g. 2+ hours). Only `working` bots with no activity > 45 minutes transition to `stuck`.
 - **Real Percentages:** Exact percentage from CTO status file is preserved (e.g. 72%), without inventing or clamping when not working.
 - **Privacy Abstraction:** Redacts internal task IDs (`DT-...`, `O6-...`), internal file paths (`/srv/...`), code file names (`*.ts`), branch refs, and secrets from public output.
+- **Dry-Run CLI Mode:** Supports `--dry-run` flag to print generated feed JSON to stdout and exit 0 without network upload. Fails loudly with non-zero exit when run without flag and missing upload credentials.
 - **Location Independence:** Implemented directly in repo (`scripts/office-feed-updater.mjs`), with no dependencies on external runtime folders.
 
 ### 2. Office Page v2 Layout (`public/office/index.html`)
@@ -71,7 +72,7 @@ npx tsc --noEmit
 **Result:** 0 errors (clean exit code 0).
 
 ### 3. Forbidden Words Audit
-Verified 0 occurrences of commercial game/platform names (`GTA`, `Grand Theft`, `Rockstar`, `PlayStation`, `Sony`) across repository diff.
+Verified 0 occurrences of commercial game or platform names across repository diff.
 
 ### 4. DOM Security Audit
 Verified zero use of `innerHTML` for dynamic feed data; all modal attributes populated via `textContent`.

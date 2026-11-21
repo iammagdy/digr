@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import {
   buildOfficeFeed,
   CANONICAL_BOTS,
   BOT_ROLES,
   readTaskStatus,
   getNewestFileMtime,
+  main,
 } from "../scripts/office-feed-updater.mjs";
 
 describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
@@ -286,5 +287,62 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
 
     expect(grepFailed).toBe(true);
     expect(grepOutput.trim()).toBe("");
+  });
+
+  it("main() with --dry-run prints feed JSON to stdout and exits 0 without upload env vars", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-dryrun-"));
+    const statusDir = path.join(tmpDir, "status");
+    const tasksDir = path.join(tmpDir, "tasks");
+    fs.mkdirSync(statusDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+
+    const res = spawnSync(
+      process.execPath,
+      ["scripts/office-feed-updater.mjs", "--dry-run"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          OFFICE_STATUS_DIR: statusDir,
+          OFFICE_TASKS_DIR: tasksDir,
+          OFFICE_UPLOAD_URL: "",
+          OFFICE_UPLOAD_KEY: "",
+          OFFICE_PR_CACHE_PATH: path.join(tmpDir, "pr-cache.json"),
+        },
+        encoding: "utf8",
+      }
+    );
+    expect(res.status).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed).toHaveProperty("bots");
+    expect(parsed).toHaveProperty("open_prs");
+  });
+
+  it("main() without --dry-run and missing upload env vars fails loudly with non-zero exit", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-err-"));
+    const statusDir = path.join(tmpDir, "status");
+    const tasksDir = path.join(tmpDir, "tasks");
+    fs.mkdirSync(statusDir, { recursive: true });
+    fs.mkdirSync(tasksDir, { recursive: true });
+
+    const res = spawnSync(
+      process.execPath,
+      ["scripts/office-feed-updater.mjs"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          OFFICE_STATUS_DIR: statusDir,
+          OFFICE_TASKS_DIR: tasksDir,
+          OFFICE_UPLOAD_URL: "",
+          OFFICE_UPLOAD_KEY: "",
+          OFFICE_PR_CACHE_PATH: path.join(tmpDir, "pr-cache.json"),
+        },
+        encoding: "utf8",
+      }
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain("office-feed-error");
+    expect(res.stderr).toContain("Missing OFFICE_UPLOAD_URL or OFFICE_UPLOAD_KEY");
   });
 });

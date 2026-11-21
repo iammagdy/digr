@@ -3217,6 +3217,17 @@ async function fetchLiveFeed() {
 // A finished task earns a little celebration bubble above the bot,
 // drawn inside the scene itself.
 function celebrateBot(bot, text) {
+  if (!bot) return;
+  if (typeof BOT_KEYS !== 'undefined' && typeof BOTS !== 'undefined') {
+    for (const k of BOT_KEYS) {
+      const other = BOTS[k];
+      if (other && other !== bot) {
+        other.bubbleUntil = 0;
+        other.bubbleText = '';
+        if (typeof clearChat === 'function') clearChat(other);
+      }
+    }
+  }
   bot.bubbleText = Array.from(String(text)).slice(0, 50).join("");
   bot.bubbleUntil = performance.now() + 5200;
 }
