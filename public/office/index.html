@@ -496,6 +496,49 @@ function drawLoungeFloor(x, y, w, h) {
   ctx.fillRect(rx + rw - 11, ry + rh - 8 - bs, 3, bs);
 }
 
+// Clean and format sprint board task titles
+function cleanBoardTaskTitle(b) {
+  if (!b) return '';
+  let raw = b.task_title || b.taskTitle || '';
+  if (!raw && b.task && !b.task.includes('بدون تحديث') && b.task !== 'مهمة قيد التنفيذ' && b.task !== 'في انتظار البث المباشر...') {
+    raw = b.task;
+  }
+  if (!raw) {
+    raw = b.taskId || b.task || b.shortTask || '';
+  }
+  return String(raw)
+    .replace(/\s*🔴\s*متأخر/gu, '')
+    .replace(/\s*متأخر/gu, '')
+    .replace(/\s*بدون تحديث.*/gu, '')
+    .replace(/\s+\d+%$/gu, '')
+    .trim();
+}
+
+function fitBoardTitle(ctx, name, rawTitle, availWidth) {
+  const prefix = name ? name + ': ' : '';
+  const full = prefix + rawTitle;
+  if (ctx.measureText(full).width <= availWidth) {
+    return full;
+  }
+  let cut = rawTitle;
+  while (cut.length > 0 && ctx.measureText(prefix + cut + '…').width > availWidth) {
+    cut = cut.slice(0, -1);
+  }
+  if (cut.length === 0 && ctx.measureText(prefix + '…').width > availWidth) {
+    let pCut = prefix;
+    while (pCut.length > 0 && ctx.measureText(pCut + '…').width > availWidth) {
+      pCut = pCut.slice(0, -1);
+    }
+    return pCut ? pCut + '…' : '…';
+  }
+  return prefix + cut + '…';
+}
+
+if (typeof window !== 'undefined') {
+  window.cleanBoardTaskTitle = cleanBoardTaskTitle;
+  window.fitBoardTitle = fitBoardTitle;
+}
+
 // 5. Walls, Windows, Whiteboard (live task board with percentages)
 function drawWalls() {
   const wallH = 45;
@@ -598,13 +641,22 @@ function drawWalls() {
     ];
     activeBots.slice(0, 4).forEach((b, idx) => {
       const slot = slots[idx];
-      const rawTitle = (b.taskId || b.shortTask || b.task || '').slice(0, 18);
+      const rawTitle = cleanBoardTaskTitle(b);
+      const pctText = b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : '');
+      const percentWidth = ctx.measureText(pctText).width;
+      const availWidth = (slot.tx - slot.px) - percentWidth - 6;
+      const titleText = fitBoardTitle(ctx, b.name, rawTitle, availWidth);
+
+      const prevDir = ctx.direction || 'inherit';
+      ctx.direction = 'rtl';
       ctx.textAlign = 'right';
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(b.name + ': ' + rawTitle, slot.tx, slot.y);
+      ctx.fillText(titleText, slot.tx, slot.y);
+      ctx.direction = prevDir;
+
       ctx.textAlign = 'left';
       ctx.fillStyle = b.status === 'stuck' ? '#ef4444' : '#10b981';
-      ctx.fillText(b.progress + '%' + (b.status === 'stuck' ? ' ⚠️' : ''), slot.px, slot.y);
+      ctx.fillText(pctText, slot.px, slot.y);
     });
   }
 
@@ -2247,6 +2299,8 @@ function applyLiveFeed(payload) {
     bot.status = status;
     bot.progress = status === 'idle' ? 0 : pct;
     bot.taskId = taskId;
+    bot.taskTitle = taskTitle;
+    bot.task_title = taskTitle;
     bot.step = step;
     bot.next = next;
     bot.updatedAt = incoming.updated_at || null;
