@@ -70,6 +70,7 @@ describe("TEST 18: an ordinary mission is approved exactly as before", () => {
   it("reserves through the existing functions once; a double click reserves once", async () => {
     db.seed("missions", [ordinary()]);
     const { client, money } = makeClient(db);
+    db.seed("credit_ledger", money.ledger.map((row) => ({ ...row, user_id: ME })));
     const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
     if (!view.ok) throw new Error(view.error);
     const first = await approve(client, "msn_ready0001", view.view.approvalVersion);

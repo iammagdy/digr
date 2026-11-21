@@ -83,6 +83,39 @@ describe("the owned plan's affordability and approval", () => {
     expect(card).not.toHaveProperty("affordability.offer");
   });
 
+  it.each([715, 714])("applies the same wallet boundary with %i points after an active hold", async (remaining) => {
+    const fixture = world(remaining + 715);
+    const prior = "msn_earlieractive";
+    fixture.db.seed("missions", [{ ...fixture.db.rows("missions")[0], id: prior }]);
+    const priorCard = await loadCustomerMission(fixture.client, { id: prior, userId: owner });
+    if (!priorCard.ok) throw new Error(priorCard.error);
+    expect(await approveForCustomer(fixture.client, {
+      id: prior, userId: owner, isGuest: false, emailVerified: true, approvalVersion: priorCard.view.approvalVersion,
+    })).toMatchObject({ ok: true, reservePoints: 715 });
+
+    fixture.db.tables.set("credit_ledger", [
+      ...fixture.money.ledger.map((row) => ({ ...row, user_id: owner })),
+      { id: "other_wallet", user_id: "other-owner", delta: 100_000 },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.availablePoints).toBe(remaining);
+    expect(fixture.money.balance()).toBe(remaining);
+    const result = await fixture.approve(card.approvalVersion);
+
+    if (remaining === 715) {
+      expect(result).toMatchObject({ ok: true, reservePoints: 715 });
+      expect(await fixture.approve(card.approvalVersion)).toMatchObject({ ok: false, status: 409 });
+      expect(fixture.money.quotes.size).toBe(2);
+      expect(fixture.money.jobs.size).toBe(2);
+      expect(fixture.holds()).toEqual([715, 715]);
+    } else {
+      expect(result).toMatchObject({ ok: false, status: 402, code: "affordability_changed" });
+      expect(fixture.money.quotes.size).toBe(1);
+      expect(fixture.money.jobs.size).toBe(1);
+      expect(fixture.holds()).toEqual([715]);
+    }
+  });
+
   it("one approval of an unchanged plan holds 715 once", async () => {
     const fixture = world(3000);
     const card = await fixture.read();

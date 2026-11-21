@@ -43,7 +43,7 @@ The shared runner still uses 600 points. Each file below scopes the default sett
 - `tests/integration-stage2-3-4-flags.test.ts`. Approve the same plan under every flag combination, including after each flag reset.
 - `tests/mission-12-replay.test.ts`. Original 50-company approval and measured downstream delivery.
 - `tests/mission-13-replay.test.ts`. Original approved company replay and settlement.
-- `tests/money7a-approve-guard.test.ts`. Normal-approval control beside the add-on refusal tests.
+- `tests/money7a-approve-guard.test.ts`. Normal-approval control beside the add-on refusal tests. Per D-0173 amendment, seeds the existing fake ledger into the db.from read used by readVerifiedWallet with assertions unchanged.
 - `tests/people-columns-replay.test.ts`. Approve the original people plan before checking workbook columns.
 - `tests/people-company-confirmation.test.ts`. Original approval before company/person matching assertions.
 - `tests/people-delivery-evidence.test.ts`. Original full approval before validating per-person evidence.
