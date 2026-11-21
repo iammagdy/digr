@@ -472,7 +472,11 @@ export function createGateway(deps: GatewayDeps) {
       if (result.data !== null && result.data !== undefined) {
         try { await deps.store.putFile(deps.missionId, RAW_PATH(id), JSON.stringify(result.data), "application/json"); storagePath = RAW_PATH(id); } catch { storagePath = null; }
       }
-      const { digest, reading } = result.ok ? buildShapeDigest(result.data, endpoint) : { digest: null, reading: null };
+      const { digest, reading } = result.ok
+        ? buildShapeDigest(result.data, endpoint, {
+            ...(result.allowLegacyEnvelope ? { allowLegacyEnvelope: true } : {}),
+          })
+        : { digest: null, reading: null };
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
       if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); if (sourceKey !== null) samplesBySource.set(sourceKey, (samplesBySource.get(sourceKey) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }

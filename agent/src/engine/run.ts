@@ -72,6 +72,7 @@ export interface EngineDeps {
   sources?: SourceGateway;
   onlyStages?: ReadonlySet<string>;
   provenance?: boolean;
+  fundingSchedule?: ReadonlyMap<string, { calls: number; costUsdMicro: number }> | null;
 }
 
 export interface EngineOutcome {
@@ -82,6 +83,9 @@ export interface EngineOutcome {
 }
 
 const refusalStop = (code: string): StopReason => (code === "over_budget" ? "budget" : code === "daily_cap" || code === "daily_limit" ? "daily_cap" : "refused");
+const FATAL_STOPS: ReadonlySet<StopReason> = new Set<StopReason>(["budget", "daily_cap", "refused", "time_limit", "review_limit", "page_limit", "topic_dry"]);
+/** Why a parent that gave nothing is read again (the same input once, then the next tool). */
+const RETRY_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
 
 /**
  * THE ENGINE: carries out the approved plan with no model in the loop. For each stage, in order: read the source page after page (RESUMING from the cursor the log recorded, never restarting), map each page with the plan's
@@ -92,7 +96,9 @@ const refusalStop = (code: string): StopReason => (code === "over_budget" ? "bud
 export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
   const { items, plan } = deps;
   const stops: Record<string, StopReason> = {};
-  const schedule = plan.price.listedRate ? executionFundingSchedule(stagePriceInputs(plan.stages)) : null;
+  const schedule = deps.fundingSchedule !== undefined
+    ? deps.fundingSchedule
+    : (plan.price.listedRate ? executionFundingSchedule(stagePriceInputs(plan.stages)) : null);
   for (const stage of plan.stages) {
     if (deps.onlyStages && !deps.onlyStages.has(stage.key)) continue;
     const spec = stage.engine;
@@ -100,7 +106,7 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
     const stageFunding = schedule?.get(stage.key);
     const outcome = plan.price.listedRate && !stageFunding
       ? { reason: "need_new_plan" as const, aborted: null }
-      : await runStage(stageFunding ? { ...deps, fundedCallLimit: stageFunding.calls } : deps, stage, spec);
+      : await runStage({ ...deps, ...(stageFunding ? { fundedCallLimit: stageFunding.calls } : {}), ...(schedule ? { fundingSchedule: schedule } : {}) }, stage, spec);
     if (outcome.aborted) return { stops, aborted: outcome.aborted };
     // items the review could not reach are asked once more at the end of the stage (a late good item is never lost)
     await drainPending(deps, stage);
@@ -132,13 +138,186 @@ async function retryReviewLater(deps: EngineDeps, stage: Stage): Promise<void> {
   await drainPending(deps, stage);
 }
 
+async function expandNextParent(
+  deps: EngineDeps,
+  childStage: Stage,
+  parentStage: Stage,
+  parentSpec: EngineSpec,
+  fundingSchedule: ReadonlyMap<string, { calls: number; costUsdMicro: number }> | null,
+): Promise<{ added: number; stop: StopReason; aborted: string | null }> {
+  const parentFunding = fundingSchedule?.get(parentStage.key);
+  if (!parentFunding || parentFunding.calls <= 0) return { added: 0, stop: "source_exhausted", aborted: null };
+  if (deps.fundedCallLimit !== undefined && deps.items.stage(childStage.key).fundedCalls >= deps.fundedCallLimit) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  const parentStream = deps.items.streamState(parentStage.key, "root");
+  if (!parentStream || parentStream.ended || parentStream.barren >= BARREN_PAGES) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  if (parentStream.cursor !== null && parentStream.visitedPositions.has(parentStream.cursor)) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  if (parentSpec.sources?.length || !parentSpec.cursor_param) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  const parentMaxPages = Math.min(
+    parentStage.max_pages ?? Number.POSITIVE_INFINITY,
+    deps.maxPagesPerStage ?? enginePageCapFor(parentStage.planned_rows),
+  );
+  if (deps.items.counts(parentStage.key).pages >= parentMaxPages) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  if (deps.items.stage(parentStage.key).fundedCalls >= parentFunding.calls) {
+    return { added: 0, stop: "source_exhausted", aborted: null };
+  }
+  if ((deps.now ?? Date.now)() >= deps.deadlineMs) {
+    return { added: 0, stop: "time_limit", aborted: null };
+  }
+  const outside = deps.shouldStop?.() ?? null;
+  if (outside) {
+    return { added: 0, stop: "failed", aborted: outside };
+  }
+
+  const before = deps.items.counts(parentStage.key).accepted;
+  const parentDeps: EngineDeps = { ...deps, fundedCallLimit: parentFunding.calls };
+  const res = await runStream(
+    parentDeps,
+    parentStage,
+    parentSpec,
+    "root",
+    withCairoPeriod(parentStage, parentSpec.window, parentSpec.params),
+    null,
+    Number.POSITIVE_INFINITY,
+    periodOf(parentStage, (deps.now ?? Date.now)())?.field ?? (deps.redesignStages?.has(parentStage.key) ? boundaryFieldOf(parentStage, (deps.now ?? Date.now)()) : null),
+    null,
+    null,
+    { singlePage: true, targetRows: Number.POSITIVE_INFINITY },
+  );
+  const added = Math.max(0, deps.items.counts(parentStage.key).accepted - before);
+  return { added, stop: res.reason, aborted: res.aborted };
+}
+
+interface ChildCollectionContext {
+  stage: Stage & { parent_key: string };
+  spec: EngineSpec & { parent_binding: NonNullable<EngineSpec["parent_binding"]> };
+  isFillTotal: boolean;
+  isReplies: boolean;
+  blindReplies: boolean;
+  readsAll: boolean;
+  readAll: boolean;
+  per: number;
+  shareById: Map<string, number> | null;
+  grandRows: Map<string, Row>;
+  swapsLeft: { n: number };
+}
+
+async function collectParentChildren(
+  deps: EngineDeps,
+  ctx: ChildCollectionContext,
+  first: Row,
+  cap: number,
+): Promise<{ stop: StopReason; aborted: string | null; failed: boolean }> {
+  const { stage, spec, isFillTotal, isReplies, blindReplies, readsAll, readAll, per, shareById, grandRows, swapsLeft } = ctx;
+  const { items } = deps;
+  let parent: Row = first;
+  for (;;) {
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { stop: "target_reached", aborted: null, failed: false };
+    const parentId = String(parent.id);
+    // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
+    const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? Math.min(ownChildCount(parent) ?? (stage.children_open ? (Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap), Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap;
+    if (shareById && parentCap <= 0) break;
+    // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
+    // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
+    if (ownChildCount(parent) === 0 && !blindReplies) {
+      const spare = swapsLeft.n > 0 ? spareParentFor(items, stage.parent_key, stage.key, parent) : null;
+      if (spare) {
+        swapsLeft.n -= 1;
+        await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
+        await items.mirror(stage.parent_key);
+        parent = spare.row;
+        continue;
+      }
+      break;
+    }
+    // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
+    // the same field read as a BARE DOMAIN too when the source's input is a website («www.x.com», «x.com/home» are not found by a source that knows «x.com»): index 9, so the streams of the other bindings keep their keys
+    const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false, index: 0 }, ...(WEBSITE_PARAM.test(spec.parent_binding.param) ? [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: true, index: 9 }] : []), ...(spec.parent_binding.fallbacks ?? []).map((f, i) => ({ param: f.param, from: f.from, domain: f.domain === true, index: i + 1 }))];
+    const seenInputs = new Set<string>();
+    // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
+    const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
+      // a PLACEHOLDER company page or website (https://linkedin.com/company/mycompany) is never the key: the source would answer for another company
+      // A POST LINK IS NEVER A COMPANY WEBSITE (S1 live findings, R1): the bare domain of a social link («facebook.com») names no post, the source refuses it
+      if (deps.redesignStages?.has(stage.key) && x.value !== null && x.b.domain && SOCIAL_HOST.test(String(x.value))) return false;
+      if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
+      const key = `${x.b.param}=${String(x.value)}`;
+      if (seenInputs.has(key)) return false;
+      seenInputs.add(key);
+      return true;
+    });
+    if (usable.length === 0) break;
+    let r: { reason: StopReason; aborted: string | null } = { reason: "no_new_items", aborted: null };
+    const baseline = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+    let primary: { params: Record<string, unknown> } | null = null;
+    for (const u of usable) {
+      if (items.counts(stage.key).accepted >= stage.planned_rows) return { stop: "target_reached", aborted: null, failed: false };
+      const also = spec.parent_binding.also ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue((a.grand ? grandRows.get(String(parent.parent_id ?? "")) : parent)?.[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
+      const params = { ...spec.params, ...also, [u.b.param]: u.value };
+      if (u.index === 0) primary = { params };
+      const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+      r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap, null, null, readsAll ? ownChildCount(parent) : null);
+      if (r.aborted) return { stop: r.reason, aborted: r.aborted, failed: false };
+      const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
+      if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
+    }
+    if (r.aborted) return { stop: r.reason, aborted: r.aborted, failed: false };
+    // EVERY SELECTED PARENT IS READ TO THE END (S1 complete count, redesigned stages): a parent that gave nothing (an empty answer or a failure) is read once more with its own input, then by the next suitable tool of the stage (which reads the same parent through its own input)
+    // A TOOL THAT ENDS BEFORE THE PROMISED COUNT IS NOT THE END OF THE SOURCE (S6, live 2026-11-02 ~12:23: the comments tool ended at 139 of a counter of 329 and the stage stopped): the parent's next tools read it too, from the start (an id already stored is ignored), until the parent's own
+    // supply is reached or every tool has ended; only then is the source's end real. A parent that gave nothing keeps the retry of its own input first.
+    const childrenOf = (): number => items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+    const shortOfSupply = (): boolean => (Number.isFinite(parentCap) ? childrenOf() < parentCap : childrenOf() === baseline);
+    const isCatalogPaging = spec.catalog_paging === true && missionPageOf(spec.endpoint_id) !== undefined;
+    if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
+      if (primary && childrenOf() === baseline && !isCatalogPaging) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
+      for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
+        const alt = spec.alternatives![i];
+        if (isCatalogPaging && alt.endpoint_id === spec.endpoint_id) continue;
+        if (isFillTotal) break;
+        const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
+        if (!alt.parent_binding || value === null) continue;
+        const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
+        const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params: { ...alt.params, [alt.parent_binding.param]: value }, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, parent_binding: alt.parent_binding, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}) };
+        r = await runStream(deps, stage, altSpec, `p:${parentId}:alt${i}`, altSpec.params, parentId, parentCap);
+      }
+    }
+    if (r.aborted) return { stop: r.reason, aborted: r.aborted, failed: false };
+    if (FATAL_STOPS.has(r.reason)) return { stop: r.reason, aborted: null, failed: false };
+    const children = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+    // the source ended for this parent and gave it NO child: a spare parent takes its place and is read the same way
+    if (children === 0 && (r.reason === "source_exhausted" || r.reason === "no_new_items") && swapsLeft.n > 0) {
+      const spare = spareParentFor(items, stage.parent_key, stage.key, parent);
+      if (spare) {
+        swapsLeft.n -= 1;
+        await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
+        await items.mirror(stage.parent_key);
+        parent = spare.row;
+        continue;
+      }
+    }
+    if (r.reason === "failed") return { stop: r.reason, aborted: null, failed: true };
+    return { stop: r.reason, aborted: null, failed: false };
+  }
+  return { stop: "source_exhausted", aborted: null, failed: false };
+}
+
 async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (stage.parent_key === null) return runRoot(deps, stage, spec);
+  const parentKey = stage.parent_key;
   // THE COMPLETE COUNT (S1 live findings): the parents the promised count was computed from are the parents read (redesigned stages only)
   if (deps.redesignStages?.has(stage.key) && (stage.parent_pins ?? []).length > 0) await alignPinnedParents(deps, stage);
-  const parentRows = items.acceptedRows(stage.parent_key);
-  if (parentRows.length === 0 || !spec.parent_binding) return { reason: "no_parents", aborted: null };
+  const parentRows = items.acceptedRows(parentKey);
+  const specBinding = spec.parent_binding;
+  if (parentRows.length === 0 || !specBinding) return { reason: "no_parents", aborted: null };
   let last: StopReason = "source_exhausted";
   let failedInARow = 0;
   let anyFailed = false;
@@ -147,7 +326,6 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   const isFillTotal = spec.fill_total_across_parents === true && stage.per_parent_rows === undefined;
   const per = stage.per_parent_rows ?? Number.POSITIVE_INFINITY;
   const fair = isFillTotal ? Number.POSITIVE_INFINITY : Math.max(1, Math.ceil(stage.planned_rows / parentRows.length));
-  const rounds = [Math.min(per, fair)];
   // A PARENT THE SOURCE GAVE NO CHILD FOR IS REPLACED (live, 2026-10-30: «٥ فيديوهات تيك توك ... ومن كل فيديو ١٠ تعليقات»: the plan took the five NEWEST videos, brand new, and the comment source answered 0, 0, 1, 0 and 10 comments, so 16 of 55 were delivered while the
   // search had checked 20 videos and kept 15 beyond the five). The parent stage's own spares (matches it checked and kept beyond its volume) stand in, one at a time, so the customer gets the number of parents he asked for, each with children. Only a parent with NO child is replaced
   // (nothing delivered is ever dropped), only when this stage is the only child of that stage, and a spare is read once.
@@ -168,101 +346,100 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
   const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
   const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
-  for (const cap of rounds) {
-    for (const first of parentRows) {
-      let parent: Row = first;
-      for (;;) {
-        if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
-        const parentId = String(parent.id);
-        // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
-        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? Math.min(ownChildCount(parent) ?? (stage.children_open ? (Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap), Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap;
-        if (shareById && parentCap <= 0) break;
-        // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
-        // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
-        if (ownChildCount(parent) === 0 && !blindReplies) {
-          const spare = swapsLeft.n > 0 ? spareParentFor(items, stage.parent_key, stage.key, parent) : null;
-          if (spare) {
-            swapsLeft.n -= 1;
-            await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
-            await items.mirror(stage.parent_key);
-            parent = spare.row;
-            continue;
-          }
-          break;
-        }
-        // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
-        // the same field read as a BARE DOMAIN too when the source's input is a website («www.x.com», «x.com/home» are not found by a source that knows «x.com»): index 9, so the streams of the other bindings keep their keys
-        const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false, index: 0 }, ...(WEBSITE_PARAM.test(spec.parent_binding.param) ? [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: true, index: 9 }] : []), ...(spec.parent_binding.fallbacks ?? []).map((f, i) => ({ param: f.param, from: f.from, domain: f.domain === true, index: i + 1 }))];
-        const seenInputs = new Set<string>();
-        // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
-        const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
-          // a PLACEHOLDER company page or website (https://linkedin.com/company/mycompany) is never the key: the source would answer for another company
-          // A POST LINK IS NEVER A COMPANY WEBSITE (S1 live findings, R1): the bare domain of a social link («facebook.com») names no post, the source refuses it
-          if (deps.redesignStages?.has(stage.key) && x.value !== null && x.b.domain && SOCIAL_HOST.test(String(x.value))) return false;
-          if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
-          const key = `${x.b.param}=${String(x.value)}`;
-          if (seenInputs.has(key)) return false;
-          seenInputs.add(key);
-          return true;
-        });
-        if (usable.length === 0) break;
-        let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
-        const baseline = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-        let primary: { params: Record<string, unknown> } | null = null;
-        for (const u of usable) {
-          // the first read of a parent also carries the parent's other identity inputs (its link beside its id): a routed source needs them to keep its providers (spec.ts bindingAlso)
-          const also = u.index === 0 ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue((a.grand ? grandRows.get(String(parent.parent_id ?? "")) : parent)?.[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
-          const params = { ...spec.params, ...also, [u.b.param]: u.value };
-          if (u.index === 0) primary = { params };
-          const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap, null, null, readsAll ? ownChildCount(parent) : null);
-          if (r.aborted) return r;
-          const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
-          if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
-        }
-        if (r.aborted) return r;
-        // EVERY SELECTED PARENT IS READ TO THE END (S1 complete count, redesigned stages): a parent that gave nothing (an empty answer or a failure) is read once more with its own input, then by the next suitable tool of the stage (which reads the same parent through its own input)
-        // A TOOL THAT ENDS BEFORE THE PROMISED COUNT IS NOT THE END OF THE SOURCE (S6, live 2026-11-02 ~12:23: the comments tool ended at 139 of a counter of 329 and the stage stopped): the parent's next tools read it too, from the start (an id already stored is ignored), until the parent's own
-        // supply is reached or every tool has ended; only then is the source's end real. A parent that gave nothing keeps the retry of its own input first.
-        const childrenOf = (): number => items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-        const shortOfSupply = (): boolean => (Number.isFinite(parentCap) ? childrenOf() < parentCap : childrenOf() === baseline);
-        const isCatalogPaging = spec.catalog_paging === true && missionPageOf(spec.endpoint_id) !== undefined;
-        if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
-          if (primary && childrenOf() === baseline && !isCatalogPaging) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
-          for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
-            const alt = spec.alternatives![i];
-            if (isCatalogPaging && alt.endpoint_id === spec.endpoint_id) continue;
-            if (isFillTotal) break;
-            const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
-            if (!alt.parent_binding || value === null) continue;
-            const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
-            const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params: { ...alt.params, [alt.parent_binding.param]: value }, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, parent_binding: alt.parent_binding, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}) };
-            r = await runStream(deps, stage, altSpec, `p:${parentId}:alt${i}`, altSpec.params, parentId, parentCap);
-          }
-        }
-        if (r.aborted) return r;
-        // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
-        if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit" || r.reason === "topic_dry") return r;
-        const children = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-        // the source ended for this parent and gave it NO child: a spare parent takes its place and is read the same way
-        if (children === 0 && (r.reason === "source_exhausted" || r.reason === "no_new_items") && swapsLeft.n > 0) {
-          const spare = spareParentFor(items, stage.parent_key, stage.key, parent);
-          if (spare) {
-            swapsLeft.n -= 1;
-            await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
-            await items.mirror(stage.parent_key);
-            parent = spare.row;
-            continue;
-          }
-        }
-        // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
-        if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; break; }
-        failedInARow = 0;
-        last = r.reason;
-        break;
-      }
+
+  const ctx: ChildCollectionContext = {
+    stage: stage as Stage & { parent_key: string },
+    spec: spec as EngineSpec & { parent_binding: NonNullable<EngineSpec["parent_binding"]> },
+    isFillTotal,
+    isReplies,
+    blindReplies,
+    readsAll,
+    readAll,
+    per,
+    shareById,
+    grandRows,
+    swapsLeft,
+  };
+
+  const capForParent = Math.min(per, fair);
+  for (const first of parentRows) {
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    const res = await collectParentChildren(deps, ctx, first, capForParent);
+    if (res.aborted) return { reason: res.stop, aborted: res.aborted };
+    if (FATAL_STOPS.has(res.stop)) return { reason: res.stop, aborted: null };
+    if (res.failed) {
+      failedInARow += 1;
+      anyFailed = true;
+      if (failedInARow >= 3) return { reason: "failed", aborted: null };
+    } else {
+      failedInARow = 0;
+      last = res.stop;
     }
   }
+
+  if (items.counts(stage.key).accepted >= stage.planned_rows) {
+    return { reason: "target_reached", aborted: null };
+  }
+
+  // Schedule-gated parent expansion (Facebook case):
+  const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
+  while (
+    spec.fill_total_across_parents === true &&
+    stage.per_parent_rows === undefined &&
+    items.counts(stage.key).accepted < stage.planned_rows &&
+    !FATAL_STOPS.has(last) &&
+    !(stage.parent_pins?.length) &&
+    parentStage &&
+    !parentStage.deliver &&
+    parentStage.engine &&
+    !(parentStage.pinned_rows?.length)
+  ) {
+    const expanded = await expandNextParent(deps, stage, parentStage, parentStage.engine, deps.fundingSchedule ?? null);
+    if (expanded.aborted) return { reason: expanded.stop, aborted: expanded.aborted };
+    if (FATAL_STOPS.has(expanded.stop)) {
+      last = expanded.stop;
+      break;
+    }
+
+    if (expanded.added > 0) {
+      const freshParents = items.acceptedRows(parentKey).slice(-expanded.added);
+      for (const p of freshParents) {
+        if (items.counts(stage.key).accepted >= stage.planned_rows) break;
+        const res = await collectParentChildren(deps, ctx, p, capForParent);
+        if (res.aborted) return { reason: res.stop, aborted: res.aborted };
+        if (FATAL_STOPS.has(res.stop)) return { reason: res.stop, aborted: null };
+        if (res.failed) {
+          failedInARow += 1;
+          anyFailed = true;
+          if (failedInARow >= 3) return { reason: "failed", aborted: null };
+        } else {
+          failedInARow = 0;
+          last = res.stop;
+        }
+      }
+      if (items.counts(stage.key).accepted >= stage.planned_rows) break;
+    }
+
+    if (expanded.stop === "source_exhausted") {
+      last = "source_exhausted";
+      break;
+    }
+    const parentStream = deps.items.streamState(parentStage.key, "root");
+    if (!parentStream || parentStream.ended || parentStream.barren >= BARREN_PAGES) {
+      last = "source_exhausted";
+      break;
+    }
+    if (parentStream.cursor !== null && parentStream.visitedPositions.has(parentStream.cursor)) {
+      last = "source_exhausted";
+      break;
+    }
+    if (expanded.added === 0) {
+      // Parent page brought no new parents, but parent root stream moved to a new live cursor and barren < BARREN_PAGES.
+      // Keep looping to fetch the next funded parent page.
+      continue;
+    }
+  }
+
   // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
 }
@@ -431,8 +608,6 @@ async function runPinnedRows(deps: EngineDeps, stage: Stage, spec: EngineSpec, r
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : "source_exhausted", aborted: null };
 }
 
-/** Why a parent that gave nothing is read again (the same input once, then the next tool). */
-const RETRY_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
 /** Why a read of one tool may be continued on the next one: it failed twice, it ran dry before the count, or it only repeated itself. */
 const CONTINUE_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
 /** The first day a read goes back to when the customer gave no period. */
@@ -539,7 +714,7 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 }
 
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
-async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null, opts: { singlePage?: boolean; targetRows?: number } = {}): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
   // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
@@ -551,8 +726,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
   let failures = 0;
   for (;;) {
     const counts = items.counts(stage.key);
+    const targetRows = opts.targetRows ?? stage.planned_rows;
     // (the last parent of a stage read in depth may fill the stage's total with its first page: its later pages are still read for a better title, and swap the page-1 people out; the per-parent check below ends it)
-    if (counts.accepted >= stage.planned_rows && !(parentId !== null && depthPages > 1)) return { reason: "target_reached", aborted: null };
+    if (counts.accepted >= targetRows && !(parentId !== null && depthPages > 1)) return { reason: "target_reached", aborted: null };
     const state = items.streamState(stage.key, streamKey);
     if (state?.ended) return { reason: "source_exhausted", aborted: null };
     if (state && state.barren >= BARREN_PAGES) return { reason: "no_new_items", aborted: null };
@@ -573,7 +749,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const cursor = state?.cursor ?? null;
     const paging = spec.catalog_paging === true ? missionPageOf(spec.endpoint_id) : undefined;
     const isCatalogPaging = paging !== undefined;
-    if (isCatalogPaging && cursor !== null && state?.visitedPositions?.has(cursor)) {
+    if (cursor !== null && state?.visitedPositions?.has(cursor)) {
       return { reason: "source_exhausted", aborted: null };
     }
     const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
@@ -624,7 +800,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
     const guaranteeCount = deps.redesignStages?.has(stage.key) === true || isCatalogPaging;
     let ended = pageMode && !reading ? rowsInPage === 0 : !nextCursor || (rowsInPage === 0 && !guaranteeCount) || hasMore === false || !spec.cursor_param;
-    if (isCatalogPaging && nextCursor) {
+    if (nextCursor) {
       if (nextCursor === cursor || state?.visitedPositions?.has(nextCursor)) {
         ended = true;
       }
@@ -635,7 +811,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: hasMore, ended, rows_in_page: rowsInPage, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(opts.targetRows !== undefined ? { targetRows: opts.targetRows } : {}), ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: hasMore, ended, rows_in_page: rowsInPage, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
     // EVERY REPLY, WITHOUT A PAID PAGE FOR NOTHING (live finding C): the replies of a comment read to the end have the comment's own counter as their signal (a real page keeps a next-page value after its last row). When the replies read have reached the counter, the page was
     // not a full one (fewer rows than a call usually gives) and the counter was not exceeded, the comment is done; a counter that was understated shows itself (more rows than it said, or a full page), and the read goes on to the source's end
     if (counterStop !== null && parentId !== null && counterStop > 0) {
@@ -657,5 +833,6 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
       if (after.accepted > before || after.pending > 0) dryStreak = 0; else if (freshNew > 0) dryStreak += 1;
     }
     if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "topic_dry", aborted: null };
+    if (opts.singlePage) return { reason: ended ? "source_exhausted" : "target_reached", aborted: null };
   }
 }

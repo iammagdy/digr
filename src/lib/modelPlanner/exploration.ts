@@ -43,6 +43,8 @@ export interface ExplorationDeps {
   requestCapUsd?: number;
   /** The turn's own deadline (epoch ms): a call is cut so that the planner still has time to answer. */
   deadlineAtMs?: number;
+  /** Replay/recorded mode: masked placeholder cursors from fixtures are not treated as malformed. */
+  isReplay?: boolean;
 }
 
 const MEMORY = { day: new Map<string, number>(), request: new Map<string, number>() };
@@ -378,7 +380,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
     await settleRecord(a, chargeKnown);
     return { ok: false, attempt: a };
   }
-  const { digest, reading } = buildShapeDigest(result.data, endpoint);
+  const { digest, reading } = buildShapeDigest(result.data, endpoint, { isReplay: deps.isReplay });
   if (reading.rows.length === 0) {
     const a = attempt({ outcome: "empty", httpStatus: result.httpStatus, costUsd, durationMs, detail: `the call worked but no rows were found in the answer${reading.warnings.length ? ` (${clip(reading.warnings.join("; "), 120)})` : ""}` });
     await settleRecord(a, chargeKnown);
@@ -407,7 +409,7 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
       const charged2 = classifyTregCharge(second);
       const known2 = charged2.known;
       const secondCost = charged2.known ? charged2.usd : money2.holdUsd;
-      const r2 = second && second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
+      const r2 = second && second.ok ? buildShapeDigest(second.data, endpoint, { isReplay: deps.isReplay }).reading.rows.length : 0;
       const a2 = attempt({ outcome: second && second.ok && r2 > 0 ? "ok" : second && second.ok ? "empty" : "http_error", httpStatus: second?.httpStatus ?? 0, rows: r2, costUsd: secondCost, durationMs: 0, detail: `second page, to measure the rows one call returns${known2 ? "" : " (the charge is not known: the reserved amount stays counted)"}` });
       await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd }, { tag: held2.tag, holdUsd: money2.holdUsd, day: held2.day });
       a.costUsd += secondCost;

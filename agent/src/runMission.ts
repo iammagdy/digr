@@ -1365,7 +1365,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // the plan as the customer approved it (the delivery contract compares the promised number with the card's)
   const approvedPlan = plan;
   plan = withPromiseCaps(plan);
-  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
+  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
   const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));

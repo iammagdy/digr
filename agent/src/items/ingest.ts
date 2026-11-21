@@ -65,6 +65,7 @@ export interface PageRecord { stream: string; call_id: string | null; cursor_in:
 
 export interface IngestOptions {
   page?: PageRecord;
+  targetRows?: number;
   /** Keep a progress event out of this call (the engine writes its own, once per page). Default: the event is written. */
   silent?: boolean;
   /** The most items this batch may ADD to the stage (a parent's share: «five comments per post»): a match beyond it is kept, never delivered, like a match beyond the volume bought. */
@@ -341,6 +342,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   } else for (const c of candidates) outcome.set(c.id, { state: "accepted", by: "rule" });
 
   // the verdicts, in order, as ops: the volume the customer bought is never exceeded (a match beyond it is kept UNCHECKED, never delivered)
+  const stageTarget = options.targetRows ?? stage.planned_rows;
   let acceptedNow = 0;
   let modelAccepted = 0;
   for (const c of candidates) {
@@ -348,7 +350,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     let state: "accepted" | "excluded" | "pending" | "unchecked" = o.state;
     let reason: ItemReason | undefined = o.reason;
     // a match beyond the volume the customer bought was checked and is not needed: it is kept (never delivered, never charged) with that reason
-    if (state === "accepted" && (before.accepted + acceptedNow >= stage.planned_rows || (options.acceptCap !== undefined && acceptedNow >= options.acceptCap))) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; }
+    if (state === "accepted" && (before.accepted + acceptedNow >= stageTarget || (options.acceptCap !== undefined && acceptedNow >= options.acceptCap))) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; }
     // a named source whose share is full: its match is kept, not delivered (the other sources still have room)
     if (state === "accepted" && quota) {
       const src = c.row[SOURCE_KEY];
@@ -379,7 +381,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   if (!options.silent && (tally.saved_now > 0 || fresh.length > 0 || options.page)) {
     await deps.addEvent({ kind: "progress", message_ar: `يحفظ الوكيل ما جمعه لمرحلة «${stage.title_ar}»`, counts: stageEventCounts(plan, key, counts) });
   }
-  const stillNeeded = Math.max(0, stage.planned_rows - counts.accepted);
+  const stillNeeded = Math.max(0, stageTarget - counts.accepted);
   return {
     ok: true, stage: key, ...tally, ...(excludedByList > 0 ? { rejected_by_customer_exclusion: excludedByList } : {}), ...(excludedAsDelivered > 0 ? { rejected_as_delivered_before: excludedAsDelivered } : {}), counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
     ...(spec ? {

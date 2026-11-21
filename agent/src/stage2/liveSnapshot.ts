@@ -29,7 +29,7 @@ type Row = Record<string, unknown>;
 export function deliveryRowsOf(approvedPlan: PricedPlan, snap: Pick<ItemSnapshot, "acceptedRows" | "stage">): { plan: PricedPlan; rowsByStage: Record<string, Row[]>; repliesJudged: boolean } {
   let plan = withPromiseCaps(approvedPlan);
   const rowsByStage: Record<string, Row[]> = {};
-  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
+  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   const repliesJudged = plan.stages.some((s) => s.replies_open || s.children_open);
   if (repliesJudged) plan = withRepliesJudged(plan, rowsByStage, (k) => { const st = snap.stage(k).stop; return !st || st === "source_exhausted"; });

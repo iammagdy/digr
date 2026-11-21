@@ -17,6 +17,7 @@ import type { LiveSnapshot } from "../src/lib/agentMission/stage2/liveSheet";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { replayGateway } from "./helpers/replayGateway";
 import { cellsOf } from "./helpers/round11Worlds";
+import { parentCountsOf } from "../src/lib/agentMission/parents";
 
 /**
  * STAGE 2 (docs/STAGE-2.md), THE EQUALITY CONTRACT: at completion, the rows the customer watched in the live sheet ARE the rows of the file: the same sheets, the same headers, the same rows
@@ -55,7 +56,7 @@ async function fileOf(approved: PricedPlan, log: ItemStore): Promise<Record<stri
   const snap = log.snapshotOfMemory();
   let plan = withPromiseCaps(approved);
   const rowsByStage: Record<string, Row[]> = {};
-  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
+  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));
   if (openKeys.size > 0) plan = withRepliesJudged(plan, rowsByStage, (k) => { const st = snap.stage(k).stop; return !st || st === "source_exhausted"; });
@@ -179,14 +180,14 @@ describe("the live builder reads the rows the way runMission.ts does (a pin: cha
     const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
     for (const line of [
       "plan = withPromiseCaps(plan);",
-      "for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);",
+      "for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);",
       "plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));",
       "const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));",
       "if (hadOpenReplies) plan = withRepliesJudged(plan, rowsByStage, (k) => { const st = snap.stage(k).stop; return !st || st === \"source_exhausted\"; });",
       "const built = await buildMissionFiles(plan, rowsByStage,",
     ]) expect(src.includes(line), line).toBe(true);
     const live = readFileSync(new URL("../agent/src/stage2/liveSnapshot.ts", import.meta.url), "utf8");
-    expect(live).toContain("rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);");
+    expect(live).toContain("rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);");
     expect(live).toContain("deliveredSheetsOf(plan, rowsByStage, input.facts, input.companyMailboxes,");
     const wb = readFileSync(new URL("../agent/src/workbook.ts", import.meta.url), "utf8");
     expect(wb).toContain("= deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);");
@@ -249,6 +250,68 @@ describe("Facebook (NOV 6 2026): the final live table is the workbook, field for
     expect(newestSnapshotName(["snap_000000005_zzzz9999.json", "snap_000000005_aaaa0000_done.json", "snap_000000004_zzzz9999.json"])).toBe("snap_000000005_aaaa0000_done.json");
     expect(newestSnapshotName(["snap_000000003_b.json", "snap_000000004_a.json"])).toBe("snap_000000004_a.json");
     expect(newestSnapshotName(["junk.json", "snap_1_a.json"])).toBeNull();
+  });
+
+  it("preserves deliver: false parent rows in snapshot and workbook (Point 7)", async () => {
+    const basePlan = plan();
+    const p: PricedPlan = {
+      ...basePlan,
+      stages: [
+        { ...basePlan.stages[0], deliver: false, planned_rows: 20, expected_rows: 20 },
+        { ...basePlan.stages[1], planned_rows: 200, expected_rows: 200 },
+      ],
+    };
+    const posts: Row[] = Array.from({ length: 26 }, (_, i) => ({
+      post_id: `post_${i + 1}`,
+      id: `post_${i + 1}`,
+      text: `منشور فيسبوك رقم ${i + 1}`,
+      message: `منشور فيسبوك رقم ${i + 1}`,
+      url: `https://www.facebook.com/p/post_${i + 1}`,
+      author: { name: `كاتب ${i + 1}`, id: `a${i + 1}`, url: `https://www.facebook.com/a${i + 1}` },
+      timestamp: 1_794_000_000 + i * 1000,
+      comments_count: 10,
+      reactions_count: i + 5,
+      reshare_count: 2,
+    }));
+    const comments: Row[] = Array.from({ length: 200 }, (_, i) => {
+      const parentIdx = i % 26;
+      return {
+        id: `c_${i + 1}`,
+        parent_id: `post_${parentIdx + 1}`,
+        text: `تعليق رقم ${i + 1}`,
+        author: `معلق ${i + 1}`,
+        posted_at: "2026-11-06T18:00:00.000Z",
+        likes: i % 10,
+        replies_count: 0,
+        language: "ar",
+      };
+    });
+
+    const { log } = await runLog({ posts, comments }, ["posts", "comments"], 10);
+    const live = buildLiveSnapshot({ missionId: "msn_live_fb_expanded", plan: p, snap: log.snapshotOfMemory(), status: "done", nowMs: 0 });
+    const file = await fileOf(p, log);
+    expectEqual(live, file);
+
+    const fileSheets = Object.keys(file).filter((n) => n !== SUMMARY_SHEET_AR);
+    expect(fileSheets).toEqual([live.sheets[0].nameAr]);
+    expect(live.sheets.length).toBe(1);
+    expect(live.sheets[0].stageKey).toBe("comments");
+
+    const d = deliveryRowsOf(p, log.snapshotOfMemory());
+    const counts = parentCountsOf(p, d.rowsByStage);
+    expect(counts.stage_1_read).toBe(26);
+    expect(counts.stage_1_used).toBe(26);
+
+    const commentsSheet = live.sheets[0];
+    const parentTextIdx = commentsSheet.headers.findIndex((h) => h.includes("نص") || h.includes("المنشور"));
+    expect(parentTextIdx).toBeGreaterThanOrEqual(0);
+
+    const lateComments = commentsSheet.rows.filter((r) => r.parentId && ["post_21", "post_22", "post_23", "post_24", "post_25", "post_26"].includes(r.parentId));
+    expect(lateComments.length).toBeGreaterThan(0);
+    for (const lc of lateComments) {
+      const parentNum = lc.parentId!.replace("post_", "");
+      expect(lc.cells[parentTextIdx].v).toBe(`منشور فيسبوك رقم ${parentNum}`);
+    }
   });
 });
 

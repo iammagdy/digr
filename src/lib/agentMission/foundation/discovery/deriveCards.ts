@@ -79,7 +79,7 @@ export function deriveCard(e: CatalogEndpoint, catalog: TregCatalog, access: Acc
   let cursorPath: string[] | null = e.cursor_path ? e.cursor_path.split(".") : null;
   let rowsInExample = 0;
   try {
-    const read = buildShapeDigest(e.example_response_trimmed, e);
+    const read = buildShapeDigest(e.example_response_trimmed, e, { isReplay: true });
     if (!cursorPath && read.digest.nextCursorPath && cursorName) cursorPath = read.digest.nextCursorPath.split(".");
     rowsInExample = read.digest.rowsInSample;
   } catch { /* the example could not be read: the page size stays 1 (the pessimistic price) */ }

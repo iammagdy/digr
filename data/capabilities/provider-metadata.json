@@ -18987,6 +18987,11 @@
      "nextPath": "data.continuation_token",
      "cursorParam": "continuation_token",
      "cursorType": "string",
+     "nilMarkerPath": "data",
+     "terminalFlag": {
+      "path": "code",
+      "equals": 200
+     },
      "preferForCount": true
     }
    },

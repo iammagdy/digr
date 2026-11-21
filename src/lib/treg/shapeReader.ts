@@ -24,6 +24,7 @@ export interface MissionPageMetadata {
   cursorType: "string" | "integer";
   hasMorePath?: string;
   nilMarkerPath?: string;
+  terminalFlag?: { path: string; equals: string | number | boolean };
   preferForCount?: boolean;
 }
 
@@ -56,6 +57,8 @@ export interface ShapeHints {
   itemFields?: Record<string, { type: string }> | null;
   /** The endpoint answers ONE record as the answer itself (no list, no envelope): the whole answer is the row. Set by a caller that knows the endpoint has no list (the catalog's list path is null). */
   rootObjectIsRow?: boolean;
+  /** Offline replay or catalog fixture mode: placeholder strings like «<omitted: ...>» are not flagged as malformed live cursors. */
+  isReplay?: boolean;
 }
 
 export interface ShapeReading {
@@ -183,6 +186,50 @@ export function looksLikeOneRecord(body: Obj): boolean {
   return values >= 3;
 }
 
+
+const ECHO_KEYS = new Set(["params", "request", "query", "input", "echo", "_request", "request_params", "requestparams"]);
+const MASKED = /^<\s*omitted[^>]*>$/i;
+
+interface ReviewedPageVerdict {
+  hasMore: boolean | null;
+  explicitNoMore: boolean;
+  parsedNext: string | number | null;
+  malformedNext: boolean;
+  isTerminalWrapper: boolean;
+  isTerminalCursor: boolean;
+}
+
+function evaluateReviewedPage(body: unknown, mp: MissionPageMetadata, rawList: unknown, isReplay?: boolean): ReviewedPageVerdict {
+  let hasMore: boolean | null = null;
+  let explicitNoMore = false;
+  if (mp.hasMorePath) {
+    const rawMore = getPath(body, mp.hasMorePath);
+    if (rawMore === false || rawMore === 0 || rawMore === "0" || rawMore === "false" || rawMore === "False") {
+      hasMore = false;
+      explicitNoMore = true;
+    } else if (rawMore === true || rawMore === 1 || rawMore === "1" || rawMore === "true" || rawMore === "True") {
+      hasMore = true;
+    }
+  }
+  const rawNext = getPath(body, mp.nextPath);
+  const parsedNext = pageInputValue(rawNext, mp);
+  const cursorAbsentOrNull = rawNext === null || rawNext === undefined;
+  const isMasked = typeof rawNext === "string" && MASKED.test(rawNext.trim());
+  const malformedNext = !explicitNoMore && !cursorAbsentOrNull && (!isReplay || !isMasked) && parsedNext === null;
+  const flagOk = mp.terminalFlag ? getPath(body, mp.terminalFlag.path) === mp.terminalFlag.equals : true;
+  const markerOk = Boolean(mp.nilMarkerPath && isObj(getPath(body, mp.nilMarkerPath)));
+  const isTerminalWrapper =
+    (rawList === null || rawList === undefined) &&
+    !malformedNext &&
+    markerOk &&
+    flagOk &&
+    (mp.hasMorePath ? explicitNoMore : cursorAbsentOrNull);
+  const isEmptyDeclaredArray = Array.isArray(rawList) && rawList.length === 0 && !mp.hasMorePath && cursorAbsentOrNull && !malformedNext && flagOk;
+  const isTerminalCursor = !malformedNext && (explicitNoMore || isTerminalWrapper || isEmptyDeclaredArray);
+  if (isTerminalCursor && hasMore === null) hasMore = false;
+  return { hasMore, explicitNoMore, parsedNext, malformedNext, isTerminalWrapper, isTerminalCursor };
+}
+
 function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string | null; strategy: ListStrategy; warnings: string[] } {
   const warnings: string[] = [];
   const asRows = (v: unknown): Obj[] | null => (isObjectList(v) ? v : Array.isArray(v) && v.length === 0 ? [] : null);
@@ -190,19 +237,18 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
   if (hints.missionPage) {
     const mp = hints.missionPage;
     const rawList = getPath(body, mp.listPath);
+    const ev = evaluateReviewedPage(body, mp, rawList, hints.isReplay);
     if (Array.isArray(rawList)) {
       if (rawList.length === 0 || rawList.every(isObj)) {
-        return { rows: rawList as Obj[], path: mp.listPath, strategy: "list_path", warnings: [] };
+        if (ev.malformedNext && rawList.length === 0) {
+          return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared next_path «${mp.nextPath}» is malformed`] };
+        }
+        return { rows: rawList as Obj[], path: mp.listPath, strategy: "list_path", warnings: ev.malformedNext ? [`declared next_path «${mp.nextPath}» is malformed`] : [] };
       }
       return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared list_path «${mp.listPath}» contains non-object rows`] };
     }
-    if (rawList === null && mp.nilMarkerPath) {
-      const marker = getPath(body, mp.nilMarkerPath);
-      const rawMore = mp.hasMorePath ? getPath(body, mp.hasMorePath) : undefined;
-      const isTerminal = rawMore === false || rawMore === 0 || rawMore === "0" || rawMore === "false" || rawMore === "False";
-      if (isObj(marker) && isTerminal) {
-        return { rows: [], path: mp.listPath, strategy: "list_path", warnings: [] };
-      }
+    if (ev.isTerminalWrapper) {
+      return { rows: [], path: mp.listPath, strategy: "list_path", warnings: [] };
     }
     return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared list_path «${mp.listPath}» is absent or malformed`] };
   }
@@ -237,8 +283,6 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
   return { rows: [], path: null, strategy: "none", warnings };
 }
 
-const ECHO_KEYS = new Set(["params", "request", "query", "input", "echo", "_request", "request_params", "requestparams"]);
-const MASKED = /^<\s*omitted[^>]*>$/i;
 const isCursorString = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.trim().toLowerCase() !== "null" && !MASKED.test(v.trim());
 
 interface CursorFound { value: string; path: string; kind: "token" | "offset" | "url" }
@@ -294,23 +338,14 @@ function cursorAtCommonKeys(value: unknown, path: string, depth: number): Cursor
 function readCursor(body: unknown, hints: ShapeHints): { found: CursorFound | null; strategy: CursorStrategy; hasMore: boolean | null } {
   if (hints.missionPage) {
     const mp = hints.missionPage;
-    let hasMore: boolean | null = null;
-    if (mp.hasMorePath) {
-      const rawMore = getPath(body, mp.hasMorePath);
-      if (rawMore === false || rawMore === 0 || rawMore === "0" || rawMore === "false" || rawMore === "False") {
-        hasMore = false;
-      } else if (rawMore === true || rawMore === 1 || rawMore === "1" || rawMore === "true" || rawMore === "True") {
-        hasMore = true;
-      }
-    }
-    if (hasMore === false) return { found: null, strategy: "none", hasMore };
-
-    const cursor = pageInputValue(getPath(body, mp.nextPath), mp);
-    if (cursor === null) return { found: null, strategy: "none", hasMore };
+    const ev = evaluateReviewedPage(body, mp, getPath(body, mp.listPath), hints.isReplay);
+    if (ev.malformedNext) return { found: null, strategy: "none", hasMore: null };
+    if (ev.isTerminalCursor) return { found: null, strategy: "none", hasMore: false };
+    if (ev.parsedNext === null) return { found: null, strategy: "none", hasMore: ev.hasMore };
     return {
-      found: { value: String(cursor), path: mp.nextPath, kind: mp.cursorType === "integer" ? "offset" : "token" },
+      found: { value: String(ev.parsedNext), path: mp.nextPath, kind: mp.cursorType === "integer" ? "offset" : "token" },
       strategy: "cursor_path",
-      hasMore,
+      hasMore: ev.hasMore,
     };
   }
 

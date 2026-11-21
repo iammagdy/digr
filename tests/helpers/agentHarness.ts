@@ -19,7 +19,7 @@ export const NOT_ADMIN: AccountAccess = { isAdmin: false, verifiedBusiness: fals
 export const USER_ID = "00000000-0000-0000-0000-0000000000aa";
 
 export function tregResult(data: unknown, costUsd: number, extra: Partial<TregCallResult> = {}): TregCallResult {
-  return { ok: true, httpStatus: 200, tregCallId: `t_${Math.random().toString(36).slice(2, 8)}`, costMicro: Math.round(costUsd * 1_000_000), latencyMs: 12, data, isRouteMaxCost: false, isPlatformBalanceLow: false, ...extra };
+  return { ok: true, httpStatus: 200, tregCallId: `t_${Math.random().toString(36).slice(2, 8)}`, costMicro: Math.round(costUsd * 1_000_000), latencyMs: 12, data, isRouteMaxCost: false, isPlatformBalanceLow: false, allowLegacyEnvelope: true, ...extra };
 }
 
 /** posts: n rows of {id, text, url}. */
