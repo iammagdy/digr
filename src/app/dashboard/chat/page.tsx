@@ -191,6 +191,17 @@ interface ActiveJobState {
   resultColumns?: Array<{ key: string; titleAr: string }>;
 }
 
+export function extractDraftFromQuery(searchStr: string): string | null {
+  try {
+    const s = searchStr.startsWith("?") ? searchStr : `?${searchStr}`;
+    const p = new URLSearchParams(s);
+    const d = p.get("draft");
+    return d && d.trim() !== "" ? d : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ChatWorkspacePage() {
   const { user, refresh } = useUser();
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -1670,6 +1681,23 @@ export default function ChatWorkspacePage() {
   useEffect(() => {
     if (!user || deepLinkHandled.current) return;
     const search = new URLSearchParams(window.location.search);
+    const draft = search.get("draft");
+    if (draft && draft.trim() !== "") {
+      setInputText(draft);
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("draft");
+        window.history.replaceState(null, "", url.toString());
+      } catch {
+        /* keep URL */
+      }
+      const convId = search.get("c");
+      const jobId = search.get("jobId");
+      if (!convId && !jobId) {
+        deepLinkHandled.current = true;
+        return;
+      }
+    }
     const convId = search.get("c");
     const retry = search.get("retry") === "1";
     const jobId = search.get("jobId");

@@ -15,6 +15,7 @@ export interface RequestFacts {
   requested: number | null;
   /** The points line of the row («محجوز» or the charge in words). */
   pointsAr: string | null;
+  billable?: number | null;
 }
 
 const key = (id: string) => `diger_request_facts_${id}`;

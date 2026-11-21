@@ -79,7 +79,7 @@ describe("1. the pending block: only what truly waits, last 72 hours, newest fir
     expect(ended.counts.ended).toBe(6);
     expect(ended.rows.map((r) => r.id)).toEqual(["msn_5059162d3a586a55eb36", "msn_0dd51aa74efc716c95ad", "msn_25fb87d4b0dd80c6ae12", "msn_cb5fb577dcafdf3b1f16", "msn_4b08aab1dfe4b5d5b8ee", "msn_480a44f90e1784edbc94"]);
     for (const r of ended.rows) expect(r).toMatchObject({ type: "mission", tab: "ended", endedKind: "expired" });
-    for (const r of ended.rows) expect(r.type === "mission" && r.noteAr).toContain(EXPIRED_SENTENCE_AR);
+    for (const r of ended.rows) expect(r.type === "mission" && r.noteAr).toContain("انتهت مهلة اعتماد الخطة");
     expect(ended.pending).toEqual([]);
   });
 
@@ -234,7 +234,7 @@ describe("3. the tabs filter the whole page, and each count is what its tab list
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     const ids = [...page.matchAll(/^\s*\["(all|running|done|ended|refunded)", "([^"]+)"\],$/gm)];
     expect(ids.map((m) => m[1])).toEqual([...REQUEST_TAB_IDS]);
-    expect(ids.map((m) => m[2])).toEqual(["الكل", "قيد التنفيذ", "مكتملة", "فشلت أو أُلغيت", "حجز مؤقت مُحرَّر"]);
+    expect(ids.map((m) => m[2])).toEqual(["الكل", "قيد التنفيذ", "مكتملة", "فشلت أو أُلغيت", "المبالغ المستردة"]);
     expect(page).toContain("hashOfTab(next)");
     expect(page).toContain("tabFromHash(window.location.hash)");
   });
