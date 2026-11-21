@@ -186,6 +186,106 @@ describe("the owned plan's affordability and approval", () => {
     expect(fixture.money.quotes.size).toBe(0);
     expect(fixture.money.jobs.size).toBe(0);
   });
+
+  it("SDK transport: credit 716 and fractional holds summing to exact 715 approve once (D-0176 case a)", async () => {
+    const fixture = world(715);
+    fixture.db.tables.set("credit_ledger", [
+      { id: "top_716", user_id: owner, delta: "716" },
+      { id: "hold_1", user_id: owner, delta: "-0.12345678901234572" },
+      { id: "hold_2", user_id: owner, delta: "-0.87654321098765428" },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.availablePoints).toBe(715);
+    expect(card.affordability?.mode).toBe("ready");
+    const app = await fixture.approve(card.approvalVersion);
+    expect(app).toMatchObject({ ok: true, reservePoints: 715 });
+    expect(await fixture.approve(card.approvalVersion)).toMatchObject({ ok: false, status: 409 });
+    expect(fixture.holds()).toEqual([715]);
+  });
+
+  it("wallet 683.99999999999999 offers 652 and approves, 684 never offered (D-0176 case b)", async () => {
+    const fixture = world(0);
+    fixture.db.tables.set("credit_ledger", [
+      { id: "top_sub684", user_id: owner, delta: "683.99999999999999" },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.mode).toBe("offer");
+    expect(card.affordability?.limitedBy).toBe("wallet");
+    expect(card.affordability?.offer).toMatchObject({ kind: "count", count: 18, reservePoints: 652 });
+    expect(card.affordability?.offer?.reservePoints).not.toBe(684);
+
+    const selected = await smallerVersionForCustomer(fixture.client, {
+      id, userId: owner, approvalVersion: card.approvalVersion, offer: card.affordability?.offer,
+    });
+    expect(selected).toMatchObject({ ok: true, status: "plan_ready" });
+
+    const ready = await fixture.read();
+    expect(ready.affordability).toMatchObject({ mode: "ready", reservePoints: 652 });
+    fixture.money.ledger.push({ id: "top_money", delta: 683, type: "topup" });
+    const app = await fixture.approve(ready.approvalVersion);
+    expect(app).toMatchObject({ ok: true, reservePoints: 652 });
+    expect(fixture.holds()).toEqual([652]);
+  });
+
+  it("wallet 684.000000000000000000000 offers 684 and approves (D-0176 case c)", async () => {
+    const fixture = world(0);
+    fixture.db.tables.set("credit_ledger", [
+      { id: "top_exact684", user_id: owner, delta: "684.000000000000000000000" },
+    ]);
+    const card = await fixture.read();
+    expect(card.affordability?.mode).toBe("offer");
+    expect(card.affordability?.limitedBy).toBe("wallet");
+    expect(card.affordability?.offer).toMatchObject({ kind: "count", count: 19, reservePoints: 684 });
+
+    const selected = await smallerVersionForCustomer(fixture.client, {
+      id, userId: owner, approvalVersion: card.approvalVersion, offer: card.affordability?.offer,
+    });
+    expect(selected).toMatchObject({ ok: true, status: "plan_ready" });
+
+    const ready = await fixture.read();
+    expect(ready.affordability).toMatchObject({ mode: "ready", reservePoints: 684 });
+    fixture.money.ledger.push({ id: "top_money", delta: 684, type: "topup" });
+    const app = await fixture.approve(ready.approvalVersion);
+    expect(app).toMatchObject({ ok: true, reservePoints: 684 });
+    expect(fixture.holds()).toEqual([684]);
+  });
+
+  it("delta returned as a JSON number returns 409 unavailable with zero writes (D-0176 case e)", async () => {
+    const fixture = world(1000);
+    const customClient = {
+      ...fixture.client,
+      from: (table: string) => {
+        const builder = fixture.db.from(table);
+        if (table !== "credit_ledger") return builder;
+        return {
+          select: (cols: string, opts?: any) => {
+            if (opts?.count) return builder.select(cols, opts);
+            return {
+              eq: () => ({
+                order: () => ({
+                  range: () => Promise.resolve({
+                    data: [{ id: "top_raw_number", delta: 1000 }],
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      },
+    };
+    const cardResult = await loadCustomerMission(customClient, { id, userId: owner });
+    expect(cardResult.ok).toBe(true);
+    if (!cardResult.ok) throw new Error("expected cardResult.ok to be true");
+    expect(cardResult.view.affordability).toMatchObject({ mode: "unavailable", availablePoints: null });
+    const app = await approveForCustomer(customClient, {
+      id, userId: owner, isGuest: false, emailVerified: true, approvalVersion: cardResult.view.approvalVersion,
+    });
+    expect(app).toMatchObject({ ok: false, status: 409, code: "affordability_changed" });
+    expect(fixture.holds()).toEqual([]);
+    expect(fixture.money.quotes.size).toBe(0);
+    expect(fixture.money.jobs.size).toBe(0);
+  });
 });
 
 describe("a cap-limited proposal is a priced preview", () => {

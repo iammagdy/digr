@@ -147,16 +147,14 @@ const affordabilityChanged = (status: 402 | 409, error = AFFORDABILITY_CHANGED_A
 
 type VerifiedWallet = {
   points: number;
-  num: bigint;
-  denExp: number;
+  wholePoints: number;
   lt: (points: number) => boolean;
   gte: (points: number) => boolean;
 };
 
 function parseDecimal(raw: unknown): { num: bigint; denExp: number } | null {
-  if (typeof raw !== "number" && typeof raw !== "string") return null;
-  if (typeof raw === "number" && !Number.isFinite(raw)) return null;
-  let str = String(raw).trim();
+  if (typeof raw !== "string") return null;
+  let str = raw.trim();
   if (str === "") return null;
   if (/[eE]/.test(str)) {
     const [coeff, expStr] = str.split(/[eE]/);
@@ -198,17 +196,6 @@ const ZERO_BIG = BigInt(0);
 const TEN_BIG = BigInt(10);
 const pow10Big = (exp: number): bigint => TEN_BIG ** BigInt(exp);
 
-function compareDecimal(num1: bigint, exp1: number, num2: bigint, exp2: number): number {
-  if (exp1 === exp2) return num1 === num2 ? 0 : num1 < num2 ? -1 : 1;
-  if (exp1 < exp2) {
-    const scaled = num1 * pow10Big(exp2 - exp1);
-    return scaled === num2 ? 0 : scaled < num2 ? -1 : 1;
-  } else {
-    const scaled = num2 * pow10Big(exp1 - exp2);
-    return num1 === scaled ? 0 : num1 < scaled ? -1 : 1;
-  }
-}
-
 async function readVerifiedWallet(client: any, userId: string): Promise<VerifiedWallet | null> {
   const countRows = () => client.from(CREDIT_LEDGER_TABLE).select("id", { count: "exact", head: true }).eq("user_id", userId);
   try {
@@ -219,7 +206,7 @@ async function readVerifiedWallet(client: any, userId: string): Promise<Verified
     let totalExp = 0;
     for (let offset = 0; offset < first.count; offset += 1000) {
       const length = Math.min(1000, first.count - offset);
-      const page = await client.from(CREDIT_LEDGER_TABLE).select("id,delta").eq("user_id", userId)
+      const page = await client.from(CREDIT_LEDGER_TABLE).select("id,delta::text").eq("user_id", userId)
         .order("id", { ascending: true }).range(offset, offset + length - 1);
       if (page.error || !Array.isArray(page.data) || page.data.length !== length) return null;
       for (const row of page.data) {
@@ -243,18 +230,13 @@ async function readVerifiedWallet(client: any, userId: string): Promise<Verified
       totalExp = 0;
     }
     const points = totalNum === ZERO_BIG ? 0 : Number(totalNum) / Number(pow10Big(totalExp));
+    const wholeBig = totalNum === ZERO_BIG ? ZERO_BIG : totalNum / pow10Big(totalExp);
+    const wholePoints = Number(wholeBig);
     return {
       points,
-      num: totalNum,
-      denExp: totalExp,
-      lt: (p: number) => {
-        const target = parseDecimal(p);
-        return target !== null && compareDecimal(totalNum, totalExp, target.num, target.denExp) < 0;
-      },
-      gte: (p: number) => {
-        const target = parseDecimal(p);
-        return target !== null && compareDecimal(totalNum, totalExp, target.num, target.denExp) >= 0;
-      },
+      wholePoints,
+      lt: (p: number) => wholePoints < p,
+      gte: (p: number) => wholePoints >= p,
     };
   } catch {
     return null;
@@ -275,6 +257,7 @@ function checkedPrice(plan: PricedPlan) {
 async function affordabilityOf(client: any, userId: string, plan: PricedPlan): Promise<{
   view: CustomerAffordability;
   candidate?: PricedPlan;
+  limit?: number;
 }> {
   const price = checkedPrice(plan);
   const capPoints = effectiveJobPointsCap();
@@ -283,19 +266,19 @@ async function affordabilityOf(client: any, userId: string, plan: PricedPlan): P
   const wallet = await readVerifiedWallet(client, userId);
   if (!wallet) return { view: { ...base, mode: "unavailable" } };
   const availablePoints = wallet.points;
-  const limit = Math.min(availablePoints, capPoints);
+  const limit = Math.min(wallet.wholePoints, capPoints);
   const info = { ...base, availablePoints };
   const minimum = price.settings?.minChargePoints ?? DEFAULT_MISSION_PRICING_SETTINGS.minChargePoints;
-  if (wallet.lt(minimum)) return { view: { ...info, mode: "top_up", limitedBy: "wallet" } };
-  const fits = !price.overCap && wallet.gte(price.reservePoints) && price.reservePoints <= capPoints;
-  if (fits && !plan.hold_cap_preview) return { view: { ...info, mode: "ready" } };
+  if (wallet.wholePoints < minimum) return { view: { ...info, mode: "top_up", limitedBy: "wallet" }, limit };
+  const fits = !price.overCap && price.reservePoints <= limit;
+  if (fits && !plan.hold_cap_preview) return { view: { ...info, mode: "ready" }, limit };
 
-  const limitedBy = wallet.lt(capPoints) && wallet.lt(price.reservePoints) ? "wallet" : "cap";
+  const limitedBy = wallet.wholePoints < capPoints && price.reservePoints > wallet.wholePoints ? "wallet" : "cap";
   const root = fits && plan.hold_cap_preview ? fixedCountBasket(plan)?.root : undefined;
   const candidate = root
     ? { kind: "count" as const, count: root.planned_rows, plan, countAr: countAr(root.planned_rows, itemNounOf(root.title_ar)) }
     : affordableVersionOf(plan, limit);
-  if (!candidate) return { view: { ...info, limitedBy, mode: "edit" } };
+  if (!candidate) return { view: { ...info, limitedBy, mode: "edit" }, limit };
   return {
     view: {
       ...info, limitedBy, mode: "offer",
@@ -303,6 +286,7 @@ async function affordabilityOf(client: any, userId: string, plan: PricedPlan): P
         reservePoints: candidate.plan.price.reservePoints, maxChargePoints: candidate.plan.price.maxChargePoints },
     },
     candidate: candidate.plan,
+    limit,
   };
 }
 
@@ -381,7 +365,7 @@ export async function approveForCustomer(client: any, input: { id: string; userI
   if (snapshot.plan.hold_cap_preview || price.overCap || price.reservePoints > effectiveJobPointsCap()) return affordabilityChanged(409);
   const wallet = await readVerifiedWallet(client, input.userId);
   if (!wallet) return affordabilityChanged(409);
-  if (wallet.lt(price.reservePoints)) return affordabilityChanged(402, APPROVE_MESSAGES.insufficient_balance);
+  if (wallet.wholePoints < price.reservePoints) return affordabilityChanged(402, APPROVE_MESSAGES.insufficient_balance);
   const r = await approveMissionOnce(client, { id: input.id, actorId: input.userId, expectUserId: input.userId, snapshot, messages: APPROVE_MESSAGES });
   if (!r.ok) {
     if (r.code === "stale_plan") return staleApproval();
@@ -478,8 +462,8 @@ export async function smallerVersionForCustomer(client: any, input: { id: string
   if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
   if (!matchesApprovalVersion(input.approvalVersion, approvalVersionOf(mission))) return staleApproval();
-  const { view, candidate } = await affordabilityOf(client, input.userId, mission.plan);
-  if (!candidate || !view.offer) {
+  const { view, candidate, limit } = await affordabilityOf(client, input.userId, mission.plan);
+  if (!candidate || !view.offer || limit == null) {
     if (input.offer != null || view.mode === "unavailable") return affordabilityChanged(409);
     return bad(400, "لا توجد نسخة أصغر تناسب الحد المسموح أو رصيدك. غيّر طلبك أو ألغِ المهمة؛ ولم يُخصم شيء.");
   }
@@ -488,7 +472,7 @@ export async function smallerVersionForCustomer(client: any, input: { id: string
   const next = resealCapabilitySelection(selected);
   const price = checkedPrice(next);
   if (!price || price.overCap || price.reservePoints !== view.offer.reservePoints
-    || price.reservePoints > Math.min(view.capPoints, view.availablePoints ?? 0)
+    || price.reservePoints > limit
     || (view.offer.kind === "count" && fixedCountBasket(next)?.root.planned_rows !== view.offer.count)) return affordabilityChanged(409);
   const upd = await saveReadyPlan(client, mission, next);
   if (upd.error) return bad(500, "تعذّر حفظ النسخة الأصغر.");

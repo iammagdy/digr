@@ -63,3 +63,14 @@ The shared runner still uses 600 points. Each file below scopes the default sett
 - `src/lib/agentMission/customerActions.ts`: `readVerifiedWallet` parses arbitrary-precision NUMERIC ledger deltas and sums them using exact scaled BigInt arithmetic, preventing floating-point drift on exact boundary evaluations. Rejects non-numeric/non-finite values as unavailable (409) with zero writes.
 - `tests/dt-20261120-overcap.test.tsx`: Adds explicit test cases for (a) 715.5 approval with 214.5 active hold, (b) 714.5 rejection with 402, (c) preserved integer controls, (d) float drift boundary prevention (715.3 - 0.1 - 0.2 = 715.0), and (e) malformed row delta rejection with 409 and 0 writes.
 - Tested against scratch PostgreSQL on socket `/tmp/digr-issue13-pg` port `55131` with identical results.
+
+## D-0176 PostgREST projection and whole-point limit resolution
+
+- `src/lib/agentMission/customerActions.ts`:
+  - `readVerifiedWallet` selects `id,delta::text` via PostgREST column projection, bypassing JS float conversion during JSON parsing of high-precision NUMERIC fields.
+  - `parseDecimal` strictly accepts only string values (`typeof raw === "string"`), returning null (triggering 409 unavailable) if a raw JSON number or malformed value is received.
+  - Computes `wholePoints = Number(wholeBig)` using integer division on exact BigInt representation (`totalNum / pow10Big(totalExp)`), representing the true integer floor of the wallet balance.
+  - `affordabilityOf` sets `limit = Math.min(wallet.wholePoints, capPoints)`, ensuring comparisons and candidates are governed strictly by whole points so that fractional balances (e.g. 683.99999999999999) cannot offer or attempt to approve unaffordable integer plans (e.g. 684).
+  - `wallet.points` (IEEE-754 float) is preserved only for customer-facing display in `view.availablePoints` and never governs approval or offer selection.
+- `tests/helpers/memoryDb.ts`: Supports `delta::text` projection by converting row `delta` to string.
+- `tests/dt-20261120-overcap.test.tsx`: Adds explicit coverage for PostgREST delta text transport, fractional point offer boundaries (683.99999999999999 vs 684.0), and raw JSON number rejection.

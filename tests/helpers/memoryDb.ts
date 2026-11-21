@@ -41,6 +41,7 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
     let single = false;
     let wantCount = false;
     let head = false;
+    let selectCols: string | null = null;
     const run = () => {
       let out = rows.filter((r) => filters.every((f) => f(r)));
       if (mode === "update") { for (const r of out) Object.assign(r, patch); return { data: out, error: null }; }
@@ -49,10 +50,22 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
       if (orderBy) out = [...out].sort((a, b) => (a[orderBy!.col] > b[orderBy!.col] ? 1 : -1) * (orderBy!.asc ? 1 : -1));
       if (skip > 0) out = out.slice(skip);
       if (max !== null) out = out.slice(0, max);
+      if (selectCols && selectCols.includes("delta::text")) {
+        out = out.map((r) => {
+          if (r && "delta" in r) {
+            return { ...r, delta: r.delta !== undefined && r.delta !== null ? String(r.delta) : r.delta };
+          }
+          return r;
+        });
+      }
       return { data: single ? out[0] ?? null : out, error: null };
     };
     const b: any = {
-      select: (_cols?: string, opts?: { count?: string; head?: boolean }) => { if (opts?.count) { wantCount = true; head = Boolean(opts.head); } return b; },
+      select: (cols?: string, opts?: { count?: string; head?: boolean }) => {
+        if (typeof cols === "string") selectCols = cols;
+        if (opts?.count) { wantCount = true; head = Boolean(opts.head); }
+        return b;
+      },
       eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
       gt: (c: string, v: any) => { filters.push((r) => r[c] > v); return b; },
       neq: (c: string, v: any) => { filters.push((r) => r[c] !== v); return b; },
