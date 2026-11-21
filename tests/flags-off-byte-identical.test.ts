@@ -46,6 +46,24 @@ const norm = (value: unknown): string => JSON.stringify(value, (k, v) => {
 });
 const hash = (value: unknown): string => createHash("sha256").update(norm(value)).digest("hex").slice(0, 16);
 
+type ApprovalViewFields = { approvalState?: string; approvalVersion?: unknown };
+type ReplayPlanView = ReplayResult["planView"] & ApprovalViewFields;
+
+function legacyViewOf(view: ReplayPlanView) {
+  const { approvalState: _approvalState, approvalVersion: _approvalVersion, ...legacyFields } = view;
+  return legacyFields;
+}
+
+const LEGACY_ACCEPT_ARGUMENTS = ["p_quote_id", "p_user_id", "p_expected_quote_hash"];
+
+function preserveAcceptArgumentOrder(call: ReplayResult["money"]["calls"][number]) {
+  if (call.name !== "accept_quote_atomic") return call;
+  const keys = Object.keys(call.args);
+  const ordered = LEGACY_ACCEPT_ARGUMENTS.filter((key) => keys.includes(key));
+  const extra = keys.filter((key) => !ordered.includes(key));
+  return { ...call, args: Object.fromEntries([...ordered, ...extra].map((key) => [key, call.args[key]])) };
+}
+
 async function sectionsOf(r: ReplayResult): Promise<Record<string, string>> {
   const wb = await readWorkbook(r);
   const sheets = wb.worksheets.map((ws) => ({ name: ws.name, rows: Array.from({ length: ws.rowCount }, (_, i) => (ws.getRow(i + 1).values as unknown[]).slice(1).map((c) => (c && typeof c === "object" && "text" in (c as object) ? { text: (c as { text: unknown }).text, link: (c as { hyperlink?: unknown }).hyperlink } : c))) }));
@@ -54,12 +72,12 @@ async function sectionsOf(r: ReplayResult): Promise<Record<string, string>> {
   return {
     mission: hash({ status: m.status, delivered: m.delivered_units, charged: m.charged_points, reserved: m.reserved_points, unit: m.unit_price_points, summary: m.summary_ar, plan: m.plan }),
     workbook: hash(sheets),
-    planView: hash(r.planView),
-    finalView: hash(r.finalView),
+    planView: hash(legacyViewOf(r.planView)),
+    finalView: hash(legacyViewOf(r.finalView)),
     notices: hash(r.notices),
     events: hash(visibleEvents),
     providerCalls: hash(r.call.mock.calls.map((c) => [(c[0] as { endpointId: string }).endpointId, (c[0] as { params: unknown }).params])),
-    ledger: hash(r.money.calls),
+    ledger: hash(r.money.calls.map(preserveAcceptArgumentOrder)),
   };
 }
 
@@ -88,11 +106,21 @@ describe("every flag off: byte-identical to the code before this pull request", 
           expect(values.every((value) => value === null || value === "غير متوفر")).toBe(true);
         }
       }
+      expect(result.planView).toMatchObject({
+        approvalState: "unapproved",
+        approvalVersion: { updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), planHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+      });
+      expect(result.finalView).toHaveProperty("approvalState", "confirmed");
+      expect(result.finalView).not.toHaveProperty("approvalVersion");
       const sections = await sectionsOf(result);
       collected[name] = sections;
       if (writing) { mkdirSync(path.dirname(FIXTURE), { recursive: true }); writeFileSync(FIXTURE, JSON.stringify({ ...(existsSync(FIXTURE) ? JSON.parse(readFileSync(FIXTURE, "utf-8")) : {}), [name]: sections }, null, 1)); return; }
       expect(pinned[name], `no pinned digest for ${name}`).toBeDefined();
       expect(sections).toEqual(pinned[name]);
+      if (name === "x_posts_300") {
+        const changed = { ...result.planView, currentLineAr: `${result.planView.currentLineAr} تغيّر النص.` };
+        expect(hash(legacyViewOf(changed))).not.toBe(pinned[name].planView);
+      }
     });
   }
   it("the pinned file covers exactly the five worlds", () => {

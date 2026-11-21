@@ -32,6 +32,8 @@ const APPROVE_FAILURES: Record<string, string> = {
   // a plan with an ESTIMATED people stage is settled per stage (stageUnits.ts): when the database cannot do that yet, nothing is held and nothing is charged
   settle_unavailable: "تعذّر التأكد من جاهزية التسوية لهذه المهمة، ولم يُحجز أي رصيد. حاول بعد قليل.",
 };
+export const MISSION_APPROVAL_PENDING_AR = "نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.";
+
 const fail = (code: string): ApproveResult => ({ ok: false, code, messageAr: APPROVE_FAILURES[code] ?? "تعذّر اعتماد المهمة." });
 
 /** The stored plan priced AGAIN by code: what the site shows and reserves is never a stored number that nobody recomputed. */
@@ -55,7 +57,7 @@ export async function perStageSettlementReady(client: any): Promise<boolean> {
   }
 }
 
-export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number } = {}): Promise<ApproveResult> {
+export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number; atomicMission?: { actorId: string; expectedUpdatedAt: string } } = {}): Promise<ApproveResult> {
   // a card quoted before a catalog price correction (DT-20261119-11 D7): refused before any price is recomputed, any quote made or any point reserved
   if (planNeedsRequote(mission.plan)) return fail("plan_changed");
   const price = repriceStoredPlan(mission.plan);
@@ -81,6 +83,45 @@ export async function approveMission(client: any, mission: { id: string; user_id
   const quoteHash = createHash("sha256").update(JSON.stringify({ items, formats })).digest("hex");
   const expiresAt = new Date(now.getTime() + (options.expiresInMinutes ?? 30) * 60_000).toISOString();
 
+  const approval = (jobId: string): ApproveResult => ({
+    ok: true, jobId, quoteId, reservePoints: price.reservePoints, unitPricePoints: price.unitPricePoints,
+    deliveredRows: price.deliveredRows, executionBudgetUsd: executionBudgetUsd(price.reservePoints),
+  });
+  if (options.atomicMission) {
+    const pending: ApproveResult = { ok: false, code: "approval_pending", messageAr: MISSION_APPROVAL_PENDING_AR };
+    let response;
+    try {
+      response = await client.rpc("accept_mission_quote_atomic", {
+        p_mission_id: mission.id, p_user_id: mission.user_id, p_actor_id: options.atomicMission.actorId,
+        p_expected_plan: mission.plan, p_expected_updated_at: options.atomicMission.expectedUpdatedAt,
+        p_quote_id: quoteId, p_quote_hash: quoteHash, p_items: items, p_total_points: price.reservePoints,
+        p_output_formats: formats, p_expires_at: expiresAt, p_lease_seconds: AGENT_JOB_LEASE_SECONDS,
+      });
+    } catch {
+      return pending;
+    }
+    if (response?.error) return pending;
+    const body = response?.data;
+    if (body?.success === true) {
+      return typeof body.job_id === "string" && body.job_id.length > 0 && body.quote_id === quoteId
+        && body.reserved_credits === price.reservePoints ? approval(body.job_id) : pending;
+    }
+    if (body?.success !== false) return pending;
+
+    switch (body.error) {
+      case "stale_plan": return fail("stale_plan");
+      case "already_approved": return { ok: false, code: body.error, messageAr: "هذه الخطة اعتُمدت بالفعل." };
+      case "not_plan_ready": return { ok: false, code: body.error, messageAr: "لا توجد خطة جاهزة للاعتماد." };
+      case "claim_failed": return { ok: false, code: body.error, messageAr: "تعذّر بدء المهمة الآن؛ لم يُحجز أي رصيد." };
+      case "insufficient_balance":
+      case "concurrency_limit":
+      case "quote_expired":
+      case "quote_failed":
+      case "accept_failed": return fail(body.error);
+      default: return pending;
+    }
+  }
+
   const created = await client.rpc("create_quote_atomic", {
     p_user_id: mission.user_id, p_quote_id: quoteId, p_quote_hash: quoteHash, p_items: items,
     p_total_points: price.reservePoints, p_output_formats: formats, p_expires_at: expiresAt, p_previous_quote_ids: [],
@@ -98,7 +139,7 @@ export async function approveMission(client: any, mission: { id: string; user_id
     await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تعذّر تجهيز المهمة للتنفيذ، فعاد الحجز المؤقت كاملًا." });
     return fail("claim_failed");
   }
-  return { ok: true, jobId, quoteId, reservePoints: price.reservePoints, unitPricePoints: price.unitPricePoints, deliveredRows: price.deliveredRows, executionBudgetUsd: executionBudgetUsd(price.reservePoints) };
+  return approval(jobId);
 }
 
 export interface SettleInput {

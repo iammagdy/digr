@@ -337,7 +337,7 @@ describe("DT-20261119-11 F6 (D-0140): offline company + people + contact worker 
       const row = db.rows("missions").find((m) => m.id === missionId)!;
       Object.assign(
         row,
-        { created_at: new Date().toISOString() },
+        { created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
         Object.fromEntries(Object.entries(newMission({ id: missionId, user_id: REPLAY_USER })).filter(([k]) => row[k] === undefined)),
       );
       store.missions.set(missionId, row as any);
@@ -406,7 +406,8 @@ describe("DT-20261119-11 F6 (D-0140): offline company + people + contact worker 
 
       const planLoad = await loadCustomerMission(client, { id: missionId, userId: REPLAY_USER });
       expect(planLoad.ok).toBe(true);
-      const approved = await approveForCustomer(client, { id: missionId, userId: REPLAY_USER, isGuest: false, emailVerified: true });
+      if (!planLoad.ok) throw new Error(planLoad.error);
+      const approved = await approveForCustomer(client, { id: missionId, userId: REPLAY_USER, isGuest: false, emailVerified: true, approvalVersion: planLoad.view.approvalVersion });
       expect(approved.ok).toBe(true);
 
       const claimedExec = await store.claimMission("w_scale", 120);

@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   if (body?.action === "approve") {
     const r = await approveForCustomer(client, {
-      id, userId: viewer.userId, isGuest: viewer.isGuest, emailVerified: viewer.emailVerified,
+      id, userId: viewer.userId, isGuest: viewer.isGuest, emailVerified: viewer.emailVerified, approvalVersion: body.approvalVersion,
       precheck: async () => {
         const gate = await getLiveProviderGateStatusFromSettings(client);
         if (!gate.isReady) return { ok: false, status: 503, error: gate.messageAr };
@@ -66,7 +66,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       },
       onApproved: async ({ jobId }) => { await sendMissionNotice(client, { userId: viewer.userId, missionId: id, jobId, kind: "started", facts: { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: true } }); },
     });
-    return r.ok ? NextResponse.json({ success: true, jobId: r.jobId }) : fail(r);
+    if (r.ok) return NextResponse.json({ success: true, jobId: r.jobId });
+    if (r.code === "stale_plan") return NextResponse.json({ success: false, code: r.code, error: r.error }, { status: 409 });
+    return fail(r);
   }
   // ROUND 57: «اكتب الطلب من جديد» only reads the words back; the plan stays until the new request is sent
   if (body?.action === "retype") {

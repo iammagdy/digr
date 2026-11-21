@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
-import { fakeMoneyClient } from "./helpers/agentMoney";
+import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
 import { addonRowOf } from "./helpers/reviewQuoteWorld";
 import { customerPlanView } from "../src/lib/agentMission/plan";
-import { approveForCustomer } from "../src/lib/agentMission/customerActions";
+import { approveForCustomer, loadCustomerMission } from "../src/lib/agentMission/customerActions";
 
 /**
  * MONEY PR 7d, PHASE 2B-2 TASK 3: THE EXISTING MISSION APPROVAL REFUSES AN ADD-ON ROW (docs/MONEY-PR-7A.md section 16.4). A review request is a `missions` row whose plan is `{ addon }`, `plan_ready`, and the customer is handed its id. The existing approval
@@ -20,12 +20,12 @@ function makeClient(db: MemoryDb) {
   const written: string[] = [];
   const client: any = {
     from: (t: string) => { const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(`${m} ${t}`); return o(...a); }; } return b; },
-    rpc: money.client.rpc,
+    rpc: withAtomicMissionApproval(db, money).rpc,
   };
   return { client, money, written };
 }
-const ordinary = () => ({ id: "msn_ready0001", user_id: ME, status: "plan_ready", request_text: "هات منشورات", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()), created_at: "2026-10-28T10:00:00Z" });
-const approve = (client: any, id: string) => approveForCustomer(client, { id, userId: ME, isGuest: false, emailVerified: true });
+const ordinary = () => ({ id: "msn_ready0001", user_id: ME, status: "plan_ready", request_text: "هات منشورات", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()), created_at: "2026-10-28T10:00:00Z", updated_at: "2026-11-21T06:00:00.000Z" });
+const approve = (client: any, id: string, approvalVersion?: unknown) => approveForCustomer(client, { id, userId: ME, isGuest: false, emailVerified: true, approvalVersion });
 
 describe("an add-on row is not approved as a mission", () => {
   it("a waiting review request: 409, no money function, no write, the row stays plan_ready, and the precheck is never asked", async () => {
@@ -68,7 +68,9 @@ describe("TEST 18: an ordinary mission is approved exactly as before", () => {
   it("reserves through the existing functions once; a double click reserves once", async () => {
     db.seed("missions", [ordinary()]);
     const { client, money } = makeClient(db);
-    const first = await approve(client, "msn_ready0001");
+    const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
+    if (!view.ok) throw new Error(view.error);
+    const first = await approve(client, "msn_ready0001", view.view.approvalVersion);
     expect(first.ok).toBe(true);
     expect(await approve(client, "msn_ready0001")).toMatchObject({ ok: false, status: 409 });
     expect(money.calls.map((c) => c.name)).toEqual(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk"]);

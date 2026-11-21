@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
-import { fakeMoneyClient } from "./helpers/agentMoney";
+import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
 
 const state = vi.hoisted(() => ({ client: null as any, admin: true, audit: [] as any[], notices: [] as any[] }));
@@ -37,8 +37,9 @@ const TEST_ACC = "33333333-3333-4333-8333-333333333333";
  */
 function makeClient(db: MemoryDb, money = fakeMoneyClient()) {
   const grants: any[] = [];
+  const atomic = withAtomicMissionApproval(db, money);
   const rpc = async (name: string, args: any) => {
-    if (name !== "admin_grant_credit_atomic") return money.client.rpc(name, args);
+    if (name !== "admin_grant_credit_atomic") return atomic.rpc(name, args);
     grants.push(args);
     if (args.p_admin_id !== ADMIN) return { data: { success: false, error: "not_admin" } };
     if (!(args.p_points > 0) || Math.trunc(args.p_points) !== args.p_points || args.p_points > 100000) return { data: { success: false, error: "invalid_amount" } };
@@ -65,7 +66,7 @@ beforeEach(() => {
 });
 
 /** Plans the re-run as the worker would: the plan is ready. */
-const planReady = async (id: string) => await db.from("missions").update({ status: "plan_ready", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()) }).eq("id", id);
+const planReady = async (id: string) => await db.from("missions").update({ status: "plan_ready", updated_at: "2026-11-21T06:00:00.000Z", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()) }).eq("id", id);
 const eventsOfMission = (id: string) => db.rows("mission_events").filter((e: any) => e.mission_id === id);
 
 describe("creating a free re-run", () => {

@@ -1,38 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
-import { fakeMoneyClient } from "./helpers/agentMoney";
+import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
-import { customerPlanView } from "../src/lib/agentMission/plan";
+import { approveWithRecovery } from "../src/lib/missionApprove";
+import { settleMission } from "../src/lib/agentMission/lifecycle";
+import { checkCustomerText } from "../src/lib/agentMission/text";
+import { customerPlanView, validateAndPricePlan } from "../src/lib/agentMission/plan";
 import { AGENT_MAX_OPEN_MISSIONS_PER_USER, AGENT_SERVES_CHAT } from "../src/lib/agentMission/constants";
 
-const state = vi.hoisted(() => ({ viewer: { userId: "u-1", isGuest: false, emailVerified: true } as any, client: null as any, gate: { isReady: true, messageAr: "" } as any, busy: { busy: false, messageAr: "" } as any, notices: [] as any[] }));
+const state = vi.hoisted(() => ({ viewer: { userId: "u-1", isGuest: false, emailVerified: true } as any, client: null as any, gate: { isReady: true, messageAr: "" } as any, duringGate: undefined as (() => Promise<void>) | undefined, busy: { busy: false, messageAr: "" } as any, notices: [] as any[] }));
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => state.client, createServerSideClient: vi.fn() }));
 vi.mock("../src/lib/server/missionViewer", async (orig) => {
   const real = await orig<typeof import("../src/lib/server/missionViewer")>();
   return { ...real, resolveMissionViewer: vi.fn(async () => (state.viewer ? { ok: true, viewer: state.viewer } : { ok: false, response: NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 }) })) };
 });
-vi.mock("../src/lib/server/providerGate", () => ({ getLiveProviderGateStatusFromSettings: vi.fn(async () => state.gate) }));
+vi.mock("../src/lib/server/providerGate", () => ({ getLiveProviderGateStatusFromSettings: vi.fn(async () => { await state.duringGate?.(); return state.gate; }) }));
 vi.mock("../src/lib/server/busyState", () => ({ getBusyState: vi.fn(async () => state.busy) }));
 vi.mock("../src/lib/server/missionNotify", () => ({ sendMissionNotice: vi.fn(async (_c: unknown, n: any) => { state.notices.push(n); return { inApp: true, email: false }; }) }));
 
 import { GET, POST } from "../src/app/api/missions/[id]/route";
 import { GET as fileGET } from "../src/app/api/missions/[id]/file/route";
 import { agentChatTurn, AGENT_PRESS_APPROVE_AR } from "../src/lib/agentMission/chatTurn";
-import { answerForCustomer, approveForCustomer, cancelForCustomer, createCustomerMission, customerFileLink, loadCustomerMission, readQueue, SIGNUP_TO_APPROVE_AR } from "../src/lib/agentMission/customerActions";
+import { answerForCustomer, approveForCustomer, cancelForCustomer, createCustomerMission, customerFileLink, editPlanForCustomer, loadCustomerMission, readQueue, SIGNUP_TO_APPROVE_AR } from "../src/lib/agentMission/customerActions";
 
 const ME = "u-1";
 const OTHER = "u-2";
-const ready = (over: Record<string, unknown> = {}) => ({ id: "msn_ready0001", user_id: ME, status: "plan_ready", request_text: "هات منشورات", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()), created_at: "2026-10-28T10:00:00Z", ...over });
+const ready = (over: Record<string, unknown> = {}) => ({ id: "msn_ready0001", user_id: ME, status: "plan_ready", request_text: "هات منشورات", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()), created_at: "2026-10-28T10:00:00Z", updated_at: "2026-11-21T06:00:00.000Z", ...over });
 
 function makeClient(db: MemoryDb, money = fakeMoneyClient()) {
   const written: string[] = [];
+  const atomic = withAtomicMissionApproval(db, money);
   const client: any = {
     from: (t: string) => { const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
-    rpc: money.client.rpc,
+    rpc: atomic.rpc,
     storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://signed.example/${bucket}/${p}` }, error: null }) }) },
   };
-  return { client, money, written };
+  return { client, money, written, atomic };
 }
 const req = (body?: unknown, url = "http://localhost/api/missions/msn_ready0001") => new NextRequest(url, body === undefined ? undefined : { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 const ctx = (id = "msn_ready0001") => ({ params: Promise.resolve({ id }) });
@@ -97,6 +101,171 @@ describe("a chat request becomes a mission", () => {
   });
 });
 
+describe("approval of the displayed plan (NEW-ISSUES #13)", () => {
+  const timestamp = "2026-11-21T06:00:00.000Z";
+
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => {
+    state.duringGate = undefined;
+    vi.unstubAllEnvs();
+  });
+
+  function world() {
+    const checked = validateAndPricePlan({
+      summary_ar: "ستحصل على شركات المقاولات.",
+      stages: [{ key: "companies", title_ar: "الشركات", endpoint_id: "treg.aiark.company.search", expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "الاسم" }, { key: "created_at", title_ar: "التاريخ" }], sample_rows: [{ name: "شركة مثال", created_at: timestamp }], measured_by: ["call_0001"], filters: [{ kind: "period", days: 30 }] }],
+    }, {
+      call: () => ({ id: "call_0001", endpointId: "treg.aiark.company.search", ok: true, costUsd: 0.05, rows: 10 }),
+      evidenceText: () => `شركة مثال ${timestamp}`,
+      endpointAllowed: () => true,
+    });
+    if (!checked.ok) throw new Error(checked.issues.join("; "));
+    const { client, money, atomic } = makeClient(db, fakeMoneyClient({ balance: 3_000 }));
+    state.client = client;
+    const mission = (over: Record<string, unknown> = {}) => ready({ plan: checked.plan, plan_public: customerPlanView(checked.plan), updated_at: timestamp, ...over });
+    db.seed("missions", [mission()]);
+    const readCard = async (id = "msn_ready0001") => (await GET(req(), ctx(id))).json();
+    const submit = (approvalVersion: unknown, id = "msn_ready0001") => POST(req({ action: "approve", approvalVersion }), ctx(id));
+    const reserves = () => money.ledger.filter((r) => r.type === "reserve").map((r) => -r.delta);
+    const assertNoMoney = () => {
+      expect(reserves()).toEqual([]);
+      expect(money.quotes.size).toBe(0);
+      expect(money.jobs.size).toBe(0);
+      expect(money.ledger.map((r) => r.type)).toEqual(["topup"]);
+      expect(state.notices).toHaveLength(0);
+    };
+    return { client, money, atomic, mission, readCard, submit, reserves, assertNoMoney };
+  }
+
+  const holdFact = (card: any) => card.view.priceFacts.find((f: any) => f.labelAr === "حجز مؤقت")?.valueAr;
+
+  it.each([
+    { when: "before POST", amount: 1348 },
+    { when: "during precheck", amount: 1348 },
+    { when: "same timestamp and price", amount: 715 },
+  ])("refuses an edit $when and accepts only a fresh click at the refreshed price", async ({ when, amount }) => {
+    const f = world();
+    const shown = await f.readCard();
+    expect(holdFact(shown)).toContain("٧١٥");
+    const edit = async () => {
+      const edits = when === "same timestamp and price"
+        ? { stages: [{ key: "companies", filters: [{ kind: "period", enabled: true, days: 7 }] }] }
+        : { count: 40 };
+      expect(await editPlanForCustomer(f.client, { id: "msn_ready0001", userId: ME, edits })).toMatchObject({ ok: true });
+      if (when === "same timestamp and price") db.rows("missions")[0].updated_at = timestamp;
+    };
+    if (when === "before POST") await edit();
+    else state.duringGate = edit;
+
+    const refused = await f.submit(shown.view.approvalVersion);
+    state.duringGate = undefined;
+    expect({ status: refused.status, reserves: f.reserves() }).toEqual({ status: 409, reserves: [] });
+    const body = await refused.json();
+    expect(body).toMatchObject({ success: false, code: "stale_plan" });
+    expect(checkCustomerText(body.error).issues).toEqual([]);
+    f.assertNoMoney();
+    expect(db.rows("missions")[0].status).toBe("plan_ready");
+
+    const newCard = await f.readCard();
+    expect(newCard.view.approvalVersion.planHash).not.toBe(shown.view.approvalVersion.planHash);
+    if (when === "same timestamp and price") expect(newCard.view.approvalVersion.updatedAt).toBe(shown.view.approvalVersion.updatedAt);
+    expect(holdFact(newCard)).toContain(amount === 715 ? "٧١٥" : "١٬٣٤٨");
+    expect((await f.submit(newCard.view.approvalVersion)).status).toBe(200);
+    expect(f.reserves()).toEqual([amount]);
+    expect(f.money.quotes.size).toBe(1);
+    expect(f.money.jobs.size).toBe(1);
+  });
+
+  it("refuses missing or other-mission versions, then holds the unchanged displayed amount once on overlapping clicks", async () => {
+    const f = world();
+    const second = "msn_other0002";
+    db.rows("missions").push(f.mission({ id: second }));
+    const shown = await f.readCard();
+    const wrong = await f.readCard(second);
+    expect(holdFact(shown)).toContain("٧١٥");
+    for (const version of [undefined, wrong.view.approvalVersion]) {
+      const response = await f.submit(version);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "stale_plan" });
+    }
+    f.assertNoMoney();
+
+    const clicks = await Promise.all([f.submit(shown.view.approvalVersion), f.submit(shown.view.approvalVersion)]);
+    expect(clicks.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(f.reserves()).toEqual([715]);
+    expect(f.money.quotes.size).toBe(1);
+    expect(f.money.jobs.size).toBe(1);
+    expect(state.notices).toHaveLength(1);
+    const accepted = await clicks.find((r) => r.ok)!.json();
+    expect(db.rows("missions")[0]).toMatchObject({ status: "approved", job_id: accepted.jobId, quote_id: [...f.money.quotes.keys()][0] });
+  });
+
+  it.each(["database reply", "browser reply"])("recovers the committed job after losing the %s", async (boundary) => {
+    const f = world();
+    const shown = await f.readCard();
+    if (boundary === "database reply") f.atomic.dropNextReply();
+    let discardReply = boundary === "browser reply";
+    const recovery = await approveWithRecovery({
+      post: async () => {
+        const response = await f.submit(shown.view.approvalVersion);
+        if (discardReply) { discardReply = false; return null; }
+        return { status: response.status, body: await response.json() };
+      },
+      isApproved: async () => (await f.readCard()).view.approvalState === "confirmed",
+      sleep: async () => {},
+      refreshSession: async () => {},
+    });
+    expect(recovery).toEqual({ ok: true, viaRead: true });
+    expect(f.reserves()).toEqual([715]);
+    expect(f.money.quotes.size).toBe(1);
+    const row = db.rows("missions")[0];
+    expect([...f.money.jobs.keys()]).toEqual([row.job_id]);
+    expect([...f.money.quotes.keys()]).toEqual([row.quote_id]);
+    expect((await f.readCard()).view).toMatchObject({ phase: "running", approvalState: "confirmed" });
+    expect((await f.submit(shown.view.approvalVersion)).status).toBe(409);
+    expect(f.reserves()).toEqual([715]);
+    expect(state.notices).toHaveLength(boundary === "database reply" ? 0 : 1);
+  });
+
+  it("leaves no hold or false success on link failure and permits a new mission after settlement", async () => {
+    const f = world();
+    const original = await f.readCard();
+    f.atomic.failNextLink();
+    const failed = await f.submit(original.view.approvalVersion);
+    expect(failed.status).toBe(409);
+    expect(await failed.json()).toMatchObject({ success: false });
+    f.assertNoMoney();
+    expect((await f.readCard()).view.approvalState).toBe("unapproved");
+    const retried = await f.submit(original.view.approvalVersion);
+    expect(retried.status).toBe(200);
+    const { jobId } = await retried.json();
+    const row = db.rows("missions")[0];
+    const settled = await settleMission(f.client, { jobId, deliveredUnits: 0, unitPricePoints: row.unit_price_points, reservedPoints: 715, costUsd: 0, resultPath: null });
+    expect(settled).toMatchObject({ ok: true, releasedPoints: 715, chargedPoints: 0 });
+    row.status = "unserved";
+    const created = await createCustomerMission(f.client, { userId: ME, text: "هات شركات جديدة" });
+    if (!created.ok) throw new Error(created.error);
+    Object.assign(db.rows("missions").find((m) => m.id === created.id)!, f.mission({ id: created.id }));
+    expect((await f.submit((await f.readCard(created.id)).view.approvalVersion, created.id)).status).toBe(200);
+    expect(f.reserves()).toEqual([715, 715]);
+    expect(f.money.balance()).toBe(2_285);
+  });
+
+  it("labels an understood claim rollback as no hold and keeps an unlinked legacy approval pending", async () => {
+    const f = world();
+    const shown = await f.readCard();
+    f.atomic.refuseNextClaim();
+    const refused = await f.submit(shown.view.approvalVersion);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: "تعذّر بدء المهمة الآن؛ لم يُحجز أي رصيد." });
+    f.assertNoMoney();
+    Object.assign(db.rows("missions")[0], { status: "approved", job_id: null, quote_id: null });
+    expect((await f.readCard()).view.approvalState).toBe("pending");
+    expect((await f.submit(shown.view.approvalVersion)).status).toBe(409);
+    f.assertNoMoney();
+  });
+});
+
 describe("approval by the customer", () => {
   it("a guest must sign up first; an unverified account must verify; another customer's mission does not exist", async () => {
     db.seed("missions", [ready()]);
@@ -111,7 +280,9 @@ describe("approval by the customer", () => {
   it("reserves through the existing functions ONLY, price and hold computed by code, no money table written by hand; a double click reserves once", async () => {
     db.seed("missions", [ready()]);
     const { client, money, written } = makeClient(db);
-    const first = await approveForCustomer(client, { id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true });
+    const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
+    if (!view.ok) throw new Error(view.error);
+    const first = await approveForCustomer(client, { id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true, approvalVersion: view.view.approvalVersion });
     expect(first.ok).toBe(true);
     const again = await approveForCustomer(client, { id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true });
     expect(again).toMatchObject({ ok: false, status: 409 });
@@ -126,7 +297,9 @@ describe("approval by the customer", () => {
   it("an insufficient balance says so in the customer's words, holds nothing and keeps the plan", async () => {
     db.seed("missions", [ready()]);
     const { client, money } = makeClient(db, fakeMoneyClient({ balance: 2 }));
-    const r = await approveForCustomer(client, { id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true });
+    const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
+    if (!view.ok) throw new Error(view.error);
+    const r = await approveForCustomer(client, { id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true, approvalVersion: view.view.approvalVersion });
     expect(r).toMatchObject({ ok: false, status: 402 });
     expect((r as any).error).toContain("اشحن رصيدك");
     expect((r as any).error).not.toContain("الاختبار");
@@ -139,16 +312,18 @@ describe("approval by the customer", () => {
     const { client, money } = makeClient(db);
     state.client = client;
     state.gate = { isReady: false, messageAr: "الخدمة متوقفة الآن." };
-    let res = await POST(req({ action: "approve" }), ctx());
+    const card = await (await GET(req(), ctx())).json();
+    const click = { action: "approve", approvalVersion: card.view.approvalVersion };
+    let res = await POST(req(click), ctx());
     expect(res.status).toBe(503);
     expect(money.calls).toHaveLength(0);
     state.gate = { isReady: true, messageAr: "" };
     state.busy = { busy: true, messageAr: "الضغط عالٍ الآن." };
-    res = await POST(req({ action: "approve" }), ctx());
+    res = await POST(req(click), ctx());
     expect(res.status).toBe(503);
     expect(money.calls).toHaveLength(0);
     state.busy = { busy: false, messageAr: "" };
-    res = await POST(req({ action: "approve" }), ctx());
+    res = await POST(req(click), ctx());
     expect(res.status).toBe(200);
     expect(state.notices).toHaveLength(1);
     expect(state.notices[0]).toMatchObject({ userId: ME, missionId: "msn_ready0001", kind: "started" });

@@ -55,7 +55,7 @@ describe("seam off (the production behaviour) for the tests of this file", () =>
     expect(isStaleSocialPlan(social(true))).toBe(false);
     expect(isStaleSocialPlan({ stages: [{ key: "c", endpoint_id: "x.companies.search", capability: "companies.search", engine: { built_by: "model" } }] } as never)).toBe(false);
     const rpc = vi.fn(async () => { throw new Error("a money function was called"); });
-    const mk = (plan: unknown) => ({ rpc, from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: "m", user_id: "u", status: "plan_ready", plan } }) }) }) }) });
+    const mk = (plan: unknown) => ({ rpc, from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: "m", user_id: "u", status: "plan_ready", plan } }) }) }) }) }) });
     const r = await approveForCustomer(mk(social(false)) as never, { id: "m", userId: "u", isGuest: false, emailVerified: true });
     expect(r).toMatchObject({ ok: false, status: 410, error: EXPIRED_SOCIAL_PLAN_AR });
     expect(rpc).not.toHaveBeenCalled();

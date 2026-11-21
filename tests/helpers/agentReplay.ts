@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { createMemoryDb, type MemoryDb } from "./memoryDb";
-import { fakeMoneyClient } from "./agentMoney";
+import { fakeMoneyClient, withAtomicMissionApproval } from "./agentMoney";
 import { fakeRecorder, NOT_ADMIN, USER_ID } from "./agentHarness";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { createFakeDriver, type FakeStep } from "../../agent/src/fakeDriver";
@@ -86,7 +86,7 @@ export function replayClient(db: MemoryDb, money: ReturnType<typeof fakeMoneyCli
   const written: string[] = [];
   const client: any = {
     from: (t: string) => { const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
-    rpc: money.client.rpc,
+    rpc: withAtomicMissionApproval(db, money).rpc,
     storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://signed.example/${bucket}/${p}` }, error: null }) }) },
   };
   return { client, written };
@@ -125,7 +125,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   if (!turn.ok) throw new Error(`the chat turn did not create a mission: ${turn.contentAr}`);
   const missionId = input.chooseMission ? input.chooseMission(turn, db) : turn.missionId;
   const row = db.rows("missions").find((m) => m.id === missionId)!;
-  Object.assign(row, { created_at: new Date().toISOString() }, Object.fromEntries(Object.entries(newMission({ id: missionId, user_id: REPLAY_USER })).filter(([k]) => row[k] === undefined)));
+  Object.assign(row, { created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, Object.fromEntries(Object.entries(newMission({ id: missionId, user_id: REPLAY_USER })).filter(([k]) => row[k] === undefined)));
   store.missions.set(missionId, row as MissionRecord);
 
   const base = (driver: ReturnType<typeof createFakeDriver>): RunnerDeps => ({
@@ -161,12 +161,14 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   customerAnswers.push(planLoad);
 
   if (input.beforeApproval) await input.beforeApproval({ client, missionId, db, store });
+  const shown = input.beforeApproval ? await loadCustomerMission(client, { id: missionId, userId: REPLAY_USER }) : planLoad;
+  if (!shown.ok) throw new Error("the updated card could not be read");
   const stored = store.missions.get(missionId)!;
   // the plan the customer approves is the stored one (a plan edit may have replaced it)
   const approvedPlan = (stored.plan ?? planned.plan) as PricedPlan;
 
   // 4. the customer approves
-  const approved = await approveForCustomer(client, { id: missionId, userId: REPLAY_USER, isGuest: false, emailVerified: true });
+  const approved = await approveForCustomer(client, { id: missionId, userId: REPLAY_USER, isGuest: false, emailVerified: true, approvalVersion: shown.view.approvalVersion });
   if (!approved.ok) throw new Error(`approval failed: ${approved.error}`);
 
   // 5. the worker executes it

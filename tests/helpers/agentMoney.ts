@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import type { MemoryDb } from "./memoryDb";
 
 /**
  * A fake of the database's MONEY FUNCTIONS that the agent is allowed to call, with the same arithmetic and the same rules as the real ones (create_quote_atomic, accept_quote_atomic, claim_job_chunk,
@@ -189,4 +191,95 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
   /** The NEXT call of `name` fails: "before" = it never ran, "after" = it ran and committed but the caller never got the answer. */
   const inject = (name: string, when: "before" | "after"): void => { injected.set(name, [...(injected.get(name) ?? []), when]); };
   return { client, quotes, jobs, ledger, calls, balance, inject };
+}
+
+/** The application fake for the atomic wrapper. Transaction/lock semantics are proved separately on PostgreSQL. */
+export function withAtomicMissionApproval(db: MemoryDb, money: ReturnType<typeof fakeMoneyClient>) {
+  const callPrimitive = money.client.rpc;
+  const refuse = (error: string) => ({ data: { success: false, error } });
+  let queue = Promise.resolve();
+  let dropReply = false;
+  let failLink = false;
+  let refuseClaim = false;
+
+  async function approve(args: any) {
+    const row = db.rows("missions").find((m) => m.id === args.p_mission_id && m.user_id === args.p_user_id);
+    if (!row) return refuse("not_plan_ready");
+    if (["approved", "executing"].includes(row.status) && row.job_id && row.quote_id) return refuse("already_approved");
+    if (row.status !== "plan_ready" || row.job_id || row.quote_id) return refuse("not_plan_ready");
+    if (row.updated_at !== args.p_expected_updated_at || !isDeepStrictEqual(row.plan, args.p_expected_plan)) return refuse("stale_plan");
+    if (Array.from(money.quotes.values()).some((q) => q.status === "accepted" && q.user_id === args.p_user_id
+      && q.items.some((i) => i.missionId === row.id && i.endpointId === "agent-mission" && i.capabilitySlug === "agent-mission"))) {
+      return refuse("approval_pending");
+    }
+
+    const previous = structuredClone({ quotes: money.quotes, jobs: money.jobs, ledger: money.ledger, row });
+    function rollback() {
+      money.quotes.clear();
+      for (const [id, quote] of previous.quotes) money.quotes.set(id, quote);
+      money.jobs.clear();
+      for (const [id, job] of previous.jobs) money.jobs.set(id, job);
+      money.ledger.splice(0, money.ledger.length, ...previous.ledger);
+      Object.assign(row, previous.row);
+    }
+    try {
+      const created = await callPrimitive("create_quote_atomic", {
+        p_user_id: args.p_user_id, p_quote_id: args.p_quote_id, p_quote_hash: args.p_quote_hash, p_items: args.p_items,
+        p_total_points: args.p_total_points, p_output_formats: args.p_output_formats, p_expires_at: args.p_expires_at,
+        p_previous_quote_ids: [],
+      });
+      if (created.error) throw new Error(created.error.message);
+      if (!created.data?.success || created.data.already_created) {
+        rollback();
+        return refuse("quote_failed");
+      }
+      const accepted = await callPrimitive("accept_quote_atomic", {
+        p_user_id: args.p_user_id, p_quote_id: args.p_quote_id, p_expected_quote_hash: args.p_quote_hash,
+      });
+      if (accepted.error) throw new Error(accepted.error.message);
+      if (!accepted.data?.success) {
+        rollback();
+        return refuse(accepted.data?.error ?? "accept_failed");
+      }
+      const jobId = accepted.data.job_id;
+      const claimed = refuseClaim ? { data: { claimed: false } } : await callPrimitive("claim_job_chunk", {
+        p_job_id: jobId, p_expected_step: 0, p_lease_seconds: args.p_lease_seconds,
+      });
+      refuseClaim = false;
+      if (!claimed.data?.claimed) {
+        rollback();
+        return refuse("claim_failed");
+      }
+      if (failLink) {
+        failLink = false;
+        throw new Error("injected: mission link failed before commit");
+      }
+      const timestamp = new Date().toISOString();
+      Object.assign(row, {
+        approved_at: timestamp, approved_by: args.p_actor_id, status: "approved", worker_id: null, lease_until: null,
+        job_id: jobId, quote_id: args.p_quote_id, reserved_points: accepted.data.reserved_credits,
+        unit_price_points: args.p_items[0].unitPricePoints, error: null, updated_at: timestamp,
+      });
+      if (dropReply) {
+        dropReply = false;
+        return { error: { message: "injected: the committed mission RPC reply was lost" } };
+      }
+      return { data: { success: true, job_id: jobId, quote_id: args.p_quote_id, reserved_credits: accepted.data.reserved_credits } };
+    } catch (error) {
+      rollback();
+      return { error: { message: String(error) } };
+    }
+  }
+
+  return {
+    rpc(name: string, args: any) {
+      if (name !== "accept_mission_quote_atomic") return callPrimitive(name, args);
+      const result = queue.then(() => approve(args));
+      queue = result.then(() => undefined, () => undefined);
+      return result;
+    },
+    dropNextReply() { dropReply = true; },
+    failNextLink() { failLink = true; },
+    refuseNextClaim() { refuseClaim = true; },
+  };
 }

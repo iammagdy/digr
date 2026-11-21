@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
-import { fakeMoneyClient } from "./helpers/agentMoney";
+import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
 
 const state = vi.hoisted(() => ({ admin: true as boolean, client: null as any, audits: [] as string[] }));
@@ -37,7 +37,7 @@ function makeClient(db: MemoryDb, money = fakeMoneyClient()) {
       for (const m of ["insert", "update", "upsert"]) { const orig = b[m]; b[m] = (...a: any[]) => { written.push(t); return orig(...a); }; }
       return b;
     },
-    rpc: money.client.rpc,
+    rpc: withAtomicMissionApproval(db, money).rpc,
     storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://signed.example/${bucket}/${p}` }, error: null }) }) },
   };
   return { client, touched, written, money };
@@ -71,7 +71,7 @@ describe("the admin page «الوكيل» is for the test account only", () => {
 
   it("refuses to approve a mission of any other account", async () => {
     const { client, money } = makeClient(db);
-    db.seed("missions", [{ id: "msn_other0001", user_id: OTHER_USER, status: "plan_ready", plan: pricedTwoStagePlan() }]);
+    db.seed("missions", [{ id: "msn_other0001", user_id: OTHER_USER, status: "plan_ready", updated_at: "2026-11-21T06:00:00.000Z", plan: pricedTwoStagePlan() }]);
     expect(await approvePlan(client, { id: "msn_other0001", adminId: "adm-1" })).toMatchObject({ ok: false, status: 403 });
     expect(money.calls).toHaveLength(0);
     expect(db.rows("missions")[0].status).toBe("plan_ready");
@@ -79,7 +79,7 @@ describe("the admin page «الوكيل» is for the test account only", () => {
 });
 
 describe("approve reserves through the existing functions and hands the mission to the worker", () => {
-  const seedReady = () => db.seed("missions", [{ id: "msn_ready0001", user_id: TEST_USER, status: "plan_ready", plan: pricedTwoStagePlan() }]);
+  const seedReady = () => db.seed("missions", [{ id: "msn_ready0001", user_id: TEST_USER, status: "plan_ready", updated_at: "2026-11-21T06:00:00.000Z", plan: pricedTwoStagePlan() }]);
 
   it("plan_ready -> approved with the job, the reserve and the unit price computed by code; no money table is written by hand", async () => {
     seedReady();
@@ -226,7 +226,7 @@ describe("the routes check the admin and nothing else answers", () => {
     const id = (await created.json()).id as string;
     expect(state.audits).toContain("إنشاء مهمة وكيل");
     const mission = db.rows("missions").find((m) => m.id === id)!;
-    Object.assign(mission, { status: "plan_ready", plan: pricedTwoStagePlan() });
+    Object.assign(mission, { status: "plan_ready", updated_at: "2026-11-21T06:00:00.000Z", plan: pricedTwoStagePlan() });
     expect((await detailGET(req(`http://x/api/admin/agent/${id}`), ctx(id))).status).toBe(200);
     expect((await detailGET(req("http://x/api/admin/agent/not-an-id"), ctx("not-an-id"))).status).toBe(400);
     expect((await detailPOST(req(`http://x/api/admin/agent/${id}`, { action: "explode" }), ctx(id))).status).toBe(400);

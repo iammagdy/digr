@@ -23,15 +23,44 @@ const statements = (): string => code().replace(/'(?:[^']|'')*'/g, "''");
 /** D-0098: does this migration name the missions table? A left boundary only (see the test of the rule below); `--` comments are not text. */
 const namesTheMissionsTable = (sql: string): boolean => /(?<![a-z0-9])missions/i.test(sql.replace(/--[^\n]*/g, ""));
 
+const ATOMIC_MISSION_APPROVAL = "20261121010000_accept_mission_quote_atomic.sql";
+const violatesLaterMigrationGuard = (filename: string, source: string): boolean =>
+  filename !== ATOMIC_MISSION_APPROVAL && namesTheMissionsTable(source);
+
 describe("the migration file", () => {
   it("there is exactly one, named the way the Supabase CLI names a migration (a timestamp, then the name), and it sorts AFTER every other migration", () => {
     expect(FILE).toHaveLength(1);
     expect(FILE[0]).toMatch(/^\d{14}_one_open_addon_per_file\.sql$/);
     const all = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
     // it sorts after EVERY migration that existed when it was written (the last one before it is the quote-and-settle migration); a migration added LATER (DT-20261118-06 admin_campaigns,
-    // D-0094 point 2) may follow it, but no later migration may name the missions table, so nothing applied after it can touch the index or the rows it guards
+    // D-0094 point 2) may follow it. D-0167 carves out only the validated approval wrapper below.
     expect(all.indexOf(FILE[0])).toBe(all.indexOf("20261104222000_record_production_quote_and_settle.sql") + 1);
-    for (const later of all.slice(all.indexOf(FILE[0]) + 1)) expect(namesTheMissionsTable(readFileSync(path.join(MIGRATIONS, later), "utf8")), later).toBe(false);
+    for (const later of all.slice(all.indexOf(FILE[0]) + 1)) {
+      expect(violatesLaterMigrationGuard(later, readFileSync(path.join(MIGRATIONS, later), "utf8")), later).toBe(false);
+    }
+  });
+  it("D-0167 permits only the owned atomic approval transition and leaves the open add-on index alone", () => {
+    const wrapper = readFileSync(path.join(MIGRATIONS, ATOMIC_MISSION_APPROVAL), "utf8")
+      .replace(/\/\*[\s\S]*?\*\/|--[^\n]*/g, "").replace(/\s+/g, " ");
+    expect(wrapper).not.toMatch(/one_open_addon/i);
+    expect(wrapper).not.toMatch(/\b(?:ALTER|DROP|CREATE)\s+(?:(?:OR REPLACE|UNIQUE|TEMP(?:ORARY)?|UNLOGGED|CONSTRAINT)\s+)*(?:TABLE|INDEX|TRIGGER|POLICY)\b[^;]*\bmissions/i);
+    expect(OPEN_STATUSES).toEqual(expect.arrayContaining(["plan_ready", "approved"]));
+
+    const rowType = /\bmission public\.missions%ROWTYPE;/gi;
+    const lock = /\bSELECT \* INTO mission FROM public\.missions WHERE id = p_mission_id AND user_id = p_user_id FOR UPDATE;/gi;
+    const update = /\bUPDATE public\.missions SET ([^;]+?) WHERE id = p_mission_id AND user_id = p_user_id AND status = 'plan_ready';/gi;
+    expect([...wrapper.matchAll(rowType)]).toHaveLength(1);
+    expect([...wrapper.matchAll(lock)]).toHaveLength(1);
+    const updates = [...wrapper.matchAll(update)];
+    expect(updates).toHaveLength(1);
+    expect(updates[0][1]).toMatch(/(?:^|,)\s*status = 'approved'(?:,|$)/i);
+    expect(updates[0][1]).not.toMatch(/\bplan\b/i);
+    expect(wrapper).toMatch(/\bIF mission\.plan \? 'addon' OR[\s\S]*?RETURN jsonb_build_object\('success', false, 'error', 'quote_failed'\); END IF;/i);
+    expect(namesTheMissionsTable(wrapper.replace(rowType, "").replace(lock, "").replace(update, ""))).toBe(false);
+  });
+  it("D-0098 still rejects another later migration even when it contains the same SQL", () => {
+    const wrapper = readFileSync(path.join(MIGRATIONS, ATOMIC_MISSION_APPROVAL), "utf8");
+    expect(violatesLaterMigrationGuard("20261122010000_accept_mission_quote_atomic.sql", wrapper)).toBe(true);
   });
   // DT-20261118-06 PR 2 (BUG HUNTER Gate 1 P1-3 CONFIRMED D-0098's intent: «any naming of the missions table»): FIX1 matched the letters «missions» ANYWHERE, so a later migration that merely holds «admissions» or «permissions» failed this test.
   // The rule is now a LEFT boundary only: the word must not continue a letter or a digit on its left. `public.missions`, `"missions"`, `missions_one_open_addon_per_file`, `missions_idx` and `agent_missions` (the underscore is not in the class) still fail;

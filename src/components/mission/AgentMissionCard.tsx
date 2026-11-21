@@ -13,7 +13,7 @@ import type { CustomerMissionView } from "@/lib/agentMission/customerView";
 import { CSV_PACKAGING_NOTE_AR } from "@/lib/agentMission/csvLabels";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
-import { approveWithRecovery } from "@/lib/missionApprove";
+import { APPROVE_UNKNOWN_AR, approveWithRecovery } from "@/lib/missionApprove";
 import { useBalance } from "@/hooks/useBalance";
 import { countInputValue, displayDigitsAr } from "@/lib/digitsInput";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
@@ -39,7 +39,15 @@ import { counterAr } from "@/lib/agentMission/stage2/counterWording";
  */
 /** ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was bought). */
 interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
-interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView; /** STAGE 2 S10: present only when DIGER_STAGE2_LIVE_SHEET is on for the viewer. */ liveSheet?: true }
+type ApprovalVersion = { updatedAt: string; planHash: string };
+type ApprovalCardView = CustomerMissionView & {
+  approvalState?: "confirmed" | "pending" | "unapproved";
+  approvalVersion?: ApprovalVersion;
+};
+const sameApprovalVersion = (a: ApprovalVersion | undefined, b: ApprovalVersion | undefined) =>
+  a?.updatedAt === b?.updatedAt && a?.planHash === b?.planHash;
+
+interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: ApprovalCardView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView; /** STAGE 2 S10: present only when DIGER_STAGE2_LIVE_SHEET is on for the viewer. */ liveSheet?: true }
 
 /**
  * NOV 6 2026 CAMPAIGN (X, msn_d31f37958788a24ec46d): a step the customer asked for that the plan cannot carry is a SCOPE DECISION, not a footnote. The approve button names it («اعتمد بدون هذه الخطوة»), next to «عدّل الطلب»;
@@ -80,6 +88,10 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // the approval is on its way (the button and a status line say so at once) / the server accepted it (the card shows the running state before the next read returns)
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [approvedHere, setApprovedHere] = useState(false);
+  const [rejectedVersion, setRejectedVersion] = useState<ApprovalVersion>();
+  const requestNumber = useRef(0);
+  const lastAppliedRead = useRef(0);
+  const earliestRead = useRef(0);
   const alive = useRef(true);
   // ROUND 26 (item 2): the choice on its way (its own label «جارٍ الإرسال…»), and the time of the customer's last action (the card asks fast for a few minutes after it)
   const [pendingText, setPendingText] = useState<string | null>(null);
@@ -92,17 +104,24 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const { balance } = useBalance();
   const balancePoints = balance.status === "ready" ? balance.value : null;
 
-  const read = useCallback(async () => {
+  const read = useCallback(async (discardEarlier = false) => {
+    const number = ++requestNumber.current;
+    if (discardEarlier) earliestRead.current = number;
     // a read that does not answer is cut off (the connection is freed) and the next one is made by the polling loop, which also has its own limit
     const cut = new AbortController();
     const limit = setTimeout(() => cut.abort(), MISSION_READ_LIMIT_MS);
     try {
       const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { cache: "no-store", headers: await authHeaders(), signal: cut.signal });
       const json = (await res.json()) as MissionAnswer;
-      if (alive.current && json?.success && json.view) setAnswer(json);
+      if (alive.current && json?.success && json.view && number >= earliestRead.current && number > lastAppliedRead.current) {
+        lastAppliedRead.current = number;
+        setAnswer(json);
+      }
     } catch { /* the card keeps what it has */ } finally { clearTimeout(limit); }
   }, [missionId]);
 
+  const currentVersion = answer?.view?.approvalVersion;
+  const approvalDisabled = !answer?.isGuest && (!currentVersion || sameApprovalVersion(currentVersion, rejectedVersion));
   const live = answer?.view?.live ?? true;
   const ended = TERMINAL_PHASES.has(answer?.view?.phase ?? "");
   // THE BALANCE AFTER THE END (missionBalance.ts): the header kept the hold taken because nothing asked for the balance when the mission ended
@@ -122,7 +141,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   }, [read, live, ended]);
 
   async function act(action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
-    if (busy) return;
+    if (busy || (action === "approve" && approvalDisabled)) return;
+    const approvalVersion = currentVersion;
     // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
     const shownText = text;
     if (action === "answer" && typeof text === "string" && /^\s*[\d٠-٩۰-۹]+\s*$/.test(text)) text = String(countInputValue(text));
@@ -135,13 +155,41 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       // THE APPROVE CLICK RECOVERS (round 14, missionApprove.ts): a first request that never reaches the money step is retried once with a fresh session, and a lost answer is settled by reading the mission
       if (action === "approve") {
         const url = `/api/missions/${encodeURIComponent(missionId)}`;
+        let stale = false;
+        const transportFailure = { status: 0, body: { error: APPROVE_UNKNOWN_AR } };
         const outcome = await approveWithRecovery({
-          post: async () => { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action: "approve" }) }); return { status: r.status, body: await r.json().catch(() => null) }; },
+          post: async () => {
+            try {
+              const resp = await fetch(url, {
+                method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+                body: JSON.stringify({ action: "approve", approvalVersion }),
+              });
+              const body = await resp.json().catch(() => null);
+              if (typeof body?.success !== "boolean") return transportFailure;
+              stale = resp.status === 409 && body.code === "stale_plan";
+              return { status: resp.status, body };
+            } catch {
+              return transportFailure;
+            }
+          },
           refreshSession: async () => { await createClient().auth.refreshSession(); },
-          isApproved: async () => { const r = await fetch(url, { cache: "no-store", headers: await authHeaders() }); const j = await r.json().catch(() => null); return j?.success && typeof j.status === "string" ? j.status !== "plan_ready" : null; },
+          isApproved: async () => {
+            const response = await fetch(url, { cache: "no-store", headers: await authHeaders() });
+            const json: MissionAnswer | null = await response.json().catch(() => null);
+            if (!json?.success) return null;
+            if (json.view?.approvalState === "confirmed") return true;
+            return json.view?.approvalState === "unapproved" ? false : null;
+          },
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         });
-        if (!outcome.ok) { setError(outcome.error); return; }
+        if (!outcome.ok) {
+          setError(outcome.error);
+          if (stale) {
+            setRejectedVersion(approvalVersion);
+            await read(true);
+          }
+          return;
+        }
         setApprovedHere(true);
         onApproved?.();
         await read();
@@ -157,7 +205,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       if (action === "edit_plan") setEditing(false);
       await read();
     } catch {
-      setError("تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
+      setError(action === "approve" ? APPROVE_UNKNOWN_AR : "تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
     } finally {
       setBusy(false);
       setPendingAction(null);
@@ -231,12 +279,19 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       </div>
     );
   }
+  if (v.approvalState === "pending") {
+    return (
+      <div dir="rtl" role="status" data-testid="agent-approval-pending" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-ink">
+        نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.
+      </div>
+    );
+  }
   // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
   // the live snapshot is written a little after the card's own events: while it lags, the card keeps the higher count it already knows (live, 16 Nov 2026: ٤٠ → ٢٠ → ٦٠ on one run)
   const cardLive = liveData && v.phase === "running" && v.savedSoFar > liveData.delivered ? { ...liveData, delivered: v.savedSoFar, counterAr: counterAr(v.savedSoFar, liveData.promised) } : liveData;
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? cardLive : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} approvalDisabled={approvalDisabled} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? cardLive : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
     // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file). The sheet has its own fold button (handoff
     // «Diger live sheet»); it stays mounted while folded so its numbers keep the same source as the card's counter
     <div className="mt-2 w-full min-w-0" data-testid="agent-live">
@@ -246,7 +301,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null, onRetry }: { /** The customer asks to start again from the same words (the failed, partial and cancelled cards). */ onRetry?: () => void; /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalDisabled = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null, onRetry }: { /** The customer asks to start again from the same words (the failed, partial and cancelled cards). */ onRetry?: () => void; /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; approvalDisabled?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // STAGE 2 F-2: the progress the live counter shows (null: nothing to follow, the card is today's), and the card's own bar (its basis: the delivering stages' rows)
@@ -296,7 +351,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   const headlineAr = finished ? deliveredLineAr || v.resultSummaryAr || "" : "";
   const counter = liveProgress ? { n: liveProgress.delivered, total: liveProgress.promised } : { n: v.savedSoFar, total: v.totalRows };
   const approveButton = (
-    <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[220px] sm:flex-none`} disabled={busy || approving} aria-busy={approving || undefined} style={approving ? { opacity: 0.75 } : undefined} onClick={() => onAct("approve")} data-testid="agent-approve">
+    <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[220px] sm:flex-none`} disabled={busy || approving || approvalDisabled} aria-busy={approving || undefined} style={approving ? { opacity: 0.75 } : undefined} onClick={() => onAct("approve")} data-testid="agent-approve">
       {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : v.unservedAr.length > 0 ? APPROVE_WITHOUT_UNSERVED_AR : "اعتمد وابدأ الجمع"}
     </button>
   );
