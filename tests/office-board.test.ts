@@ -2,6 +2,103 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
+class MockElement {
+  tagName: string;
+  id: string = "";
+  className: string = "";
+  style: Record<string, string> = {};
+  textContent: string = "";
+  children: MockElement[] = [];
+  listeners: Record<string, Function[]> = {};
+  onclick: Function | null = null;
+  attributes: Record<string, string> = {};
+
+  constructor(tagName: string, id: string = "") {
+    this.tagName = tagName.toUpperCase();
+    this.id = id;
+  }
+
+  get firstChild() {
+    return this.children[0] ?? null;
+  }
+
+  appendChild(child: MockElement) {
+    this.children.push(child);
+    return child;
+  }
+
+  removeChild(child: MockElement) {
+    const idx = this.children.indexOf(child);
+    if (idx !== -1) this.children.splice(idx, 1);
+    return child;
+  }
+
+  setAttribute(name: string, val: string) {
+    this.attributes[name] = val;
+  }
+
+  getAttribute(name: string) {
+    return this.attributes[name] ?? null;
+  }
+
+  contains(el: any): boolean {
+    if (el === this) return true;
+    for (const c of this.children) {
+      if (c === el || (c.contains && c.contains(el))) return true;
+    }
+    return false;
+  }
+
+  addEventListener(evt: string, cb: Function) {
+    if (!this.listeners[evt]) this.listeners[evt] = [];
+    this.listeners[evt].push(cb);
+  }
+
+  trigger(evt: string, data: any = {}) {
+    if (evt === "click" && this.onclick) {
+      this.onclick(data);
+    }
+    const handlers = this.listeners[evt] || [];
+    for (const h of handlers) h(data);
+  }
+
+  querySelector(sel: string): MockElement | null {
+    const check = (el: MockElement): MockElement | null => {
+      if (sel.startsWith(".") && el.className.split(" ").includes(sel.slice(1))) return el;
+      if (sel.startsWith("#") && el.id === sel.slice(1)) return el;
+      if (el.tagName.toLowerCase() === sel.toLowerCase()) return el;
+      for (const c of el.children) {
+        const res = check(c);
+        if (res) return res;
+      }
+      return null;
+    };
+    return check(this);
+  }
+
+  querySelectorAll(sel: string): MockElement[] {
+    const list: MockElement[] = [];
+    const check = (el: MockElement) => {
+      if (sel.startsWith(".") && el.className.split(" ").includes(sel.slice(1))) list.push(el);
+      else if (sel.startsWith("#") && el.id === sel.slice(1)) list.push(el);
+      else if (el.tagName.toLowerCase() === sel.toLowerCase()) list.push(el);
+      for (const c of el.children) check(c);
+    };
+    for (const c of this.children) check(c);
+    return list;
+  }
+
+  getBoundingClientRect() {
+    return { left: 0, top: 0, width: 800, height: 540 };
+  }
+
+  getContext() {
+    return mockCtx;
+  }
+}
+
+let mockCtx: any;
+
 function createBoardHarness() {
   const html = readFileSync("public/office/index.html", "utf8");
   const script = html.split("<script>")[1].split("</script>")[0];
@@ -15,8 +112,10 @@ function createBoardHarness() {
     direction: string;
   }> = [];
 
-  const elements = new Map<string, any>();
-  const mockCtx: any = {
+  const fetchCalls: any[] = [];
+  const windowListeners: Record<string, Function[]> = {};
+
+  mockCtx = {
     direction: "inherit",
     textAlign: "start",
     fillStyle: "#000000",
@@ -39,7 +138,6 @@ function createBoardHarness() {
     stroke() {},
     setLineDash() {},
     measureText(text: string) {
-      // Realistic mock: 5.5px per character
       return { width: Array.from(text).length * 5.5 };
     },
     fillText(text: string, x: number, y: number) {
@@ -61,37 +159,38 @@ function createBoardHarness() {
     },
   };
 
-  const makeEl = (tag = "div", id = "") => ({
-    id,
-    tagName: tag.toUpperCase(),
-    style: {} as Record<string, string>,
-    className: "",
-    textContent: "",
-    src: "",
-    clientWidth: 800,
-    clientHeight: 450,
-    addEventListener() {},
-    getBoundingClientRect() {
-      return { left: 0, top: 0, width: 800, height: 450 };
-    },
-    getContext() {
-      return mockCtx;
-    },
-  });
-
-  elements.set("stage-wrapper", makeEl("div", "stage-wrapper"));
-  elements.set("office-canvas", makeEl("canvas", "office-canvas"));
+  const elements = new Map<string, MockElement>();
+  const stageWrapper = new MockElement("div", "stage-wrapper");
+  const canvasEl = new MockElement("canvas", "office-canvas");
+  elements.set("stage-wrapper", stageWrapper);
+  elements.set("office-canvas", canvasEl);
+  stageWrapper.appendChild(canvasEl);
 
   const sandbox: any = {
-    window: {} as any,
+    window: {
+      addEventListener(evt: string, cb: Function) {
+        if (!windowListeners[evt]) windowListeners[evt] = [];
+        windowListeners[evt].push(cb);
+      },
+      innerWidth: 800,
+      innerHeight: 540,
+      devicePixelRatio: 1,
+      matchMedia() {
+        return { matches: false };
+      },
+    } as any,
     document: {
       getElementById(id: string) {
-        return elements.get(id) ?? null;
+        if (elements.has(id)) return elements.get(id);
+        return stageWrapper.querySelector("#" + id);
+      },
+      createElement(tag: string) {
+        return new MockElement(tag);
       },
       addEventListener() {},
     },
     innerWidth: 800,
-    innerHeight: 450,
+    innerHeight: 540,
     devicePixelRatio: 1,
     matchMedia() {
       return { matches: false };
@@ -101,7 +200,10 @@ function createBoardHarness() {
       complete = false;
       naturalWidth = 0;
     },
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    fetch: async (...args: any[]) => {
+      fetchCalls.push(args);
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
     setInterval() {
       return 1;
     },
@@ -118,14 +220,39 @@ function createBoardHarness() {
     Object,
     console: { log() {}, warn() {}, error() {} },
   };
-  sandbox.window = sandbox;
+  sandbox.window.window = sandbox.window;
+  sandbox.window.document = sandbox.document;
 
   const vmCtx = vm.createContext(sandbox);
   vm.runInContext(script, vmCtx);
 
   const evalInContext = (code: string) => vm.runInContext(code, vmCtx);
 
-  return { vmCtx, mockCtx, fillTextCalls, evalInContext };
+  const triggerStageClick = (x: number, y: number, target?: any) => {
+    stageWrapper.trigger("click", {
+      clientX: x,
+      clientY: y,
+      target: target || canvasEl,
+      stopPropagation() {},
+    });
+  };
+
+  const triggerKey = (key: string) => {
+    for (const h of windowListeners["keydown"] || []) {
+      h({ key });
+    }
+  };
+
+  return {
+    vmCtx,
+    mockCtx,
+    fillTextCalls,
+    fetchCalls,
+    stageWrapper,
+    evalInContext,
+    triggerStageClick,
+    triggerKey,
+  };
 }
 
 describe("DT-20261121-office-board: Sprint board title formatting and clearance", () => {
@@ -150,7 +277,6 @@ describe("DT-20261121-office-board: Sprint board title formatting and clearance"
     const rawTitle = cleanBoardTaskTitle(bot);
     expect(rawTitle).toBe("DT-20261121-social-fill");
 
-    // Slot 0 geometry
     const slot = { tx: 125 + 185 - 8, px: 125 + 185 / 2 + 12, y: 7 + 21 }; // tx: 302, px: 229.5
     const pctText = bot.progress + "%";
     const percentWidth = mockCtx.measureText(pctText).width;
@@ -213,7 +339,6 @@ describe("DT-20261121-office-board: Sprint board title formatting and clearance"
     const rawTitle = cleanBoardTaskTitle(bot);
     expect(rawTitle).toBe("NEW-ISSUES-13");
 
-    // Generous availWidth where full title fits
     const availWidth = 200;
     const titleText = fitBoardTitle(mockCtx, bot.name, rawTitle, availWidth);
     expect(titleText).toBe("جوني: NEW-ISSUES-13");
@@ -289,7 +414,205 @@ describe("DT-20261121-office-board: Sprint board title formatting and clearance"
     const titleCall = fillTextCalls.find((c) => c.text.includes("جوني:"));
     expect(titleCall).toBeDefined();
     expect(titleCall?.direction).toBe("rtl");
-    // Context direction is restored after drawWalls
     expect(mockCtx.direction).toBe("ltr");
+  });
+});
+
+describe("DT-20261121-office-board: Employee status card and cheer action (D-0160)", () => {
+  it("case a: Click on جوني (working, 85%) -> card shows Arabic title, step, 85%, and next", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      const nowIso = new Date().toISOString();
+      BOTS.johnny.status = 'working';
+      BOTS.johnny.name = 'جوني';
+      BOTS.johnny.taskTitle = 'خطة استكمال الوسائط';
+      BOTS.johnny.task_title = 'خطة استكمال الوسائط';
+      BOTS.johnny.step = 'تنفيذ المنطق';
+      BOTS.johnny.progress = 85;
+      BOTS.johnny.next = 'مراجعة أشرف';
+      BOTS.johnny.updatedAt = nowIso;
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    // Johnny is at homeX: 300, homeY: 245. wy = 245 - 6 = 239.
+    triggerStageClick(300, 239);
+
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card).toBeDefined();
+    expect(card.style.display).toBe("block");
+
+    const nameEl = card.querySelector(".agent-card-name");
+    expect(nameEl?.textContent).toBe("جوني");
+
+    const statusEl = card.querySelector(".agent-card-status");
+    expect(statusEl?.textContent).toBe("🟢 شغال 85%");
+
+    const taskEl = card.querySelector(".agent-card-task");
+    expect(taskEl?.textContent).toContain("خطة استكمال الوسائط");
+
+    const stepEl = card.querySelector(".agent-card-step");
+    expect(stepEl?.textContent).toContain("تنفيذ المنطق");
+
+    const pctEl = card.querySelector(".agent-card-percent");
+    expect(pctEl?.textContent).toContain("85%");
+
+    const nextEl = card.querySelector(".agent-card-next");
+    expect(nextEl?.textContent).toContain("مراجعة أشرف");
+  });
+
+  it("case b: Click on حزلقوم (idle) -> only the name + متاح (no task, step, or next rows)", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      BOTS.hazalqom.status = 'idle';
+      BOTS.hazalqom.name = 'حزلقوم';
+      BOTS.hazalqom.progress = 0;
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    // Hazalqom is at homeX: 440, homeY: 280. wy = 280 - 6 = 274.
+    triggerStageClick(440, 274);
+
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card).toBeDefined();
+    expect(card.style.display).toBe("block");
+
+    const nameEl = card.querySelector(".agent-card-name");
+    expect(nameEl?.textContent).toBe("حزلقوم");
+
+    const statusEl = card.querySelector(".agent-card-status");
+    expect(statusEl?.textContent).toBe("☕ متاح");
+
+    // Details rows should not exist for idle bot
+    expect(card.querySelector(".agent-card-task")).toBeNull();
+    expect(card.querySelector(".agent-card-step")).toBeNull();
+    expect(card.querySelector(".agent-card-percent")).toBeNull();
+    expect(card.querySelector(".agent-card-next")).toBeNull();
+  });
+
+  it("case c: A stuck bot -> red متأخر label with ⚠️", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      BOTS.salem.status = 'stuck';
+      BOTS.salem.name = 'سالم';
+      BOTS.salem.progress = 25;
+      BOTS.salem.taskId = 'DT-123';
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    // Salem is at homeX: 575, homeY: 390. wy = 390 - 6 = 384.
+    triggerStageClick(575, 384);
+
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card).toBeDefined();
+
+    const statusEl = card.querySelector(".agent-card-status");
+    expect(statusEl?.textContent).toBe("🔴 متأخر 25% ⚠️");
+    expect(statusEl?.style.color).toBe("#ef4444");
+  });
+
+  it("case d: A task_title containing '<b>x</b>' -> shown as plain text, not as HTML", () => {
+    const { evalInContext, stageWrapper, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      BOTS.johnny.status = 'working';
+      BOTS.johnny.taskTitle = '<b>x</b>';
+      BOTS.johnny.task_title = '<b>x</b>';
+      BOTS.johnny.task = '<b>x</b>';
+      BOTS.johnny.progress = 50;
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    triggerStageClick(300, 239);
+
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    const taskEl = card.querySelector(".agent-card-task");
+    expect(taskEl?.textContent).toBe("المهمة: <b>x</b>");
+    // Should NOT have created a <b> DOM node
+    expect(card.querySelector("b")).toBeNull();
+  });
+
+  it("case e: Click on empty floor -> card closes; Esc -> card closes; click other bot -> switches", () => {
+    const { evalInContext, stageWrapper, triggerStageClick, triggerKey } = createBoardHarness();
+
+    evalInContext(`
+      BOTS.johnny.status = 'working';
+      BOTS.johnny.name = 'جوني';
+
+      BOTS.nafady.status = 'working';
+      BOTS.nafady.name = 'نفادي';
+
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    // Click Johnny (300, 239) -> opens
+    triggerStageClick(300, 239);
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    expect(card.style.display).toBe("block");
+    expect(card.querySelector(".agent-card-name")?.textContent).toBe("جوني");
+
+    // Click empty space (50, 50) -> closes
+    triggerStageClick(50, 50);
+    expect(card.style.display).toBe("none");
+
+    // Click Johnny again -> opens
+    triggerStageClick(300, 239);
+    expect(card.style.display).toBe("block");
+
+    // Press Escape -> closes
+    triggerKey("Escape");
+    expect(card.style.display).toBe("none");
+
+    // Click close button (✕) -> closes
+    triggerStageClick(300, 239);
+    expect(card.style.display).toBe("block");
+    const closeBtn = card.querySelector(".agent-card-close");
+    closeBtn?.trigger("click", { stopPropagation() {} });
+    expect(card.style.display).toBe("none");
+
+    // Click Johnny, then click Nafady (235, 144) -> switches bot
+    triggerStageClick(300, 239);
+    expect(card.querySelector(".agent-card-name")?.textContent).toBe("جوني");
+    triggerStageClick(235, 144);
+    expect(card.querySelector(".agent-card-name")?.textContent).toBe("نفادي");
+  });
+
+  it("case f: Cheer button -> bubble shows above bot and NO fetch/XHR happens", () => {
+    const { evalInContext, stageWrapper, fetchCalls, triggerStageClick } = createBoardHarness();
+
+    evalInContext(`
+      BOTS.johnny.status = 'working';
+      BOTS.johnny.name = 'جوني';
+      effCamX = 400;
+      effCamY = 270;
+      cam.zoom = 1;
+    `);
+
+    triggerStageClick(300, 239);
+    const card = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+    const cheerBtn = card.querySelector(".agent-card-cheer");
+    expect(cheerBtn).toBeDefined();
+
+    fetchCalls.length = 0;
+    cheerBtn?.trigger("click", { stopPropagation() {} });
+
+    // celebrateBot was called locally
+    expect(evalInContext("BOTS.johnny.bubbleText")).toBe("👏 برافو!");
+    expect(evalInContext("BOTS.johnny.bubbleUntil")).toBeGreaterThan(1000);
+
+    // No network requests or XHR made
+    expect(fetchCalls.length).toBe(0);
   });
 });
