@@ -24,8 +24,9 @@ const statements = (): string => code().replace(/'(?:[^']|'')*'/g, "''");
 const namesTheMissionsTable = (sql: string): boolean => /(?<![a-z0-9])missions/i.test(sql.replace(/--[^\n]*/g, ""));
 
 const ATOMIC_MISSION_APPROVAL = "20261121010000_accept_mission_quote_atomic.sql";
+const ATOMIC_AGENT_DELIVERY = "20261122010000_finalize_agent_delivery_atomic.sql";
 const violatesLaterMigrationGuard = (filename: string, source: string): boolean =>
-  filename !== ATOMIC_MISSION_APPROVAL && namesTheMissionsTable(source);
+  filename !== ATOMIC_MISSION_APPROVAL && filename !== ATOMIC_AGENT_DELIVERY && namesTheMissionsTable(source);
 
 describe("the migration file", () => {
   it("there is exactly one, named the way the Supabase CLI names a migration (a timestamp, then the name), and it sorts AFTER every other migration", () => {
@@ -33,7 +34,7 @@ describe("the migration file", () => {
     expect(FILE[0]).toMatch(/^\d{14}_one_open_addon_per_file\.sql$/);
     const all = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
     // it sorts after EVERY migration that existed when it was written (the last one before it is the quote-and-settle migration); a migration added LATER (DT-20261118-06 admin_campaigns,
-    // D-0094 point 2) may follow it. D-0167 carves out only the validated approval wrapper below.
+    // D-0094 point 2) may follow it. D-0167 and D-0185 carve out the validated wrappers below.
     expect(all.indexOf(FILE[0])).toBe(all.indexOf("20261104222000_record_production_quote_and_settle.sql") + 1);
     for (const later of all.slice(all.indexOf(FILE[0]) + 1)) {
       expect(violatesLaterMigrationGuard(later, readFileSync(path.join(MIGRATIONS, later), "utf8")), later).toBe(false);
@@ -57,6 +58,47 @@ describe("the migration file", () => {
     expect(updates[0][1]).not.toMatch(/\bplan\b/i);
     expect(wrapper).toMatch(/\bIF mission\.plan \? 'addon' OR[\s\S]*?RETURN jsonb_build_object\('success', false, 'error', 'quote_failed'\); END IF;/i);
     expect(namesTheMissionsTable(wrapper.replace(rowType, "").replace(lock, "").replace(update, ""))).toBe(false);
+  });
+  it("D-0185 permits only the delivery foreign keys, ownership lock and guarded park on missions", () => {
+    const delivery = readFileSync(path.join(MIGRATIONS, ATOMIC_AGENT_DELIVERY), "utf8")
+      .replace(/\/\*[\s\S]*?\*\/|--[^\n]*/g, "").replace(/\s+/g, " ");
+    expect(delivery).not.toMatch(/one_open_addon/i);
+    expect(OPEN_STATUSES).toEqual(expect.arrayContaining(["executing", "approved"]));
+
+    const foreignKeys = ["attempts", "receipts"].map((table) =>
+      `CREATE TABLE public.agent_delivery_${table} ( job_id text PRIMARY KEY REFERENCES public.jobs(id), mission_id text NOT NULL UNIQUE REFERENCES public.missions(id),`);
+    const lockSignature = "CREATE FUNCTION public.agent_delivery_lock(p_mission_id text, p_worker_id text) RETURNS TABLE (mission public.missions, job public.jobs, quote_item jsonb)";
+    const ownedLock = [
+      "SELECT m.* INTO mission FROM public.missions AS m WHERE m.id = p_mission_id FOR UPDATE;",
+      "IF NOT FOUND OR mission.status IS DISTINCT FROM 'executing' OR mission.approved_at IS NULL",
+      "OR mission.plan IS NULL OR p_worker_id IS NULL OR btrim(p_worker_id) = ''",
+      "OR mission.worker_id IS DISTINCT FROM p_worker_id OR mission.lease_until IS NULL",
+      "OR mission.lease_until <= clock_timestamp() THEN RETURN; END IF;",
+    ].join(" ");
+    const park = [
+      "UPDATE public.missions m SET status = 'approved', worker_id = NULL, lease_until = a.next_at, updated_at = v_now",
+      "WHERE m.id = p_mission_id AND m.worker_id = p_worker_id;",
+    ].join(" ");
+    const [lockHeader, lockBody, , , attemptHeader, attemptBody] = delivery.split("$$");
+    expect(lockHeader).toContain(lockSignature);
+    expect(lockBody).toContain(ownedLock);
+    expect(attemptHeader).toContain("CREATE FUNCTION public.claim_agent_delivery_attempt_atomic(");
+    expect(attemptBody).toMatch(/^ DECLARE [^$]+? BEGIN SELECT \* INTO ctx FROM public\.agent_delivery_lock\(p_mission_id, p_worker_id\); IF NOT FOUND THEN RETURN jsonb_build_object\('kind', 'error', 'error', 'unowned_or_unlinked'\); END IF;/i);
+    expect(attemptBody).toContain([
+      "IF p_operation = 'park' THEN",
+      "IF a.next_at IS NULL OR (a.phase = 'release_only' AND a.release_count = 2) THEN",
+      "RETURN jsonb_build_object('kind','exhausted','progress',to_jsonb(a)); END IF;",
+      park,
+    ].join(" "));
+
+    let remaining = delivery;
+    for (const allowed of [...foreignKeys, lockSignature, ownedLock, park]) {
+      expect(remaining).toContain(allowed);
+      remaining = remaining.replace(allowed, "");
+    }
+    expect(remaining).not.toMatch(/\b(?:ALTER|DROP|CREATE)\s+(?:(?:OR REPLACE|UNIQUE|TEMP(?:ORARY)?|UNLOGGED|CONSTRAINT)\s+)*(?:TABLE|INDEX|TRIGGER|POLICY)\b[^;]*\bmissions/i);
+    expect(namesTheMissionsTable(remaining)).toBe(false);
+    expect(violatesLaterMigrationGuard("20261122010001_finalize_agent_delivery_atomic.sql", delivery)).toBe(true);
   });
   it("D-0098 still rejects another later migration even when it contains the same SQL", () => {
     const wrapper = readFileSync(path.join(MIGRATIONS, ATOMIC_MISSION_APPROVAL), "utf8");

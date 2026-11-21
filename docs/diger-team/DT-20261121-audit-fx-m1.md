@@ -29,6 +29,8 @@ The changes below preserve the original ledger, amount, workbook cell and custom
 - `tests/helpers/agentReplay.ts`
 - `tests/methodology-section.test.ts`
 - `tests/ownership-fail-closed.test.ts`
+- `tests/safety-migration-one-open-addon.test.ts` (D-0185)
+- `tests/stage2-done-snapshot-safe.test.ts` (D-0185)
 - `tests/stage2-live-writer.test.ts`
 - `tests/stage4-first-version.test.ts`
 - `tests/worker-ownership.test.ts`

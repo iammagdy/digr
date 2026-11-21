@@ -7,19 +7,19 @@ import { ItemStore } from "../agent/src/items/itemStore";
 import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { ENDPOINT as _ENDPOINT, pages, planning } from "./helpers/engineXScenario";
-import { createMemoryStore, type MemoryStore } from "../agent/src/memoryStore";
+import { createMemoryStore } from "../agent/src/memoryStore";
 import { readSnapshot } from "../agent/src/items/itemStore";
 import { writeDoneSnapshotSafely } from "../agent/src/stage2/liveWriter";
 
 void _ENDPOINT;
 
 /**
- * STAGE 2 safety fix: THE DONE SNAPSHOT NEVER STANDS BETWEEN A MISSION AND ITS SETTLEMENT. It is written AFTER `settleMission` has returned, and the whole of it (the flag check, building the facts and
- * the mailboxes, the write) is inside one try that logs and swallows. If building its arguments throws while DIGER_STAGE2_LIVE_SHEET is on for a test account, `settleMission` is still called once, with
+ * STAGE 2 safety fix: THE DONE SNAPSHOT NEVER STANDS BETWEEN A MISSION AND ITS SETTLEMENT. It is written AFTER the finalizer confirms settlement, and the whole of it (the flag check, building the facts and
+ * the mailboxes, the write) is inside one try that logs and swallows. If building its arguments throws while DIGER_STAGE2_LIVE_SHEET is on for a test account, the replay records one committed settlement with
  * exactly the arguments of the flag-off run, and the mission ends exactly as it does with the flag off. A whole mission (the replay harness, no real call) is run three ways: flag unset, flag on,
  * and flag on with the facts builder throwing on the Stage 2 call.
  */
-const control = vi.hoisted(() => ({ factsCalls: 0, throwOnCall: null as number | null, settleArgs: [] as Array<Record<string, unknown>> }));
+const control = vi.hoisted(() => ({ factsCalls: 0, throwOnCall: null as number | null }));
 
 vi.mock("../agent/src/methodology", async (orig) => {
   const real = await orig<typeof import("../agent/src/methodology")>();
@@ -32,23 +32,52 @@ vi.mock("../agent/src/methodology", async (orig) => {
     },
   };
 });
-vi.mock("../src/lib/agentMission/lifecycle", async (orig) => {
-  const real = await orig<typeof import("../src/lib/agentMission/lifecycle")>();
-  return { ...real, settleMission: vi.fn(async (client: unknown, input: Record<string, unknown>) => { control.settleArgs.push({ ...input }); return real.settleMission(client, input as never); }) };
-});
-
 const REQUEST = "هات ٣٠٠ تغريدة عن محمد صلاح";
-const testAccountStore = (): MemoryStore => { const s = createMemoryStore(); s.readUserEmail = async () => "tester@digr.local"; return s; };
 async function run() {
   control.factsCalls = 0;
-  control.settleArgs = [];
-  const r = await replay({ request: REQUEST, planning: planning(), execution: () => [], answers: [pages(1)[0], ...pages(30)], makeStore: testAccountStore });
+  const doneSnapshotReceipts: boolean[] = [];
+  let settlementConfirmed = false;
+  const makeStore = () => {
+    const store = createMemoryStore();
+    store.readUserEmail = async () => "tester@digr.local";
+    const putNew = store.putNew;
+    store.putNew = async (missionId, path, bytes, contentType) => {
+      if (path.startsWith("live/") && path.endsWith("_done.json")) {
+        doneSnapshotReceipts.push(settlementConfirmed);
+      }
+      await putNew(missionId, path, bytes, contentType);
+    };
+    return store;
+  };
+  const r = await replay({
+    request: REQUEST, planning: planning(), execution: () => [], answers: [pages(1)[0], ...pages(30)], makeStore,
+    deps: (base) => ({
+      ...base,
+      client: {
+        ...base.client,
+        async rpc(name: string, args: Record<string, unknown>) {
+          const reply = await base.client.rpc(name, args);
+          if (name === "finalize_agent_delivery_atomic" && reply.data?.success === true && reply.data.receipt?.kind === "settled") {
+            settlementConfirmed = true;
+          }
+          return reply;
+        },
+      },
+    }),
+  });
   const m = r.mission;
+  const committed = r.money.legacyMoneyTrace().filter(({ name }) => name === "complete_chunk" || name === "settle_job_atomic" || name === "settle_job_by_stage_atomic");
+  expect(committed.map(({ name }) => name)).toEqual(["complete_chunk", "settle_job_atomic"]);
   return {
     r,
-    // the job id is random in each run (it is inside `resultPath` too): everything else of the settlement's input must be identical
-    settleArgs: control.settleArgs.map((a) => { const { jobId: _j, resultPath, ...rest } = a; void _j; return { ...rest, resultPath: String(resultPath).replace(/job_quote_[0-9a-f]+/, "job_quote_X") }; }),
-    settleCalls: control.settleArgs.length,
+    // Job IDs vary across runs. The replay's inner RPC trace already normalizes the sealed path segment.
+    settleArgs: committed.map(({ name, args }) => {
+      const { p_job_id, p_result_file_id, ...rest } = args;
+      expect(p_job_id).toBe(m.job_id);
+      return { name, ...rest, ...(typeof p_result_file_id === "string" ? { p_result_file_id: p_result_file_id.replace(/job_quote_[0-9a-f]+/, "job_quote_X") } : {}) };
+    }),
+    settleCalls: committed.filter(({ name }) => name !== "complete_chunk").length,
+    doneSnapshotReceipts,
     factsCalls: control.factsCalls,
     outcome: { status: m.status, delivered_units: m.delivered_units, charged_points: m.charged_points, reserved_points: m.reserved_points, error: m.error ?? null, summary_ar: m.summary_ar ?? null },
     balance: r.money.balance(),
@@ -80,6 +109,7 @@ describe("the flag on for a test account", () => {
     const on = await run();
     expect(on.factsCalls).toBe(2);
     expect(on.live.some((n) => n.endsWith("_done.json"))).toBe(true);
+    expect(on.doneSnapshotReceipts).toEqual([true]);
     expect(on.settleCalls).toBe(1);
     expect(on.settleArgs).toEqual(off.settleArgs);
     expect(on.outcome).toEqual(off.outcome);
