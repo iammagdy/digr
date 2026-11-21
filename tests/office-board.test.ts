@@ -1238,4 +1238,410 @@ describe("DT-20261121-office-v47: Must-Pass Verification Suite", () => {
       expect(evalInContext("BOTS.hazalqom.isSleeping")).toBe(false);
     });
   });
+
+  describe("DT-20261121-office-busy: busy bots never wander, 20s coffee with countdown", () => {
+    it("case a: auto break never picks working / waiting / stuck / meeting bots; picks an idle one when available", () => {
+      const { evalInContext } = createBoardHarness();
+      evalInContext(`
+        tripBot = null;
+        nextTripAt = 1000;
+        interaction = null;
+        teamMeetingActive = false;
+
+        // Set all bots to non-idle except hagras
+        for (const k of BOT_KEYS) {
+          BOTS[k].onTrip = false;
+          BOTS[k].returningHome = false;
+          BOTS[k].isSleeping = false;
+          BOTS[k].feedStatus = 'working';
+          BOTS[k].status = 'working';
+        }
+        BOTS.ashraf.feedStatus = 'working';
+        BOTS.ashraf.status = 'working';
+        BOTS.marbouha.feedStatus = 'waiting';
+        BOTS.marbouha.status = 'waiting';
+        BOTS.fazza.feedStatus = 'stuck';
+        BOTS.fazza.status = 'stuck';
+        BOTS.johnny.feedStatus = 'meeting';
+        BOTS.johnny.status = 'meeting';
+
+        // Only hagras is idle
+        BOTS.hagras.feedStatus = 'idle';
+        BOTS.hagras.status = 'idle';
+
+        updateCoffeeTrip(1, 2000);
+      `);
+
+      expect(evalInContext("tripBot ? tripBot.id : null")).toBe("hagras");
+
+      // Now set all bots busy (even hagras) -> auto break must pick NO ONE
+      evalInContext(`
+        if (tripBot) {
+          tripBot.onTrip = false;
+          tripBot = null;
+        }
+        nextTripAt = 2000;
+        BOTS.hagras.feedStatus = 'working';
+        BOTS.hagras.status = 'working';
+
+        updateCoffeeTrip(1, 3000);
+      `);
+
+      expect(evalInContext("tripBot")).toBeNull();
+    });
+
+    it("case b: startStandup / startHelp never set onTrip or a route on a busy bot; help with a busy helpee + idle helper still works (only helper moves)", () => {
+      const { evalInContext } = createBoardHarness();
+      evalInContext(`
+        tripBot = null;
+        interaction = null;
+        teamMeetingActive = false;
+
+        // All bots busy
+        for (const k of BOT_KEYS) {
+          BOTS[k].onTrip = false;
+          BOTS[k].returningHome = false;
+          BOTS[k].isSleeping = false;
+          BOTS[k].feedStatus = 'working';
+          BOTS[k].status = 'working';
+          BOTS[k].route = [];
+        }
+
+        const standupRes = startStandup(1000);
+      `);
+      expect(evalInContext("standupRes")).toBe(false);
+      expect(evalInContext("BOT_KEYS.some(k => BOTS[k].onTrip)")).toBe(false);
+
+      // startHelp with all busy bots
+      evalInContext(`
+        const helpBusyRes = startHelp(1000);
+      `);
+      expect(evalInContext("helpBusyRes")).toBe(false);
+
+      // Now: helpee (ashraf) is busy (working), helper (hagras) is idle
+      evalInContext(`
+        BOTS.ashraf.feedStatus = 'working';
+        BOTS.ashraf.status = 'working';
+        BOTS.ashraf.onTrip = false;
+        BOTS.ashraf.route = [];
+
+        BOTS.hagras.feedStatus = 'idle';
+        BOTS.hagras.status = 'idle';
+        BOTS.hagras.onTrip = false;
+        BOTS.hagras.route = [];
+
+        // Run startHelp
+        const helpRes = startHelp(1000);
+      `);
+      expect(evalInContext("helpRes")).toBe(true);
+      expect(evalInContext("BOTS.hagras.onTrip")).toBe(true);
+      expect(evalInContext("BOTS.hagras.route.length")).toBeGreaterThan(0);
+      expect(evalInContext("BOTS.ashraf.onTrip")).toBe(false);
+      expect(evalInContext("BOTS.ashraf.route.length")).toBe(0);
+    });
+
+    it("case c: wait phase = exactly 20000 ms for coffee and lounge", () => {
+      const { evalInContext } = createBoardHarness();
+      // Test coffee
+      evalInContext(`
+        tripBot = null;
+        interaction = null;
+        teamMeetingActive = false;
+        BOTS.hagras.feedStatus = 'idle';
+        BOTS.hagras.status = 'idle';
+        sendBotOnBreak(BOTS.hagras, 'coffee');
+
+        // Simulate arrival at coffee spot
+        BOTS.hagras.x = BOTS.hagras.tripTarget.x;
+        BOTS.hagras.y = BOTS.hagras.tripTarget.y;
+        BOTS.hagras.route = [];
+
+        updateCoffeeTrip(0.1, 2000);
+      `);
+
+      expect(evalInContext("BOTS.hagras.tripPhase")).toBe("wait");
+      expect(evalInContext("BOTS.hagras.tripWait")).toBe(20000);
+
+      // Test lounge
+      evalInContext(`
+        tripBot = null;
+        BOTS.salem.feedStatus = 'idle';
+        BOTS.salem.status = 'idle';
+        sendBotOnBreak(BOTS.salem, 'lounge');
+
+        BOTS.salem.x = BOTS.salem.tripTarget.x;
+        BOTS.salem.y = BOTS.salem.tripTarget.y;
+        BOTS.salem.route = [];
+
+        updateCoffeeTrip(0.1, 3000);
+      `);
+
+      expect(evalInContext("BOTS.salem.tripPhase")).toBe("wait");
+      expect(evalInContext("BOTS.salem.tripWait")).toBe(20000);
+    });
+
+    it("case c2: right after arrival the bubble text is the countdown «… · ٢٠ث» without being hidden by banter", () => {
+      const { evalInContext, fillTextCalls } = createBoardHarness();
+      evalInContext(`
+        tripBot = null;
+        interaction = null;
+        teamMeetingActive = false;
+        BOTS.hagras.feedStatus = 'idle';
+        BOTS.hagras.status = 'idle';
+        sendBotOnBreak(BOTS.hagras, 'coffee');
+
+        // Fast forward arrival at coffee spot at time = 2000 (departure banter chatUntil was set)
+        BOTS.hagras.x = BOTS.hagras.tripTarget.x;
+        BOTS.hagras.y = BOTS.hagras.tripTarget.y;
+        BOTS.hagras.route = [];
+
+        updateCoffeeTrip(0.1, 2000);
+
+        // Setup head coordinates for bubble rendering
+        BOTS.hagras._headX = 700;
+        BOTS.hagras._headY = 400;
+        BOTS.hagras._headR = 10;
+        drawBotBubble(BOTS.hagras, 2000, false);
+      `);
+
+      expect(evalInContext("BOTS.hagras.tripPhase")).toBe("wait");
+      expect(evalInContext("BOTS.hagras.tripWait")).toBe(20000);
+      expect(evalInContext("BOTS.hagras.chatUntil || 0")).toBe(0);
+
+      // Bubble text drawn immediately on arrival is the countdown
+      const countdownCall = fillTextCalls.find((c) => c.text.includes("☕ بيشرب القهوة"));
+      expect(countdownCall).toBeDefined();
+      expect(countdownCall?.text).toMatch(/(20|٢٠)ث/);
+    });
+
+    it("case d: countdown text at remaining 20000/15000/1000 ms shows 20/15/1 s; progress at 0 / 10 / 20 s = 0 / 50 / 100%", () => {
+      const { evalInContext } = createBoardHarness();
+      evalInContext(`
+        tripBot = BOTS.hagras;
+        BOTS.hagras.onTrip = true;
+        BOTS.hagras.tripPhase = 'wait';
+        BOTS.hagras.tripKind = 'coffee';
+        BOTS.hagras.tripWait = 20000;
+      `);
+
+      // At 20000 ms (0s elapsed)
+      const text20 = evalInContext("getBreakCountdownText(BOTS.hagras)");
+      expect(text20).toContain("☕ بيشرب القهوة");
+      expect(text20).toMatch(/(20|٢٠)ث/);
+      expect(evalInContext("getBreakProgress(BOTS.hagras)")).toBe(0);
+
+      // At 15000 ms (5s elapsed)
+      evalInContext("BOTS.hagras.tripWait = 15000;");
+      const text15 = evalInContext("getBreakCountdownText(BOTS.hagras)");
+      expect(text15).toMatch(/(15|١٥)ث/);
+
+      // At 10000 ms (10s elapsed)
+      evalInContext("BOTS.hagras.tripWait = 10000;");
+      expect(evalInContext("getBreakProgress(BOTS.hagras)")).toBe(0.5);
+
+      // At 1000 ms (19s elapsed)
+      evalInContext("BOTS.hagras.tripWait = 1000;");
+      const text1 = evalInContext("getBreakCountdownText(BOTS.hagras)");
+      expect(text1).toMatch(/(1|١)ث/);
+
+      // At 0 ms (20s elapsed)
+      evalInContext("BOTS.hagras.tripWait = 0;");
+      expect(evalInContext("getBreakProgress(BOTS.hagras)")).toBe(1);
+
+      // Lounge variant
+      evalInContext(`
+        BOTS.salem.onTrip = true;
+        BOTS.salem.tripPhase = 'wait';
+        BOTS.salem.tripKind = 'lounge';
+        BOTS.salem.tripWait = 15000;
+      `);
+      const loungeText = evalInContext("getBreakCountdownText(BOTS.salem)");
+      expect(loungeText).toContain("🎮 استراحة");
+      expect(loungeText).toMatch(/(15|١٥)ث/);
+    });
+
+    it("case e: feed turns bot working mid-trip (go and wait) -> onTrip false, returningHome true, tripBot null", () => {
+      const { evalInContext } = createBoardHarness();
+      const now = Date.now();
+
+      // Subcase 1: during 'go' phase
+      evalInContext(`
+        const now = ${now};
+        BOTS.hagras.status = 'idle';
+        BOTS.hagras.feedStatus = 'idle';
+        sendBotOnBreak(BOTS.hagras, 'coffee');
+        // Now BOTS.hagras is in 'go' phase, tripBot is BOTS.hagras
+
+        const workingPayload = {
+          version: 1,
+          bots: {
+            hagras: {
+              bot: "hagras",
+              state: "working",
+              task_title: "شغل جديد عاجل",
+              percent: 10,
+              updated_at: new Date(now).toISOString()
+            }
+          }
+        };
+
+        applyLiveFeed(workingPayload);
+      `);
+
+      expect(evalInContext("BOTS.hagras.onTrip")).toBe(false);
+      expect(evalInContext("BOTS.hagras.returningHome")).toBe(true);
+      expect(evalInContext("tripBot")).toBeNull();
+
+      // Subcase 2: during 'wait' phase
+      evalInContext(`
+        const now2 = ${now + 5000};
+        BOTS.salem.status = 'idle';
+        BOTS.salem.feedStatus = 'idle';
+        sendBotOnBreak(BOTS.salem, 'coffee');
+        BOTS.salem.tripPhase = 'wait';
+        BOTS.salem.tripWait = 18000;
+
+        const workingSalemPayload = {
+          version: 1,
+          bots: {
+            salem: {
+              bot: "salem",
+              state: "working",
+              task_title: "إصلاح عاجل",
+              percent: 5,
+              updated_at: new Date(now2).toISOString()
+            }
+          }
+        };
+
+        applyLiveFeed(workingSalemPayload);
+      `);
+
+      expect(evalInContext("BOTS.salem.onTrip")).toBe(false);
+      expect(evalInContext("BOTS.salem.returningHome")).toBe(true);
+      expect(evalInContext("tripBot")).toBeNull();
+    });
+
+    it("case e2: feed turns standup or help participant busy -> cancels interaction cleanly", () => {
+      const { evalInContext } = createBoardHarness();
+      evalInContext(`
+        tripBot = null;
+        interaction = null;
+        teamMeetingActive = false;
+        for (const k of BOT_KEYS) {
+          BOTS[k].onTrip = false;
+          BOTS[k].returningHome = false;
+          BOTS[k].isSleeping = false;
+          BOTS[k].feedStatus = 'idle';
+          BOTS[k].status = 'idle';
+        }
+        startStandup(1000);
+      `);
+      expect(evalInContext("interaction && interaction.type")).toBe("standup");
+      const presenterId = evalInContext("interaction.presenter.id");
+
+      // Now presenter receives working feed
+      evalInContext(`
+        applyLiveFeed({
+          version: 1,
+          bots: {
+            [interaction.presenter.id]: {
+              bot: interaction.presenter.id,
+              state: "working",
+              task_title: "شغل جديد عاجل",
+              percent: 10,
+              updated_at: new Date().toISOString()
+            }
+          }
+        });
+      `);
+      expect(evalInContext("interaction")).toBeNull();
+      expect(evalInContext(`BOTS[${JSON.stringify(presenterId)}].onTrip`)).toBe(false);
+      expect(evalInContext(`BOTS[${JSON.stringify(presenterId)}].returningHome`)).toBe(true);
+    });
+
+    it("case f: card button on busy bot -> no trip, shows busy bubble; on idle bot -> trip starts; stuck message unchanged", () => {
+      const { evalInContext, stageWrapper } = createBoardHarness();
+
+      // 1. Busy bot (working)
+      evalInContext(`
+        BOTS.ashraf.feedStatus = 'working';
+        BOTS.ashraf.status = 'working';
+        BOTS.ashraf.onTrip = false;
+        tripBot = null;
+        openAgentCard('ashraf');
+      `);
+
+      const cardAshraf = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+      expect(cardAshraf).toBeDefined();
+      const coffeeBtnAshraf = cardAshraf.querySelector(".card-btn.coffee") as MockElement;
+      expect(coffeeBtnAshraf).toBeDefined();
+
+      coffeeBtnAshraf.onclick?.({ stopPropagation() {} });
+
+      expect(evalInContext("BOTS.ashraf.onTrip")).toBe(false);
+      expect(evalInContext("tripBot")).toBeNull();
+      expect(evalInContext("BOTS.ashraf.bubbleText")).toBe("عندي شغل، أخلّص وأروح ☕");
+
+      // 2. Stuck bot
+      evalInContext(`
+        BOTS.fazza.feedStatus = 'stuck';
+        BOTS.fazza.status = 'stuck';
+        BOTS.fazza.onTrip = false;
+        openAgentCard('fazza');
+      `);
+      const cardFazza = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+      const coffeeBtnFazza = cardFazza.querySelector(".card-btn.coffee") as MockElement;
+      coffeeBtnFazza.onclick?.({ stopPropagation() {} });
+
+      expect(evalInContext("BOTS.fazza.onTrip")).toBe(false);
+      expect(evalInContext("BOTS.fazza.bubbleText")).toBe("مش هينفع دلوقتي، عندي مشكلة شغالة 🔴");
+
+      // 3. Idle bot
+      evalInContext(`
+        BOTS.hagras.feedStatus = 'idle';
+        BOTS.hagras.status = 'idle';
+        BOTS.hagras.onTrip = false;
+        tripBot = null;
+        openAgentCard('hagras');
+      `);
+      const cardHagras = stageWrapper.querySelector("#agent-card-popup") as MockElement;
+      const coffeeBtnHagras = cardHagras.querySelector(".card-btn.coffee") as MockElement;
+      coffeeBtnHagras.onclick?.({ stopPropagation() {} });
+
+      expect(evalInContext("BOTS.hagras.onTrip")).toBe(true);
+      expect(evalInContext("tripBot === BOTS.hagras")).toBe(true);
+    });
+
+    it("counter-cases: idle breaks, team meeting gathers all, sleep and wander unchanged, desk chat allowed when busy", () => {
+      const { evalInContext } = createBoardHarness();
+
+      // Desk chat works between two busy bots
+      evalInContext(`
+        tripBot = null;
+        interaction = null;
+        teamMeetingActive = false;
+        BOTS.hagras.feedStatus = 'working';
+        BOTS.nafady.feedStatus = 'working';
+        BOTS.hagras.onTrip = false;
+        BOTS.nafady.onTrip = false;
+        BOTS.hagras.isSleeping = false;
+        BOTS.nafady.isSleeping = false;
+
+        const chatRes = startChat(1000);
+      `);
+      expect(evalInContext("chatRes")).toBe(true);
+      expect(evalInContext("interaction && interaction.type")).toBe("chat");
+
+      // Team meeting gathers everyone including busy bots
+      evalInContext(`
+        triggerTeamMeeting();
+      `);
+      expect(evalInContext("teamMeetingActive")).toBe(true);
+      expect(evalInContext("BOTS.hagras.status")).toBe("meeting");
+      expect(evalInContext("BOTS.nafady.status")).toBe("meeting");
+      expect(evalInContext("BOTS.hagras.route.length > 0")).toBe(true);
+      expect(evalInContext("BOTS.nafady.route.length > 0")).toBe(true);
+    });
+  });
 });

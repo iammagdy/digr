@@ -2735,6 +2735,26 @@ function drawBotEntity(bot, time) {
 }
 
 // Separate Z-Pass for Bubbles: Compact pills normally (zero overlap!), Full speech bubbles on top!
+const BREAK_DWELL_MS = 20000;
+
+function toArabicIndic(n) {
+  return String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
+}
+
+function getBreakCountdownText(bot) {
+  const remainingSec = Math.max(1, Math.ceil((bot.tripWait || 0) / 1000));
+  const digits = toArabicIndic(remainingSec);
+  if (bot.tripKind === 'lounge') {
+    return `🎮 استراحة · ${digits}ث`;
+  }
+  return `☕ بيشرب القهوة · ${digits}ث`;
+}
+
+function getBreakProgress(bot) {
+  const elapsed = BREAK_DWELL_MS - (bot.tripWait || 0);
+  return Math.max(0, Math.min(1, elapsed / BREAK_DWELL_MS));
+}
+
 function drawBotBubble(bot, time, expanded) {
   const hx = bot._headX, hy = bot._headY, r = bot._headR;
   if (hx === undefined) return;
@@ -2750,7 +2770,7 @@ function drawBotBubble(bot, time, expanded) {
   } else if (bot.isSleeping) {
     text = '💤 نايم';
   } else if (bot.onTrip && bot.tripPhase === 'wait') {
-    text = bot.tripKind === 'lounge' ? '🎮 استراحة سريعة' : '☕ قهوة مظبوط وراجع';
+    text = getBreakCountdownText(bot);
   } else if (expanded) {
     text = lastGoodFetchMs === null ? bot.title : (bot.shortTask || bot.statusLabel);
   } else {
@@ -2819,6 +2839,18 @@ function drawBotBubble(bot, time, expanded) {
 
   ctx.fillStyle = textColor;
   ctx.fillText(text, bx0 + bw / 2, bubbleY + 11.4 * bs);
+
+  if (bot.onTrip && bot.tripPhase === 'wait') {
+    const progress = getBreakProgress(bot);
+    const pBarH = 2 * bs;
+    const pBarY = bubbleY + bh - pBarH - 1.5;
+    const pBarW = Math.max(10, bw - 8 * bs);
+    const pBarX = bx0 + 4 * bs;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(pBarX, pBarY, pBarW, pBarH);
+    ctx.fillStyle = bot.tripKind === 'lounge' ? '#c084fc' : '#fbbf24';
+    ctx.fillRect(pBarX, pBarY, pBarW * progress, pBarH);
+  }
 }
 
 // ---------- Egyptian Banter Bank, Cheer Replies & Office Simulation ----------
@@ -2884,7 +2916,7 @@ let tripBot = null;
 let nextTripAt = 12000;
 
 function sendBotOnBreak(bot, kind) {
-  if (!bot || teamMeetingActive || bot.status === 'stuck') return false;
+  if (!bot || teamMeetingActive || bot.status === 'stuck' || bot.status === 'meeting' || bot.feedStatus !== 'idle') return false;
   if (tripBot && tripBot !== bot) return false;
   if (interaction) endInteraction(performance.now());
   tripBot = bot;
@@ -2913,6 +2945,16 @@ function updateCoffeeTrip(dt, time) {
 
   if (tripBot) {
     const bot = tripBot;
+    if (bot.feedStatus !== 'idle') {
+      bot.onTrip = false;
+      bot.tripPhase = '';
+      bot.tripKind = '';
+      bot.returningHome = true;
+      setBotRoute(bot, bot.homeX, bot.homeY);
+      tripBot = null;
+      nextTripAt = time + 22000 + Math.random() * 24000;
+      return;
+    }
     if (bot.tripPhase === 'wait') {
       bot.isMoving = false;
       bot.tripWait -= dt * 1000;
@@ -2926,9 +2968,9 @@ function updateCoffeeTrip(dt, time) {
     if (arrived) {
       if (bot.tripPhase === 'go') {
         bot.tripPhase = 'wait';
-        bot.tripWait = 4200 + Math.random() * 2400;
-        bot.chatText = bot.tripKind === 'lounge' ? '🎮 جيم سريع وأرجع!' : pickBanter('coffee');
-        bot.chatUntil = time + 3200;
+        bot.tripWait = BREAK_DWELL_MS;
+        bot.chatUntil = 0;
+        bot.chatText = '';
       } else {
         bot.onTrip = false;
         bot.tripPhase = '';
@@ -2941,7 +2983,7 @@ function updateCoffeeTrip(dt, time) {
   }
 
   if (interaction || time < nextTripAt) return;
-  const candidates = BOT_KEYS.map(k => BOTS[k]).filter(b => b.id !== 'elkebir' && b.status !== 'stuck' && !b.onTrip && !b.returningHome && !b.isSleeping);
+  const candidates = BOT_KEYS.map(k => BOTS[k]).filter(b => b.id !== 'elkebir' && b.feedStatus === 'idle' && b.status !== 'stuck' && b.status !== 'meeting' && !b.onTrip && !b.returningHome && !b.isSleeping);
   if (!candidates.length) { nextTripAt = time + 8000; return; }
   const bot = candidates[Math.floor(Math.random() * candidates.length)];
   const kind = (bot.status === 'idle' && Math.random() < 0.4) ? 'lounge' : 'coffee';
@@ -3005,7 +3047,7 @@ function startChat(time) {
 }
 
 function startStandup(time) {
-  const pool = freeDevBots().filter(b => b.status !== 'stuck');
+  const pool = freeDevBots().filter(b => b.feedStatus === 'idle' && b.status !== 'stuck' && b.status !== 'meeting');
   if (pool.length < 3) return false;
   const shuffled = pool.slice().sort(() => Math.random() - 0.5);
   const group = shuffled.slice(0, 3);
@@ -3022,10 +3064,12 @@ function startStandup(time) {
 function startHelp(time) {
   const desk = freeDevBots();
   if (desk.length < 2) return false;
-  const helpee = desk.find(b => b.status === 'stuck') || desk[Math.floor(Math.random() * desk.length)];
-  const helpers = desk.filter(b => b !== helpee && b.status !== 'stuck');
+  const helpers = desk.filter(b => b.feedStatus === 'idle' && b.status !== 'stuck' && b.status !== 'meeting');
   if (!helpers.length) return false;
   const helper = helpers[Math.floor(Math.random() * helpers.length)];
+  const helpeeCandidates = desk.filter(b => b !== helper && b.status !== 'meeting');
+  if (!helpeeCandidates.length) return false;
+  const helpee = helpeeCandidates.find(b => b.status === 'stuck') || helpeeCandidates[Math.floor(Math.random() * helpeeCandidates.length)];
   helper.onTrip = true;
   const spot = { x: helpee.homeX + 48, y: helpee.homeY + 12 };
   setBotRoute(helper, spot.x, spot.y);
@@ -3830,6 +3874,8 @@ function renderAgentCard(bot) {
       celebrateBot(bot, 'بعد الاجتماع على طول يا ريس! ☕', false);
     } else if (bot.status === 'stuck') {
       celebrateBot(bot, 'مش هينفع دلوقتي، عندي مشكلة شغالة 🔴', false);
+    } else if (bot.feedStatus !== 'idle') {
+      celebrateBot(bot, 'عندي شغل، أخلّص وأروح ☕', false);
     } else if (sendBotOnBreak(bot, 'coffee')) {
       closeAgentCard();
     } else {
@@ -4288,6 +4334,25 @@ function applyLiveFeed(payload) {
       bot.isSleeping = false;
     }
 
+    if (status !== 'idle' && (bot.onTrip || tripBot === bot)) {
+      bot.onTrip = false;
+      bot.tripPhase = '';
+      bot.tripKind = '';
+      bot.returningHome = true;
+      setBotRoute(bot, bot.homeX, bot.homeY);
+      if (tripBot === bot) {
+        tripBot = null;
+        nextTripAt = performance.now() + 22000 + Math.random() * 24000;
+      }
+      if (interaction) {
+        const isInInteraction = (interaction.members && interaction.members.some(m => m.bot === bot)) ||
+                                 (interaction.helper === bot);
+        if (isInInteraction) {
+          endInteraction(performance.now());
+        }
+      }
+    }
+
     if (bot.baseWander && !teamMeetingActive && !bot.onTrip) {
       bot.wander = (status === 'idle') && !bot.isSleeping;
       if (!bot.wander && !bot.isSleeping && Math.hypot(bot.x - bot.homeX, bot.y - bot.homeY) > 6) {
@@ -4550,6 +4615,11 @@ window.focusRoom = focusRoom;
 window.CHEER_REPLIES = CHEER_REPLIES;
 window.EGYPTIAN_OFFICE_BANTER = EGYPTIAN_OFFICE_BANTER;
 window.MEETING_SEATS = MEETING_SEATS;
+window.BREAK_DWELL_MS = BREAK_DWELL_MS;
+window.toArabicIndic = toArabicIndic;
+window.getBreakCountdownText = getBreakCountdownText;
+window.getBreakProgress = getBreakProgress;
+window.drawBotBubble = drawBotBubble;
 
 // ---------- Startup ----------
 syncCanvasSizing();
