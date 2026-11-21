@@ -656,6 +656,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // (with the hard spend gate active for this mission the planner does not run: its long structured requests are not on the gate's reviewed call path; production runs with the gate unset)
   // DT-20261118-03 PR-7: the request's STRUCTURE as the planner understood it (a people step under a companies step) reaches catalog_search of the path below
   let understoodPeople: ReturnType<typeof understoodPeopleOf> = null;
+  let peopleRoleTitleAr: string | null = null;
   let understoodCompanies: UnderstoodCompaniesSummary | undefined;
   let plannerUnderstanding: Understanding | null = null;
   // the planner ran and answered (a plan, a question, a hand-over, or a failure to read it): the agent path below is never allowed to ask the customer (DT-20261119-03 R2)
@@ -678,6 +679,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       if (r.understanding) {
         plannerUnderstanding = r.understanding;
         understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
+        peopleRoleTitleAr = r.understanding.people_of_companies?.title_ar ?? null;
         const compStep = r.understanding.steps.find((s) => !s.parent);
         if (compStep) {
           understoodCompanies = {
@@ -832,7 +834,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       ? "\n\nThe customer chose to continue with companies only. Propose a companies-only plan using the saved companies evidence without a people stage."
       : "";
   const capabilityPrompt = (discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "") + retryGuidance;
-  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(forceCompaniesOnly ? { forceCompaniesOnly: true } : {}), ...(isRecoveryRetry ? { isRecoveryRetry: true } : {}), ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(forceCompaniesOnly ? { forceCompaniesOnly: true } : {}), ...(isRecoveryRetry ? { isRecoveryRetry: true } : {}), ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(peopleRoleTitleAr ? { peopleRoleTitleAr } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {

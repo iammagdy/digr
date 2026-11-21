@@ -128,6 +128,8 @@ export interface ToolContext {
   understoodPeople?: UnderstoodPeopleSummary;
   /** The companies parent step the planner understood (used to preserve scale count/title when recovering from saved evidence). */
   understoodCompanies?: UnderstoodCompaniesSummary;
+  /** The Arabic title of the asked people role from the planner (e.g. «مدير»). */
+  peopleRoleTitleAr?: string | null;
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */
