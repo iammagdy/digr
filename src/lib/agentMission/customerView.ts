@@ -4,7 +4,7 @@ import { checkCustomerText, customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from ".
 import { isExpiredMission } from "../requests/expiry";
 import { deliveredChargedLineAr } from "../jobs/requestStatus";
 import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, withoutUnwrittenLabels, writtenLatinWords } from "./shownWords";
-import { formatAr, toArabicDigits } from "../arabicDigits";
+import { formatAr, normalizeDigits, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr, unitPriceLabelAr } from "../pointsFormat";
@@ -560,9 +560,27 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
 
   const rawSummary = mission.summary_ar ? fixFileWordingAr(mission.summary_ar, plan?.stages) : null;
   const summaryCheck = rawSummary ? checkCustomerText(rawSummary, { maxChars: 600 }) : null;
+  const summaryMatchesCardNumbers = (text: string): boolean => {
+    const nums = (normalizeDigits(text).replace(/(?<=\d)[,٬](?=\d)/g, "").match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+    if (nums.length === 0) return true;
+    const allowed = new Set<number>();
+    const realDelivered = delivered !== null && Number.isFinite(delivered) ? Math.round(delivered) : null;
+    if (realDelivered !== null) allowed.add(realDelivered);
+    if (typeof mission.charged_units === "number" && Number.isFinite(mission.charged_units)) allowed.add(Math.round(mission.charged_units));
+    const realCharged = mission.charged_points !== null && Number.isFinite(Number(mission.charged_points)) ? Math.round(Number(mission.charged_points)) : null;
+    if (realCharged !== null) allowed.add(realCharged);
+    const realReserved = mission.reserved_points !== null && Number(mission.reserved_points) > 0 && Number.isFinite(Number(mission.reserved_points)) ? Math.round(Number(mission.reserved_points)) : null;
+    if (realReserved !== null) allowed.add(realReserved);
+    if (realReserved !== null && realCharged !== null && realReserved > realCharged) allowed.add(realReserved - realCharged);
+    const denom = requestedRows > 0 && delivered !== null && delivered > 0 ? deliveryDenominatorOf(delivered, planned, requestedRows) : requestedRows > 0 ? requestedRows : null;
+    if (denom !== null && Number.isFinite(denom) && (phase !== "partial" || (realDelivered !== null && nums.includes(realDelivered)))) {
+      allowed.add(Math.round(denom));
+    }
+    return nums.every((n) => Number.isFinite(n) && allowed.has(n));
+  };
   const storedSummary = rawSummary && summaryCheck
     ? (/[0-9٠-٩]/.test(rawSummary)
-        ? (summaryCheck.issues.length === 0 ? summaryCheck.text : null)
+        ? (summaryCheck.issues.length === 0 && summaryMatchesCardNumbers(rawSummary) ? summaryCheck.text : null)
         : (summaryCheck.issues.some((i) => !i.includes("no Latin words")) ? null : rawSummary))
     : null;
 

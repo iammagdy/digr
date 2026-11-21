@@ -156,8 +156,8 @@ describe("C + D. ONE delivered count everywhere: no text says a number that diff
       mission: { id: "msn_1", status: "completed", question_ar: null, plan_public: planPublic, reserved_points: 279, unit_price_points: 0.8, delivered_units: 250, charged_points: 202, summary_ar: "سلّمت ٣٠٠ تغريدة عن الموضوع كلها", files: [{ name: "result.xlsx", kind: "xlsx" }], created_at: "2026-10-28T20:00:00Z" },
       events: [],
     });
-    // under N13 a stored summary with digits that passes checkCustomerText is shown
-    expect(view.resultSummaryAr).toBe("سلّمت ٣٠٠ تغريدة عن الموضوع كلها");
+    // the stored summary of an older mission carries a number (٣٠٠) that disagrees with the delivered count: it is not shown
+    expect(view.resultSummaryAr).toBeNull();
     expect(view.resultLinesAr[0]).toBe(`تم تسليم ${deliveredOfAr(250, 300, knownItemNoun(noun)!)}.`);
     expect(view.resultLinesAr[1]).toBe(`خُصم ٢٠٢ نقطة مقابل ${countAr(250, knownItemNoun(noun)!)}.`);
 
@@ -184,6 +184,15 @@ describe("C + D. ONE delivered count everywhere: no text says a number that diff
     const view = customerMissionView({ mission: { id: "msn_1", status: "completed", question_ar: null, plan_public: planPublic, reserved_points: 279, unit_price_points: 0.8, delivered_units: 250, charged_points: 202, summary_ar: "لم يكتمل العدد المطلوب لأن هذا كل ما وُجد مطابقًا لطلبك.", files: null, created_at: "2026-10-28T20:00:00Z" }, events: [] });
     expect(view.resultSummaryAr).toBe("لم يكتمل العدد المطلوب لأن هذا كل ما وُجد مطابقًا لطلبك.");
     expect(view.phase).toBe("partial");
+  });
+
+  it("a stored summary with digits whose numbers match the mission's real card numbers is shown when it passes checkCustomerText", () => {
+    const planPublic = { summary_ar: "ملخص", stages: [{ key: "s", title_ar: "التغريدات", expected_rows: 300, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [] }], price: {} };
+    const view = customerMissionView({
+      mission: { id: "msn_1", status: "completed", question_ar: null, plan_public: planPublic, reserved_points: 279, unit_price_points: 0.8, delivered_units: 250, charged_points: 202, summary_ar: "تم تسليم ٢٥٠ من ٣٠٠ تغريدة، وخُصم ٢٠٢ نقطة ورجع لمحفظتك ٧٧ نقطة.", files: null, created_at: "2026-10-28T20:00:00Z" },
+      events: [],
+    });
+    expect(view.resultSummaryAr).toBe("تم تسليم ٢٥٠ من ٣٠٠ تغريدة، وخُصم ٢٠٢ نقطة ورجع لمحفظتك ٧٧ نقطة.");
   });
 
   it("the shortfall reason says WHY, in plain words with no number: the sources gave no more, the review's limit, or a review that could not be reached", () => {

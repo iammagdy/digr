@@ -199,9 +199,10 @@ describe("FX-02 Phase C: customer view and mission card fixes (N9, N4, N2, N12, 
   });
 
   it("N13: stored summary with digits passing checkCustomerText is shown; provider names or foreign Latin are dropped", () => {
-    // Valid digits summary
+    // Valid digits summary matching card numbers
     const validDigitsMission: MissionRowForCustomer = {
       ...baseMission,
+      delivered_units: 250,
       summary_ar: "اكتمل جمع ٢٥٠ تغريدة مطابقة لطلبك",
     };
     const viewValid = customerMissionView({
@@ -210,9 +211,22 @@ describe("FX-02 Phase C: customer view and mission card fixes (N9, N4, N2, N12, 
     });
     expect(viewValid.resultSummaryAr).toBe("اكتمل جمع ٢٥٠ تغريدة مطابقة لطلبك");
 
+    // Mismatched digits summary (contains 250 but delivered is 10)
+    const mismatchDigitsMission: MissionRowForCustomer = {
+      ...baseMission,
+      delivered_units: 10,
+      summary_ar: "اكتمل جمع ٢٥٠ تغريدة مطابقة لطلبك",
+    };
+    const viewMismatch = customerMissionView({
+      mission: mismatchDigitsMission,
+      events: [],
+    });
+    expect(viewMismatch.resultSummaryAr).toBeNull();
+
     // Summary with provider name
     const providerMission: MissionRowForCustomer = {
       ...baseMission,
+      delivered_units: 5,
       summary_ar: "تم جمع ٥ تغريدات من تريغ",
     };
     const viewProvider = customerMissionView({
@@ -224,6 +238,7 @@ describe("FX-02 Phase C: customer view and mission card fixes (N9, N4, N2, N12, 
     // Summary with foreign Latin text
     const latinMission: MissionRowForCustomer = {
       ...baseMission,
+      delivered_units: 5,
       summary_ar: "collected 5 from apify provider",
     };
     const viewLatin = customerMissionView({
