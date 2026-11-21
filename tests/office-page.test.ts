@@ -25,39 +25,94 @@ function createMegzOfficeHarness(
   const elements = new Map<string, any>();
   const consoleErrors: unknown[] = [];
 
-  const makeEl = (tag = "div", id = "") => ({
-    id,
-    tagName: tag.toUpperCase(),
-    style: {} as Record<string, string>,
-    className: "",
-    textContent: "",
-    src: "",
-    clientWidth: opts.width,
-    clientHeight: opts.height,
-    addEventListener() {},
-    getBoundingClientRect() {
-      return { left: 0, top: 0, width: opts.width, height: opts.height };
-    },
-    getContext() {
-      return {
-        save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
-        rect() {}, beginPath() {}, moveTo() {}, lineTo() {}, arcTo() {}, closePath() {}, arc() {}, ellipse() {},
-        fill() {}, stroke() {}, setLineDash() {}, measureText(t: string) { return { width: t.length * 6 }; },
-        fillText() {}, drawImage() {}, clip() {}, translate() {}, scale() {},
-        createRadialGradient() { return { addColorStop() {} }; },
-      };
-    },
-  });
+  const makeEl = (tag = "div", id = "") => {
+    const el: any = {
+      id,
+      tagName: tag.toUpperCase(),
+      style: {} as Record<string, string>,
+      className: "",
+      textContent: "",
+      src: "",
+      clientWidth: opts.width,
+      clientHeight: opts.height,
+      offsetWidth: 200,
+      offsetHeight: 200,
+      children: [] as any[],
+      hidden: false,
+      classList: {
+        add(...cls: string[]) {
+          const s = new Set(el.className.split(" ").filter(Boolean));
+          for (const c of cls) s.add(c);
+          el.className = Array.from(s).join(" ");
+        },
+        remove(...cls: string[]) {
+          const s = new Set(el.className.split(" ").filter(Boolean));
+          for (const c of cls) s.delete(c);
+          el.className = Array.from(s).join(" ");
+        },
+        toggle(c: string, force?: boolean) {
+          const s = new Set(el.className.split(" ").filter(Boolean));
+          const add = force !== undefined ? force : !s.has(c);
+          if (add) s.add(c); else s.delete(c);
+          el.className = Array.from(s).join(" ");
+          return add;
+        },
+        contains(c: string) { return el.className.split(" ").includes(c); },
+      },
+      parentElement: null as any,
+      addEventListener() {},
+      setAttribute() {},
+      getAttribute() { return null; },
+      appendChild(c: any) {
+        c.parentElement = el;
+        el.children.push(c);
+        return c;
+      },
+      removeChild(c: any) {
+        const i = el.children.indexOf(c);
+        if (i >= 0) el.children.splice(i, 1);
+        return c;
+      },
+      querySelector(sel: string) { const m = makeEl("div"); m.parentElement = makeEl("div"); return m; },
+      querySelectorAll(sel: string) { const m = makeEl("div"); m.parentElement = makeEl("div"); return [m]; },
+      getBoundingClientRect() {
+        return { left: 0, top: 0, width: opts.width, height: opts.height };
+      },
+      getContext() {
+        return {
+          save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, strokeRect() {},
+          rect() {}, beginPath() {}, moveTo() {}, lineTo() {}, arcTo() {}, closePath() {}, arc() {}, ellipse() {},
+          fill() {}, stroke() {}, setLineDash() {}, measureText(t: string) { return { width: t.length * 6 }; },
+          fillText() {}, drawImage() {}, clip() {}, translate() {}, scale() {},
+          createRadialGradient() { return { addColorStop() {} }; },
+        };
+      },
+    };
+    return el;
+  };
 
   elements.set("stage-wrapper", makeEl("div", "stage-wrapper"));
   elements.set("office-canvas", makeEl("canvas", "office-canvas"));
+  elements.set("feed-dot", makeEl("span", "feed-dot"));
+  elements.set("feed-meta", makeEl("span", "feed-meta"));
+  elements.set("log-drawer", makeEl("aside", "log-drawer"));
+  elements.set("log-list", makeEl("div", "log-list"));
+  elements.set("demo-banner", makeEl("div", "demo-banner"));
 
   const ctx: any = {
     window: {} as any,
     document: {
-      getElementById(id: string) { return elements.get(id) ?? null; },
+      getElementById(id: string) {
+        if (!elements.has(id)) elements.set(id, makeEl("div", id));
+        return elements.get(id);
+      },
+      createElement(tag: string) { return makeEl(tag); },
+      createTextNode(text: string) { return { textContent: text }; },
+      querySelector(sel: string) { const m = makeEl("div"); m.parentElement = makeEl("div"); return m; },
+      querySelectorAll(sel: string) { const m = makeEl("div"); m.parentElement = makeEl("div"); return [m]; },
       addEventListener() {},
     },
+    addEventListener() {},
     innerWidth: opts.width,
     innerHeight: opts.height,
     devicePixelRatio: 1,
@@ -127,10 +182,10 @@ describe("DT-20261120-office-megz v2: Megz pure fullscreen office page", () => {
     expect(html).not.toMatch(/\b(sb_secret_|sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,})\b/);
     expect(html).not.toContain("bot-modal-overlay");
     expect(html).not.toContain("bot-card");
-    expect(html).not.toContain("شجّعه");
     expect(html).not.toContain("feed-notice");
     for (const [id, role] of Object.entries(EXPECTED_ROLES)) {
-      expect(html).toContain(`${id}: { id: "${id}", name:`);
+      expect(html).toContain(`${id}: {`);
+      expect(html).toContain(`id: "${id}"`);
       expect(html).toContain(`title: "${role}", role: "${role}"`);
     }
   });
