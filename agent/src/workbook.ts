@@ -2,6 +2,7 @@ import { isLanguageColumn, languageLabelAr, languageOfTextAr, textColumnKeyOf } 
 import { MARKS_KEY, MARK_COLUMNS_AR, markCellAr, markColumnsOf, type RowMarks } from "../../src/lib/agentMission/rawMarks";
 import { columnSpec, headerHeightOf, rowHeightOf } from "./sheetLayout";
 import ExcelJS from "exceljs";
+import { requestedContactKinds, workbookThreadKey, type WorkbookBillingLayout, type WorkbookBillingSheet } from "./workbookBilling";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { csvText } from "../../src/lib/agentMission/csvText";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
@@ -173,8 +174,14 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       if (isManagerStage && c.title_ar === PERSON_NAME_TITLE_AR) return (r) => bilingualName(r[c.key], r[NAME_AR_KEY]);
       return null;
     };
+    const retainedContacts = new Set<string>();
     for (const c of own) {
-      if (titles.has(c.title_ar)) continue;
+      const askedKinds = requestedContactKinds(plan, stage, c);
+      const onlyContactOfKind = askedKinds.some((kind) => !retainedContacts.has(kind));
+      if (titles.has(c.title_ar)) {
+        if (onlyContactOfKind) throw new Error("ambiguous workbook contact header");
+        continue;
+      }
       const special = specialGet(c);
       const values = rows.map((r) => (special ? special(r) : r[c.key]));
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
@@ -182,9 +189,10 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const availability = isAvailabilityKey(plan, stage, c.key);
       // Identical missing-contact markers make no claim that two contact fields are the same.
       const unavailableContact = (c.kind === "work_email" || c.kind === "phone") && values.some((value) => value === NOT_AVAILABLE_AR);
-      if (!rawSheet && !availability && !unavailableContact && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      if (!onlyContactOfKind && c.key !== COMMENT_KIND_KEY && !rawSheet && !availability && !unavailableContact && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
+      for (const kind of askedKinds) retainedContacts.add(kind);
       const ownText = textGetter(stage, c.key);
       const counterWords = availability;
       columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
@@ -461,7 +469,7 @@ export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]
   return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string> } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number }; /** ROUND 59: what the company check found (companyQuality.ts), for the delivery line. */ companyQuality: CompanyQualityReport[] }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string> } = {}): Promise<{ xlsx: Buffer; csv: string; billingLayout: WorkbookBillingLayout; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number }; /** ROUND 59: what the company check found (companyQuality.ts), for the delivery line. */ companyQuality: CompanyQualityReport[] }> {
   const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports } = deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);
   // STAGE 3 S2: the lines a B2B delivery states (each gap, each mark, the exact duplicates removed) join the limits row of the summary; with none, nothing changes
   if (options.extraLimitLines && options.extraLimitLines.length > 0) {
@@ -484,11 +492,42 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the replies stage has no sheet of its own: its row of the first sheet points to the thread sheet
   for (const st of plan.stages) if (st.replies_of !== undefined && threaded.threaded.has(st.key) && sheetNameOf.has(st.replies_of)) sheetNameOf.set(st.key, sheetNameOf.get(st.replies_of)!);
 
+  const billingLayout: WorkbookBillingLayout = [];
   for (const lay of layouts) {
     const name = sheetNameOf.get(lay.stage.key)!;
     const parentLayout = lay.stage.parent_key !== null ? layouts.find((l) => l.stage.key === lay.stage.parent_key) : undefined;
     const parentByIdRow = new Map((rowsByStage[lay.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     const headers = [...lay.columns.map((c) => c.title), ID_HEADER_AR, ...(lay.hasParent ? [PARENT_HEADER_AR] : [])];
+    const billingStage = (options.approvedPlan ?? plan).stages.find((stage) => stage.key === lay.stage.key);
+    const binding: WorkbookBillingSheet = { name, headers, stageKey: lay.stage.key, contacts: [] };
+    lay.columns.forEach((col, index) => {
+      const sourceColumn = billingStage?.columns.find((candidate) => candidate.key === col.key);
+      if (col.kind === "own" && billingStage && sourceColumn &&
+          requestedContactKinds(options.approvedPlan ?? plan, billingStage, sourceColumn).length > 0) {
+        binding.contacts.push({ column: index + 1, key: sourceColumn.key });
+      }
+    });
+    const mergedReplies = plan.stages.filter((stage) => stage.replies_of === lay.stage.key && threaded.threaded.has(stage.key));
+    if (mergedReplies.length > 0) {
+      const column = lay.columns.findIndex((col) => col.key === COMMENT_KIND_KEY) + 1;
+      if (!column) throw new Error("missing comment type in workbook");
+      const stageByLabel: Record<string, string> = { [COMMENT_KIND_COMMENT_AR]: lay.stage.key };
+      if (mergedReplies.length === 1) {
+        stageByLabel[COMMENT_KIND_REPLY_AR] = mergedReplies[0].key;
+        binding.thread = { column, stageByLabel };
+      } else {
+        const stageByKindAndId: Record<string, string> = {};
+        for (const replyStage of mergedReplies) {
+          for (const row of rowsIn[replyStage.key] ?? []) {
+            const key = workbookThreadKey(COMMENT_KIND_REPLY_AR, text(row.id));
+            if (Object.hasOwn(stageByKindAndId, key)) throw new Error("ambiguous reply stage in workbook");
+            stageByKindAndId[key] = replyStage.key;
+          }
+        }
+        binding.thread = { column, stageByLabel, idColumn: lay.columns.length + 1, stageByKindAndId };
+      }
+    }
+    billingLayout.push(binding);
     const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
     const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
     const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
@@ -645,6 +684,10 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       });
     });
   });
+  for (const binding of billingLayout) {
+    const sheet = wb.getWorksheet(binding.name)!;
+    binding.headers = binding.headers.map((_, index) => sheet.getCell(1, index + 1).text);
+  }
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
 
   // the CSV: the deepest delivered stage, the same columns as its sheet
@@ -660,5 +703,5 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the CSV gets the same last look
   const csvOut = withoutProviderUrls(`﻿${lines.join("\r\n")}`, providers);
   if (csvOut !== `﻿${lines.join("\r\n")}`) finalFixes += 1;
-  return { xlsx, csv: csvOut, contract, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes }, companyQuality: qualityReports };
+  return { xlsx, csv: csvOut, billingLayout, contract, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes }, companyQuality: qualityReports };
 }
