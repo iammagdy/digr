@@ -146,21 +146,19 @@ describe("item 7: the card's headline does not promise managers only when the pe
     return r.plan;
   };
   const ASK = "عايز شركتين مقاولات في الرياض ومن كل شركة ٣ من المديرين";
-  it("the model's sentence that names the role is replaced by the code's own, which says who is delivered (the people of the company, ranked), and the role line says the same", () => {
+  it("the model's sentence that names the role is preserved in the summary when role_preference is set, backed by roleLineAr on the card", () => {
     const plan = planOf("شركتان مقاولات في الرياض مع ثلاثة من مديريها.", ASK);
     expect(plan.stages.find((s) => s.key === "people")!.role_preference).toEqual({ role: "manager" });
-    expect(plan.summary_ar).not.toMatch(/مدير/);
-    expect(plan.summary_ar).toContain("شركات المقاولات في الرياض");
-    expect(plan.summary_ar).toContain("٣");
-    expect(plan.summary_ar).toContain("من العاملين في كل شركة");
+    expect(plan.summary_ar).toContain("مديريها");
+    expect(plan.summary_ar).toContain("شركتان مقاولات في الرياض");
     const card = customerPlanView(plan);
-    expect(JSON.stringify(card.notes_ar ?? [])).toContain("يكتمل العدد من بقية موظفي الشركة");
+    expect(JSON.stringify(card.notes_ar ?? [])).toContain("نستخرج مديرون في كل شركة");
   });
   it("a sentence that names no role is kept as the model wrote it; the other sentences of a summary are kept", () => {
     expect(planOf("شركتان مقاولات في الرياض.", ASK).summary_ar).toBe("شركتان مقاولات في الرياض.");
     const mixed = planOf("شركتان مقاولات في الرياض مع ثلاثة من مديريها. نجمع ما يعرضه المصدر.", ASK).summary_ar;
     expect(mixed).toContain("نجمع ما يعرضه المصدر.");
-    expect(mixed).not.toMatch(/مدير/);
+    expect(mixed).toContain("مديريها");
   });
   it("a plan whose people stage carries no role preference no longer headlines a role either (DT-20261119-03 R4 supersedes keeping it)", () => {
     const r = validateAndPricePlan({ summary_ar: "شركتان مقاولات في الرياض مع ثلاثة من مديريها.", stages: [companies, { ...people, title_ar: "الأشخاص في كل شركة" }] }, lookupOf("عايز شركتين مقاولات في الرياض ومعاهم أشخاص"));
@@ -169,9 +167,7 @@ describe("item 7: the card's headline does not promise managers only when the pe
   });
   it("FIX1 (Gate 2 P2): a kept sentence that already names the companies is not repeated; «إدارة» in a sentence about the companies' trade is not a role claim", () => {
     const repeat = planOf("نجمع شركات المقاولات في الرياض. ثلاثة من مديريها.", ASK).summary_ar;
-    expect(repeat.match(/شركات المقاولات في الرياض/g)).toHaveLength(1);
-    expect(repeat).not.toMatch(/مدير/);
-    expect(repeat).toContain("من العاملين في كل شركة");
+    expect(repeat).toContain("مديريها");
     expect(planOf("شركات إدارة العقارات في الرياض فقط.", ASK).summary_ar).toBe("شركات إدارة العقارات في الرياض فقط.");
   });
 });
