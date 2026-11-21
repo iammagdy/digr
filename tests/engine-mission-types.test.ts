@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approvingReview, assertReplayInvariants, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { callIds, companiesPage, employeesPage, fbCommentsPage, fbPostsPage, tregResult, ttCommentsPage, ttVideosPage, type Results } from "./helpers/agentFakeWorld";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
@@ -10,6 +10,9 @@ import { itemNounOfPlan } from "../src/lib/agentMission/itemNoun";
 import { moneyLineAr } from "../src/lib/agentMission/moneyText";
 import { missionWalletLineAr } from "../src/lib/agentMission/walletLine";
 import type { FakeStep } from "../agent/src/fakeDriver";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * THE CODE ENGINE ON MISSION TYPES WITH TWO LINKED STAGES (Facebook posts and their comments, TikTok videos and their comments, companies and their employees). The model PLANNED (a fake transcript against fake provider

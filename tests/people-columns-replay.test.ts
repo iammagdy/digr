@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook } from "./helpers/agentReplay";
 import { cell, g1 } from "./helpers/g1World";
 import { llmCostFromUsage } from "../agent/src/llmCost";
 import { MODEL_HAIKU } from "../src/lib/agentMission/constants";
 import type { ReviewCall } from "../agent/src/review";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * GOLDEN PROMPT G1 (docs/AUDIT-2026-11.md section 7), OFFLINE REPLAY, PART c: the people's columns of the reference (A, columns 7 and 8) and the owner's per-company note.

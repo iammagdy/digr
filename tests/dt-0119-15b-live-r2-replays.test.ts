@@ -1,4 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
+import { approveForCustomer, loadCustomerMission, smallerVersionForCustomer } from "../src/lib/agentMission/customerActions";
+import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
+import { publicPlanOf } from "../src/lib/agentMission/overLimit";
+import { createMemoryDb } from "./helpers/memoryDb";
+import { replayClient } from "./helpers/agentReplay";
 import { createFakeDriver } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { runPlanning } from "../agent/src/runMission";
@@ -18,6 +26,7 @@ import { fakeMoneyClient } from "./helpers/agentMoney";
  * Strictly offline with fakes, zero real network, zero spend.
  */
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
+afterEach(() => vi.unstubAllEnvs());
 
 const catalog = loadTregCatalog();
 const allSkip = Object.fromEntries(catalog.endpoints.map((e) => [e.id, "other"]));
@@ -611,7 +620,8 @@ describe("DT-20261119-15b Live R2 Real-Shape Replays & Diagnostics", () => {
     expect(emptyRes.mission.summary_ar).toBe(EMPTY_SOURCE_AR);
     expect(emptyRes.mission.summary_ar).not.toBe(INTERNAL_PLANNING_AR);
 
-    // 3. Recovery validator rejection records exact validator issue codes (`issue_over_job_limit` + `issue_rec_over_cap_question_blocked`)
+    // 3. Saved evidence recovers a locked preview after the earlier question.
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const storeOverCap = createMemoryStore();
     const moneyOverCap = fakeMoneyClient();
     const recOverCap = fakeRecorder();
@@ -657,11 +667,39 @@ describe("DT-20261119-15b Live R2 Real-Shape Replays & Diagnostics", () => {
       },
       mOver,
     );
-    const evOver = storeOverCap.events.filter((e) => e.mission_id === mOver.id);
-    const overDiag = evOver.find((e) => (e.counts as Record<string, number> | undefined)?.issue_rec_over_cap_question_blocked === 1);
-    expect(overDiag).toBeDefined();
-    expect((overDiag!.counts as Record<string, number>).adm_flag).toBe(1);
-    expect((overDiag!.counts as Record<string, number>).issue_over_job_limit).toBe(1);
-    expect(isInternalEvent(overDiag!)).toBe(true);
+    const previewMission = storeOverCap.missions.get(mOver.id)!;
+    const plan = previewMission.plan;
+    if (!plan) throw new Error("expected the recovery preview to be saved");
+    expect(previewMission.status).toBe("plan_ready");
+    expect(plan.hold_cap_preview).toBe(true);
+    expect(plan.price.reservePoints).toBeGreaterThan(AGENT_JOB_POINTS_CAP);
+    const db = createMemoryDb();
+    db.seed("missions", [{ ...previewMission, plan_public: publicPlanOf(plan), updated_at: previewMission.created_at }]);
+    const { client } = replayClient(db, moneyOverCap);
+    const owner = { id: previewMission.id, userId: USER_ID };
+    const preview = await loadCustomerMission(client, owner);
+    if (!preview.ok || !preview.view.affordability?.offer) throw new Error("expected a valid capped offer for the preview");
+    const offer = preview.view.affordability.offer;
+    expect(offer.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
+    const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: preview.view, isGuest: false, authoritative: true }));
+    expect(html).not.toContain('data-testid="agent-approve"');
+
+    const approve = (approvalVersion: unknown) => approveForCustomer(client, {
+      ...owner, isGuest: false, emailVerified: true, approvalVersion,
+    });
+    const holds = () => moneyOverCap.ledger.filter((row) => row.type === "reserve").map((row) => -row.delta);
+    expect(await approve(preview.view.approvalVersion)).toMatchObject({ ok: false, status: 409, code: "affordability_changed" });
+    expect(moneyOverCap.quotes.size).toBe(0);
+    expect(moneyOverCap.jobs.size).toBe(0);
+    expect(holds()).toEqual([]);
+    const selected = await smallerVersionForCustomer(client, { ...owner, approvalVersion: preview.view.approvalVersion, offer });
+    expect(selected).toMatchObject({ ok: true, status: "plan_ready" });
+    const ready = await loadCustomerMission(client, owner);
+    if (!ready.ok) throw new Error(ready.error);
+    expect(ready.view.affordability).toMatchObject({ mode: "ready", reservePoints: offer.reservePoints });
+    expect(await approve(ready.view.approvalVersion)).toMatchObject({ ok: true, reservePoints: offer.reservePoints });
+    expect(moneyOverCap.quotes.size).toBe(1);
+    expect(moneyOverCap.jobs.size).toBe(1);
+    expect(holds()).toEqual([offer.reservePoints]);
   }, 30_000);
 });

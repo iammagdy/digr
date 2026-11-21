@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tregResult, callIds, type Results } from "./helpers/agentFakeWorld";
 import { firstOutputId } from "./helpers/agentRelevance";
 import { assertReplayInvariants, replay } from "./helpers/agentReplay";
 import { readSnapshot } from "../agent/src/items/itemStore";
 import type { FakeStep } from "../agent/src/fakeDriver";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * ITEM 2 (owner decision after #321): the people source returns 5 people per page (aviato.companies.employees, perPage 5, 0.005 USD a page), so a decision maker beyond page 1 was never seen (msn_7539…: «عامل» and «محاسب» delivered because the first page held no manager).

@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { dispatcher, planFlow } from "./helpers/g1World";
 import { LIVE_7539, stage3Dispatcher, testAccountStore } from "./helpers/stage3World";
 import { stagePriceInputs } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { B2B_CARDS } from "../src/lib/agentMission/stage3/b2bCards";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
 
 /**
  * STAGE 3, PART A WIRING (behind DIGER_STAGE3_COMPANIES): with the flag on for the account, the worker's planning of a companies and decision-makers request is the code-built plan

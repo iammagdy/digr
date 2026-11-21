@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { replay } from "./helpers/agentReplay";
 import { companiesPage, peopleOfCompany, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
@@ -12,6 +12,9 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { fakeRecorder, NOT_ADMIN, USER_ID } from "./helpers/agentHarness";
 import type { CallRow } from "../agent/src/types";
 import type { FakeStep } from "../agent/src/fakeDriver";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 

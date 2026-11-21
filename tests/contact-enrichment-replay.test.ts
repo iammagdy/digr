@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readWorkbook, replay } from "./helpers/agentReplay";
 import { COMPANIES, PEOPLE, SLUGS, companiesPage, peopleAnswer, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 // CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });

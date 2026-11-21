@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { g1 } from "./helpers/g1World";
 import { cellsOf } from "./helpers/round11Worlds";
 import { createMemoryStore, newMission, type MemoryStore } from "../agent/src/memoryStore";
 import { FIRST_VERSION_TIMEOUT_MS, storeFirstVersion, workbookCells } from "../agent/src/stage4/firstVersion";
 import { firstVersionFromCells, versionPathOf, type FileVersion } from "../src/lib/agentMission/stage4/versions";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
 
 /**
  * STAGE 4, S1 (docs/STAGE-4.md section 8): VERSION 1 AT DELIVERY, behind DIGER_STAGE4_VERSIONS. After the file is stored and the mission is settled, the worker reads back the delivered workbook, makes

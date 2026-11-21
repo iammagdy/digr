@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook, replay } from "./helpers/agentReplay";
 import { request } from "./helpers/a1World";
 import { liveDispatcher, liveFlow } from "./helpers/g1R2World";
 import { filterVerdict, type StageFilter } from "../src/lib/agentMission/filters";
 import { countryOfValue, placeKeysOfValues, placeVerdict } from "../src/lib/agentMission/places";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * GOLDEN RUN ROUND 2, G1 (TEST account, 2026-11-01 15:35 UTC, msn_9dc8f2db86bc5cf4959b): «عايز ٥ شركات مصرية في قطاع الكهروميكانيكا ...» delivered 2 companies and 1 person (3 of 15). The source (tomba companies, asked for

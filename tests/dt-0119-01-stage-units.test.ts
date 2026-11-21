@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { g1 } from "./helpers/g1World";
 import { fakeMoneyClient } from "./helpers/agentMoney";
 import { approveMission, perStageSettlementReady, repriceStoredPlan, settleMission } from "../src/lib/agentMission/lifecycle";
@@ -16,7 +16,9 @@ import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 let plan: any;
 let noContact: any;
 const estimated = (p: any) => ({ ...p, stages: p.stages.map((s: any) => (s.parent_key ? { ...s, estimated: true } : s)) });
+afterAll(() => vi.unstubAllEnvs());
 beforeAll(async () => {
+  vi.stubEnv("JOB_MAX_POINTS_CAP", "");
   const world = (await g1({})).mission as any;
   plan = estimated(world.plan);
   const bare = { ...plan, contact_steps: [] };

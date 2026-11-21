@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { replay } from "./helpers/agentReplay";
 import { companiesPage, peopleAnswer, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
 import { stagePriceInputs, type PricedPlan } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 

@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
@@ -11,6 +11,8 @@ import { B2B_NOT_SEARCHED_AR, resolveField } from "../src/lib/agentMission/stage
 import { b2bContactCells, b2bLimitLines, createAttemptLog } from "../src/lib/agentMission/stage3/b2bEngine";
 import { readWorkbook, replay } from "./helpers/agentReplay";
 import { LIVE_7539, SLUGS, company, stage3Dispatcher, type Stage3World } from "./helpers/stage3World";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
 
 /**
  * STAGE 3, PART B (docs/STAGE-3.md S4, the engine half), behind DIGER_STAGE3_COMPANIES: every lookup the contact steps make is recorded per row and column as an Attempt

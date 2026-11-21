@@ -28,11 +28,13 @@ const ME = "u-1";
 const OTHER = "u-2";
 const ready = (over: Record<string, unknown> = {}) => ({ id: "msn_ready0001", user_id: ME, status: "plan_ready", request_text: "هات منشورات", plan: pricedTwoStagePlan(), plan_public: customerPlanView(pricedTwoStagePlan()), created_at: "2026-10-28T10:00:00Z", updated_at: "2026-11-21T06:00:00.000Z", ...over });
 
-function makeClient(db: MemoryDb, money = fakeMoneyClient()) {
+function makeClient(db: MemoryDb, money = fakeMoneyClient(), projectLedger = true) {
   const written: string[] = [];
   const atomic = withAtomicMissionApproval(db, money);
   const client: any = {
-    from: (t: string) => { const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
+    from: (t: string) => {
+      if (t === "credit_ledger" && projectLedger) db.tables.set(t, money.ledger.map((row) => ({ ...row, user_id: ME })));
+      const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
     rpc: atomic.rpc,
     storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://signed.example/${bucket}/${p}` }, error: null }) }) },
   };
@@ -267,6 +269,8 @@ describe("approval of the displayed plan (NEW-ISSUES #13)", () => {
 });
 
 describe("approval by the customer", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   it("a guest must sign up first; an unverified account must verify; another customer's mission does not exist", async () => {
     db.seed("missions", [ready()]);
     const { client, money } = makeClient(db);
@@ -305,6 +309,26 @@ describe("approval by the customer", () => {
     expect((r as any).error).not.toContain("الاختبار");
     expect(db.rows("missions")[0].status).toBe("plan_ready");
     expect(money.ledger.filter((l) => l.type === "reserve")).toHaveLength(0);
+  });
+
+  it.each([0, 2])("refuses a ledger with %i points before creating a quote", async (balance) => {
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
+    try {
+      db.seed("missions", [ready()]);
+      if (balance > 0) db.seed("credit_ledger", [{ id: "topup_fixture", user_id: ME, delta: balance }]);
+      const { client, money } = makeClient(db, fakeMoneyClient(), false);
+      const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
+      if (!view.ok) throw new Error(view.error);
+      const result = await approveForCustomer(client, {
+        id: "msn_ready0001", userId: ME, isGuest: false, emailVerified: true, approvalVersion: view.view.approvalVersion,
+      });
+      expect(result).toMatchObject({ ok: false, status: 402, code: "affordability_changed" });
+      expect(money.quotes.size).toBe(0);
+      expect(money.jobs.size).toBe(0);
+      expect(money.ledger.filter((row) => row.type === "reserve")).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("the route: checks the gate, the busy state and the user's limit before anything is reserved, then tells the customer once that the page may be closed", async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, tregResult, type Results } from "./helpers/agentFakeWorld";
 import { firstOutputId } from "./helpers/agentRelevance";
@@ -7,6 +7,9 @@ import type { FakeStep } from "../agent/src/fakeDriver";
 import { countWorkbookSheets } from "../agent/src/finalize";
 import { settlementCharge } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * REPLAY OF THE LIVE RETEST OF 2026-10-31 16:20 (A1 «٥ شركات كهروميكانيكا + صناع القرار», A2 petroleum). The people source gave role mailboxes (info@, customer_care@, webmaster@, a «Petro Consultants») beside the named people of some companies;

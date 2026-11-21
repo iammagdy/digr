@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, readWorkbook } from "./helpers/agentReplay";
 import { cell, g1 } from "./helpers/g1World";
 import { activityArabic, bilingualActivity, bilingualTitle, titleArabic } from "../src/lib/agentMission/titleLexicon";
 import { ACTIVITY_AR_KEY, TITLE_AR_KEY, namesPrompt, runNamesStep } from "../agent/src/namesAr";
 import { NAMES_STEP_USD_PER_PERSON } from "../src/lib/agentMission/constants";
 import type { ReviewCall } from "../agent/src/review";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * F5 (golden G1, msn_ecca2a0d074fef9f4456): «مدير المبيعات (Sales Manager)» was right but «Business Owner», «Aftermarket Engineer», «Workforce Management», «Vendor Relationship Manager» stayed English only, and the activity column («Machinery Manufacturing») was English.

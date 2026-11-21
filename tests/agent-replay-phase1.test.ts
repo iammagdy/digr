@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approvingReview, assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, emailFound, emailNotFound, employeesPage, fbCommentsPage, fbPostsPage, igHashtagPage, lastOutputId, mapsReviewsPage, mapsSearch, planningFlow, pagedCalls, tregResult, ttCommentsPage, ttVideosPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import { isSellable, loadTregCatalog } from "../src/lib/treg/catalog";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * PHASE 1 REPLAYS: a customer request through the chat, the agent's plan on the customer's card, the customer's approval, the execution, the settlement, the files and the notice, with a fake

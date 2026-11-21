@@ -1,12 +1,15 @@
-import { AGENT_JOB_POINTS_CAP, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
+import { isDeepStrictEqual } from "node:util";
+import { AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
 import { childCountOf } from "./childCount";
 import { countAr, itemNounOf, knownItemNoun } from "./itemNoun";
-import { customerPlanView, stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
+import { customerPlanView, fixedCountBasket, stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
 import { carriedRevision, priceMissionByCode } from "./price";
 import { OPEN_REPLIES_FLOOR } from "./foundation/openReplies";
 import { holdLimitOf, type HoldLimit } from "./holdLimit";
 import { pointsAr } from "../pointsFormat";
 import { formatAr } from "../arabicDigits";
+import { applyPlanEdits } from "./planEdit";
+import { repriceStoredPlan } from "./lifecycle";
 
 /**
  * A PLAN THAT CANNOT BE APPROVED IS NEVER SHOWN WITH AN APPROVE BUTTON (live round 11, Facebook msn_9d196025e7929324983a: after the customer chose «fill from other pages» the card said «السعر حتى ٩٬١٢٥» and «حجز مؤقت ٢٦٬٦٥٣», above the job cap of
@@ -147,6 +150,63 @@ export function smallerVersionOf(plan: PricedPlan, limitPoints: number, options:
     if (p) { lo = mid; best = p; } else hi = mid - 1;
   }
   return { per_post: lo, plan: best };
+}
+
+type AffordableVersion = { kind: "count" | "per_post"; count: number; plan: PricedPlan; countAr: string };
+
+function repriceAffordable(plan: PricedPlan, limitPoints: number): PricedPlan | null {
+  const price = repriceStoredPlan(plan);
+  if (price.overCap || price.reservePoints > limitPoints || price.deliveredRows > AGENT_MAX_DELIVERED_ROWS
+    || price.reservePoints !== plan.price.reservePoints || price.unitPricePoints !== plan.price.unitPricePoints
+    || price.deliveredRows !== plan.price.deliveredRows) return null;
+  return plan;
+}
+
+function sameStageScope(first: PricedStage, second: PricedStage): boolean {
+  const scopeOf = ({ planned_rows, expected_rows, title_ar, how_ar, ...scope }: PricedStage) => scope;
+  return isDeepStrictEqual(scopeOf(first), scopeOf(second));
+}
+
+export function affordableVersionOf(plan: PricedPlan, limitPoints: number): AffordableVersion | null {
+  const basket = fixedCountBasket(plan);
+  if (!basket) {
+    const smaller = smallerVersionOf(plan, limitPoints);
+    if (!smaller || !repriceAffordable(smaller.plan, limitPoints)) return null;
+    const comments = rolesOf(smaller.plan)?.comments;
+    if (!comments) return null;
+    return { kind: "per_post", count: smaller.per_post, plan: smaller.plan, countAr: countAr(smaller.per_post, itemNounOf(comments.title_ar)) };
+  }
+
+  const { root, child } = basket;
+  function candidate(count: number): PricedPlan | null {
+    const edited = applyPlanEdits(plan, { count });
+    if (!edited.ok || !isDeepStrictEqual(plan.contact_steps, edited.plan.contact_steps)) return null;
+    const next = fixedCountBasket(edited.plan);
+    if (!next || next.root.planned_rows !== count || !sameStageScope(root, next.root)) return null;
+    if (child && (!next.child || !sameStageScope(child, next.child) || next.child.planned_rows > child.planned_rows)) return null;
+    return repriceAffordable(edited.plan, limitPoints);
+  }
+
+  let low = 1;
+  let high = root.planned_rows - 1;
+  let best: AffordableVersion | null = null;
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2);
+    const reduced = candidate(count);
+    if (reduced) {
+      best = { kind: "count", count, plan: reduced, countAr: countAr(count, itemNounOf(root.title_ar)) };
+      low = count + 1;
+    } else {
+      high = count - 1;
+    }
+  }
+  if (best && (best.count + 1 === root.planned_rows || !candidate(best.count + 1))) return best;
+
+  for (let count = root.planned_rows - 1; count >= 1; count -= 1) {
+    const reduced = candidate(count);
+    if (reduced) return { kind: "count", count, plan: reduced, countAr: countAr(count, itemNounOf(root.title_ar)) };
+  }
+  return null;
 }
 
 /** The public plan the card draws from: the customer's view of the plan, and, for a Facebook, Instagram or YouTube compiled plan, its `limit` (the hold against the cap, the hold's rows, and the smaller version by code). Other plans are exactly `customerPlanView`. */

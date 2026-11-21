@@ -17,6 +17,7 @@ const COMBOS: Combo[] = [
 ];
 
 const run = (c: Combo): Promise<ReplayResult> => {
+  vi.stubEnv("JOB_MAX_POINTS_CAP", "");
   vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", c.s2 ? "on" : "");
   vi.stubEnv("DIGER_STAGE3_COMPANIES", c.s3 ? "on" : "");
   vi.stubEnv("DIGER_STAGE4_VERSIONS", c.s4 ? "on" : "");

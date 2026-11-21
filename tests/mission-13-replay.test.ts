@@ -337,6 +337,9 @@ describe("4. «عايز ٥٠ شركة مقاولات في مصر، ومن كل �
 // ---------------------------------------------------------------------------------------------------- 5. The denominator is the card's total
 import { cardTotalOf, deliveryDenominatorOf } from "../src/lib/agentMission/plan";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 describe("5. the final line, the first sheet and the notice say «X من» the CARD's total, not the request's own number (live: «تم تسليم ٧٣ من ١٣٦» with a card of 129; «من ١٥» with a card of 11)", () => {
   const COMPANIES = "parallel.companies.search";
   const EMPLOYEES = "aviato.companies.employees";

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
 import { fakeMoneyClient, withAtomicMissionApproval } from "./helpers/agentMoney";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
@@ -65,9 +65,12 @@ describe("an add-on row is not approved as a mission", () => {
 });
 
 describe("TEST 18: an ordinary mission is approved exactly as before", () => {
+  beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+  afterEach(() => vi.unstubAllEnvs());
   it("reserves through the existing functions once; a double click reserves once", async () => {
     db.seed("missions", [ordinary()]);
     const { client, money } = makeClient(db);
+    db.seed("credit_ledger", money.ledger.map((row) => ({ ...row, user_id: ME })));
     const view = await loadCustomerMission(client, { id: "msn_ready0001", userId: ME });
     if (!view.ok) throw new Error(view.error);
     const first = await approve(client, "msn_ready0001", view.view.approvalVersion);

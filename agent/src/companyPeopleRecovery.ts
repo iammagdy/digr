@@ -1054,6 +1054,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       : neutralPeopleTitleAr(rawPeopleTitle, "manager", "شركة");
   const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
   let sawOverCap = false;
+  let preview: { plan: PricedPlan; evidence: Map<string, string | null> } | undefined;
   let sawCandidateRejected = false;
   let lastFailReason = "stage_not_allowed";
   const collectedIssueCodes: string[] = [];
@@ -1225,6 +1226,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       for (const tv of textVariants) {
         const checked = validateAndPricePlan({ summary_ar: tv.summary, stages: assembledStages as any, ...(tv.assumptions !== undefined ? { assumptions_ar: tv.assumptions as any } : {}) }, makeLookup(evMap));
         if (!checked.ok) {
+          if (!preview && checked.overCapPlan) preview = { plan: checked.overCapPlan, evidence: evMap };
           sawCandidateRejected = true;
           lastFailReason = "plan_rejected";
           if (checked.issues.some((i) => /more than the job limit|lower the expected rows/i.test(i))) sawOverCap = true;
@@ -1248,9 +1250,17 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
     }
   }
 
+  if (preview) {
+    const finalized = await finalizePlan(preview.plan, preview.evidence, { skipAdvice: true });
+    if (finalized.ok) {
+      clearDiag();
+      return { kind: "plan", plan: finalized.plan, outSeq: seq };
+    }
+  }
+
   if (sawOverCap && canAskOverCap) {
-    const question_ar = "العدد المطلوب من الشركات يتجاوز الحد الأقصى لحجز المهمة الواحدة حاليًا؛ هل تفضّل تقليل العدد ليناسب الحد المتاح أم الاستمرار بالشركات فقط؟";
-    const options_ar = ["تقليل العدد ليناسب الحد المتاح", "الاستمرار بالشركات فقط"];
+    const question_ar = "العدد المطلوب يتجاوز الحد المسموح للحجز. اكتب عددًا أقل لنحسب الحجز من جديد.";
+    const options_ar: string[] = [];
     if (checkCustomerText(question_ar).issues.length === 0) {
       clearDiag();
       return { kind: "question", question_ar, options_ar };

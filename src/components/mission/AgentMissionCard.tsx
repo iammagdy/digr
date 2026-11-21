@@ -14,7 +14,7 @@ import { CSV_PACKAGING_NOTE_AR } from "@/lib/agentMission/csvLabels";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
 import { APPROVE_UNKNOWN_AR, approveWithRecovery } from "@/lib/missionApprove";
-import { useBalance } from "@/hooks/useBalance";
+import type { CustomerAffordability } from "@/lib/agentMission/customerActions";
 import { countInputValue, displayDigitsAr } from "@/lib/digitsInput";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
@@ -43,6 +43,7 @@ type ApprovalVersion = { updatedAt: string; planHash: string };
 type ApprovalCardView = CustomerMissionView & {
   approvalState?: "confirmed" | "pending" | "unapproved";
   approvalVersion?: ApprovalVersion;
+  affordability?: CustomerAffordability;
 };
 const sameApprovalVersion = (a: ApprovalVersion | undefined, b: ApprovalVersion | undefined) =>
   a?.updatedAt === b?.updatedAt && a?.planHash === b?.planHash;
@@ -89,6 +90,19 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [approvedHere, setApprovedHere] = useState(false);
   const [rejectedVersion, setRejectedVersion] = useState<ApprovalVersion>();
+  const [refreshPending, setRefreshPending] = useState(false);
+  const [awaitingProof, setAwaitingProof] = useState(false);
+  const approvalAttempted = useRef(false);
+  const announcedStart = useRef(false);
+  const acting = useRef(false);
+  const approvedCallback = useRef(onApproved);
+  approvedCallback.current = onApproved;
+  const announceStarted = useCallback(() => {
+    if (!approvalAttempted.current || announcedStart.current) return;
+    announcedStart.current = true;
+    setApprovedHere(true);
+    approvedCallback.current?.();
+  }, []);
   const requestNumber = useRef(0);
   const lastAppliedRead = useRef(0);
   const earliestRead = useRef(0);
@@ -100,10 +114,6 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const [quietSinceMs, setQuietSinceMs] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(0);
   const signatureRef = useRef<string | null>(null);
-  // THE CUSTOMER'S BALANCE (the shared provider: null while it loads or when it failed, never a made-up zero): a hold above it is a limit like the job cap
-  const { balance } = useBalance();
-  const balancePoints = balance.status === "ready" ? balance.value : null;
-
   const read = useCallback(async (discardEarlier = false) => {
     const number = ++requestNumber.current;
     if (discardEarlier) earliestRead.current = number;
@@ -116,12 +126,24 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       if (alive.current && json?.success && json.view && number >= earliestRead.current && number > lastAppliedRead.current) {
         lastAppliedRead.current = number;
         setAnswer(json);
+        setRefreshPending(false);
+        if (json.view.approvalState === "confirmed") {
+          setAwaitingProof(false);
+          announceStarted();
+        }
       }
     } catch { /* the card keeps what it has */ } finally { clearTimeout(limit); }
-  }, [missionId]);
+  }, [missionId, announceStarted]);
 
   const currentVersion = answer?.view?.approvalVersion;
-  const approvalDisabled = !answer?.isGuest && (!currentVersion || sameApprovalVersion(currentVersion, rejectedVersion));
+  const affordability = answer?.view?.affordability;
+  const proofPending = awaitingProof || answer?.view?.approvalState === "pending";
+  const editingBlocked = !answer?.isGuest && (!currentVersion || refreshPending || proofPending || sameApprovalVersion(currentVersion, rejectedVersion));
+  const approvalDisabled = !answer?.isGuest && (editingBlocked || affordability?.mode !== "ready");
+  async function refreshOffer() {
+    setRefreshPending(true);
+    await read(true);
+  }
   const live = answer?.view?.live ?? true;
   const ended = TERMINAL_PHASES.has(answer?.view?.phase ?? "");
   // THE BALANCE AFTER THE END (missionBalance.ts): the header kept the hold taken because nothing asked for the balance when the mission ended
@@ -141,8 +163,12 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   }, [read, live, ended]);
 
   async function act(action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
-    if (busy || (action === "approve" && approvalDisabled)) return;
+    if (busy || acting.current || (action === "approve" && approvalDisabled)
+      || (action === "edit_plan" && editingBlocked)
+      || (action === "smaller" && (editingBlocked || !affordability?.offer))) return;
     const approvalVersion = currentVersion;
+    const offer = affordability?.offer;
+    acting.current = true;
     // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
     const shownText = text;
     if (action === "answer" && typeof text === "string" && /^\s*[\d٠-٩۰-۹]+\s*$/.test(text)) text = String(countInputValue(text));
@@ -155,7 +181,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       // THE APPROVE CLICK RECOVERS (round 14, missionApprove.ts): a first request that never reaches the money step is retried once with a fresh session, and a lost answer is settled by reading the mission
       if (action === "approve") {
         const url = `/api/missions/${encodeURIComponent(missionId)}`;
-        let stale = false;
+        approvalAttempted.current = true;
+        let refusal: "stale_plan" | "affordability_changed" | "approval_pending" | undefined;
         const transportFailure = { status: 0, body: { error: APPROVE_UNKNOWN_AR } };
         const outcome = await approveWithRecovery({
           post: async () => {
@@ -166,7 +193,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
               });
               const body = await resp.json().catch(() => null);
               if (typeof body?.success !== "boolean") return transportFailure;
-              stale = resp.status === 409 && body.code === "stale_plan";
+              if (body.code === "stale_plan" || body.code === "affordability_changed" || body.code === "approval_pending") refusal = body.code;
               return { status: resp.status, body };
             } catch {
               return transportFailure;
@@ -174,6 +201,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
           },
           refreshSession: async () => { await createClient().auth.refreshSession(); },
           isApproved: async () => {
+            if (refusal !== undefined) return null;
             const response = await fetch(url, { cache: "no-store", headers: await authHeaders() });
             const json: MissionAnswer | null = await response.json().catch(() => null);
             if (!json?.success) return null;
@@ -184,29 +212,43 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
         });
         if (!outcome.ok) {
           setError(outcome.error);
-          if (stale) {
-            setRejectedVersion(approvalVersion);
-            await read(true);
-          }
+          if (refusal === "stale_plan") setRejectedVersion(approvalVersion);
+          if (refusal === "approval_pending" || outcome.retriable) setAwaitingProof(true);
+          if (refusal || outcome.retriable) await refreshOffer();
           return;
         }
-        setApprovedHere(true);
-        onApproved?.();
-        await read();
+        announceStarted();
+        await read(true);
         setTimeout(() => { if (alive.current) void read(); }, 1500);
         return;
       }
-      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}), ...(action === "smaller" && typeof balancePoints === "number" ? { maxHoldPoints: Math.max(0, Math.floor(balancePoints)) } : {}) }) });
+      const body = {
+        action,
+        ...(text !== undefined ? { text } : {}),
+        ...(edits !== undefined ? { edits } : {}),
+        ...(action === "smaller" || action === "edit_plan" ? { approvalVersion } : {}),
+        ...(action === "smaller" && offer ? { offer: { kind: offer.kind, count: offer.count, reservePoints: offer.reservePoints } } : {}),
+      };
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify(body) });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.success) { setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء.")); return; }
+      if (!res.ok || !json?.success) {
+        setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء."));
+        if (json?.code === "stale_plan" || json?.code === "affordability_changed") {
+          if (json.code === "stale_plan") setRejectedVersion(approvalVersion);
+          await refreshOffer();
+        }
+        return;
+      }
       if ((action === "edit" || action === "retype") && typeof json.requestText === "string") onEdit?.(json.requestText);
       if (action === "retype") setEditing(false);
       if (action === "answer") setReply("");
       if (action === "edit_plan") setEditing(false);
-      await read();
+      if (action === "smaller" || action === "edit_plan") await refreshOffer();
+      else await read();
     } catch {
       setError(action === "approve" ? APPROVE_UNKNOWN_AR : "تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
     } finally {
+      acting.current = false;
       setBusy(false);
       setPendingAction(null);
       setPendingText(null);
@@ -291,7 +333,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
   // the live snapshot is written a little after the card's own events: while it lags, the card keeps the higher count it already knows (live, 16 Nov 2026: ٤٠ → ٢٠ → ٦٠ on one run)
   const cardLive = liveData && v.phase === "running" && v.savedSoFar > liveData.delivered ? { ...liveData, delivered: v.savedSoFar, counterAr: counterAr(v.savedSoFar, liveData.promised) } : liveData;
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} approvalDisabled={approvalDisabled} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? cardLive : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} approvalDisabled={approvalDisabled} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} authoritative affordabilityBlocked={refreshPending || editingBlocked} proofPending={proofPending} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? cardLive : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
     // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file). The sheet has its own fold button (handoff
     // «Diger live sheet»); it stays mounted while folded so its numbers keep the same source as the card's counter
     <div className="mt-2 w-full min-w-0" data-testid="agent-live">
@@ -301,7 +343,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalDisabled = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null, onRetry }: { /** The customer asks to start again from the same words (the failed, partial and cancelled cards). */ onRetry?: () => void; /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; approvalDisabled?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalDisabled = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null, onRetry, authoritative = false, affordabilityBlocked = false, proofPending = false }: { /** The customer asks to start again from the same words (the failed, partial and cancelled cards). */ onRetry?: () => void; /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: ApprovalCardView; isGuest: boolean; authoritative?: boolean; affordabilityBlocked?: boolean; proofPending?: boolean; busy?: boolean; approvalDisabled?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // STAGE 2 F-2: the progress the live counter shows (null: nothing to follow, the card is today's), and the card's own bar (its basis: the delivering stages' rows)
@@ -312,13 +354,17 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
     </div>
   );
   // the plan the customer has just approved is shown as a running mission at once, before the next read of the mission returns
-  const planShown = v.phase === "plan" && !approved;
+  const planShown = v.phase === "plan" && !approved && v.approvalState !== "confirmed";
   const approving = pendingAction === "approve";
+  const pendingProof = proofPending || v.approvalState === "pending";
+  const affordability = !isGuest && !pendingProof ? v.affordability : undefined;
+  const offer = affordability?.offer;
+  const showAffordability = planShown && !approving && !isGuest && (pendingProof || (affordability !== undefined && affordability.mode !== "ready"));
   // A PLAN THAT CANNOT BE APPROVED HAS NO APPROVE BUTTON (live round 11): its hold is above the job cap (the plan says so) or above the customer's balance (the card compares it)
   const hold = v.limit ? holdLimitOf(v.limit.reservePoints, balancePoints) : null;
-  const overLimit = Boolean(v.limit?.over) || hold !== null;
+  const overLimit = !authoritative && !affordability && !pendingProof && (Boolean(v.limit?.over) || hold !== null);
   const byBalance = !v.limit?.over && hold !== null && hold.kind === "balance";
-  const showStarted = v.phase === "running" || (v.phase === "plan" && approved);
+  const showStarted = v.phase === "running" || (v.phase === "plan" && (approved || v.approvalState === "confirmed"));
   const sampleRows = v.samples?.rows ?? [];
   const hasDetails = v.assumptionsAr.length > 0 || v.stages.length > 0 || Boolean(v.samples) || Boolean(v.fileContentsAr) || v.notesAr.length > 0;
   // THE REDESIGN (handoff of 16 Nov 2026): the facts of the plan are THREE cells (the count, the highest price, the time); the hold is told in the one money sentence, not as a fourth cell
@@ -416,6 +462,32 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         </div>
       ) : planShown && !approving && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
+      {showAffordability ? (
+        <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="status" data-testid="agent-over-limit">
+          {pendingProof ? (
+            <p>نتحقق الآن من حالة اعتماد طلبك. حدّث الصفحة للاطّلاع على الحالة.</p>
+          ) : affordability?.mode === "top_up" ? (
+            <><p>رصيدك أقل من الحد الأدنى لحجز المهمة.</p><a className={BTN_PRIMARY} href="/dashboard/topup">اشحن رصيدك</a></>
+          ) : affordability?.mode === "unavailable" ? (
+            <p>تعذّر التحقق من الرصيد الآن. حدّث الصفحة وحاول مرة أخرى.</p>
+          ) : (
+            <>
+              {affordability?.limitedBy === "cap" && v.limit?.over ? <p>{v.limit.sentenceAr ?? "المهمة أكبر من الحد المسموح للحجز الواحد."}</p> : null}
+              {affordability?.limitedBy === "cap" && v.limit?.rowsAr ? <p data-testid="agent-over-limit-rows">{v.limit.rowsAr}</p> : null}
+              {offer ? <>
+                <p data-testid="agent-smaller-line">{affordability?.limitedBy === "wallet"
+                  ? `أقصى عدد يناسب رصيدك حاليًا: ${offer.countAr}. الحجز المؤقت لهذه النسخة ${pointsAr(offer.reservePoints)}.`
+                  : `أقصى عدد يناسب حد الحجز لهذه المهمة: ${offer.countAr}. الحجز المؤقت لهذه النسخة ${pointsAr(offer.reservePoints)}.`}</p>
+                <button className={BTN_PRIMARY} type="button" disabled={busy || affordabilityBlocked} onClick={() => onAct("smaller")} data-testid="agent-smaller">جهّز هذه النسخة</button>
+                {affordability?.limitedBy === "wallet" ? <a href="/dashboard/topup">اشحن رصيدك</a> : null}
+              </> : <p>لا توجد نسخة محسوبة تناسب الحد المتاح لهذه الخطة. عدّل الطلب لنحسب الحجز من جديد.</p>}
+              <button className={BTN_PLAIN} type="button" disabled={busy || affordabilityBlocked} onClick={() => onAct("retype")} data-testid="agent-edit">عدّل الطلب</button>
+              <button className={BTN_PLAIN} type="button" disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">ألغِ المهمة</button>
+            </>
+          )}
+        </div>
+      ) : null}
+
       {planShown && !isGuest && overLimit && v.limit ? (
         <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="alert" data-testid="agent-over-limit">
           <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink">
@@ -432,7 +504,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         </div>
       ) : null}
 
-      {planShown && !approving && !(overLimit && !isGuest) ? (
+      {planShown && !approving && !showAffordability && !(overLimit && !isGuest) ? (
         <div className="flex flex-col gap-2 max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-4 max-sm:border-t max-sm:border-ln max-sm:bg-sf max-sm:px-4 max-sm:py-3 sm:flex-row sm:flex-wrap sm:items-center" data-testid="agent-actions">
           {/* ON A PHONE the bar is the whole decision: the price and the time, the one promise, and the two buttons in one row */}
           {!isGuest && !overLimit && (maxPriceAr || factOf("الوقت")) ? (
@@ -441,7 +513,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
           <div className="flex gap-2 sm:contents">
             {isGuest
               ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 flex-1 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[220px] sm:flex-none`} data-testid="agent-signup">سجّل لتعتمد</a>
-              : overLimit ? null
+              : overLimit || (authoritative && affordability?.mode !== "ready") ? null
               : approveButton}
             <button type="button" className={`${BTN_PLAIN} min-h-12 shrink-0 sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
           </div>

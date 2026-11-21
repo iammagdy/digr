@@ -15,6 +15,12 @@ function project(row: Row, cols: string | undefined): Row {
   const out: Row = {};
   for (const raw of cols.split(",").map((c) => c.trim()).filter(Boolean)) {
     if (raw === "*") { Object.assign(out, row); continue; }
+    const cast = /^([A-Za-z_]\w*)::text$/.exec(raw);
+    if (cast) {
+      const col = cast[1];
+      out[col] = row[col] == null ? null : String(row[col]);
+      continue;
+    }
     const alias = /^([A-Za-z_]\w*):(.+)$/.exec(raw);
     if (alias) { out[alias[1]] = pathValue(row, alias[2]); continue; }
     out[raw] = raw.includes("->") ? pathValue(row, raw) : row[raw] ?? null;

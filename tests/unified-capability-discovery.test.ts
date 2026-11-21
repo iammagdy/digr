@@ -29,6 +29,9 @@ import type { PricedPlan } from "../src/lib/agentMission/plan";
 import { editPlanForCustomer } from "../src/lib/agentMission/customerActions";
 import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 /**
  * UNIFIED REQUEST-TO-EXECUTION (docs/UNIFIED-CAPABILITY-DISCOVERY.md), OFFLINE. Each scenario goes through the real code paths: the chat turn (`agentChatTurn`, a SCRIPTED chat model in the real one-line JSON format), the worker's planning
  * (`runPlanning` with a fake planning model, or the compiled social path over stored live pages), the customer's approval (the existing money functions, faked with their arithmetic), the worker's execution and the settlement/delivery.

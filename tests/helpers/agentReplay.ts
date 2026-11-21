@@ -85,7 +85,9 @@ const MODELS = { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" };
 export function replayClient(db: MemoryDb, money: ReturnType<typeof fakeMoneyClient>) {
   const written: string[] = [];
   const client: any = {
-    from: (t: string) => { const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
+    from: (t: string) => {
+      if (t === "credit_ledger") db.tables.set(t, money.ledger.map((row) => ({ ...row, user_id: REPLAY_USER })));
+      const b = db.from(t); for (const m of ["insert", "update", "upsert"]) { const o = b[m]; b[m] = (...a: any[]) => { written.push(t); return o(...a); }; } return b; },
     rpc: withAtomicMissionApproval(db, money).rpc,
     storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://signed.example/${bucket}/${p}` }, error: null }) }) },
   };

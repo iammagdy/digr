@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
@@ -112,6 +112,9 @@ import { stagePriceInputs, type PricedPlan } from "../src/lib/agentMission/plan"
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
 import { FINDERS_PER_STEP, VERIFIER_PRICE_DEPTH, chainExpectation, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 describe("the A1-style plan price includes every step, by code", () => {
   const plan = async () => (await replay({ request, planning: planFlow(), execution: () => [], answers: Array.from({ length: 40 }, () => (o: any) => (o.endpointId.includes("waterfall") ? peopleAnswer(o) : tregResult(companiesPage, 0.0005))) })).plannedPlan as PricedPlan;

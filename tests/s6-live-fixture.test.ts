@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryStore } from "../agent/src/memoryStore";
 import { readWorkbook } from "./helpers/agentReplay";
 import { FIXTURE, runS6 } from "./helpers/s6World";
@@ -83,6 +83,9 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, withRepliesStages } from "../src/lib/agentMission/replies";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 describe("4. the price of the replies follows the calls they need (the live plan priced a call for every comment, 0.0045 USD a reply, while 46 reply calls were made)", () => {
   const catalog = loadTregCatalog();

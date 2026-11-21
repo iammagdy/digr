@@ -24,6 +24,9 @@ import { UNDERSTAND_TOOL } from "../agent/src/llmPlanner/prompts";
 import type { PlannerModel } from "../agent/src/llmPlanner/planner";
 import { NOT_ADMIN } from "./helpers/agentHarness";
 
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 const catalog = loadTregCatalog();
 const COMPANIES_CAP = [...capabilitiesOf(catalog, NOT_ADMIN, "companies")].sort().find((c) => !PEOPLE_OF_COMPANY_CAPABILITIES.has(c))!;
 /** The planning model's UNDERSTANDING (scripted): companies, and the people of the companies asked for (two per company, e-mail and phone). Code acts on this answer, never on the words. */

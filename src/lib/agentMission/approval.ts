@@ -1,5 +1,6 @@
 import { MISSION_EVENTS_TABLE, MISSION_TABLE } from "./constants";
-import { approveMission } from "./lifecycle";
+import { effectiveJobPointsCap } from "../jobPointsCap";
+import { approveMission, repriceStoredPlan } from "./lifecycle";
 import type { PricedPlan } from "./plan";
 
 /** The customer passes the owned snapshot read before precheck. The database compares it under the mission lock. */
@@ -29,6 +30,10 @@ export async function approveMissionOnce(client: any, input: ApprovalInput): Pro
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا توجد خطة جاهزة للاعتماد.");
   if (typeof mission.updated_at !== "string" || !Number.isFinite(Date.parse(mission.updated_at))) {
     return bad(409, STALE_MISSION_PLAN_AR, "stale_plan");
+  }
+
+  if (mission.plan.hold_cap_preview || repriceStoredPlan(mission.plan).reservePoints > effectiveJobPointsCap()) {
+    return bad(409, input.messages?.quote_failed ?? "المهمة أكبر من الحد المسموح للحجز الواحد.", "quote_failed");
   }
 
   const result = await approveMission(client, { id: mission.id, user_id: mission.user_id, plan: mission.plan }, {

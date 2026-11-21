@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertReplayInvariants, replay } from "./helpers/agentReplay";
 import { callIds, tregResult, type Results } from "./helpers/agentFakeWorld";
 import { firstOutputId } from "./helpers/agentRelevance";
@@ -8,6 +8,9 @@ import { buildMethodology, type MissionFacts, type StageRecord } from "../agent/
 import { shortfallClauseAr, stageTruthBodyAr, zeroDeliveryReasonAr } from "../agent/src/finalize";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
 import { checkCustomerText } from "../src/lib/agentMission/text";
+
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * THE LIMITS AND EXCLUSION TEXT TELLS THE TRUTH FROM RECORDED COUNTS. Live re-test 2026-10-31 (A1 msn_e750…, A2 msn_6fe6…): the people stage read 31 (A1) / 41 with 9 repeats (A2) rows, every one was left out by our own row rule, and the delivered file said
