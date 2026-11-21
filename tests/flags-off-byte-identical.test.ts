@@ -54,6 +54,11 @@ function legacyViewOf(view: ReplayPlanView) {
   return legacyFields;
 }
 
+function legacyPlanViewOf(view: ReplayPlanView & { affordability?: unknown }) {
+  const { affordability: _affordability, ...legacyFields } = view;
+  return legacyViewOf(legacyFields);
+}
+
 const LEGACY_ACCEPT_ARGUMENTS = ["p_quote_id", "p_user_id", "p_expected_quote_hash"];
 
 function preserveAcceptArgumentOrder(call: ReplayResult["money"]["calls"][number]) {
@@ -72,7 +77,7 @@ async function sectionsOf(r: ReplayResult): Promise<Record<string, string>> {
   return {
     mission: hash({ status: m.status, delivered: m.delivered_units, charged: m.charged_points, reserved: m.reserved_points, unit: m.unit_price_points, summary: m.summary_ar, plan: m.plan }),
     workbook: hash(sheets),
-    planView: hash(legacyViewOf(r.planView)),
+    planView: hash(legacyPlanViewOf(r.planView)),
     finalView: hash(legacyViewOf(r.finalView)),
     notices: hash(r.notices),
     events: hash(visibleEvents),
@@ -110,6 +115,11 @@ describe("every flag off: byte-identical to the code before this pull request", 
         approvalState: "unapproved",
         approvalVersion: { updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), planHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
       });
+      expect(result.planView).toHaveProperty("affordability", expect.objectContaining({
+        mode: "ready", availablePoints: result.initialBalance, reservePoints: result.plannedPlan.price.reservePoints,
+      }));
+      expect(result.planView).not.toHaveProperty("affordability.offer");
+      expect(result.finalView).not.toHaveProperty("affordability");
       expect(result.finalView).toHaveProperty("approvalState", "confirmed");
       expect(result.finalView).not.toHaveProperty("approvalVersion");
       const sections = await sectionsOf(result);
@@ -119,7 +129,7 @@ describe("every flag off: byte-identical to the code before this pull request", 
       expect(sections).toEqual(pinned[name]);
       if (name === "x_posts_300") {
         const changed = { ...result.planView, currentLineAr: `${result.planView.currentLineAr} تغيّر النص.` };
-        expect(hash(legacyViewOf(changed))).not.toBe(pinned[name].planView);
+        expect(hash(legacyPlanViewOf(changed))).not.toBe(pinned[name].planView);
       }
     });
   }

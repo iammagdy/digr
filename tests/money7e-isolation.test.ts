@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectingDb, type ProjectingDb } from "./helpers/projectingDb";
 import { addonRowOf, reviewPricing, USER } from "./helpers/addonWorld";
+import { liveFacebookPlan } from "./helpers/facebookLiveShape";
+import { smallerVersionOf, publicPlanOf } from "../src/lib/agentMission/overLimit";
 import { pricedTwoStagePlan } from "./helpers/agentPlan";
 import { fakeChatModel } from "./helpers/fakeChatModel";
 import { AGENT_MAX_MISSIONS_PER_HOUR, AGENT_TEST_ACCOUNT_EMAIL } from "../src/lib/agentMission/constants";
@@ -163,11 +165,29 @@ describe("the customer's own actions on a mission refuse a review request, and c
     expect(db.log.filter((l) => l.op === "update")).toEqual([]);
   });
   it("the plan edit and the smaller version refuse it instead of crashing on a plan that has no price", async () => {
+    const ordinaryDb = projectingDb({});
+    const plan = liveFacebookPlan().plan;
+    const cheapest = smallerVersionOf(plan, Number.MAX_SAFE_INTEGER, { perPost: 1 });
+    if (!cheapest) throw new Error("expected an offerable ordinary plan");
+    const balance = cheapest.plan.price.reservePoints;
+    ordinaryDb.seed("missions", [{
+      ...ordinary("offer", "plan_ready"), updated_at: ago(2 * H), plan, plan_public: publicPlanOf(plan),
+      reserved_points: plan.price.reservePoints, unit_price_points: plan.price.unitPricePoints,
+    }]);
+    ordinaryDb.seed("credit_ledger", [{ id: "grant_offer", user_id: ME, delta: balance }]);
+    const previousCap = process.env.JOB_MAX_POINTS_CAP;
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
+    const shown = await loadCustomerMission(ordinaryDb, { id: "msn_offer", userId: ME });
+    vi.stubEnv("JOB_MAX_POINTS_CAP", previousCap);
+    if (!shown.ok) throw new Error(shown.error);
+    const offer = shown.view.affordability?.offer;
+    if (!offer || !shown.view.approvalVersion) throw new Error("expected an owned offer and version");
     seedMixed();
     const before = snapshot();
     for (const id of ADDON_ROWS) {
       expect(await editPlanForCustomer(db, { id, userId: ME, edits: { count: 5 } }), id).toMatchObject({ ok: false, status: 409 });
-      expect(await smallerVersionForCustomer(db, { id, userId: ME }), id).toMatchObject({ ok: false, status: 409 });
+      expect(await smallerVersionForCustomer(db, { id, userId: ME, approvalVersion: shown.view.approvalVersion, offer }), id)
+        .toMatchObject({ ok: false, status: 409, error: "هذا طلب على ملف سُلّم من قبل، وليس طلب بيانات جديدًا؛ تجده في صفحة الملف." });
     }
     expect(snapshot()).toBe(before);
   });

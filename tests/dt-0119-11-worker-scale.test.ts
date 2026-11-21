@@ -1,11 +1,14 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { runExecution, runPlanning, type RunnerDeps } from "../agent/src/runMission";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
-import { approveForCustomer, loadCustomerMission } from "../src/lib/agentMission/customerActions";
+import { approveForCustomer, loadCustomerMission, smallerVersionForCustomer } from "../src/lib/agentMission/customerActions";
 import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 import { settlementCharge } from "../src/lib/agentMission/price";
 import { INTERNAL_PLANNING_AR } from "../src/lib/agentMission/refusal";
@@ -25,6 +28,10 @@ import { assertReplayInvariants, readWorkbook, replay, replayClient, REPLAY_USER
  * Zero real network calls, zero spend, source files untouched.
  */
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
+// D-0172 pins this scale invariant to the production 25,000-point ceiling.
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
 
 const catalog = loadTregCatalog();
 const COMPANIES = "tomba.companies.search.reveal";
@@ -402,6 +409,42 @@ describe("DT-20261119-11 F6 (D-0140): offline company + people + contact worker 
       }
 
       expect(planned.plan).toBeTruthy();
+      if (planned.plan!.price.reservePoints > AGENT_JOB_POINTS_CAP) {
+        expect(planned.plan).toHaveProperty("hold_cap_preview", true);
+        const owner = { id: missionId, userId: REPLAY_USER };
+        const preview = await loadCustomerMission(client, owner);
+        if (!preview.ok) throw new Error(preview.error);
+        expect(preview.view.affordability?.mode).toBe("offer");
+        const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: preview.view, isGuest: false, authoritative: true }));
+        expect(html).not.toContain('data-testid="agent-approve"');
+        const approve = (approvalVersion: unknown) => approveForCustomer(client, {
+          ...owner, isGuest: false, emailVerified: true, approvalVersion,
+        });
+        expect(await approve(preview.view.approvalVersion)).toMatchObject({ ok: false, status: 409 });
+        expect(money.quotes.size).toBe(0);
+        expect(money.jobs.size).toBe(0);
+        expect(money.ledger.filter((row) => row.type === "reserve")).toHaveLength(0);
+
+        const offer = preview.view.affordability?.offer;
+        expect(offer).toBeDefined();
+        if (!offer) throw new Error("Locked preview did not yield an offer");
+        expect(offer.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
+        const selected = await smallerVersionForCustomer(client, {
+          ...owner, approvalVersion: preview.view.approvalVersion, offer,
+        });
+        expect(selected).toMatchObject({ ok: true, status: "plan_ready" });
+        const ready = await loadCustomerMission(client, owner);
+        if (!ready.ok) throw new Error(ready.error);
+        expect(ready.view.affordability).toMatchObject({ mode: "ready", reservePoints: offer.reservePoints });
+        const result = await approve(ready.view.approvalVersion);
+        expect(result).toMatchObject({ ok: true, reservePoints: offer.reservePoints });
+        expect(money.quotes.size).toBe(1);
+        expect(money.jobs.size).toBe(1);
+        expect(money.ledger.filter((row) => row.type === "reserve").map((row) => -row.delta)).toEqual([offer.reservePoints]);
+        expect(bigRec.rows.every((row) => row.committedUsd !== null)).toBe(true);
+        rssReport.push(`${companies}x${perCompany} (${contacts}): locked preview | prepared hold=${offer.reservePoints} | peakRssMb=${readRssMb()}`);
+        return;
+      }
       expect((planned.plan as any).price.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
 
       const planLoad = await loadCustomerMission(client, { id: missionId, userId: REPLAY_USER });

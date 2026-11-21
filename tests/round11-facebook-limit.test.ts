@@ -1,15 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { liveFacebookPlan, FB_REQUEST, LIVE_COUNTERS } from "./helpers/facebookLiveShape";
 import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 import { customerPlanView, type PricedPlan } from "../src/lib/agentMission/plan";
-import { customerMissionView, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { priceBreakdownOf, publicPlanOf, smallerVersionOf, holdLimitOf } from "../src/lib/agentMission/overLimit";
-import { smallerVersionForCustomer } from "../src/lib/agentMission/customerActions";
+import { loadCustomerMission, smallerVersionForCustomer } from "../src/lib/agentMission/customerActions";
 import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { formatAr } from "../src/lib/arabicDigits";
@@ -26,6 +25,36 @@ import { REPLAY_USER } from "./helpers/agentReplay";
 cardOf("anyapi.facebook.comment_replies")!.page.observedRowsPerPage = 1;
 const live = liveFacebookPlan();
 const plan: PricedPlan = live.plan;
+
+const id = "msn_small1";
+const owner = { id, userId: REPLAY_USER };
+const timestamp = "2026-11-03T13:34:21Z";
+beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
+afterEach(() => vi.unstubAllEnvs());
+
+function dbWith(patch: Record<string, unknown> = {}, p: PricedPlan = plan, balance = AGENT_JOB_POINTS_CAP) {
+  const db = createMemoryDb();
+  db.seed("missions", [{
+    id, user_id: REPLAY_USER, status: "plan_ready", request_text: FB_REQUEST, plan: p,
+    plan_public: publicPlanOf(p), reserved_points: p.price.reservePoints, unit_price_points: p.price.unitPricePoints,
+    created_at: timestamp, updated_at: timestamp, ...patch,
+  }]);
+  db.seed("credit_ledger", [{ id: "grant_fixture", user_id: REPLAY_USER, delta: balance }]);
+  return { db, client: db };
+}
+
+async function cardOfOwner(client: ReturnType<typeof createMemoryDb>) {
+  const result = await loadCustomerMission(client, { ...owner, isGuest: false });
+  if (!result.ok) throw new Error(result.error);
+  return result.view;
+}
+
+async function offeredPayload(client: ReturnType<typeof createMemoryDb>) {
+  const view = await cardOfOwner(client);
+  const offer = view.affordability?.offer;
+  if (!view.approvalVersion || view.affordability?.mode !== "offer" || !offer) throw new Error("expected a signed offer");
+  return { approvalVersion: view.approvalVersion, offer: { kind: offer.kind, count: offer.count, reservePoints: offer.reservePoints } };
+}
 
 describe("the live plan is reproduced to the point (the breakdown of 9,125 and 26,653 row by row)", () => {
   it("4,879 rows at 4.750125 points: 3 posts, 1,896 comments (15 + 1,823 + 58), 2,980 replies; the hold is 26,653 and is above the 25,000 cap", () => {
@@ -111,11 +140,14 @@ describe("a plan above the limit is never shown with an approve button; the card
     expect(smallerVersionOf(plan, 5)).toBeNull();
   });
 
-  const row = (publicPlan: unknown): MissionRowForCustomer => ({ id: "msn_x", status: "plan_ready", question_ar: null, plan_public: publicPlan, reserved_points: 26653, unit_price_points: 4.750125, delivered_units: null, charged_points: null, summary_ar: null, files: null, created_at: "2026-11-03T13:34:21Z" });
-  const html = (publicPlan: unknown, extra: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(AgentMissionCardBody, { view: customerMissionView({ mission: row(publicPlan), events: [] }), isGuest: false, ...extra }));
+  const html = async (p: PricedPlan, extra: { balancePoints?: number | null } = {}) => {
+    const { client } = dbWith({}, p, extra.balancePoints ?? AGENT_JOB_POINTS_CAP);
+    const view = await cardOfOwner(client);
+    return renderToStaticMarkup(createElement(AgentMissionCardBody, { view, isGuest: false, ...extra }));
+  };
 
-  it("the card of the live plan: NO approve button; a plain sentence that the plan is above the limit; the smaller version, the change and the cancel by code", () => {
-    const out = html(pub);
+  it("the card of the live plan: NO approve button; a plain sentence that the plan is above the limit; the smaller version, the change and the cancel by code", async () => {
+    const out = await html(plan);
     expect(out).not.toContain('data-testid="agent-approve"');
     expect(out).toContain('data-testid="agent-over-limit"');
     expect(out).toMatch(/أكبر من الحد المسموح/);
@@ -125,26 +157,26 @@ describe("a plan above the limit is never shown with an approve button; the card
     const s = smallerVersionOf(plan, AGENT_JOB_POINTS_CAP)!;
     expect(out).toContain(`${formatAr(s.per_post)} تعليق`);
   });
-  it("the over-limit text rows add up: posts, comments, counted replies, replies not counted yet", () => {
-    const out = html(pub);
+  it("the over-limit text rows add up: posts, comments, counted replies, replies not counted yet", async () => {
+    const out = await html(plan);
     expect(out).toContain("٣ منشورات");
     expect(out).toMatch(/١٬٨٩٦ تعليقًا|١٨٩٦ تعليقًا/);
     expect(out).toContain("٢٬٩٥٨");
   });
-  it("a plan within the limit keeps its approve button (nothing else changed)", () => {
+  it("a plan within the limit keeps its approve button (nothing else changed)", async () => {
     const s = smallerVersionOf(plan, AGENT_JOB_POINTS_CAP)!;
-    const out = html(publicPlanOf(s.plan));
+    const out = await html(s.plan);
     expect(out).toContain('data-testid="agent-approve"');
     expect(out).not.toContain('data-testid="agent-over-limit"');
   });
-  it("the balance on the card: a customer whose balance is below the hold sees no approve button either, with the balance named", () => {
+  it("the balance on the card: a customer whose balance is below the hold sees no approve button either, with the balance named", async () => {
     const s = smallerVersionOf(plan, AGENT_JOB_POINTS_CAP)!;
-    const out = html(publicPlanOf(s.plan), { balancePoints: 1000 });
+    const out = await html(s.plan, { balancePoints: 1000 });
     expect(out).not.toContain('data-testid="agent-approve"');
     expect(out).toContain('data-testid="agent-over-limit"');
     expect(out).toMatch(/رصيدك/);
-    expect(html(publicPlanOf(s.plan), { balancePoints: 100_000 })).toContain('data-testid="agent-approve"');
-    expect(html(publicPlanOf(s.plan), { balancePoints: null })).toContain('data-testid="agent-approve"');
+    expect(await html(s.plan, { balancePoints: 100_000 })).toContain('data-testid="agent-approve"');
+    expect(await html(s.plan, { balancePoints: null })).toContain('data-testid="agent-approve"');
   });
   it("the plans of the old path (not compiled) and of TikTok and X are not touched: no limit is added to their public plan", () => {
     const old = { ...plan, compiled: undefined } as unknown as PricedPlan;
@@ -156,15 +188,9 @@ describe("a plan above the limit is never shown with an approve button; the card
 });
 
 describe("the customer's action «نسخة أصغر» is applied by code on the stored plan, and only while the plan waits", () => {
-  const dbWith = (patch: Record<string, unknown> = {}, p: PricedPlan = plan) => {
-    const db = createMemoryDb();
-    db.seed("missions", [{ id: "msn_small1", user_id: REPLAY_USER, status: "plan_ready", request_text: FB_REQUEST, plan: p, plan_public: publicPlanOf(p), reserved_points: p.price.reservePoints, unit_price_points: p.price.unitPricePoints, ...patch }]);
-    db.seed("mission_events", []);
-    return { db, client: { from: (t: string) => db.from(t) } as never };
-  };
   it("stores the smaller plan with its own card view and price; the mission stays «plan_ready»; a plan event with no digit is written; the new card is within the limit", async () => {
     const { db, client } = dbWith();
-    const r = await smallerVersionForCustomer(client, { id: "msn_small1", userId: REPLAY_USER });
+    const r = await smallerVersionForCustomer(client, { ...owner, ...await offeredPayload(client) });
     expect(r.ok).toBe(true);
     const row = db.rows("missions")[0];
     expect(row.status).toBe("plan_ready");
@@ -174,22 +200,26 @@ describe("the customer's action «نسخة أصغر» is applied by code on the 
     expect(repriceStoredPlan(row.plan as PricedPlan).reservePoints).toBe(row.reserved_points);
     expect(db.rows("mission_events").find((e) => e.kind === "plan")!.message_ar).not.toMatch(/[0-9]/);
   });
-  it("sized to a lower hold the customer's balance gives (never above the cap; the server recomputes, the client only names its balance)", async () => {
-    const { db, client } = dbWith();
-    const r = await smallerVersionForCustomer(client, { id: "msn_small1", userId: REPLAY_USER, maxHoldPoints: 10_000 });
+  it("sized to a lower hold the customer's balance gives (never above the cap; the server recomputes from the owner ledger)", async () => {
+    const { db, client } = dbWith({}, plan, 10_000);
+    const r = await smallerVersionForCustomer(client, { ...owner, ...await offeredPayload(client) });
     expect(r.ok).toBe(true);
     expect((db.rows("missions")[0].plan as PricedPlan).price.reservePoints).toBeLessThanOrEqual(10_000);
-    const big = dbWith();
-    const r2 = await smallerVersionForCustomer(big.client, { id: "msn_small1", userId: REPLAY_USER, maxHoldPoints: 10_000_000 });
+    const big = dbWith({}, plan, 10_000_000);
+    const r2 = await smallerVersionForCustomer(big.client, { ...owner, ...await offeredPayload(big.client) });
     expect(r2.ok).toBe(true);
     expect((big.db.rows("missions")[0].plan as PricedPlan).price.reservePoints).toBeLessThanOrEqual(AGENT_JOB_POINTS_CAP);
   });
   it("refused: somebody else's mission (not found), a mission already approved, a plan with no smaller version (nothing changes)", async () => {
-    expect(await smallerVersionForCustomer(dbWith().client, { id: "msn_small1", userId: "someone-else" })).toMatchObject({ ok: false, status: 404 });
-    const approved = dbWith({ status: "approved" });
-    expect(await smallerVersionForCustomer(approved.client, { id: "msn_small1", userId: REPLAY_USER })).toMatchObject({ ok: false, status: 409 });
-    const none = dbWith();
-    expect(await smallerVersionForCustomer(none.client, { id: "msn_small1", userId: REPLAY_USER, maxHoldPoints: 5 })).toMatchObject({ ok: false, status: 400 });
+    const approved = dbWith();
+    const payload = await offeredPayload(approved.client);
+    expect(await smallerVersionForCustomer(approved.client, { ...owner, ...payload, userId: "someone-else" })).toMatchObject({ ok: false, status: 404 });
+    approved.db.rows("missions")[0].status = "approved";
+    expect(await smallerVersionForCustomer(approved.client, { ...owner, ...payload })).toMatchObject({ ok: false, status: 409 });
+    const none = dbWith({}, plan, 5);
+    const view = await cardOfOwner(none.client);
+    expect(view).not.toHaveProperty("affordability.offer");
+    expect(await smallerVersionForCustomer(none.client, { ...owner, approvalVersion: view.approvalVersion, offer: undefined })).toMatchObject({ ok: false, status: 400 });
     expect((none.db.rows("missions")[0].plan as PricedPlan).price.reservePoints).toBe(26653);
   });
 });
