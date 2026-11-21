@@ -76,7 +76,7 @@ async function world() {
   await store.putFile(ID, "rows/posts.json", JSON.stringify(rows), "application/json");
   await updateRunState(store, ID, (s) => ({ ...s, executionStarts: AGENT_PHASE_STARTS_MAX }));
   const balanceAfterHold = money.balance();
-  const moneyCalls = () => money.calls.map((c) => c.name).filter((n) => MONEY.includes(n));
+  const moneyCalls = () => money.rpcCalls.map((c) => c.name).filter((n) => MONEY.includes(n));
   const ledgerOf = (prefix: string) => money.ledger.filter((r) => r.id === `${prefix}${ok.jobId}`);
   return { store, money, deps, notices, logs, ok, balanceAfterHold, moneyCalls, ledgerOf, initialBalance: balanceAfterHold + ok.reservePoints };
 }

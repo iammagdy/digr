@@ -344,7 +344,14 @@ export function fakeMoneyClient(options: { balance?: number; cap?: number; /** a
       return call;
     })];
   }
-  return { client, quotes, jobs, ledger, calls, balance, inject, receipts, attempts, bindDeliveryMissions, legacyMoneyTrace };
+  return {
+    client, quotes, jobs, ledger, balance, inject, receipts, attempts, bindDeliveryMissions,
+    rpcCalls: calls,
+    // Existing suites compare the actual financial operations. Delivery-aware
+    // suites also assert the raw RPC journal, owner, permit and receipt.
+    get calls() { return legacyMoneyTrace(); },
+    legacyMoneyTrace,
+  };
 }
 
 /** The application fake for the atomic wrapper. Transaction/lock semantics are proved separately on PostgreSQL. */

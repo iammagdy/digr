@@ -244,7 +244,7 @@ export async function advanceMissionDelivery(deps: RunnerDeps, mission: MissionR
   }
 
   try {
-    await bounded(() => ensureOwned(deps, mission.id));
+    await ensureOwned(deps, mission.id);
     const result = await bounded(() => deps.client.rpc("finalize_agent_delivery_atomic", {
       p_mission_id: mission.id, p_worker_id: deps.ownerId ?? mission.worker_id,
       p_delivery: delivery, p_mode: claim.mode === "verify" ? "deliver" : "release_unsettled", p_trial_id: trial,

@@ -232,7 +232,7 @@ export function assertReplayInvariants(r: ReplayResult, options: { expectDeliver
   expect(price.unitPricePoints).toBeGreaterThanOrEqual(ruleUnit);
   expect(price.reservePoints).toBe(Math.max(price.minChargePoints ?? 0, Math.ceil(Math.round(price.deliveredRows * ruleUnit * 1e6 * 1.15) / 1e6 - 1e-9)));
   expect(price.reservePoints).toBeLessThanOrEqual(25_000);
-  expect(new Set(r.money.calls.map((c) => c.name))).toEqual(new Set(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk", "claim_agent_delivery_attempt_atomic", "finalize_agent_delivery_atomic"]));
+  expect(new Set(r.money.rpcCalls.map((c) => c.name))).toEqual(new Set(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk", "claim_agent_delivery_attempt_atomic", "finalize_agent_delivery_atomic"]));
   assertBoundReplay(r);
   const delivered = Number(m.delivered_units);
   if (options.expectDelivered !== undefined) expect(delivered).toBe(options.expectDelivered);
@@ -298,9 +298,9 @@ export function assertBoundReplay(r: ReplayResult): void {
   const mission = r.mission;
   const job = r.money.jobs.get(mission.job_id!);
   const receipt = r.money.receipts.get(mission.job_id!);
-  const call = r.money.calls.find((entry) => entry.name === "finalize_agent_delivery_atomic");
+  const call = r.money.rpcCalls.find((entry) => entry.name === "finalize_agent_delivery_atomic");
   expect(receipt).toMatchObject({ job_id: mission.job_id, mission_id: mission.id, physical_units: mission.delivered_units, billable_units: job?.delivered_units, charged_credits: mission.charged_points });
-  const permit = r.money.calls.find((entry) => entry.name === "claim_agent_delivery_attempt_atomic" &&
+  const permit = r.money.rpcCalls.find((entry) => entry.name === "claim_agent_delivery_attempt_atomic" &&
     entry.args.p_operation === "claim" && entry.args.p_trial_id === call?.args.p_trial_id);
   expect(permit?.args.p_worker_id).toMatch(/\S/);
   expect(call?.args).toMatchObject({ p_mission_id: mission.id, p_worker_id: permit?.args.p_worker_id, p_mode: "deliver", p_delivery: { job_id: mission.job_id, physical_units: mission.delivered_units, billable_units: job?.delivered_units } });

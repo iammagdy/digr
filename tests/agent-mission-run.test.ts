@@ -194,7 +194,7 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     expect(m.charged_points).toBe(expectedCharge);
     expect(m.charged_points).toBeLessThanOrEqual(approved.reservePoints);
     expect(money.balance()).toBe(100_000 - expectedCharge);
-    expect(money.calls.at(-1)?.name).toBe("finalize_agent_delivery_atomic");
+    expect(money.rpcCalls.at(-1)?.name).toBe("finalize_agent_delivery_atomic");
     expect(money.legacyMoneyTrace().map((c) => c.name).slice(-2)).toEqual(["complete_chunk", "settle_job_atomic"]);
     expect(money.jobs.get(approved.jobId)).toMatchObject({ status: "completed", delivered_units: 88 });
     // the execution budget was 40% of the reserve's value; the spend was recorded against the JOB
