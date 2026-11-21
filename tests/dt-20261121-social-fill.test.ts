@@ -1330,4 +1330,95 @@ describe("DT-20261121-social-fill test suite", () => {
       expect(items.stage(child.key).stop).toBe("source_exhausted");
     });
   });
+
+  describe("10. FIX3 v3 Legacy Envelope Fallback & Malformed Admission Probes", () => {
+    const probeEndpoints = [
+      "tikhub.youtube.video.comments",
+      "anyapi.facebook.user.posts",
+      "tikhub.tiktok.search.videos",
+    ];
+
+    it("(a) Fazza probe for all 3 mission pages: declared list present but malformed [42] plus alternate items -> 0 admitted rows and 0 worker rows", () => {
+      for (const epId of probeEndpoints) {
+        const ep = catalog.byId.get(epId);
+        expect(ep).toBeDefined();
+        const mp = missionPageOf(epId)!;
+        expect(mp).toBeDefined();
+
+        // Construct fake response with present-but-malformed declared list [42] plus alternate items
+        const body: Record<string, unknown> = {
+          output: {
+            data: { items: [{ id: "alt_1", text: "retry", url: "https://example.com/retry" }] },
+            items: [{ id: "alt_1", text: "retry" }],
+          },
+        };
+        // Place [42] at the declared list path
+        const parts = mp.listPath.split(".");
+        let cur: any = body;
+        for (let i = 0; i < parts.length - 1; i++) {
+          cur = cur[parts[i]] ??= {};
+        }
+        cur[parts[parts.length - 1]] = [42];
+
+        // 1. Without opt-in: 0 admitted rows
+        const resWithoutOptIn = buildShapeDigest(body, ep!);
+        expect(resWithoutOptIn.reading.rows.length).toBe(0);
+        expect(resWithoutOptIn.digest.rowsInSample).toBe(0);
+        expect(resWithoutOptIn.reading.listStrategy).toBe("declared_missing");
+
+        // 2. With opt-in: 0 admitted rows
+        const resWithOptIn = buildShapeDigest(body, ep!, { allowLegacyEnvelope: true });
+        expect(resWithOptIn.reading.rows.length).toBe(0);
+        expect(resWithOptIn.digest.rowsInSample).toBe(0);
+        expect(resWithOptIn.reading.listStrategy).toBe("declared_missing");
+        expect(resWithOptIn.digest.listPath).not.toBe("output.data.items");
+        expect(resWithOptIn.digest.listPath).not.toBe("output.items");
+
+        // 3. Worker rows: strict endpoint reading yields 0 rows
+        const strictReading = readShape(body, { ...hintsOf(ep!), missionPage: mp });
+        expect(strictReading.rows.length).toBe(0);
+        expect(strictReading.listStrategy).toBe("declared_missing");
+      }
+    });
+
+    it("(b) Declared list absent and no opt-in -> 0 admitted rows", () => {
+      for (const epId of probeEndpoints) {
+        const ep = catalog.byId.get(epId);
+        expect(ep).toBeDefined();
+
+        // Declared list is absent, only alternate output.data.items is present
+        const body = {
+          output: {
+            data: { items: [{ id: "alt_1", text: "retry" }] },
+          },
+        };
+
+        const res = buildShapeDigest(body, ep!);
+        expect(res.reading.rows.length).toBe(0);
+        expect(res.digest.rowsInSample).toBe(0);
+        expect(res.reading.listStrategy).toBe("declared_missing");
+      }
+    });
+
+    it("(c) Approved fixture path with opt-in and valid absent-list envelope -> expected rows", () => {
+      for (const epId of probeEndpoints) {
+        const ep = catalog.byId.get(epId);
+        expect(ep).toBeDefined();
+
+        // Declared list absent, valid alternate items present, opt-in true
+        const body = {
+          output: {
+            data: { items: [{ id: "1", text: "نص", url: "https://x.com/a/status/1" }] },
+          },
+        };
+
+        const res = buildShapeDigest(body, ep!, { allowLegacyEnvelope: true });
+        expect(res.reading.rows.length).toBe(1);
+        expect(res.digest.rowsInSample).toBe(1);
+        expect(res.reading.listPath).toBe("output.data.items");
+        expect(res.reading.listStrategy).toBe("common_keys");
+        expect(res.reading.rows).toEqual([{ id: "1", text: "نص", url: "https://x.com/a/status/1" }]);
+      }
+    });
+  });
 });

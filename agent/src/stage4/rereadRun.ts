@@ -86,7 +86,7 @@ export async function runReread(input: {
       const endpoint = catalog.byId.get(tool.endpointId);
       if (raw === null || !endpoint) continue;
       let rows: unknown[] = [];
-      try { rows = buildShapeDigest(JSON.parse(raw), endpoint).reading?.rows ?? []; } catch { rows = []; }
+      try { rows = buildShapeDigest(JSON.parse(raw), endpoint, { allowSingleRecordLookup: true }).reading?.rows ?? []; } catch { rows = []; }
       for (const r of rows) {
         const v = valueAtPath(r, tool.valueField);
         if (isRealValue(v)) return { value: cellText(v), stopped: false };

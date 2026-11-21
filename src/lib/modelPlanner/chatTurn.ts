@@ -96,7 +96,8 @@ export async function preparePlannerTurn(args: ModelPlannerTurnArgs): Promise<Pr
       })).then(() => undefined, () => undefined));
     } catch { /* the table is not there */ }
   };
-  const input: PlannerInput = {
+    const isReplay = config.transport.model === "recorded" || Boolean(config.call);
+    const input: PlannerInput = {
     onEvent,
     transport: config.transport,
     customerMessages: purpose ? customerMessages.filter((m) => m !== purpose) : customerMessages,
@@ -106,7 +107,7 @@ export async function preparePlannerTurn(args: ModelPlannerTurnArgs): Promise<Pr
     purpose,
     today: config.today?.(),
     catalog: config.catalog,
-    exploration: { client, requestId: args.requestId, userId: args.userId, ...(config.call ? { call: config.call } : {}) },
+    exploration: { client, requestId: args.requestId, userId: args.userId, ...(config.call ? { call: config.call } : {}), ...(isReplay ? { isReplay: true } : {}) },
     loadRecipe: (id) => loadRecipeForEndpoint(client, id),
     loadMeasuredAvg: (id) => loadMeasuredAvgCallUsd(client, id),
     exhaustion: "explain",

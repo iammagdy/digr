@@ -80,6 +80,8 @@ export interface TregCallResult {
   budgetStopped?: boolean;
   /** The pool key that answered this call (number and label for the call log; never the key). Absent while the key pool's switch is OFF. */
   keyRef?: { id: string; number: number; label: string; isMain: boolean };
+  /** Test/fixture adapter opt-in: allows legacy array envelope compatibility when declared list is absent. */
+  allowLegacyEnvelope?: boolean;
 }
 
 /**
