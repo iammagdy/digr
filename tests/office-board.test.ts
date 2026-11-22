@@ -781,11 +781,11 @@ describe("DT-20261121-office-v47: Must-Pass Verification Suite", () => {
     expect(card.textContent).toContain("72%");
   });
 
-  it("Must-Pass 4 (Cheer Test for all 9 bots): Egyptian banter bubbles without network requests", () => {
+  it("Must-Pass 4 (Cheer Test for all 10 bots): Egyptian banter bubbles without network requests", () => {
     const { evalInContext, stageWrapper, fetchCalls } = createBoardHarness();
 
     const botKeys: string[] = evalInContext("BOT_KEYS");
-    expect(botKeys.length).toBe(9);
+    expect(botKeys.length).toBe(10);
 
     for (const key of botKeys) {
       fetchCalls.length = 0;
@@ -821,7 +821,7 @@ describe("DT-20261121-office-v47: Must-Pass Verification Suite", () => {
       expect(evalInContext(`BOTS['${key}'].status`)).toBe("meeting");
     }
 
-    // Verify all 9 seats in MEETING_SEATS are populated
+    // Verify all 10 seats in MEETING_SEATS are populated
     for (const key of botKeys) {
       const seat = evalInContext(`MEETING_SEATS['${key}']`);
       expect(seat).toBeDefined();
