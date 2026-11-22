@@ -2,19 +2,9 @@ import { redirect } from "next/navigation";
 import { createElement, type ReactNode } from "react";
 import { AdminGate } from "@/components/admin/AdminGate";
 import { createServerSideClient } from "@/lib/supabase/server";
+import { resolveAdminLayoutRedirect } from "@/lib/adminLayoutRedirect";
 
 export const dynamic = "force-dynamic";
-
-export function resolveAdminLayoutRedirect(
-  user: { app_metadata?: { role?: string } } | null | undefined,
-  resolved: boolean,
-): string | null {
-  if (!resolved) return null;
-  if (!user) return "/login";
-  const isAdmin = user.app_metadata?.role === "admin";
-  if (!isAdmin) return "/dashboard/chat";
-  return null;
-}
 
 /**
  * Server-side guard. When the browser sends a valid session and the account does NOT carry
