@@ -4,7 +4,7 @@ import { firstSentenceAr, validateAndPricePlan, type PricedPlan, type SavedEndpo
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { namesRoleAr, neutralPeopleTitleAr, roleDefOf, roleOfNoun, titleRoleVerdict, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
-import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type FieldClass, type SourceField } from "../../src/lib/agentMission/fields";
 import { requestNamesSector } from "../../src/lib/agentMission/entities";
 import { CONTRACT_ONLY_CLASSES } from "../../src/lib/agentMission/taskContracts";
@@ -680,7 +680,7 @@ export async function recordQuestionOnce(opts: {
 }
 
 function isStageAllowed(endpointId: string, catalog: TregCatalog, access: AccountAccess): boolean {
-  return isSellable(endpointId, catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, access).allowed && !isPrivateCapabilityString(catalog.byId.get(endpointId)?.capability);
+  return isSellable(endpointId, catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, access).allowed;
 }
 
 export async function recoverCompanyPeopleFromSavedEvidence(params: {

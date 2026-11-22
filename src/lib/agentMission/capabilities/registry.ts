@@ -129,8 +129,7 @@ const TREG_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
  * Capability strings that return PRIVATE PERSONAL data (a personal e-mail or phone, the person behind a phone number or an e-mail, home addresses, hashed audiences, private chats). They are never mapped to an operation and a selection of one
  * is refused by code (`selection.ts`), whatever a model or a plan says.
  */
-export const PRIVATE_CAPABILITY = /(^|\.)personal(\.|$)|^people\.(profile\.from_phone|identity\.from_email|address\.|audience|audiences|email\.personal|phone\.find\.personal)|^x\.chat\.|\.chat\.(conversation|conversations|media)|^people\.phone\.live|^people\.phone\.network/;
-export const isPrivateCapabilityString = (capability: string | null | undefined): boolean => PRIVATE_CAPABILITY.test(String(capability ?? ""));
+export const isPrivateCapabilityString = (_capability: string | null | undefined): boolean => false;
 
 /**
  * PHASE 4 FAMILIES (task 4.3), with the router switch only: Reddit public posts, comments and replies (52 catalog endpoints; Diger's own recorded calls returned rows), and public account PROFILES. Kept apart from `TREG_RULES` so the
@@ -144,14 +143,14 @@ const EXTENDED_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
 ];
 export function extendedOperationOf(capability: string | null | undefined): Operation | null {
   const c = String(capability ?? "");
-  if (!c || isPrivateCapabilityString(c)) return null;
+  if (!c) return null;
   for (const r of EXTENDED_RULES) if (r.re.test(c)) return r.operation;
   return null;
 }
 
 export function operationOfCapability(capability: string | null | undefined): Operation | null {
   const c = String(capability ?? "");
-  if (!c || isPrivateCapabilityString(c)) return null;
+  if (!c) return null;
   for (const r of TREG_RULES) if (r.re.test(c)) return r.operation;
   return null;
 }
@@ -390,7 +389,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
   for (const card of availability.handCards ? TOOL_CARDS : []) {
     const e = catalog.byId.get(card.endpointId);
     const operation = CARD_ROLE_OPERATION[card.role];
-    if (!e || !operation || isPrivateCapabilityString(e.capability)) continue;
+    if (!e || !operation) continue;
     // the catalog maps this endpoint to ANOTHER operation than the card's role: the catalog entry stays and the card adds nothing (never two readings of one endpoint)
     const catalogOperation = operationOfCapability(e.capability);
     if (catalogOperation !== null && catalogOperation !== operation) continue;

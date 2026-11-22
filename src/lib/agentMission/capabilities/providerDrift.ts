@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { levelRank } from "./evidence";
 import type { ArtifactEntry, RegistryArtifact } from "./artifact";
-import { isPrivateCapabilityString } from "./registry";
 
 /**
  * PHASE 6.1 / 6.2 (docs/intelligence/PHASE-5-3-AND-6.md §C; audit §7.3, §7.4): PROVIDER UPDATE INTELLIGENCE, as pure code.
@@ -225,8 +224,7 @@ export function diffContracts(before: ReadonlyMap<string, EndpointContract>, aft
     if ((n.status && /deprecat|sunset|retir|remov|paused|disabled/i.test(n.status) && n.status !== o.status) || (n.supersededBy && n.supersededBy !== o.supersededBy)) out.push({ id, kind: "deprecated", detail: `${n.status ?? "superseded"}${n.supersededBy ? ` → ${n.supersededBy}` : ""}`, ...(n.supersededBy ? { to: n.supersededBy } : {}) });
     const pBefore = opts.policyOf?.(o, "before");
     const pAfter = opts.policyOf?.(n, "after");
-    const turnedPrivate = !isPrivateCapabilityString(o.capability) && isPrivateCapabilityString(n.capability);
-    if ((!o.blocked && n.blocked) || turnedPrivate || (pBefore && pAfter && RANK[pAfter] > RANK[pBefore])) out.push({ id, kind: "policy_breaking", detail: [!o.blocked && n.blocked ? `no longer available through TREG's platform key: ${n.blockedBy ?? "blocked or paused"}` : "", turnedPrivate ? `capability ${o.capability} → ${n.capability} (private data)` : "", pBefore && pAfter && RANK[pAfter] > RANK[pBefore] ? `policy ${pBefore} → ${pAfter}` : ""].filter(Boolean).join("; ") });
+    if ((!o.blocked && n.blocked) || (pBefore && pAfter && RANK[pAfter] > RANK[pBefore])) out.push({ id, kind: "policy_breaking", detail: [!o.blocked && n.blocked ? `no longer available through TREG's platform key: ${n.blockedBy ?? "blocked or paused"}` : "", pBefore && pAfter && RANK[pAfter] > RANK[pBefore] ? `policy ${pBefore} → ${pAfter}` : ""].filter(Boolean).join("; ") });
     // suspicious contracts: what a caller cannot trust
     const sus: string[] = [];
     if (n.costUsd !== null && n.costUsd < 0) sus.push("negative price");

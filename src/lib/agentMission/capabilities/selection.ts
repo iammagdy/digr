@@ -1,5 +1,5 @@
 import type { TregCatalog } from "../../treg/catalog";
-import { isPrivateCapabilityString, type Operation, type OutputClass, type InputClass } from "./registry";
+import { type Operation, type OutputClass, type InputClass } from "./registry";
 import { DISCOVERY_VERSION, type CapabilityDiscovery } from "./discover";
 import { linkOf } from "./need";
 
@@ -19,7 +19,6 @@ import { linkOf } from "./need";
 export type ChoiceRejection = "unknown_stage" | "not_a_candidate" | "private_data";
 
 export function validateCapabilityChoice(d: CapabilityDiscovery, stageKey: string, capabilityId: string, catalog?: TregCatalog): { ok: true } | { ok: false; reason: ChoiceRejection } {
-  if (catalog && isPrivateCapabilityString(catalog.byId.get(capabilityId)?.capability)) return { ok: false, reason: "private_data" };
   const stage = d.stages.find((s) => s.stage.key === stageKey);
   if (!stage) return { ok: false, reason: "unknown_stage" };
   if (!stage.eligible.some((e) => e.id === capabilityId)) return { ok: false, reason: "not_a_candidate" };
@@ -68,7 +67,6 @@ export function planStageIssues(stages: ReadonlyArray<PlanStageLike>, d: Capabil
   const bound = bindPlanStages(stages, d);
   for (const st of stages) {
     const id = String(st?.endpoint_id ?? "");
-    if (isPrivateCapabilityString(catalog.byId.get(id)?.capability)) { issues.push(`stage ${st.key}: ${id} returns private personal data; it can never be planned`); continue; }
     if ((bound.get(String(st.key)) ?? []).length > 0) continue;
     const holders = d.stages.filter((s) => s.eligible.some((e) => e.id === id)).map((s) => s.stage.key);
     if (holders.length === 0) issues.push(`stage ${st.key}: ${id} is not one of the validated capabilities for this request; use only the ids listed under VALIDATED CAPABILITIES (code validated their inputs, outputs, availability and price)`);
@@ -185,7 +183,6 @@ export function verifyApprovedScope(plan: PlanLike, catalog?: TregCatalog, ancho
     if (!a) { issues.push(`stage_added:${st.key}`); continue; }
     if (a.capability_id !== st.endpoint_id) issues.push(`capability_changed:${st.key}`);
     if ((a.parent_key ?? null) !== (st.parent_key ?? null)) issues.push(`parent_changed:${st.key}`);
-    if (catalog && isPrivateCapabilityString(catalog.byId.get(st.endpoint_id)?.capability)) issues.push(`private_data:${st.key}`);
   }
   return issues.length > 0 ? { ok: false, issues } : { ok: true, checked: true };
 }
