@@ -179,7 +179,7 @@ describe("FX-CAT pricing 2: Documented free endpoints stay sellable ($0 provider
 
     const callSpy = vi.fn(async () => tregResult({ results: [{ id: "n1", title: "News", url: "https://ex.com" }] }, 0));
     const { gateway, budget } = makeGatewayEnv(catalog, { call: callSpy });
-    const res = await gateway.tregCall({ endpoint_id: tinyfish.id, params: { query: "ai" } });
+    const res = await gateway.tregCall({ endpoint_id: tinyfish.id, params: { query: "ai", domain_type: "news" } });
     expect(res.ok).toBe(true);
     expect(callSpy).toHaveBeenCalledTimes(1);
     expect(Number(callSpy.mock.calls[0][0].routeMaxCostUsd)).toBeGreaterThanOrEqual(0.001);
@@ -229,7 +229,7 @@ describe("FX-CAT pricing 3: Per-record, routed worst sibling, sample overrun, si
     const routedZero = catalog.byId.get("treg.companies.search")!;
     expect(routedZero).toBeDefined();
     expect(catalogView.usableEndpoint(routedZero, catalog, null)).toBe(true);
-    expect((planner as any).stageCostPerRawRowUsd(makeBuiltStep(routedZero, { rowsPerPage: 10 }), catalog)).toBeCloseTo((0.3 / 10) * planner.VARIANT_OVERLAP_FACTOR, 9);
+    expect((planner as any).stageCostPerRawRowUsd(makeBuiltStep(routedZero, { rowsPerPage: 10 }), catalog)).toBeCloseTo((0.02 / 10) * planner.VARIANT_OVERLAP_FACTOR, 9);
 
     const overrun = (planner as any).stageCostPerRawRowUsd(makeBuiltStep(perRecord, { rowsPerPage: 10, chargedUsd: 0.04 }), catalog);
     expect(overrun).toBeCloseTo((0.04 / 10) * planner.VARIANT_OVERLAP_FACTOR, 9);
@@ -315,7 +315,7 @@ describe("FX-CAT pricing 5: Async submit + free poll under exact budget, non-enu
     const pollParamKey = pollParamName;
     const directFreeCall = vi.fn(async () => tregResult({ results: [] }, 0));
     const directEnv = makeGatewayEnv(catalog, { ceilingUsd: 0.001, call: directFreeCall });
-    await directEnv.gateway.tregCall({ endpoint_id: "tinyfish.web.search.news", params: { query: "ai" } });
+    await directEnv.gateway.tregCall({ endpoint_id: "tinyfish.web.search.news", params: { query: "ai", domain_type: "news" } });
     expect(directEnv.budget.spentUsd()).toBe(0);
     void pollParamKey;
 
@@ -350,7 +350,7 @@ describe("FX-CAT pricing 5: Async submit + free poll under exact budget, non-enu
 
     const callSpy = vi.fn(async (opts: { endpointId: string }) => {
       if (opts.endpointId === submitId) {
-        return tregResult({ tasks: [{ id: "task_null" }] }, null as any);
+        return { ...tregResult({ tasks: [{ id: "task_null" }] }, 0), costUnreported: true };
       }
       return tregResult({ tasks: [{ status_code: 20000, status_message: "Ok.", result: [{ items: [{ id: "r1", rating: 4 }] }] }] }, 0);
     });
@@ -363,7 +363,8 @@ describe("FX-CAT pricing 5: Async submit + free poll under exact budget, non-enu
       submitParams,
     );
     expect(asyncRes.ok).toBe(true);
-    expect((asyncRes as any).charge_usd).toBeCloseTo(0.006, 9);
+    expect((asyncRes as any).charge_usd).toBeCloseTo(0.01, 9);
+    expect((asyncRes as any).reserved_usd).toBeCloseTo(0.01, 9);
     expect(RAW_PATH("call_0002")).toBe("raw/call_0002.json");
   });
 });

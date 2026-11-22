@@ -1,4 +1,5 @@
-import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
+import { unitCost } from "../../../src/lib/modelPlanner/pricing";
+import { endpointCostUsd, type CatalogEndpoint, type TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
 import { hintsOf, missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
 import { buildShapeDigest, digestValue } from "../../../src/lib/modelPlanner/digest";
@@ -20,8 +21,9 @@ export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
+import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
-import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
+import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { validateInputShape } from "../tools";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
@@ -308,7 +310,7 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
   return out;
 }
 
-export function toolChoicePrompt(step: UnderstoodStep, candidates: ReadonlyArray<CatalogEndpoint>, today: string, parentSample: ReadonlyArray<Record<string, unknown>> | null): string {
+export function toolChoicePrompt(step: UnderstoodStep, candidates: ReadonlyArray<CatalogEndpoint>, today: string, parentSample: ReadonlyArray<Record<string, unknown>> | null, catalog?: TregCatalog): string {
   const view = { ...step };
   return [
     `Today (Cairo): ${today}`,
@@ -318,7 +320,7 @@ export function toolChoicePrompt(step: UnderstoodStep, candidates: ReadonlyArray
     ...(parentSample ? ["", "Sample items of the parent step (the fields their mapped rows carry):", JSON.stringify(parentSample.slice(0, 2).map((r) => digestValue(r)))] : []),
     "",
     "Candidate tools:",
-    JSON.stringify(candidates.map(describeForModel)),
+    JSON.stringify(candidates.map((c) => describeForModel(c, catalog))),
   ].join("\n");
 }
 
@@ -612,7 +614,7 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
   const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
   if (candidates.length === 0) return { candidates, options: [] };
-  const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
+  const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample, deps.catalog), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   const options = checkOptions(choice, candidates, parentSample !== null);
   if (step.parent && (step.count.total !== null || step.count.per_parent !== null) && options.length > 1) {
     const prefIdx = options.findIndex((o) => {
@@ -836,7 +838,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (delivered.length === 0) return { kind: "cannot", reason_ar: "لم نجد مصدرًا متاحًا الآن يعطي ما طلبته.", understanding: u, costUsd, detail: "no_step_served" };
   const listed = unserved.length === 0 ? listedQuoteOf(original, deps.pricingSettings) : undefined;
   const quoted = listed ? checkedFundingSteps(bound) : bound;
-  const plan = assemblePlan(u, quoted, unserved, deps.pricingSettings, said, listed && { ...listed, catalog: deps.catalog });
+  const plan = assemblePlan(u, quoted, unserved, deps.pricingSettings, said, listed && { ...listed, catalog: deps.catalog }, deps.catalog);
   if (!listed) return { kind: "plan", plan, understanding: u, costUsd };
   const balance = deps.availablePoints ? await deps.availablePoints() : undefined;
   const available = balance === undefined ? Infinity : balance ?? 0;
@@ -846,7 +848,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   for (const step of quoted) {
     if (!step.second) continue;
     const alternate = { ...step, ...step.second, rowsPerPage: step.second.sample!.rowsPerPage, second: undefined, variantSamples: undefined };
-    const candidate = assemblePlan(u, quoted.map((b) => b === step ? alternate : b), unserved, deps.pricingSettings, said, { ...listed, catalog: deps.catalog });
+    const candidate = assemblePlan(u, quoted.map((b) => b === step ? alternate : b), unserved, deps.pricingSettings, said, { ...listed, catalog: deps.catalog }, deps.catalog);
     if (fundedPlanFits(candidate.stages, candidate.price) && candidate.price.reservePoints <= available) return { kind: "plan", plan: candidate, understanding: u, costUsd };
   }
   return { ...fundedCountQuestion(plan, u, balance === undefined ? undefined : available), understanding: u, costUsd };
@@ -913,7 +915,12 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       if (option.parent && parent) params = { ...params, [option.parent.param]: a.parentValue };
       budget.left -= 1;
       const r = await deps.probe(option.endpoint.id, params);
-      callIds.push(r.call_id);
+      const rAny = r as { call_ids?: string[] };
+      if (Array.isArray(rAny.call_ids) && rAny.call_ids.length > 0) {
+        for (const cid of rAny.call_ids) callIds.push(cid);
+      } else {
+        callIds.push(r.call_id);
+      }
       if (!r.ok) {
         deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
         if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
@@ -947,7 +954,7 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
         option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds,
         hasMore: reviewed ? Boolean(reading.nextCursor) && reading.hasMore !== false : Boolean(r.next_cursor) || r.has_more === true,
         nextCursor: reviewed ? reading.nextCursor : typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null,
-        checkedParams: params, chargedUsd: r.charge_usd ?? 0,
+        checkedParams: params, chargedUsd: effectiveChargeUsd(r as { charge_usd?: number | null; reserved_usd?: number | null }),
       };
     }
     if (budget.left > 0 && !option.parent) {
@@ -1160,7 +1167,7 @@ export async function scoutYield(
     measured += 1;
     if (reading && reading.rows.length === 0) return { ok: true, rows: [], next };
     const rows = runMap(a.mapCode, page);
-    a.onSample?.(firstParams, rows, r.charge_usd ?? 0);
+    a.onSample?.(firstParams, rows, effectiveChargeUsd(r as { charge_usd?: number | null; reserved_usd?: number | null }));
     return { ok: true, rows, next };
   };
   // a THIN first page with a next page: follow the cursor for a few pages and count (the provider may page through a filtered, almost empty list)
@@ -1311,8 +1318,40 @@ export function bindLookups(steps: ReadonlyArray<BuiltStep>): BuiltStep[] {
   return out;
 }
 
+/** Provider cost per RAW row collected by this stage (USD), respecting per-record vs per-call units, routed worst sibling, documented free endpoints, and measured sample overruns. */
+export function stageCostPerRawRowUsd(b: BuiltStep, catalog?: TregCatalog): number {
+  const rawEp = b.option.endpoint;
+  const endpoint = rawEp.cost === undefined && catalog ? (catalog.byId.get(rawEp.id) ?? rawEp) : rawEp;
+  const rowsPerPage = Math.max(1, b.rowsPerPage);
+  const measuredRows = Math.max(1, b.sample?.rowsPerPage || rowsPerPage);
+  const measuredPerRow = b.sample && Number.isFinite(b.sample.chargedUsd) && b.sample.chargedUsd > 0
+    ? (b.sample.chargedUsd / measuredRows) * VARIANT_OVERLAP_FACTOR
+    : 0;
+
+  if (endpoint.cost === undefined) {
+    return Math.max((0.01 / rowsPerPage) * VARIANT_OVERLAP_FACTOR, measuredPerRow);
+  }
+
+  if (isDocumentedFreeEndpoint(endpoint)) {
+    return measuredPerRow;
+  }
+
+  const uc = unitCost(endpoint, catalog);
+  if (uc) {
+    const catalogPerRow = (uc.unit === "record" ? uc.usd : uc.usd / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
+    return Math.max(catalogPerRow, measuredPerRow);
+  }
+
+  const ownUsd = endpointCostUsd(endpoint);
+  if (endpoint.cost?.unit === undefined && ownUsd !== null && ownUsd > 0) {
+    return Math.max((ownUsd / rowsPerPage) * VARIANT_OVERLAP_FACTOR, measuredPerRow);
+  }
+
+  throw new Error(`unpriceable endpoint: ${endpoint.id}`);
+}
+
 /** The plan in the shape every later part already reads (the card, the price, approval, the engine, the file, settlement). */
-export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown, said: ReadonlyArray<string> = [], listed?: ListedQuote & { catalog: TregCatalog }): PricedPlan {
+export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, unserved: ReadonlyArray<{ what_ar: string; reason_ar: string }>, pricingSettings?: unknown, said: ReadonlyArray<string> = [], listed?: ListedQuote & { catalog: TregCatalog }, catalog: TregCatalog | undefined = listed?.catalog): PricedPlan {
   const stages: PricedStage[] = [];
   const notes: string[] = [];
   const assumptions = (u.assumptions_ar ?? []).map((a) => customerSafe(a, 300, said)).filter((a): a is string => a !== null);
@@ -1344,7 +1383,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}.${b.option.more.length > 0 || b.second || (b.webFallbacks?.length ?? 0) > 0 ? " نكمل البحث بصيغ أخرى ومن مصادر أخرى" : " والمصدر لا يعرض أكثر من ذلك"}، ولن تدفع إلا مقابل ما يُسلَّم.`);
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
-    const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
+    const costPerRow = stageCostPerRawRowUsd(b, catalog);
     const alternatives = isTotalOnlyChild
       ? []
       : [
