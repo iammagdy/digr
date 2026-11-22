@@ -23,6 +23,28 @@ export interface AsyncTregDeps {
   now?: () => number;
 }
 
+export function effectiveChargeUsd(r: { charge_usd?: number | null; reserved_usd?: number | null }): number {
+  if (typeof r.charge_usd === "number" && Number.isFinite(r.charge_usd)) return r.charge_usd;
+  return typeof r.reserved_usd === "number" && Number.isFinite(r.reserved_usd) ? r.reserved_usd : 0;
+}
+
+export function attachMoneyFacts<T extends object>(
+  target: T,
+  facts: { charge_usd?: number | null; reserved_usd?: number; call_ids?: string[] },
+): T {
+  const out = { ...target };
+  if ("charge_usd" in facts) {
+    Object.defineProperty(out, "charge_usd", { value: facts.charge_usd, enumerable: false, configurable: true });
+  }
+  if ("reserved_usd" in facts) {
+    Object.defineProperty(out, "reserved_usd", { value: facts.reserved_usd, enumerable: false, configurable: true });
+  }
+  if ("call_ids" in facts) {
+    Object.defineProperty(out, "call_ids", { value: facts.call_ids, enumerable: false, configurable: true });
+  }
+  return out;
+}
+
 /**
  * Executes an async submit-and-poll endpoint driven by its catalog `async_config`.
  * Standard endpoints without `async_config.poll.endpoint` pass through directly with 0 overhead.
@@ -59,6 +81,15 @@ export async function callTregWithAsync(
     return res;
   }
 
+  let totalChargeUsd = effectiveChargeUsd(res);
+  let totalReservedUsd = Number(res.reserved_usd ?? 0) || 0;
+  const callIds: string[] = [res.call_id];
+  const moneyFacts = () => ({
+    charge_usd: Number(totalChargeUsd.toFixed(6)),
+    reserved_usd: Number(totalReservedUsd.toFixed(6)),
+    call_ids: [...callIds],
+  });
+
   const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? (() => Date.now());
   const startTime = now();
@@ -71,21 +102,25 @@ export async function callTregWithAsync(
     attempts++;
     await sleep(intervalMs);
     const pollRes = await callFn(cfg.poll.endpoint, { [cfg.poll.param.name]: taskId });
-    if (!pollRes.ok) return pollRes;
+    callIds.push(pollRes.call_id);
+    totalChargeUsd += effectiveChargeUsd(pollRes);
+    totalReservedUsd += Number(pollRes.reserved_usd ?? 0) || 0;
+    const facts = moneyFacts();
+    if (!pollRes.ok) return attachMoneyFacts(pollRes, facts);
 
     const pollRawText = await deps.store.getFile(deps.missionId, RAW_PATH(pollRes.call_id));
-    if (!pollRawText) return pollRes;
+    if (!pollRawText) return attachMoneyFacts(pollRes, facts);
 
     let pollRaw: unknown;
     try {
       pollRaw = JSON.parse(pollRawText);
     } catch {
-      return pollRes;
+      return attachMoneyFacts(pollRes, facts);
     }
 
     const st = cfg.status?.path ? getPath(pollRaw, cfg.status.path) : undefined;
     if ((cfg.status?.failure ?? []).includes(st) || (cfg.status?.billed_failure ?? []).includes(st)) {
-      return { ok: false, call_id: pollRes.call_id, failed: true, http_status: 500, message: "async task failed" } as GatewayCallResult;
+      return attachMoneyFacts({ ok: false, call_id: pollRes.call_id, failed: true, http_status: 500, message: "async task failed" } as GatewayCallResult, facts);
     }
 
     if ((cfg.status?.success ?? []).includes(st)) {
@@ -105,7 +140,7 @@ export async function callTregWithAsync(
       }
       const rows = reading.rows.length;
       const rowsIn = rows > 0 ? rowsExpressionOf(pollRes.call_id, reading.listPath, reading.listStrategy) : null;
-      return {
+      return attachMoneyFacts({
         ...pollRes,
         rows_in_page: rows,
         has_more: reading.hasMore ?? null,
@@ -121,9 +156,9 @@ export async function callTregWithAsync(
         },
         saved: `${pollRes.call_id} (the full page is saved; give "${pollRes.call_id}" to run_code to process it${rowsIn ? `: its rows are ${rowsIn}` : ""})`,
         ...(rowsIn ? { rows_in_code: rowsIn } : {}),
-      };
+      } as GatewayCallResult, facts);
     }
   }
 
-  return { ok: false, call_id: res.call_id, failed: true, http_status: 504, message: "async task timed out" } as GatewayCallResult;
+  return attachMoneyFacts({ ok: false, call_id: res.call_id, failed: true, http_status: 504, message: "async task timed out" } as GatewayCallResult, moneyFacts());
 }
