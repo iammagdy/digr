@@ -6,7 +6,7 @@ import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, cancelForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
 import { isExplicitCancel, openPlanFactsOf, planFollowUpAnswerAr, planQuestionKind, refersToOpenRequest } from "./openPlanFacts";
-import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr, PRIVACY_REFUSAL_AR } from "./guardRules";
+import { preModelAnswer } from "./guardRules";
 import { checkCustomerText } from "./text";
 import { LLM_PLANNER_SETTING_KEY, llmPlannerOnValue } from "./llmPlannerFlag";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
@@ -362,10 +362,7 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (viaBrief) return viaBrief;
-    if (plannerOn && (decision.type === "data_request" || decision.type === "edit_of_open_request")) {
-      const privacy = privacyRefusalAr(input.message) ?? (contactAskVerdict(input.message) === "clarify" ? contactClarifyAr(input.message) : null);
-      if (privacy) { await writeAnswer(input, privacy); return { ok: false, contentAr: privacy, status: 200 }; }
-    }
+
     // ROUND 57: while the customer HAS an open request, a follow-up never becomes a new mission of its own words: a question is answered from the plan, a cancellation is applied only when explicit, a change is planned
     // again from the whole request, and a message the model could not read keeps the plan and says so
     if (open) {
@@ -592,8 +589,6 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     }
     if (!pending || nonRequest) { ctx.outcome = "model_unavailable"; return null; }
     const joined = `${ctx.prior!.request}، ${input.message}`;
-    const privacy = privacyRefusalAr(joined) ?? (contactAskVerdict(joined) === "clarify" ? contactClarifyAr(joined) : null);
-    if (privacy) { ctx.outcome = "privacy"; await writeAnswer(input, privacy); return { ok: false, contentAr: privacy, status: 200 }; }
     ctx.outcome = "fallback_joined";
     return startMission(input, joined);
   }
@@ -896,7 +891,7 @@ function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: Capabili
   const ownUnnamed = selfReferenceOf([pb.request, ...part.objectives.map((o) => o.what ?? "")].join(" ")) ? selfReferenceUnresolved(ctx.customerTurns) : null;
   if (ownUnnamed) return { ...base, outcome: "needs_clarification", noteAr: selfReferenceQuestionAr(ownUnnamed) };
   const v = validateBrief(pb, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
-  if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? (v.reason === "count_mismatch" && pb.count !== null ? conditionDriftAr({ kind: "count", reason: "contradicts", phrase: String(pb.count) }) : null) };
+  if (!v.ok) return { ...base, outcome: "needs_clarification", noteAr: v.contentAr ?? (v.reason === "count_mismatch" && pb.count !== null ? conditionDriftAr({ kind: "count", reason: "contradicts", phrase: String(pb.count) }) : null) };
   const d = discoverCapabilities(researchNeedOf({ request: v.brief.request, brief: v.brief }), registry);
   if (d.status === "blocked") return { ...base, partBrief: v.brief, discovery: d, outcome: "refused_private", noteAr: d.messageAr };
   if (d.status === "unsupported") {

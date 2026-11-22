@@ -1,6 +1,5 @@
 import { normalizeDigits, toArabicDigits } from "../arabicDigits";
 import { NUMBER_WORDS_SRC, numberOfWord } from "./arabicNumberWords";
-import { contactAskVerdict, contactClarifyAr, privacyRefusalAr } from "./guardRules";
 import { buildRequestContract, platformsNamedIn, type RequestContract } from "./requestContract";
 
 /**
@@ -318,8 +317,6 @@ export type BriefRejection =
   /** P0: the brief's source is not in the customer's words (invented), or the consolidated request does not carry it (it would be lost). */
   | "source_not_written"
   | "source_dropped"
-  | "privacy_refusal"
-  | "privacy_clarify"
   | "request_length"
   | "number_not_written"
   | "platform_not_named"
@@ -333,7 +330,7 @@ export type BriefRejection =
 
 export type ValidatedBrief =
   | { ok: true; brief: ResearchBrief; contract: RequestContract }
-  | { ok: false; reason: BriefRejection; /** a privacy answer for the customer (privacy_refusal / privacy_clarify only) */ contentAr?: string };
+  | { ok: false; reason: BriefRejection; contentAr?: string };
 
 /**
  * What may become a mission (see the header). The privacy check comes first: a consolidated request that the guard would refuse is refused, and one it would clarify is clarified, exactly as if the customer had typed it.
@@ -385,9 +382,6 @@ export function validateBrief(brief: ResearchBrief, ctx: BriefContext): Validate
 
 function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): ValidatedBrief {
   const request = brief.request.replace(/\s+/g, " ").trim();
-  const refusal = privacyRefusalAr(request);
-  if (refusal) return { ok: false, reason: "privacy_refusal", contentAr: refusal };
-  if (contactAskVerdict(request) === "clarify") return { ok: false, reason: "privacy_clarify", contentAr: contactClarifyAr(request) };
   if (request.length < BRIEF_REQUEST_MIN || request.length > BRIEF_REQUEST_MAX) return { ok: false, reason: "request_length" };
 
   const nouns = briefItemNouns(brief, ctx.prior);
@@ -424,7 +418,6 @@ function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): Valida
   if (brief.objectives) {
     const issue = objectivesIssue(brief, named);
     if (issue) return { ok: false, reason: issue };
-    for (const o of brief.objectives) if (o.what && privacyRefusalAr(o.what)) return { ok: false, reason: "privacy_refusal", contentAr: privacyRefusalAr(o.what)! };
   }
   return { ok: true, brief: { ...brief, request }, contract };
 }
