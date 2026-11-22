@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import fs from "fs";
+import path from "path";
 import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
 import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -7,11 +8,11 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 const catalog = loadTregCatalog();
 const access = null;
 
-const mohDir = "/srv/diger-team/commander/scratch/moh";
-const raw0001 = JSON.parse(fs.readFileSync(`${mohDir}/raw_call_0001.json`, "utf8"));
-const raw0004 = JSON.parse(fs.readFileSync(`${mohDir}/raw_call_0004.json`, "utf8"));
-const raw0009 = JSON.parse(fs.readFileSync(`${mohDir}/raw_call_0009.json`, "utf8"));
-const raw0010 = JSON.parse(fs.readFileSync(`${mohDir}/raw_call_0010.json`, "utf8"));
+const mohDir = path.join(__dirname, "fixtures/x-account-rumors");
+const raw0001 = JSON.parse(fs.readFileSync(path.join(mohDir, "raw_call_0001.json"), "utf8"));
+const raw0004 = JSON.parse(fs.readFileSync(path.join(mohDir, "raw_call_0004.json"), "utf8"));
+const raw0009 = JSON.parse(fs.readFileSync(path.join(mohDir, "raw_call_0009.json"), "utf8"));
+const raw0010 = JSON.parse(fs.readFileSync(path.join(mohDir, "raw_call_0010.json"), "utf8"));
 
 describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", () => {
   it("Cause 4 & Megz Root Cause: candidatesFor includes timeline and posts tools when step has source", () => {
