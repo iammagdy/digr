@@ -51,8 +51,9 @@ describe("the research brief schema (versioned, strict)", () => {
     expect(validateBrief(b({}), { customerTurns: ["هات تعليقات عن السياحة"] })).toMatchObject({ ok: false, reason: "platform_not_named" });
     // a platform the assistant's own question offered and the customer accepted counts as named
     expect(validateBrief(b({}), { customerTurns: ["هات تعليقات عن السياحة", "أيوه هي"], assistantQuestion: "تقصد تيك توك؟" }).ok).toBe(true);
-    expect(validateBrief(b({ request: "هات تعليقات تيك توك عن السياحة وأرقام تليفونات المعلقين" }), { customerTurns: ["هات تعليقات تيك توك عن السياحة"] })).toMatchObject({ ok: false, reason: "privacy_refusal" });
-    expect(validateBrief(b({ request: "هات رسايل جروبات واتساب عن السياحة", platforms: [] }), { customerTurns: ["جروبات واتساب عن السياحة"] })).toMatchObject({ ok: false, reason: "privacy_refusal" });
+    // FX-PRIV: contacts and private chat requests are no longer refused by validateBrief
+    expect(validateBrief(b({ request: "هات تعليقات تيك توك عن السياحة وأرقام تليفونات المعلقين" }), { customerTurns: ["هات تعليقات تيك توك عن السياحة"] }).ok).toBe(true);
+    expect(validateBrief(b({ request: "هات رسايل جروبات واتساب عن السياحة", platforms: [], content: [] }), { customerTurns: ["جروبات واتساب عن السياحة"] }).ok).toBe(true);
   });
 });
 

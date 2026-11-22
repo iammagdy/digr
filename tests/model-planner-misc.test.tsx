@@ -144,30 +144,4 @@ describe("the chat turn of the model planner: the customer's words, the purpose 
     expect(purposeFrom([{ role: "assistant", content: "سؤال آخر" }], "للتواصل مع عميل")).toBeNull();
     expect(purposeFrom([{ role: "assistant", content: PURPOSE_QUESTION_AR }], '{"type":"x"}')).toBeNull();
   });
-
-  const reversePlan = { summaryAr: "البحث عن صاحب الرقم", steps: [{ endpointId: "enrichlayer.contacts.reverse-phone", volume: 1, params: [{ name: "phone_number", value: "+201001234567", source: "customer_text", quote: "+201001234567" }], fieldMap: { columns: [{ field: "linkedin_profile_url", headerAr: "رابط الملف", role: "url" }] } }] };
-  const turn = (db: any, userId: string, message: string, messagesContext: any[], script: any[]) => runModelPlannerTurn({
-    config: { transport: createScriptedTransport(script), client: db }, tables: createChatDb(), userId, conversationId: "c1", userBalance: 40_000, message, messagesContext, requestId: "r1",
-  });
-
-  it("a VERIFIED account asking for a reverse lookup is first asked for the purpose (a free-text question card); its answer then gives the plan, with the purpose on the quote item; an unverified account gets the verified-business sentence", async () => {
-    const db = createMemoryDb();
-    db.seed("verified_business_accounts", [{ user_id: "vb", verified: true }]);
-    const ask = "من صاحب الرقم +201001234567؟";
-    const first = await turn(db, "vb", ask, [{ role: "user", content: ask }], [propose(reversePlan)]);
-    expect(first).toMatchObject({ kind: "message", reason: "purpose_needed", contentAr: PURPOSE_QUESTION_AR });
-    expect((first as any).clarificationItems).toEqual([{ id: PURPOSE_QUESTION_ID, text: PURPOSE_QUESTION_AR, question: PURPOSE_QUESTION_AR, type: "free", options: [], allowOther: false }]);
-    const answer = "التحقق من هوية متصل بعميلنا";
-    const second = await turn(db, "vb", answer, [{ role: "user", content: ask }, { role: "assistant", content: PURPOSE_QUESTION_AR }, { role: "user", content: answer }], [propose(reversePlan)]);
-    expect(second.kind).toBe("plan");
-    if (second.kind === "plan") {
-      expect(second.sensitive).toBe(true);
-      const item = (second.planQuote as any).items[0];
-      expect(item.params[MODEL_PLAN_PURPOSE_PARAM]).toBe(answer);
-      expect((second.planQuote as any).sampleRows).toBeUndefined();
-    }
-    const stranger = await turn(db, "someone-else", ask, [{ role: "user", content: ask }], [propose(reversePlan), propose(reversePlan)]);
-    expect(stranger).toMatchObject({ kind: "message", reason: "restricted", contentAr: SENSITIVE_NOT_VERIFIED_AR });
-    expect(gateway.calls).toHaveLength(0);
-  });
 });

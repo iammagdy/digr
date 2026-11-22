@@ -292,6 +292,7 @@ describe("corrections, unfamiliar wording, privacy, approval", () => {
     const db = world();
     await turn(db, req);
     expect(live(db).map((m) => m.request_text).every((t) => !t.includes("تليفون"))).toBe(true);
-    expect(preModelAnswer("هات أرقام تليفونات الناس اللي علقوا على تيك توك آخر شهر")?.kind).toBe("privacy_refusal");
+    // FX-PRIV: contacts request is not refused by preModelAnswer
+    expect(preModelAnswer("هات أرقام تليفونات الناس اللي علقوا على تيك توك آخر شهر")).toBeNull();
   });
 });

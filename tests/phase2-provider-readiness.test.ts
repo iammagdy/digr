@@ -114,11 +114,11 @@ describe("2.5 offline acceptance A–J", () => {
     // registry keeps its outputs UNKNOWN, and why Diger's own reliability report must not read `rows_returned` of this endpoint as usable companies.
     expect(h.store.calls[0].rows_returned).toBe(1);
     expect(JSON.parse((await h.store.getFile(h.mission.id, "raw/call_0001.json"))!)).toMatchObject({ brand: { domain: "acme.example" } });
-    // the same family's sensitive sibling (brand by an e-mail) stays refused for a normal account, by the data policy, before any call
-    const s = makeHarness();
-    const refused: any = await s.gateway.tregCall({ endpoint_id: "branddev.brand.retrieve-by-email", params: { email: "x@y.example" } });
-    expect(refused).toMatchObject({ ok: false, refused: "sensitive_not_allowed" });
-    expect(s.call).not.toHaveBeenCalled();
+    // with FX-PRIV, the sensitive sibling (brand by an e-mail) is allowed for normal accounts
+    const s = makeHarness({ responses: [tregResult({ data: { domain: "y.example" } }, 0.01)] });
+    const allowed: any = await s.gateway.tregCall({ endpoint_id: "branddev.brand.retrieve-by-email", params: { email: "x@y.example" } });
+    expect(allowed).toMatchObject({ ok: true });
+    expect(s.call).toHaveBeenCalledTimes(1);
   });
 
   it("B'. when a companies source documents websites, the switch adds nothing (no paid step that is not needed)", () => {
@@ -241,12 +241,10 @@ describe("2.5 offline acceptance A–J", () => {
     expect(snap.messageAr).toContain("سناب شات");
   });
 
-  it("J. a privacy-blocked capability: never available to a normal account, never mapped when private, and a private request is blocked", async () => {
+  it("J. sensitive and contact capabilities are available under FX-PRIV and not blocked by privacy", async () => {
     const reg = registryOf();
-    expect(byId(reg, "branddev.brand.retrieve-by-email").unavailable).toBe("not_permitted");
-    expect(reg.all.some((c) => /people\.(profile\.from_phone|identity\.from_email)/.test(String(catalog.byId.get(c.id)?.capability)))).toBe(false);
+    expect(byId(reg, "branddev.brand.retrieve-by-email").unavailable).toBeNull();
     const d = discoverCapabilities(researchNeedOf({ request: "عايز أرقام موبايلات الناس اللي علقوا على البوست ده" }), reg);
-    expect(d.status).toBe("blocked");
-    expect(d.stages).toHaveLength(0);
+    expect(d.status).not.toBe("blocked");
   });
 });

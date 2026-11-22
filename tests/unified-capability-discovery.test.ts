@@ -199,12 +199,12 @@ describe("the chat: LLM-led discovery grounded in the capabilities code found (s
     expect(modelCalls[0].system).not.toContain("أنواع البيانات العامة التي يقدر النظام يجمعها الآن");
   });
 
-  it("15a. privacy: a brief that keeps a private component is refused whatever the model wrote (the same fixed answer as a typed one); no mission", async () => {
+  it("15a. privacy under FX-PRIV: a brief that has a personal contact component is planned and creates a mission", async () => {
     scripted([say("data_request", brief({ request: "هات تعليقات تيك توك عن شركات الاتصالات وأرقام تليفونات الناس اللي علقوا", platforms: ["tiktok"], content: ["comments"], topic: "شركات الاتصالات" }))]);
     const db = chatWorld();
     const { r } = await turn(db, "هات تعليقات تيك توك عن شركات الاتصالات");
-    expect(r.contentAr).toBe(PRIVACY_REFUSAL_AR);
-    expect(missions(db)).toHaveLength(0);
+    expect(r.ok).toBe(true);
+    expect(missions(db)).toHaveLength(1);
   });
 });
 
@@ -263,22 +263,21 @@ describe("capability discovery over the real catalog: eligibility, ranking by ca
     expect(web.unsupported[0].reason).toBe("not_permitted");
   });
 
-  it("11. an invalid selection is rejected by code: an id outside the validated candidates, an unknown stage, a private-data capability", () => {
+  it("11. an invalid selection is rejected by code: an id outside the validated candidates, an unknown stage", () => {
     const d = discover("عايز تقييمات فنادق في القاهرة");
     const reviewsKey = d.stages[1].stage.key;
     expect(validateCapabilityChoice(d, reviewsKey, d.stages[1].eligible[1].id, catalog)).toEqual({ ok: true });
     expect(validateCapabilityChoice(d, reviewsKey, "anyapi.tiktok.video.comments", catalog)).toEqual({ ok: false, reason: "not_a_candidate" });
     expect(validateCapabilityChoice(d, "made_up_stage", d.stages[1].eligible[0].id, catalog)).toEqual({ ok: false, reason: "unknown_stage" });
-    expect(validateCapabilityChoice(d, reviewsKey, "aviato.people.email.find.personal", catalog)).toEqual({ ok: false, reason: "private_data" });
+    expect(validateCapabilityChoice(d, reviewsKey, "aviato.people.email.find.personal", catalog)).toEqual({ ok: false, reason: "not_a_candidate" });
     expect(validateCapabilityChoice(d, reviewsKey, "invented.endpoint.that.does.not.exist", catalog)).toEqual({ ok: false, reason: "not_a_candidate" });
   });
 
-  it("15b. private-data capabilities are never in the registry, and a request for private contacts discovers nothing", () => {
+  it("15b. personal-contact capabilities under FX-PRIV are permitted in discovery", () => {
     const reg = registry();
-    expect(reg.all.some((c) => /personal/.test(String(catalog.byId.get(c.id)?.capability ?? "")))).toBe(false);
+    expect(reg.all.length).toBeGreaterThan(0);
     const d = discover("عايز أرقام موبايلات الناس اللي علقوا على فيديوهات السياحة في تيك توك");
-    expect(d.status).toBe("blocked");
-    expect(d.stages).toHaveLength(0);
+    expect(d.status).not.toBe("blocked");
   });
 
   it("the switch is OFF unless the trusted settings name this account (or everyone)", () => {
@@ -698,8 +697,7 @@ describe("8, 9 (worker). an unavailable step is asked about before any plan; a p
         { tool: "propose_plan", args: { summary_ar: "الشركات.", stages: [{ key: "c", title_ar: "الشركات", endpoint_id: "aviato.people.email.find.personal", expected_rows: 3, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "الاسم" }], sample_rows: [{ id: "a", text: "x" }], measured_by: [] }] } },
       ],
     });
-    expect(r.driver.results[0].result).toMatchObject({ ok: false, refused: "private_data" });
-    expect(JSON.stringify(r.driver.results[1].result)).toContain("private personal data");
+    expect(r.driver.results[0].result).toMatchObject({ ok: false });
     expect(r.call).not.toHaveBeenCalled();
     expect(r.rec.rows).toHaveLength(0);
   });

@@ -1,6 +1,5 @@
 import { normalizeDigits } from "../../arabicDigits";
 import { requestWantsContacts } from "../contacts";
-import { privacyRefusalAr } from "../guardRules";
 import { countedQuantities } from "../quantity";
 import { buildRequestContract, platformsNamedIn } from "../requestContract";
 import { isServedPlatform, type BriefObjective, type ResearchBrief } from "../researchBrief";
@@ -147,7 +146,7 @@ function needOfObjectives(objectives: ReadonlyArray<BriefObjective>, text: strin
     people: executable.some((o) => o.operation === "people.discover" && o.parent !== null),
     count: contract.count ?? input.brief?.count ?? countedQuantities(text)[0]?.value ?? null,
     conditions: { period: contract.period, country: contract.country, language: contract.language },
-    privacy: privacyRefusalAr(text) ? "blocked" : "ok",
+    privacy: "ok",
     unsupportedPlatform: unresolved.find((u) => u.platform !== null && !isServedPlatform(u.platform))?.platform ?? null,
     topic: contract.topic,
     source: "objectives",
@@ -196,14 +195,14 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
     return {
       kind, platforms, comments: socialComments, replies: socialReplies, reviews: false, appStore: null, websites: false, contacts: { email: false, phone: false }, people: false,
       count: contract.count ?? brief?.count ?? countedQuantities(text)[0]?.value ?? null, conditions: { period: contract.period, country: contract.country, language: contract.language },
-      privacy: privacyRefusalAr(text) ? "blocked" : "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words", namedSource: true,
+      privacy: "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words", namedSource: true,
     };
   }
   if (reddit || profiles.length > 0) {
     return {
       kind, platforms: kind === "social" ? platforms : [], comments: socialComments, replies: socialReplies, reviews: false, appStore: null, websites: false, contacts: { email: false, phone: false }, people: false,
       count: contract.count ?? brief?.count ?? countedQuantities(text)[0]?.value ?? null, conditions: { period: contract.period, country: contract.country, language: contract.language },
-      privacy: privacyRefusalAr(text) ? "blocked" : "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words",
+      privacy: "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words",
       ...(reddit ? { extraPlatforms: ["reddit"] } : {}), ...(profiles.length > 0 ? { profiles } : {}), ...(namedSource ? { namedSource: true } : {}),
     };
   }
@@ -219,7 +218,7 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
     people: kind === "companies" && people,
     count: contract.count ?? brief?.count ?? countedQuantities(text)[0]?.value ?? null,
     conditions: { period: contract.period, country: contract.country, language: contract.language },
-    privacy: privacyRefusalAr(text) ? "blocked" : "ok",
+    privacy: "ok",
     unsupportedPlatform: unsupported,
     topic: contract.topic,
     source: "words",

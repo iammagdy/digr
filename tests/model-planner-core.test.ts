@@ -314,11 +314,11 @@ describe("the tools the model gets", () => {
     expect(JSON.stringify(tools)).not.toMatch(/"oneOf"/);
   });
 
-  it("catalog_search never lists an endpoint the account may not use, and says when the best match is restricted", () => {
+  it("catalog_search lists allowed endpoints (reverse phone is public under FX-PRIV)", () => {
     const none = { isAdmin: false, verifiedBusiness: false };
     const hits = toolCatalogSearch({ words: ["reverse", "phone"] }, none, catalog);
-    expect(hits.hits.map((h: any) => h.id)).not.toContain("enrichlayer.contacts.reverse-phone");
-    expect(hits.restrictedTop).toBe(true);
+    expect(hits.hits.map((h: any) => h.id)).toContain("enrichlayer.contacts.reverse-phone");
+    expect(hits.restrictedTop).toBe(false);
     const allowed = toolCatalogSearch({ words: ["reverse", "phone"], limit: 10 }, { isAdmin: false, verifiedBusiness: true }, catalog);
     expect(allowed.hits.map((h: any) => h.id)).toContain("enrichlayer.contacts.reverse-phone");
     expect(allowed.restrictedTop).toBe(false);
@@ -327,12 +327,12 @@ describe("the tools the model gets", () => {
     for (const h of none2.hits) expect(String(h.id)).not.toMatch(/private-message/);
   });
 
-  it("describe_endpoint answers for an allowed endpoint and refuses a sensitive one for an account that may not use it, a write action and an unknown id", () => {
+  it("describe_endpoint answers for an allowed endpoint (including reverse phone under FX-PRIV) and refuses a write action and an unknown id", () => {
     const none = { isAdmin: false, verifiedBusiness: false };
     const ok = toolDescribeEndpoint({ id: "anyapi.x.user.posts" }, none, catalog);
     expect(ok.ok).toBe(true);
     if (ok.ok) expect((ok.endpoint.inputs as any[]).map((i) => i.name)).toEqual(["cursor", "handle", "limit"]);
-    expect(toolDescribeEndpoint({ id: "blitzapi.people.phone.reverse" }, none, catalog)).toMatchObject({ ok: false, reason: "not_allowed" });
+    expect(toolDescribeEndpoint({ id: "blitzapi.people.phone.reverse" }, none, catalog).ok).toBe(true);
     expect(toolDescribeEndpoint({ id: "blitzapi.people.phone.reverse" }, { isAdmin: true, verifiedBusiness: false }, catalog).ok).toBe(true);
     expect(toolDescribeEndpoint({ id: "openmart.deny-rules.create" }, { isAdmin: true, verifiedBusiness: true }, catalog)).toMatchObject({ ok: false });
     expect(toolDescribeEndpoint({ id: "nope.nope" }, none, catalog)).toMatchObject({ ok: false, reason: "unknown" });
