@@ -130,7 +130,7 @@ describe("1. a tool the worker has no key for is not offered (live: both YouTube
   it("the prompt keeps its web text when the worker has the keys (the default), and the two blocks are removed whole without it", () => {
     const withWeb = loadSystemPrompt("planning");
     const without = loadSystemPrompt("planning", undefined, { web: false });
-    expect(withWeb).toContain("parse_page (pre-built page parsers");
+    expect(withWeb).toContain("parse_page (structured page readers for supported public URLs returned by catalog_search");
     expect(withWeb).not.toContain("<!--");
     expect(without).not.toContain("parse_page");
     expect(without).toContain("treg_call and collect_pages (the catalog). The only way to compute on data is run_code");

@@ -16,7 +16,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import {
-  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, planParamsDigest, resealCapabilitySelection, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope,
+  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, planParamsDigest, resealCapabilitySelection, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope, isPrivateCapabilityString,
   type CapabilityRegistry,
 } from "../src/lib/agentMission/capabilities";
 import { CAPABILITY_SCOPE_OPTIONS_AR, runPlanning, type RunnerDeps } from "../agent/src/runMission";
@@ -275,7 +275,7 @@ describe("capability discovery over the real catalog: eligibility, ranking by ca
 
   it("15b. private-data capabilities are never in the registry, and a request for private contacts discovers nothing", () => {
     const reg = registry();
-    expect(reg.all.some((c) => /personal/.test(String(catalog.byId.get(c.id)?.capability ?? "")))).toBe(false);
+    expect(reg.all.some((c) => isPrivateCapabilityString(catalog.byId.get(c.id)?.capability))).toBe(false);
     const d = discover("عايز أرقام موبايلات الناس اللي علقوا على فيديوهات السياحة في تيك توك");
     expect(d.status).toBe("blocked");
     expect(d.stages).toHaveLength(0);

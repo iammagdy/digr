@@ -64,12 +64,7 @@ export function namesCollectibleData(text: string): boolean {
   if (words.length === 0) return false;
   if (STRONG_NOUN_RE.test(` ${t} `)) return true;
   if (WANTS_DATA_RE.test(t)) return true;
-  const hasCollectionVerb = COLLECT_STRONG_RE.test(t) || ASK_RE.test(t) || SEARCH_RE.test(t) || GET_RE.test(t);
-  const hasNumber = /\d|[٠-٩]/.test(t);
-  const hasUrl = /(?:https?:\/\/|www\.)\S+|(?:^| )رابط(?: |$)/.test(t);
-  if (hasCollectionVerb && (hasNumber || hasUrl || words.length >= 3)) return true;
-  if (hasNumber && words.length >= 3 && !isOnlyGreeting(words)) return true;
-  if (hasUrl) return true;
+  if (/(?:https?:\/\/|www\.)\S+|(?:^| )رابط(?: |$)/.test(t)) return true;
   return false;
 }
 
@@ -123,11 +118,14 @@ export function classifyMessage(message: string): MessageType {
   if (words.length === 0) return "other";
   if (isOnlyGreeting(words)) return "greeting";
 
-  const asksQuestion = /[؟?]/.test(raw) || QUESTION_WORDS.has(words[0]);
+  const isMethodQuestion = /(?:طريقة|طريقه|كيفية|كيفيه)\s+(?:جمع|سحب|استخراج|العمل)/.test(text);
+  const isKnowingInquiry = /(?:^| )(?:عايز اعرف|عاوز اعرف|محتاج اعرف|ممكن اعرف|حابب اعرف|حبيت اعرف)(?: |$)/.test(text);
+  const QUESTION_PHRASES_RE = /(?:^| )(?:عايز اعرف|عاوز اعرف|محتاج اعرف|ممكن اعرف|حابب اعرف|حبيت اعرف|بكام|بكم|ازاي|كيف|هل|طريقة|طريقه|كيفية|كيفيه)(?: |$)/;
+  const asksQuestion = /[؟?]/.test(raw) || QUESTION_WORDS.has(words[0]) || QUESTION_PHRASES_RE.test(text);
   const strongNoun = STRONG_NOUN_RE.test(` ${text} `);
   const generic = GENERIC_NOUN_RE.test(text);
-  const ask = ASK_RE.test(text);
-  const collectStrong = COLLECT_STRONG_RE.test(text);
+  const ask = ASK_RE.test(text) && !isKnowingInquiry;
+  const collectStrong = COLLECT_STRONG_RE.test(text) && !isMethodQuestion;
   const search = SEARCH_RE.test(text);
   const get = GET_RE.test(text);
   const number = /\d|[٠-٩]/.test(text);
@@ -144,10 +142,10 @@ export function classifyMessage(message: string): MessageType {
   if (asksQuestion && SERVICE_RE.test(text) && !command && !(hasCollectionVerb && (strongNoun || hasQuantity || hasUrl))) return "service_question";
 
   if (WANTS_DATA_RE.test(text)) return "data_request";
-  if (strongNoun && (hasCollectionVerb || hasQuantity || url)) return "data_request";
+  if (strongNoun && (hasCollectionVerb || (!asksQuestion && hasQuantity) || url)) return "data_request";
   if (OPINION_RE.test(` ${text} `) && ABOUT_RE.test(` ${text} `)) return "data_request";
   if (strongNoun && !asksQuestion && words.length >= 4) return "data_request";
-  if (hasCollectionVerb && (hasQuantity || hasUrl || hasTargetClause || words.length >= 4)) return "data_request";
+  if (hasCollectionVerb && (hasQuantity || hasUrl || hasTargetClause)) return "data_request";
   if (collectStrong && words.length >= 3) return "data_request";
   if (search && words.length >= 4) return "data_request";
   if (generic && (ask || collectStrong || get) && words.length >= 3) return "data_request";

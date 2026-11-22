@@ -4,7 +4,7 @@ import { DEFAULT_MISSION_PRICING_SETTINGS, minimumLineAr } from "../missionPrici
 import { PROVIDER_NAME_PATTERN } from "../publicCapabilityIds";
 import { CHAT_MODEL_BRIEF_MAX_TOKENS, CHAT_MODEL_MAX_TOKENS, CHAT_MODEL_TIMEOUT_MS, getChatModel, type ChatModelCall } from "./chatModel";
 import { parseBrief, type ParsedBrief, type ResearchBrief } from "./researchBrief";
-import { POINT_VALUE_EGP_AR, classifyMessage } from "./messageType";
+import { POINT_VALUE_EGP_AR, classifyMessage, namesCollectibleData } from "./messageType";
 import { checkCustomerText } from "./text";
 import { countSupportedByMessage, normalizeWords, wordNumbersIn, writtenNumbers } from "./numberWords";
 import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, unsupportedClaimIssues, type OpenPlanFacts } from "./openPlanFacts";
@@ -407,7 +407,13 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   // ROUND 57: the two open-request types need an open request too; without one a question about «the plan» is a service question and a cancellation has nothing to cancel
   if (type === "open_request_question" && !ctx.open) type = "service_question";
   if (type === "cancel_open_request" && !ctx.open) type = "other";
-  const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded });
+  // WHEN UNSURE: a message the keyword rules read as a clear data request is never turned away (an edit of an open request is the one thing that outranks it).
+  // ROUND 57: while the customer HAS an open request, only a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) is overruled: the keyword reading of a follow-up
+  // («أنا عايز أعرف البيانات دي جاية منين») made it a new mission of that sentence alone, which cancelled the plan the customer was asking about (13 Nov).
+  const standalone = !ctx.open || (type !== "open_request_question" && type !== "cancel_open_request" && namesCollectibleData(ctx.message) && !refersToOpenRequest(ctx.message) && planQuestionKind(ctx.message) === null);
+  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && type !== "privacy_refusal" && classifyMessage(ctx.message) === "data_request";
+  if (overruled) type = "data_request";
+  const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
   const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null), ...(ctx.open?.state === "needs_input" ? numbersIn(String(ctx.open.questionAr ?? "")) : [])], facts: ctx.open?.facts ?? null };
   if (ctx.brief?.enabled === true && (type === "data_request" || type === "edit_of_open_request")) {
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller
