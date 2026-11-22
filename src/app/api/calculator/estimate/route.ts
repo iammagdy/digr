@@ -1,80 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
-import { estimateMission, estimateSummaryAr, parseEstimateText, type EstimateInput, type EstimateKind } from "@/lib/missionEstimate";
+import { loadCustomerMission } from "@/lib/agentMission/customerActions";
+import { RESEARCH_GROUP_MAX_PARTS } from "@/lib/agentMission/researchGroup";
+import { TEMPORARY_FAILURE_NO_CHARGE_AR } from "@/lib/customerError";
+import { calculatorCardOf, type CalculatorCard } from "@/lib/missionEstimate";
+import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { PUBLIC_LIMITS_PER_MINUTE, RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
-import type { SocialPlatformId } from "@/lib/socialTasks";
-import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
-import { liveDriverMode } from "@/lib/server/driverHeartbeat";
-import { missionDurationForPlan } from "@/lib/missionDuration";
-import { expectedTimeOf } from "@/lib/agentMission/expectedTime";
-import { loadMeasuredTimings } from "@/lib/server/jobTimings";
 import { createAdminClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-/** Public. Pure code: no model, no provider, no database. Rate-limited per visitor. */
 const limiter = createRateLimiter({ windowMs: 60_000, max: PUBLIC_LIMITS_PER_MINUTE.estimate });
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
-const KINDS: readonly EstimateKind[] = ["comments", "posts", "videos", "companies", "people"];
-const PLATFORMS: readonly SocialPlatformId[] = ["facebook", "youtube", "tiktok", "instagram", "x", "reddit", "linkedin"];
-
-function positiveInt(value: unknown, max: number): number | null {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 && number <= max ? number : null;
+function failure(status: number, error: string) {
+  return NextResponse.json({ success: false, error }, { status, headers: PRIVATE_HEADERS });
 }
 
 export async function POST(req: NextRequest) {
   const decision = limiter.check(clientKey(req.headers));
   if (!decision.allowed) {
-    return NextResponse.json({ success: false, error: RATE_LIMITED_MESSAGE_AR }, { status: 429, headers: { "Retry-After": String(decision.retryAfterSeconds) } });
+    return NextResponse.json({ success: false, error: RATE_LIMITED_MESSAGE_AR }, {
+      status: 429, headers: { ...PRIVATE_HEADERS, "Retry-After": String(decision.retryAfterSeconds) },
+    });
   }
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") return NextResponse.json({ success: false, error: "بيانات الطلب غير صالحة." }, { status: 400 });
 
-  let input: EstimateInput | null = null;
-  let understoodAr: string | null = null;
-  let missingAr: string[] = [];
-  if (typeof body.text === "string" && body.text.trim()) {
-    const parsed = parseEstimateText(body.text);
-    input = parsed.input;
-    understoodAr = parsed.understoodAr;
-    missingAr = parsed.missingAr;
-  } else if (KINDS.includes(body.kind)) {
-    input = {
-      kind: body.kind,
-      platform: PLATFORMS.includes(body.platform) ? body.platform : null,
-      volume: positiveInt(body.volume, 1_000_000),
-      budgetPoints: positiveInt(body.budgetPoints, 10_000_000),
-      openEnded: body.openEnded === true,
-      byKeyword: body.byKeyword === true,
-    };
-  } else {
-    return NextResponse.json({ success: false, error: "اختر نوع البيانات أو اكتب طلبك." }, { status: 400 });
+  const body = await req.json().catch(() => null);
+  const ids: unknown = body?.missionIds;
+  if (!body || Object.keys(body).length !== 1 || !Array.isArray(ids) ||
+      ids.length < 1 || ids.length > RESEARCH_GROUP_MAX_PARTS ||
+      !ids.every((id): id is string => typeof id === "string" && safeMissionId(id) !== null) ||
+      new Set(ids).size !== ids.length) {
+    return failure(400, "بيانات الطلب غير صالحة.");
   }
-  if (!input) return NextResponse.json({ success: true, result: null, understoodAr, missingAr });
-  // The same live limit the detailed calculator and the segment pages use, so all three size one job alike.
-  const result = estimateMission({ ...input, dailyCapPoints: await liveDailyCapPoints() });
-  // The same duration logic the plan panel uses (records, records per call, dependent steps, measured chunk times), for ONE request.
-  let duration = null as ReturnType<typeof missionDurationForPlan>;
-  // THE EXPECTED TIME the customer reads: the plan card's own function (minutes and words), for the records one request holds
-  let expected: { minutes: number; textAr: string } | null = null;
-  if (result.status === "ok") {
-    expected = expectedTimeOf([{ rows: result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob) }]);
-    try {
-      const measured = await loadMeasuredTimings(createAdminClient());
-      const records = result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob);
-      duration = missionDurationForPlan([{ capabilitySlug: result.slug, targetVolumeMax: records, params: {} }], await liveDriverMode(), measured);
-    } catch {
-      duration = null;
+
+  const auth = await resolveMissionViewer(req);
+  if (!auth.ok) {
+    auth.response.headers.set("Cache-Control", PRIVATE_HEADERS["Cache-Control"]);
+    return auth.response;
+  }
+
+  try {
+    const client = createAdminClient();
+    const { userId, isGuest } = auth.viewer;
+    const cards: Array<{ missionId: string; card: CalculatorCard }> = [];
+    for (const missionId of ids) {
+      const result = await loadCustomerMission(client, { id: missionId, userId, isGuest });
+      if (!result.ok) return failure(result.status, result.error);
+      cards.push({ missionId, card: calculatorCardOf(result.view) });
     }
+    return NextResponse.json({ success: true, cards }, { headers: PRIVATE_HEADERS });
+  } catch {
+    return failure(503, TEMPORARY_FAILURE_NO_CHARGE_AR);
   }
-  return NextResponse.json({
-    success: true,
-    result,
-    duration,
-    expectedMinutes: expected?.minutes ?? null,
-    expectedAr: expected?.textAr ?? null,
-    summaryAr: result.status === "ok" ? estimateSummaryAr(result) : null,
-    understoodAr,
-    missingAr,
-  });
 }
