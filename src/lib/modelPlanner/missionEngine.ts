@@ -27,6 +27,8 @@ interface QueueItem {
   a?: Record<string, Record<string, string | number>>;
 }
 
+export const BARREN_PAGES_LIMIT = 3;
+
 interface StageState {
   next: string | number | null;
   page: number;
@@ -49,6 +51,7 @@ interface StageState {
   alt: number;
   seq: number;
   stopped?: string;
+  barrenPages?: number;
 }
 
 export interface MissionState {
@@ -59,7 +62,7 @@ export interface MissionState {
   finalDone: boolean;
 }
 
-const freshStage = (): StageState => ({ next: null, page: 1, offset: 0, queue: [], listDone: false, collected: 0, delivered: 0, expanded: 0, calls: 0, excluded: 0, checked: false, alt: 0, seq: 0 });
+const freshStage = (): StageState => ({ next: null, page: 1, offset: 0, queue: [], listDone: false, collected: 0, delivered: 0, expanded: 0, calls: 0, excluded: 0, checked: false, barrenPages: 0, alt: 0, seq: 0 });
 
 export function parseMissionState(cursor: string | null, stageCount: number): MissionState {
   const fresh: MissionState = { v: 2, stages: Array.from({ length: stageCount }, freshStage), reviewUsd: 0, mgrUsd: 0, finalDone: false };
@@ -283,8 +286,16 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
 
     // paging of a root stage
     if (isRoot) {
+      if (reading.rows.length > 0 && keepIdx.length === 0) {
+        s.barrenPages = (s.barrenPages ?? 0) + 1;
+      } else if (keepIdx.length > 0) {
+        s.barrenPages = 0;
+      }
       const pg = step.fieldMap.pagination;
       if (s.alt > 0 || r.viaAlternate) s.listDone = true;
+      else if ((s.barrenPages ?? 0) >= BARREN_PAGES_LIMIT) {
+        stopStage(i, "توقفت مرحلة الجمع بعد توالي صفحات دون نتائج تطابق موضوع البحث.");
+      }
       else if (reading.rows.length > 0 && pg.kind === "token" && reading.nextCursor && reading.cursorKind !== "url" && String(reading.nextCursor) !== String(s.next ?? "")) { s.next = reading.nextCursor; s.page += 1; }
       else if (reading.rows.length > 0 && pg.kind === "page") s.page += 1;
       else if (reading.rows.length > 0 && pg.kind === "offset") { s.offset += reading.rows.length; s.page += 1; }

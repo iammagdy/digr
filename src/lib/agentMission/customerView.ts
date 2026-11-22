@@ -576,6 +576,13 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     if (denom !== null && Number.isFinite(denom) && (phase !== "partial" || (realDelivered !== null && nums.includes(realDelivered)))) {
       allowed.add(Math.round(denom));
     }
+    if (phase === "partial") {
+      const claimsDelivered = /(?:تم تسليم|سُلّمت?|تسليم|وصلك)\s+([0-9٠-٩]+)/u.exec(normalizeDigits(text));
+      if (claimsDelivered && Number(claimsDelivered[1]) > (realDelivered ?? 0)) return false;
+      const claimsCharged = /(?:خصم|بخصم|تم خصم|خصمنا)\s+([0-9٠-٩]+)/u.exec(normalizeDigits(text));
+      if (claimsCharged && Number(claimsCharged[1]) > (realCharged ?? 0)) return false;
+      return nums.every((n) => Number.isFinite(n) && (allowed.has(n) || n === 0));
+    }
     if (phase === "unserved") {
       const claimsDelivered = /(?:تم تسليم|سُلّمت?|تسليم)\s+([0-9٠-٩]+)/u.exec(normalizeDigits(text));
       if (claimsDelivered && Number(claimsDelivered[1]) > 0 && (realDelivered === 0 || realDelivered === null)) return false;
@@ -598,11 +605,19 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
   if (phase === "partial") {
     let reasonText = storedSummary;
     if (!reasonText) {
-      const lastResult = [...input.events].reverse().find((e) => e.kind === "result" && e.message_ar);
-      if (lastResult?.message_ar) {
-        const c = checkCustomerText(lastResult.message_ar);
+      const lastNoteOrResult = [...input.events].reverse().find((e) => (e.kind === "result" || e.kind === "mission_note") && e.message_ar);
+      if (lastNoteOrResult?.message_ar) {
+        let msg = lastNoteOrResult.message_ar;
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed && typeof parsed.textAr === "string") msg = parsed.textAr;
+        } catch { /* not json */ }
+        const c = checkCustomerText(msg);
         if (c.issues.length === 0) reasonText = c.text;
       }
+    }
+    if (!reasonText) {
+      reasonText = "توقفت إحدى مراحل الجمع قبل استكمال العدد المطلوب بسبب استهلاك الحد المالي المخصص للطلب.";
     }
     if (reasonText) {
       partialReasonAr = reasonText.startsWith("اكتمل الجمع بعدد أقل من المطلوب")

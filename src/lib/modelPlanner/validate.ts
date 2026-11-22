@@ -98,6 +98,15 @@ export function entityOfEndpoint(endpoint: CatalogEndpoint): "company" | "person
   return platform === "companies" ? "company" : platform === "people" ? "person" : null;
 }
 
+/** True when the child endpoint produces an entity that depends on the parent endpoint's entity (e.g. people inside companies), using catalog metadata only. */
+export function isChildEntity(child: CatalogEndpoint | undefined, parent: CatalogEndpoint | undefined): boolean {
+  if (!child || !parent) return false;
+  const childEntity = entityOfEndpoint(child);
+  const parentEntity = entityOfEndpoint(parent);
+  if (parentEntity === "company" && childEntity === "person") return true;
+  return false;
+}
+
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /** Where the rows a field map is checked against come from. Only «sample» (a real call) may set a price; «catalog_example» only shows that a field exists. */
@@ -402,6 +411,14 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
       const stray = refs.filter((r) => r - 1 !== parent && !chain.has(r - 1));
       if (stray.length > 0) issues.push(issue("branch_reference", `step ${i + 1} reads step ${stray.join(", ")}, which is not on the same chain as step ${parent + 1} (its parent). A step may read its parent's rows and the rows of the steps its parent came from.`, { stepIndex: i }));
       else parents[i] = parent;
+    } else if (i > 0) {
+      const stepEp = ctx.catalog.byId.get(s.endpointId);
+      const prevEps = input.steps.slice(0, i).map((st) => ctx.catalog.byId.get(st.endpointId)).filter((ep): ep is CatalogEndpoint => Boolean(ep));
+      const isChild = prevEps.some((pe) => isChildEntity(stepEp, pe));
+      const perParentAsked = s.perItem !== undefined && s.perItem > 0;
+      if (perParentAsked || isChild) {
+        issues.push(issue("missing_parent_binding", `step ${i + 1} (${s.titleAr}) is a per-parent step but has no parameter bound to a prior step (source: prior_step).`, { stepIndex: i }));
+      }
     }
   });
   const validated: ValidatedStep[] = [];
