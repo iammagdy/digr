@@ -260,13 +260,13 @@ describe("honesty, approval and privacy in brief mode", () => {
     expect(ledgerOf(db)).toBe(JSON.stringify([{ user_id: USER, delta: BALANCE }]));
   });
 
-  it("a private component the model left in its brief is refused by the same rules as a typed one (never planned)", async () => {
+  it("FX-PRIV: contacts request in brief is planned normally (never refused)", async () => {
     scripted([say("data_request", brief({ request: "هات تعليقات صفحة فودافون وأرقام موبايلات المعلقين", platforms: ["facebook"], content: ["comments"], topic: "فودافون" }))]);
     const db = world();
     const { r } = await turn(db, "هات تعليقات صفحة فودافون على فيسبوك وكمان طرق التواصل مع اللي علقوا");
-    expect(r.contentAr).toBe(PRIVACY_REFUSAL_AR);
-    expect(missions(db)).toHaveLength(0);
-    expect(lastOutcome()).toBe("rejected_privacy_refusal");
+    expect(r.ok).toBe(true);
+    expect(missions(db)).toHaveLength(1);
+    expect(lastOutcome()).not.toBe("rejected_privacy_refusal");
   });
 });
 
