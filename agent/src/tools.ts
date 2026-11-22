@@ -22,6 +22,7 @@ import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
 import { RAW_PATH } from "./gateway";
+import { callTregWithAsync } from "./asyncTreg";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { Reviewer } from "./review";
@@ -828,7 +829,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         const shapeIssue = validateInputShape(endpoint, sent);
         if (shapeIssue) return { ok: false, refused: "invalid_params", message: shapeIssue };
-        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: sent, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
+        const result = await callTregWithAsync(
+          { catalog: ctx.catalog, store, missionId: mission.id },
+          (endpoint_id, params) => gateway.tregCall({ endpoint_id, params, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined }),
+          a.endpoint_id,
+          sent as Record<string, unknown>
+        );
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(sent) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...(sent as Record<string, unknown>) });
         if (result.ok === true && typeof result.rows_in_code === "string") (state.rowsAt ??= new Map()).set(result.call_id, { rows: Number(result.rows_in_page ?? 0) || 0, expr: result.rows_in_code });
