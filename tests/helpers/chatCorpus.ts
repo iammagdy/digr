@@ -47,6 +47,7 @@ const base: Array<[string, ChatType]> = [
   ["محتاج المنهجية بتاعة التعليقات اللي سلمتوها", "methodology_request"],
   // ---- a data request
   ["هات ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا", "data_request"],
+  ["هات ٣٠٠ تغريدة عن محمد صلاح", "data_request"],
   ["عايز ١٠٠ تعليق من بوست على فيسبوك عن الغلاء", "data_request"],
   ["اجمعلي تعليقات هذا الفيديو https://www.youtube.com/watch?v=abc123", "data_request"],
   ["محتاج قائمة شركات مقاولات في القاهرة مع الإيميلات", "data_request"],
