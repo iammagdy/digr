@@ -11,6 +11,7 @@ const EXPECTED_ROLES: Record<string, string> = {
   nafady: "المعماري التاني (الشغل اللي مش فلوس)",
   hagras: "المنفّذ الأول",
   salem: "المنفّذ التاني",
+  alatra: "المنفّذ التالت",
   fazza: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)",
   ashraf: "صائد الأخطاء التاني",
   marbouha: "الجودة والاختبار",
@@ -181,7 +182,7 @@ describe("DT-20261120-office-megz: hidden noindex office routing and counter-cas
 describe("DT-20261120-office-megz v2: Megz pure fullscreen office page", () => {
   const html = readFileSync("public/office/index.html", "utf8");
 
-  it("has noindex meta, live feed + 30s poll + cache-bust, exact 9 Arabic roles, no secrets, and no click card/cheer/notice", () => {
+  it("has noindex meta, live feed + 30s poll + cache-bust, exact 10 Arabic roles, no secrets, and no click card/cheer/notice", () => {
     expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
     expect(html).toContain("https://pfinlfaqwnytesedchik.supabase.co/storage/v1/object/public/office-status/status.json");
     expect(html).toContain("FEED_URL + '?t=' + Date.now()");
