@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import {
   personAlternatesOf,
@@ -91,6 +92,8 @@ export interface ContactDeps {
     record: (a: { stage: string; row: string; column: string; endpointId: string; outcome: "value" | "empty" | "failed" | "refused" | "not_tried"; value?: string }) => void;
     cellFor: (stage: string, row: string, column: string, chain: ReadonlyArray<string>) => string;
   };
+  /** Concurrency limit for processing rows (defaults to 3 when stage 3 / attempts is active, 1 when flags are off). */
+  concurrency?: number;
 }
 
 const EPS = 1e-9;
@@ -130,6 +133,24 @@ async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_k
 /**
  * DECISION MAKERS FIRST: every person gets the primary e-mail and phone chains in ranked order. A second pass lets people still missing a contact try the ranked alternates. The same limits apply to both passes.
  */
+export const CONTACT_ROW_CONCURRENCY = 3;
+
+async function runWithConcurrency<T>(
+  list: ReadonlyArray<T>,
+  limit: number,
+  fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (list.length === 0) return;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), list.length) }, async () => {
+    while (cursor < list.length) {
+      const idx = cursor++;
+      await fn(list[idx]!, idx);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const out = await runContactSteps(deps);
   if (out.incompleteCells.length > 0) {
@@ -180,19 +201,87 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
     const ranked = rankPeopleByRole(rows, (stage as { role_preference?: { role: Parameters<typeof rankPeopleByRole>[1] } }).role_preference?.role ?? "manager").rows;
     // WHAT ONE STEP LEARNED ABOUT A PERSON FOR THE NEXT (DT-20261118-05 item 4): the work e-mail the e-mail step found, the professional page the phone step looked up
     const learned = new Map<string, LearnedFacts>();
-    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned, addIncomplete));
     const groupStart = deps.budget.spentUsd();
     let stopped: ContactStop | null = null;
-    const deferred: ResumeContact[] = [];
+    let stoppedByIndex = Number.POSITIVE_INFINITY;
+    const deferred: DeferredItem[] = [];
+    const maxRowSpend = steps.filter((x) => x.stage_key === stageKey).reduce((sum, s) => sum + (s.max_person_usd ?? s.per_person_usd), 0);
+    const activeIndices = new Set<number>();
+    const rowSpent = new Map<number, number>();
+    let notifyWaiters: (() => void) | null = null;
+    const signalChange = () => {
+      const fn = notifyWaiters;
+      notifyWaiters = null;
+      fn?.();
+    };
+    const waitChange = () => new Promise<void>((r) => {
+      const prev = notifyWaiters;
+      notifyWaiters = () => { prev?.(); r(); };
+    });
+    const reserveBudget = async (idx: number, costUsd: number): Promise<boolean> => {
+      if (deps.budget.ceilingUsd === null) return true;
+      while (true) {
+        if (idx > stoppedByIndex) return false;
+        const earlierActive = [...activeIndices].filter((i) => i < idx);
+        if (earlierActive.length === 0) {
+          return deps.budget.spentUsd() + costUsd <= deps.budget.ceilingUsd + EPS;
+        }
+        let neededEarlier = 0;
+        for (const earlierIdx of earlierActive) {
+          const spentByEarlier = rowSpent.get(earlierIdx) ?? 0;
+          neededEarlier += Math.max(0, maxRowSpend - spentByEarlier);
+        }
+        if (deps.budget.spentUsd() + costUsd + neededEarlier <= deps.budget.ceilingUsd + EPS) {
+          return true;
+        }
+        await waitChange();
+      }
+    };
+    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned, addIncomplete, reserveBudget, signalChange, rowSpent));
+    const concurrency = deps.concurrency ?? 1;
     try {
-      outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row, deferred); if (stopped) break outer; }
-      for (const resume of deferred) {
-        const nextStop = await resume(stopped);
-        stopped ??= nextStop;
+      await runWithConcurrency(ranked, concurrency, async (row, idx) => {
+        if (idx > stoppedByIndex) return;
+        while (true) {
+          if (idx > stoppedByIndex) return;
+          if (deps.budget.ceilingUsd === null) break;
+          const earlierInFlight = [...activeIndices].filter((i) => i < idx).length;
+          const neededEarlier = earlierInFlight * maxRowSpend;
+          if (deps.budget.spentUsd() + neededEarlier <= deps.budget.ceilingUsd + EPS) {
+            break;
+          }
+          await waitChange();
+        }
+        activeIndices.add(idx);
+        try {
+          if (idx > stoppedByIndex) return;
+          for (const runner of runners) {
+            if (idx > stoppedByIndex) return;
+            const s = await runner.process(row, deferred, idx);
+            if (s) {
+              if (idx < stoppedByIndex) {
+                stoppedByIndex = idx;
+                stopped = s;
+              }
+              return;
+            }
+          }
+        } finally {
+          activeIndices.delete(idx);
+          signalChange();
+        }
+      });
+      for (const item of deferred) {
+        if (item.idx > stoppedByIndex) continue;
+        const nextStop = await item.resume(stopped);
+        if (nextStop && item.idx < stoppedByIndex) {
+          stoppedByIndex = item.idx;
+          stopped = nextStop;
+        }
       }
     } finally {
       // the group's stop is every step's stop (Gate 2 P2: only the runner that saw it said why)
-      for (const runner of runners) await runner.finish(stopped);
+      for (const runner of runners) await runner.finish(stopped, stoppedByIndex);
       if (stopped) {
         for (const step of steps.filter((x) => x.stage_key === stageKey)) {
           for (const r of items.acceptedRows(stageKey)) {
@@ -215,7 +304,15 @@ type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" 
 type LearnedFacts = { email?: string; linkedin?: string };
 
 /** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
-async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> }, value: string, companyDomain: string | null, tally: VerifierTally = emptyTally()): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
+async function emailStatusFor(
+  verifiers: ReadonlyArray<FinderInfo>,
+  api: { attempt: (helper: FinderInfo, params: Record<string, string>, rowIdx?: number) => Promise<Attempt>; down: Map<string, number> },
+  value: string,
+  companyDomain: string | null,
+  tally: VerifierTally = emptyTally(),
+  withHelperLock?: <T>(helperId: string, fn: () => Promise<T>) => Promise<T>,
+  rowIdx?: number,
+): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
   if (emailOnOtherDomain(value, companyDomain)) return { status: "other_company", stop: null };
   // A CATCH-ALL OR UNKNOWN ANSWER IS NOT THE END (audit F3, golden G1: the free verifier answers «accept_all» for a domain it cannot judge, and the paid one after it was never asked): the next verifier gives a second opinion, inside the step's own priced cap. Only «undeliverable» ends the chain at once.
   let asked = 0;
@@ -223,7 +320,12 @@ async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attem
     if ((api.down.get(verifier.id) ?? 0) >= 2) continue;
     const params = verifierParamsFor(verifier, value);
     if (!params) continue;
-    const a = await api.attempt(verifier, params);
+    const exec = async () => {
+      if ((api.down.get(verifier.id) ?? 0) >= 2) return { t: "skip" as const };
+      return api.attempt(verifier, params, rowIdx);
+    };
+    const a = withHelperLock ? await withHelperLock(verifier.id, exec) : await exec();
+    if (a.t === "skip") continue;
     if (a.t === "stop") return { status: "unverified", stop: a.stop };
     if (a.t === "failed") { tally.failed += 1; continue; }
     if (a.t !== "page") continue;
@@ -434,28 +536,69 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
   return stopped;
 }
 
+const stepCallContext = new AsyncLocalStorage<{ onSettle: (usd: number) => void }>();
+
 /**
  * THE LIMITS OF ONE STEP'S CALLS (shared by the people's steps and the company's): `capUsd` is what the step may spend (its calls are counted against it), `down` remembers a helper that failed twice in a row. Created once per step.
  */
-function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> } {
+function makeAttempt(
+  deps: ContactDeps,
+  capUsd: number,
+  reserveBudget?: (rowIdx: number, costUsd: number) => Promise<boolean>,
+  signalBudgetChange?: () => void,
+  rowSpent?: Map<number, number>,
+): { attempt: (helper: FinderInfo, params: Record<string, string>, rowIdx?: number) => Promise<Attempt>; down: Map<string, number> } {
   const { store, gateway, budget } = deps;
   let mySpent = 0;
-  /** A helper that failed twice in a row (a rate limit, an outage) is not asked again by this step. */
   const down = new Map<string, number>();
+
+  if (typeof (budget as any).settle === "function" && !(budget as any).__settleWrapped) {
+    const originalSettle = (budget as any).settle.bind(budget);
+    (budget as any).settle = (estimateUsd: number, actualUsd: number | null) => {
+      originalSettle(estimateUsd, actualUsd);
+      const actual = actualUsd === null || !Number.isFinite(actualUsd) ? Math.max(0, estimateUsd) : Math.max(0, actualUsd);
+      stepCallContext.getStore()?.onSettle(actual);
+    };
+    (budget as any).__settleWrapped = true;
+  }
+
   /**
    * ONE CALL, within every limit: the time, the outside stop, the step's priced amount (a call its own price would take past it is skipped, so a dearer fallback never runs past it) and the job budget (a call past it ends the step). The gateway settles the cost; a refusal for the
    * budget or the daily limit ends the step, any other failed or refused call (a source that is down or unhealthy) is not the end: the caller goes on to the next one.
    */
-  const attempt = async (helper: FinderInfo, params: Record<string, string>): Promise<Attempt> => {
+  const attempt = async (helper: FinderInfo, params: Record<string, string>, rowIdx?: number): Promise<Attempt> => {
     if (Date.now() >= deps.deadlineMs) return { t: "stop", stop: "time_limit" };
     if (deps.shouldStop?.()) return { t: "stop", stop: "aborted" };
     if (mySpent + helper.usd > capUsd + EPS) return { t: "skip" };
+    if (rowIdx !== undefined && reserveBudget) {
+      const ok = await reserveBudget(rowIdx, helper.usd);
+      if (!ok) return { t: "stop", stop: "budget" };
+    }
     if (budget.ceilingUsd !== null && budget.spentUsd() + helper.usd > budget.ceilingUsd + EPS) return { t: "stop", stop: "budget" };
-    const before = budget.spentUsd();
     // A CALL THAT THROWS (a dropped connection, an unreadable answer) is a failed call, never the end of the person: what was found before it stays
-    let result: Awaited<ReturnType<typeof gateway.tregCall>>;
-    try { result = await gateway.tregCall({ endpoint_id: helper.id, params }); } catch { mySpent += Math.max(0, budget.spentUsd() - before); down.set(helper.id, (down.get(helper.id) ?? 0) + 1); return { t: "failed" }; }
-    mySpent += Math.max(0, budget.spentUsd() - before);
+    let callCost = 0;
+    let result!: Awaited<ReturnType<typeof gateway.tregCall>>;
+    try {
+      await stepCallContext.run({ onSettle: (usd) => { callCost += usd; } }, async () => {
+        result = await gateway.tregCall({ endpoint_id: helper.id, params });
+      });
+    } catch {
+      mySpent += callCost;
+      if (rowIdx !== undefined && rowSpent) {
+        rowSpent.set(rowIdx, (rowSpent.get(rowIdx) ?? 0) + callCost);
+      }
+      down.set(helper.id, (down.get(helper.id) ?? 0) + 1);
+      signalBudgetChange?.();
+      return { t: "failed" };
+    }
+    if (callCost === 0 && result && "charge_usd" in result && typeof (result as any).charge_usd === "number" && (result as any).charge_usd > 0) {
+      callCost = (result as any).charge_usd;
+    }
+    mySpent += callCost;
+    if (rowIdx !== undefined && rowSpent) {
+      rowSpent.set(rowIdx, (rowSpent.get(rowIdx) ?? 0) + callCost);
+    }
+    signalBudgetChange?.();
     if (!result.ok) {
       const refused = "refused" in result ? String(result.refused) : "";
       if (refused === "over_budget") return { t: "stop", stop: "budget" };
@@ -476,8 +619,20 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
 }
 
 type ResumeContact = (stop: ContactStop | null) => Promise<ContactStop | null>;
+type DeferredItem = { idx: number; resume: ResumeContact };
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map(), addIncomplete: (stage: string, rowId: string, column: string) => void = () => {}): { process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
+function createRunner(
+  deps: ContactDeps,
+  step: ContactStep,
+  stage: ContactDeps["plan"]["stages"][number],
+  out: ContactEnrichmentOutcome,
+  peopleCount: number,
+  learned: Map<string, LearnedFacts> = new Map(),
+  addIncomplete: (stage: string, rowId: string, column: string) => void = () => {},
+  reserveBudget?: (rowIdx: number, costUsd: number) => Promise<boolean>,
+  signalBudgetChange?: () => void,
+  rowSpent?: Map<number, number>,
+): { process(row: Row, deferred: DeferredItem[], idx?: number): Promise<ContactStop | null>; finish(stop?: ContactStop | null, stoppedByIndex?: number): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
   // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
@@ -490,6 +645,20 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   let stoppedBy: string | null = null;
   // the people this step was run for (the rest, when the run stopped, are counted as never reached)
   let reached = 0;
+  const reachedRows = new Set<number>();
+  const helperLocks = new Map<string, Promise<void>>();
+  const withHelperLock = async <T>(helperId: string, fn: () => Promise<T>): Promise<T> => {
+    const prev = helperLocks.get(helperId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const next = new Promise<void>((r) => { release = r; });
+    helperLocks.set(helperId, next);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  };
   // THE COMPANY MAILBOX, BY STRUCTURE (DT-20261118-03 PR-3, D-0086): an address that is on the person's company row, or that 2+ people of the same company share, is the company's, never one person's
   const addressOf = (v: unknown): string => String(v ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
   const isAddress = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -501,15 +670,18 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   // the CAP is the whole chain at full price for every person (max_person_usd), so each delivered decision maker can go through every finder and the verifier; a plan stored before has only the expected amount
   const capUsd = (step.max_person_usd ?? step.per_person_usd) * peopleCount;
   let pending: Op[] = [];
+  const rowOps = new Map<number, Op[]>();
+  const rowStats = new Map<number, { verified: number; unverified: number; kind: number; looked: number; skipped: number }>();
   let found = 0;
   const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
-  const { attempt, down } = makeAttempt(deps, capUsd);
+  const { attempt, down } = makeAttempt(deps, capUsd, reserveBudget, signalBudgetChange, rowSpent);
   /** The status of an e-mail value (see emailStatusFor). */
-  const emailStatusOf = (value: string, companyDomain: string | null) => emailStatusFor(step.verifiers ?? [], { attempt, down }, value, companyDomain, out.verifier);
+  const emailStatusOf = (value: string, companyDomain: string | null, rowIdx?: number) => emailStatusFor(step.verifiers ?? [], { attempt, down }, value, companyDomain, out.verifier, withHelperLock, rowIdx);
   // THE COMPANY of each person: who it is, which country it is in (its row, else the country the customer asked for, else its website's suffix), and its phone (its own data first, else ONE map search per company; a miss is remembered too)
   const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
   const requestPlaces = [...(parentStage?.filters ?? []), ...(stage.filters ?? [])].filter((f) => f.kind === "place" && isEnabled(f)).flatMap((f) => (f.places && f.places.length > 0 ? f.places : f.values ?? []));
   const companies = new Map<string, { identity: CompanyIdentity; country: string | null; phone: { value: string | null; origin?: { endpointId: string; callId: string } } | null; row: Row | null; city: string | null }>();
+  const companyPhonePending = new Map<string, Promise<{ value: string | null; stop: ContactStop | null; origin?: { endpointId: string; callId: string } }>>();
   const companyOf = (parentId: string) => {
     let c = companies.get(parentId);
     if (!c) {
@@ -522,34 +694,51 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     return c;
   };
   /** The company's phone: its own data, else one map search (the helpers in order, each within the limits); remembered for every person of the company. */
-  const companyPhoneFor = async (parentId: string): Promise<{ value: string | null; stop: ContactStop | null; origin?: { endpointId: string; callId: string } }> => {
+  const companyPhoneFor = async (parentId: string, rowIdx?: number): Promise<{ value: string | null; stop: ContactStop | null; origin?: { endpointId: string; callId: string } }> => {
     const c = companyOf(parentId);
     if (c.phone) return { value: c.phone.value, stop: null, ...(c.phone.origin ? { origin: c.phone.origin } : {}) };
     const own = companyPhoneOfRow(c.row);
     if (own) { c.phone = { value: own }; return { value: own, stop: null }; }
     // the COMPANY STEP already looked for this company's HQ phone and found none (it wrote «غير متوفر» in its phone cell): the same search is not paid for twice
     if (c.row && Object.entries(c.row).some(([k, v]) => /(^|_)(phone|tel|telephone|mobile|phone_?number)$/i.test(k) && String(v ?? "").trim() === NOT_AVAILABLE_AR)) { c.phone = { value: null }; return { value: null, stop: null }; }
-    for (const helper of step.company_phone ?? []) {
-      if ((down.get(helper.id) ?? 0) >= 2) continue;
-      const params = mapsParamsFor(helper, { name: c.identity.names[0] ?? "", city: c.city, country: c.country });
-      if (!params) continue;
-      const a = await attempt(helper, params);
-      if (a.t === "stop") return { value: null, stop: a.stop };
-      if (a.t !== "page") continue;
-      const found = placePhoneIn(a.page, c.identity);
-      if (found) { const origin = { endpointId: helper.id, callId: a.callId }; c.phone = { value: found, origin }; return { value: found, stop: null, origin }; }
-    }
-    // looked for and not found (or nothing to look with): remembered, so the next person of the company does not pay for the same search; a search that was SKIPPED (the cap) is not a miss and is asked again only if room appears
-    if ((step.company_phone ?? []).length > 0) c.phone = { value: null };
-    return { value: null, stop: null };
+
+    const pendingPromise = companyPhonePending.get(parentId);
+    if (pendingPromise) return pendingPromise;
+
+    const p = (async () => {
+      try {
+        for (const helper of step.company_phone ?? []) {
+          if ((down.get(helper.id) ?? 0) >= 2) continue;
+          const params = mapsParamsFor(helper, { name: c.identity.names[0] ?? "", city: c.city, country: c.country });
+          if (!params) continue;
+          const a = await attempt(helper, params, rowIdx);
+          if (a.t === "stop") return { value: null, stop: a.stop };
+          if (a.t !== "page") continue;
+          const found = placePhoneIn(a.page, c.identity);
+          if (found) { const origin = { endpointId: helper.id, callId: a.callId }; c.phone = { value: found, origin }; return { value: found, stop: null, origin }; }
+        }
+        // looked for and not found (or nothing to look with): remembered, so the next person of the company does not pay for the same search; a search that was SKIPPED (the cap) is not a miss and is asked again only if room appears
+        if ((step.company_phone ?? []).length > 0) c.phone = { value: null };
+        return { value: null, stop: null };
+      } finally {
+        companyPhonePending.delete(parentId);
+      }
+    })();
+    companyPhonePending.set(parentId, p);
+    return p;
   };
   /** The validator's answer for a number (the helpers in order; the first that says valid or not valid ends the chain). Null when none answered. */
-  const phoneVerdictOf = async (number: string, country: string | null): Promise<{ verdict: PhoneVerdict | null; stop: ContactStop | null }> => {
+  const phoneVerdictOf = async (number: string, country: string | null, rowIdx?: number): Promise<{ verdict: PhoneVerdict | null; stop: ContactStop | null }> => {
     for (const validator of step.validators ?? []) {
       if ((down.get(validator.id) ?? 0) >= 2) continue;
       const params = validatorParamsFor(validator, number, country);
       if (!params) continue;
-      const a = await attempt(validator, params);
+      const exec = async () => {
+        if ((down.get(validator.id) ?? 0) >= 2) return { t: "skip" as const };
+        return attempt(validator, params, rowIdx);
+      };
+      const a = await withHelperLock(validator.id, exec);
+      if (a.t === "skip") continue;
       if (a.t === "stop") return { verdict: null, stop: a.stop };
       if (a.t !== "page") continue;
       const verdict = phoneVerdictIn(a.page);
@@ -558,9 +747,15 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     return { verdict: null, stop: null };
   };
   return {
-    async process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null> {
-      reached += 1;
+    async process(row: Row, deferred: DeferredItem[], idx: number = 0): Promise<ContactStop | null> {
+      reachedRows.add(idx);
       let stopRun: ContactStop | null = null;
+      const pushOp = (op: Op) => {
+        const list = rowOps.get(idx) ?? [];
+        list.push(op);
+        rowOps.set(idx, list);
+      };
+      const st = rowStats.get(idx) ?? { verified: 0, unverified: 0, kind: 0, looked: 0, skipped: 0 };
       let existing = String(row[step.column_key] ?? "").trim();
       let existingStatus = String(row[step.status_key] ?? "").trim();
       const priorType = step.type_key ? String(row[step.type_key] ?? "").trim() :
@@ -614,7 +809,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             const params = finderParamsFor(finder, facts);
             if (!params) { note(finder.id, "not_tried", `missing:${missingInputsFor(finder, facts).join("+")}`); continue; }
             if (!affordable(finder)) { note(finder.id, "not_tried", "person_budget"); continue; }
-            const a = await attempt(finder, params);
+            if ((down.get(finder.id) ?? 0) >= 2) continue;
+            const a = await attempt(finder, params, idx);
             if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
             if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
             asked = true;
@@ -633,7 +829,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           // A FINDER NOT TRIED IS RECORDED with the input the person lacked (DT-20261118-03: the skip was silent), never skipped in silence
           if (!params) { unfinished = true; const missing = missingInputsFor(finder, facts).join("+"); note(finder.id, "not_tried", `missing:${missing}`); const key = `${finder.id}|${missing}`; notTried.set(key, (notTried.get(key) ?? 0) + 1); continue; }
           if (!affordable(finder)) { unfinished = true; note(finder.id, "not_tried", "person_budget"); continue; }
-          const a = await attempt(finder, params);
+          if ((down.get(finder.id) ?? 0) >= 2) { unfinished = true; note(finder.id, "failed"); continue; }
+          const a = await attempt(finder, params, idx);
           if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
           if (a.t === "skip") { unfinished = true; note(finder.id, "not_tried"); continue; }
           asked = true;
@@ -698,7 +895,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
           // D-0084 (BUG HUNTER Gate 1 delta P0): only an older approved plan whose person step still carries the company search may do this; a new plan never copies the company row's phone into a person's cell
           if (value === "" && !afterGroupStop && legacyCompanyLookup) {
-            const cp = await companyPhoneFor(parentId);
+            const cp = await companyPhoneFor(parentId, idx);
             if (cp.stop) { stopRun = cp.stop; }
             if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; if (cp.origin) origin = cp.origin; }
           }
@@ -709,7 +906,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
             try {
               const domain = labelAr === EMAIL_LABEL_PERSONAL_AR ? null : facts.domain;
-              verdict = stopRun ? { status: emailOnOtherDomain(value, domain) ? "other_company" : "unverified", stop: null } : await emailStatusOf(value, domain);
+              verdict = stopRun ? { status: emailOnOtherDomain(value, domain) ? "other_company" : "unverified", stop: null } : await emailStatusOf(value, domain, idx);
             } catch { verdict = { status: "unverified", stop: null }; }
             if (verdict.stop) stopRun = verdict.stop;
             if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
@@ -718,28 +915,28 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             else if (keptPersonal && hit && emailValueTypeOf(hit.value) === "professional") {
               statusAr = labelledStatus(statusAr, `${EMAIL_LABEL_PERSONAL_AR}: \u200E${keptPersonal.value}`);
             }
-            if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
-            else if (verdict.status === "verified") out.filled.verified += 1;
+            if (verdict.status === "unverified") st.unverified += hit ? 1 : 0;
+            else if (verdict.status === "verified") st.verified += 1;
           } else {
             const company = companyOf(parentId);
             const mayValidate = !useOffice && (!stopRun || (legacyCompanyLookup && !afterGroupStop));
-            const checked = mayValidate ? await phoneVerdictOf(value, company.country) : { verdict: null, stop: null };
+            const checked = mayValidate ? await phoneVerdictOf(value, company.country, idx) : { verdict: null, stop: null };
             if (checked.stop) stopRun = checked.stop;
             if (mayValidate && (step.validators ?? []).length > 0) asked = true;
             const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
             statusAr = phoneStatusAr(status);
             if (keptOffice && !useOffice) statusAr = labelledStatus(statusAr, `${officeTypeOf(keptOffice)}: ${keptOffice.value}`);
           else if (keptOffice && !step.type_key) statusAr = labelledStatus(statusAr, officeTypeOf(keptOffice));
-            if (status === "verified") out.filled.verified += 1; else if (hit || (!useOffice && typeAr === PHONE_TYPE_COMPANY_AR)) out.filled.unverified += 1;
+            if (status === "verified") st.verified += 1; else if (hit || (!useOffice && typeAr === PHONE_TYPE_COMPANY_AR)) st.unverified += 1;
           }
           const id = String(row.id);
           if (givenCompany || hadMarker || (priorOffice && !useOffice)) {
-            pending.push({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key,
+            pushOp({ t: "clear", stage: step.stage_key, id, keys: [step.column_key, step.status_key,
               ...(priorOffice ? [...(step.type_key ? [step.type_key] : []), contactSrcKey(step.column_key), contactCallKey(step.column_key)] : [])] });
           }
           const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
-          if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
-          if (hit || (!useOffice && existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
+          if (Object.keys(cells).length > 0) pushOp({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
+          if (hit || (!useOffice && existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; st.kind += 1; }
           // the person's own work e-mail is an input of the phone step that follows (item 4: a phone finder looks the number up from it)
           if (step.kind === "email" && !labelAr && !isCompanyAddress(parentId, value)) learned.set(String(row.id), { ...learned.get(String(row.id)), email: addressOf(value) });
         } else {
@@ -748,36 +945,50 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           const unavailable = answeredEmpty && !unfinished && !stopRun && (step.company_phone ?? []).length === 0 &&
             (!deps.attempts || deps.attempts.cellFor(stageKey, id, step.column_key, resolutionIds) === NOT_AVAILABLE_AR);
           if (unavailable) {
-            if (hadMarker && String(row[step.column_key]).trim() !== NOT_AVAILABLE_AR) pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
-            pending.push({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: NOT_AVAILABLE_AR } });
+            if (hadMarker && String(row[step.column_key]).trim() !== NOT_AVAILABLE_AR) pushOp({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+            pushOp({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: NOT_AVAILABLE_AR } });
           } else if (hadMarker) {
-            pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+            pushOp({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
           }
           if (!unavailable && !(step.finders.length === 0 && legacyCompanyLookup && !stopRun)) {
             addIncomplete(stageKey, id, step.column_key);
           }
         }
         if (stopRun) stoppedBy = stopRun;
-        if (asked) out.looked += 1; else out.skipped += 1;
-        if (pending.length >= COMMIT_EVERY) await flush();
+        if (asked) st.looked += 1; else st.skipped += 1;
+        rowStats.set(idx, st);
         return stopRun;
       };
       await look(step.finders);
       if (!stopRun && value === "" && alternates.length > 0) {
-        deferred.push(async (groupStop) => {
-          stopRun = groupStop;
-          const learnedEmail = learned.get(String(row.id))?.email;
-          if (step.kind === "phone" && !facts.email && learnedEmail && isOwnWorkEmail(learnedEmail)) facts = { ...facts, email: learnedEmail };
-          await look(alternates);
-          return finalize(groupStop !== null);
+        deferred.push({
+          idx,
+          resume: async (groupStop) => {
+            stopRun = groupStop;
+            const learnedEmail = learned.get(String(row.id))?.email;
+            if (step.kind === "phone" && !facts.email && learnedEmail && isOwnWorkEmail(learnedEmail)) facts = { ...facts, email: learnedEmail };
+            await look(alternates);
+            return finalize(groupStop !== null);
+          },
         });
         return null;
       }
       return finalize();
     },
-    async finish(stop: ContactStop | null = null): Promise<void> {
-      // one address held by 2+ people of the same company is kept and labelled «إيميل مشترك» (D-0118)
-      // read from the stage's rows AS THEY END (QA consolidated FAIL 1): an address that already had its final status, one the people source gave, and the rows a stopped run never reached all count
+    async finish(stop: ContactStop | null = null, stoppedByIndex = Number.POSITIVE_INFINITY): Promise<void> {
+      for (let rowIdx = 0; rowIdx <= Math.min(peopleCount - 1, stoppedByIndex); rowIdx++) {
+        const ops = rowOps.get(rowIdx);
+        if (ops) pending.push(...ops);
+        const st = rowStats.get(rowIdx);
+        if (st) {
+          out.filled.verified += st.verified;
+          out.filled.unverified += st.unverified;
+          out.filled[step.kind] += st.kind;
+          out.looked += st.looked;
+          out.skipped += st.skipped;
+        }
+      }
+      reached = [...reachedRows].filter((i) => i <= stoppedByIndex).length;
       await flush();
       if (step.kind === "email" && stage.parent_key !== null) {
         const byAddress = new Map<string, string[]>();
