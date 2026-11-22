@@ -369,7 +369,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
       operation = "catalog.data";
     }
     const card = cardOf.get(e.id);
-    if (card && CARD_ROLE_OPERATION[card.role] === operation) continue;
+    if (card && CARD_ROLE_OPERATION[card.role]) continue;
     const platformOf = String(e.capability ?? "").split(".")[0];
     const profile = toolProfile(e);
     // a sub-list schema documents nothing of the record (see `subListSchema`): no field is read from it
