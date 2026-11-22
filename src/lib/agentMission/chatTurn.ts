@@ -149,9 +149,6 @@ async function answerWithoutMission(input: AgentChatTurnInput, type: Exclude<Cha
     const mentionsScope = decision.reply !== null && decision.reply.includes("جمع البيانات");
     if (decision.reply === null || (isFullResearchMethodologyAsk(input.message) && !mentionsScope)) contentAr = methodologyReplyAr({ text: input.message, delivered });
     else contentAr = `${isFullResearchMethodologyAsk(input.message) && !decision.reply.includes("وليس منهجية بحث كاملة") ? FULL_RESEARCH_PREFIX_AR : ""}${decision.reply} ${methodologyTailAr(delivered)}`;
-  } else if (type === "privacy_refusal") {
-    const checked = decision.reply ? checkCustomerText(decision.reply) : null;
-    contentAr = checked && checked.issues.length === 0 ? checked.text : PRIVACY_REFUSAL_AR;
   } else if (decision.reply !== null) contentAr = (await noPlanReplyAr(sb, input, decision.reply)) ?? decision.reply;
   else if (type === "greeting_or_small_talk") contentAr = greetingReplyAr(input.message);
   else if (type === "service_question") contentAr = serviceAnswerAr(input.message);
@@ -579,7 +576,7 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   if (decision.source === "keyword") {
     // MULTI-OBJECTIVE RESEARCH: the model's answer was cut at its output ceiling (a long request with many parts): its objectives are not dropped by reading the words alone; the customer continues with one word, the request is not retyped
     // (no second call is made: one call per message, the ceiling unchanged)
-    if (decision.failure === "truncated" && ctx.registry && decision.type !== "greeting_or_small_talk" && decision.type !== "service_question" && decision.type !== "methodology_request" && decision.type !== "privacy_refusal") {
+    if (decision.failure === "truncated" && ctx.registry && decision.type !== "greeting_or_small_talk" && decision.type !== "service_question" && decision.type !== "methodology_request") {
       ctx.outcome = "model_truncated";
       await writeAnswer(input, TRUNCATED_AR);
       return { ok: false, contentAr: TRUNCATED_AR, status: 200 };
@@ -587,7 +584,7 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const pending = ctx.prior && ctx.prior.status === "needs_clarification" && !open;
     // a conversation in progress (a brief or a request being prepared) whose message could not be read: never a new mission from a fragment of words («٥٠٠ تعليق والردود كمان», «كمّل»; live evaluation 2026-11-12, E1 and J1);
     // the customer sends it again. An answer to a question card still goes to that card (today's path)
-    const nonRequest = decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request" || decision.type === "privacy_refusal";
+    const nonRequest = decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request";
     if (!pending && ctx.registry && (ctx.prior !== null || ctx.priorGroup || (open && open.state !== "needs_input")) && !nonRequest) {
       ctx.outcome = "model_unreadable_in_conversation";
       await writeAnswer(input, MODEL_RETRY_AR);
