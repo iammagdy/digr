@@ -3,6 +3,7 @@ import { countAr, knownItemNoun } from "./itemNoun";
 import { exactPlaceLabelAr, isPlaceFragment, placeCellKind, withoutRepeatedWords } from "./places";
 import { normalizeText } from "./relevance";
 import { formatAr } from "../arabicDigits";
+import { NOT_AVAILABLE_AR } from "./taskContracts";
 
 /**
  * ROUND 59: THE COMPANY ROWS OF A FILE ARE CHECKED, NOT TRUSTED (live msn_088c, 13 Nov 2026). A company database gave:
@@ -139,7 +140,7 @@ export function withCompanyQuality<P extends QualityPlan>(plan: P, rowsIn: Recor
       if (twin) { report.possibleDuplicates.push(id); out.push(`قد تكون فرعًا أو تكرارًا لـ ${quoteAr(k.name ? text(twin[k.name]) : text(twin.id))} (${site && firstBySite.get(site) === twin ? "نفس الموقع الإلكتروني" : "نفس الاسم"})`); }
       if (site && !firstBySite.has(site)) firstBySite.set(site, r);
       if (nameKey && !firstByName.has(nameKey)) firstByName.set(nameKey, r);
-      if (k.address && isUnusableAddress(r[k.address])) { report.unusableAddress.push(id); badAddresses.push(text(r[k.address])); out.push(`العنوان في المصدر (${quoteAr(text(r[k.address]))}) ليس عنوانًا فتُرك فارغًا`); }
+      if (k.address && isUnusableAddress(r[k.address])) { report.unusableAddress.push(id); badAddresses.push(text(r[k.address])); out.push(`العنوان في المصدر (${quoteAr(text(r[k.address]))}) ليس عنوانًا فكُتب «غير متوفر»`); }
       if (children.length > 0 && !parentsWithDetails.has(id)) { report.withoutDetails.push(id); out.push(`لا توجد لها بيانات في «${children[0].title_ar}»`); }
       return out.join("؛ ");
     });
@@ -147,7 +148,7 @@ export function withCompanyQuality<P extends QualityPlan>(plan: P, rowsIn: Recor
     const nameOf = (id: string): string => { const r = rows.find((x) => text(x.id) === id); return r ? text(k.name ? r[k.name] : "") || id : id; };
     if (report.uncertain.length > 0) limitLines.push(`هوية ${countAr(report.uncertain.length, COMPANY)} من ${formatAr(report.total)} غير مؤكدة (اسمها أو موقعها لا يطابق ما يذكره وصفها أو صفحة لينكدإن): ${report.uncertain.map(nameOf).map(quoteAr).join("، ")}. لم نحذفها ولم نستبدلها بغيرها؛ التفاصيل في عمود «${VERIFICATION_NOTE_HEADER_AR}».`);
     if (report.possibleDuplicates.length > 0) limitLines.push(`${countAr(report.possibleDuplicates.length, COMPANY, { subject: true })} في «${stage.title_ar}» قد تكون فرعًا أو تكرارًا لشركة أخرى في الملف (نفس الموقع أو الاسم)؛ تركناها كما هي.`);
-    if (badAddresses.length > 0) limitLines.push(`تركنا العنوان فارغًا في ${countAr(badAddresses.length, COMPANY)} لأن قيمته في المصدر ليست عنوانًا (${[...new Set(badAddresses)].map(quoteAr).join("، ")}).`);
+    if (badAddresses.length > 0) limitLines.push(`لم نعتمد العنوان في ${countAr(badAddresses.length, COMPANY)} لأنه في المصدر ليس عنوانًا (${[...new Set(badAddresses)].map(quoteAr).join("، ")})، وكُتب «غير متوفر».`);
     if (!report.hasSourceColumn) limitLines.push(`ليس في ورقة «${stage.title_ar}» رابط مصدر لكل سجل: بياناتها من مصدر الشركات المذكور في المنهجية، و«الموقع الإلكتروني» هو موقع الشركة كما ذكره المصدر، وليس صفحة قُرئ منها السجل.`);
     if (k.description || k.linkedin) limitLines.push(`فحصنا اتساق اسم كل شركة وموقعها مع وصفها وصفحة لينكدإن، ولم نزر مواقع الشركات للتحقق من هويتها؛ ${report.uncertain.length > 0 ? `لم نجد تعارضًا في الباقي (${countAr(report.total - report.uncertain.length, COMPANY)})` : "لم نجد تعارضًا في أي منها"}.`);
     const placeColumns = stage.columns.map((c) => ({ key: c.key, kind: placeCellKind(c) })).filter((c): c is { key: string; kind: "country" | "city" | "region" } => c.kind !== null);
@@ -156,7 +157,7 @@ export function withCompanyQuality<P extends QualityPlan>(plan: P, rowsIn: Recor
     if (!anyNote && !placeFixes.some((f) => Object.keys(f).length > 0)) continue;
     rowsByStage[stage.key] = rows.map((r, i) => {
       const copy: Row = { ...r, ...placeFixes[i], ...(anyNote ? { [VERIFICATION_NOTE_KEY]: notes[i] } : {}) };
-      if (k.address && isUnusableAddress(r[k.address])) copy[k.address] = null;
+      if (k.address && isUnusableAddress(r[k.address])) copy[k.address] = NOT_AVAILABLE_AR;
       return copy;
     });
     if (!anyNote) continue;

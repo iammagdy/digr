@@ -109,8 +109,8 @@ describe("round 59: the delivered file of msn_088c, rebuilt from its own rows", 
     expect(note(5)).toBe("لا توجد لها بيانات في «الإيميل والتليفون المنشورين على موقع كل شركة»");
     // hk trade: the address «31.25» is left out and said
     expect(cell(10, 1)).toBe("hk trade");
-    expect(cell(10, 5)).toBeNull();
-    expect(note(10)).toContain("العنوان في المصدر («31.25») ليس عنوانًا فتُرك فارغًا");
+    expect(cell(10, 5)).toBe("غير متوفر");
+    expect(note(10)).toContain("العنوان في المصدر («31.25») ليس عنوانًا فكُتب «غير متوفر»");
     // every company is still there, with the values the source gave
     expect([2, 3, 4, 5, 6, 7, 8, 9, 10].map((r) => cell(r, 1))).toEqual(companies.map((c) => c.name));
     // five companies have no contact row: said on each of them
@@ -125,7 +125,7 @@ describe("round 59: the delivered file of msn_088c, rebuilt from its own rows", 
     const all = summary.join("\n");
     expect(all).toContain("هوية شركتين من ٩ غير مؤكدة");
     expect(all).toContain("«BOBANA»، «yolo-cosmetics.com». لم نحذفها ولم نستبدلها بغيرها");
-    expect(all).toContain("تركنا العنوان فارغًا في شركة واحدة لأن قيمته في المصدر ليست عنوانًا («31.25»)");
+    expect(all).toContain("لم نعتمد العنوان في شركة واحدة لأنه في المصدر ليس عنوانًا («31.25»)، وكُتب «غير متوفر».");
     expect(all).toContain("ليس في ورقة «شركات مستحضرات التجميل في مصر» رابط مصدر لكل سجل");
     expect(all).toContain("ولم نزر مواقع الشركات للتحقق من هويتها؛ لم نجد تعارضًا في الباقي (٧ شركات)");
     // the count sentence is unchanged: 13 delivered of 18, 9 companies
