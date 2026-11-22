@@ -248,7 +248,7 @@ export function withCompanyQuality<P extends QualityPlan>(plan: P, rowsIn: Recor
       const nameKey = tokensOf(name).sort().join(" ");
       const twin = (site ? firstBySite.get(site) : undefined) ?? (nameKey ? firstByName.get(nameKey) : undefined);
       if (twin) { report.possibleDuplicates.push(id); out.push(`قد تكون فرعًا أو تكرارًا لـ ${quoteAr(k.name ? text(twin[k.name]) : text(twin.id))} (${site && firstBySite.get(site) === twin ? "نفس الموقع الإلكتروني" : "نفس الاسم"})`); }
-      if (r[COMPANY_UNCERTAIN_KEY] === true && !twin) {
+      if (r[COMPANY_UNCERTAIN_KEY] === "yes" && !twin) {
         report.possibleDuplicates.push(id);
         out.push("لم تكفِ بيانات المصدر لتمييز هذا الفرع عن الصفوف المشابهة");
       }

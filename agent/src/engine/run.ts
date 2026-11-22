@@ -1,3 +1,5 @@
+import { COMPANY_SOURCE_ID_KEY } from "../../../src/lib/agentMission/companyQuality";
+import { isCompanyStage } from "../../../src/lib/agentMission/entities";
 import { AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
 import { stagePriceInputs, type EngineSpec, type PricedPlan } from "../../../src/lib/agentMission/plan";
 import { BARREN_PAGES, enginePageCapFor, executionFundingSchedule } from "../../../src/lib/agentMission/price";
@@ -208,6 +210,8 @@ interface ChildCollectionContext {
   per: number;
   shareById: Map<string, number> | null;
   grandRows: Map<string, Row>;
+  companyParent: boolean;
+  companyGrand: boolean;
   swapsLeft: { n: number };
 }
 
@@ -217,7 +221,7 @@ async function collectParentChildren(
   first: Row,
   cap: number,
 ): Promise<{ stop: StopReason; aborted: string | null; failed: boolean }> {
-  const { stage, spec, isFillTotal, isReplies, blindReplies, readsAll, readAll, per, shareById, grandRows, swapsLeft } = ctx;
+  const { stage, spec, isFillTotal, isReplies, blindReplies, readsAll, readAll, per, shareById, grandRows, companyParent, companyGrand, swapsLeft } = ctx;
   const { items } = deps;
   let parent: Row = first;
   for (;;) {
@@ -242,13 +246,29 @@ async function collectParentChildren(
     // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
     // the same field read as a BARE DOMAIN too when the source's input is a website («www.x.com», «x.com/home» are not found by a source that knows «x.com»): index 9, so the streams of the other bindings keep their keys
     const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false, index: 0 }, ...(WEBSITE_PARAM.test(spec.parent_binding.param) ? [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: true, index: 9 }] : []), ...(spec.parent_binding.fallbacks ?? []).map((f, i) => ({ param: f.param, from: f.from, domain: f.domain === true, index: i + 1 }))];
+    const siblings = companyParent ? items.acceptedRows(stage.parent_key) : [];
+    const parentField = (from: string, domain = false) => scopedCompanyBinding(parent, from, domain, siblings, companyParent);
+    const extraInputs = (spec.parent_binding.also ?? []).map((entry) => {
+      const grand = entry.grand ? grandRows.get(String(parent.parent_id ?? "")) : undefined;
+      const value = entry.grand
+        ? (grand ? scopedCompanyBinding(grand, entry.from, false, grandRows.values(), companyGrand) : undefined)
+        : parentField(entry.from);
+      return [entry.param, value] as const;
+    });
+    if (extraInputs.some(([, value]) => value === SHARED_COMPANY_BINDING)) break;
+    const also = Object.fromEntries(extraInputs.map(([param, value]) => [param, bindingValue(value, false)] as const)
+      .filter(([, value]) => value !== null && !isProviderUrl(value, providerContext()) && !isPlaceholderCompanyUrl(value)));
     const seenInputs = new Set<string>();
     // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
-    const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
-      // a PLACEHOLDER company page or website (https://linkedin.com/company/mycompany) is never the key: the source would answer for another company
-      // A POST LINK IS NEVER A COMPANY WEBSITE (S1 live findings, R1): the bare domain of a social link («facebook.com») names no post, the source refuses it
+    const usable = bindings.flatMap((b) => {
+      const raw = parentField(b.from, b.domain || WEBSITE_PARAM.test(b.param));
+      if (raw === SHARED_COMPANY_BINDING || raw === undefined || raw === null || raw === "") return [];
+      const value = b.index === 0 ? raw : bindingValue(raw, b.domain);
+      return [{ b, index: b.index, value, raw }];
+    }).filter((x) => {
+      // A provider record page, placeholder company name, or bare social host cannot identify the branch.
       if (deps.redesignStages?.has(stage.key) && x.value !== null && x.b.domain && SOCIAL_HOST.test(String(x.value))) return false;
-      if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
+      if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(x.raw, providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
       const key = `${x.b.param}=${String(x.value)}`;
       if (seenInputs.has(key)) return false;
       seenInputs.add(key);
@@ -260,7 +280,6 @@ async function collectParentChildren(
     let primary: { params: Record<string, unknown> } | null = null;
     for (const u of usable) {
       if (items.counts(stage.key).accepted >= stage.planned_rows) return { stop: "target_reached", aborted: null, failed: false };
-      const also = spec.parent_binding.also ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue((a.grand ? grandRows.get(String(parent.parent_id ?? "")) : parent)?.[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
       const params = { ...spec.params, ...also, [u.b.param]: u.value };
       if (u.index === 0) primary = { params };
       const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
@@ -282,7 +301,7 @@ async function collectParentChildren(
         const alt = spec.alternatives![i];
         if (isCatalogPaging && alt.endpoint_id === spec.endpoint_id) continue;
         if (isFillTotal) break;
-        const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
+        const value = alt.parent_binding ? bindingValue(parentField(alt.parent_binding.from, WEBSITE_PARAM.test(alt.parent_binding.param)), false) : null;
         if (!alt.parent_binding || value === null) continue;
         const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
         const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params: { ...alt.params, [alt.parent_binding.param]: value }, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, parent_binding: alt.parent_binding, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}) };
@@ -344,7 +363,9 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   const pinnedSpares = deps.redesignStages?.has(stage.key) && readAll && !isReplies ? (deps.plan.stages.find((x) => x.key === stage.parent_key)?.spare_rows ?? []).length : 0;
   const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : pinnedSpares };
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
-  const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
+  const parentStage = deps.plan.stages.find((x) => x.key === stage.parent_key);
+  const grandKey = parentStage?.parent_key ?? null;
+  const grandStage = deps.plan.stages.find((x) => x.key === grandKey);
   const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
 
   const ctx: ChildCollectionContext = {
@@ -358,6 +379,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
     per,
     shareById,
     grandRows,
+    companyParent: Boolean(parentStage && isCompanyStage(parentStage)),
+    companyGrand: Boolean(grandStage && isCompanyStage(grandStage)),
     swapsLeft,
   };
 
@@ -535,6 +558,25 @@ function spareParentFor(items: ItemStore, parentKey: string, childKey: string, o
   const count = (r: Row): number => childCountNumber(r);
   const best = spares.map((i, index) => ({ i, index, n: count(i.row!) })).sort((a, b) => b.n - a.n || a.index - b.index)[0].i;
   return { id: best.id, row: { ...best.row!, id: best.row!.id ?? best.id } };
+}
+
+const SHARED_COMPANY_BINDING = Symbol("shared company binding");
+
+function scopedCompanyBinding(parent: Row, field: string, domain: boolean, siblings: Iterable<Row>, company: boolean): unknown {
+  if (!company) return parent[field];
+  const providerValue = (row: Row) => field === "id" ? (row[COMPANY_SOURCE_ID_KEY] ?? row.id) : row[field];
+  const raw = providerValue(parent);
+  const comparable = (value: unknown) => {
+    const normalized = bindingValue(value, domain);
+    return domain ? normalized?.toLowerCase() : normalized;
+  };
+  const value = comparable(raw);
+  if (value) {
+    for (const sibling of siblings) {
+      if (sibling.id !== parent.id && comparable(providerValue(sibling)) === value) return SHARED_COMPANY_BINDING;
+    }
+  }
+  return raw;
 }
 
 /** The value a parent's field gives to the child source's input: the text itself, or for a website input the bare domain («https://www.mustcc.com/» → «mustcc.com»). Null when the parent has none. */

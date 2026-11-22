@@ -197,7 +197,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       const encoded = JSON.stringify(companyEvidence);
       const prior = observations.find((previous) => {
         const evidence = storedCompanyEvidence(previous, stage);
-        return JSON.stringify(evidence) === encoded || companyRelationship(evidence, companyEvidence) === "same";
+        return JSON.stringify(evidence) === encoded || (evidence.conflict === companyEvidence.conflict && companyRelationship(evidence, companyEvidence) === "same");
       });
       if (prior) id = String(prior.id);
       else if (observations.length > 0) {
@@ -231,7 +231,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (companyEvidence) {
       row[COMPANY_EVIDENCE_KEY] = companyEvidence;
       row[COMPANY_SOURCE_ID_KEY] = sourceId;
-      if (uncertainCompany) row[COMPANY_UNCERTAIN_KEY] = true;
+      if (uncertainCompany) row[COMPANY_UNCERTAIN_KEY] = "yes";
       for (const field of COMPANY_BRANCH_FIELDS) {
         if (companyEvidence.branches[field] !== undefined && !(field in row)) row[field] = raw[field];
       }
@@ -410,7 +410,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     }
     const marks = {
       ...(state === "accepted" && judgedMark ? { [TOPIC_RELATION_KEY]: topicRelationAr(2) } : {}),
-      ...(state === "accepted" && companyDecision === "possible" ? { [COMPANY_UNCERTAIN_KEY]: true } : {}),
+      ...(state === "accepted" && companyDecision === "possible" ? { [COMPANY_UNCERTAIN_KEY]: "yes" } : {}),
     };
     if (state === "accepted") {
       if (evidence) companyIndex.add(evidence);
