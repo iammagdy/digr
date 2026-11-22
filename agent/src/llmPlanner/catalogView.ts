@@ -1,5 +1,6 @@
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
-import { isSellable } from "../../../src/lib/treg/catalog";
+import { endpointCostUsd, isSellable } from "../../../src/lib/treg/catalog";
+import { PER_CALL_UNITS, PER_RECORD_UNITS, unitCost } from "../../../src/lib/modelPlanner/pricing";
 import { blockedEndpointReason } from "../../../src/lib/treg/blockList";
 import { policyVerdict, type AccountAccess } from "../../../src/lib/treg/dataPolicy";
 import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../../src/lib/agentMission/childSources";
@@ -41,10 +42,22 @@ export function getPollEndpoints(catalog: TregCatalog): Set<string> {
 export const isPollOnlyEndpoint = (e: CatalogEndpoint, catalog: TregCatalog): boolean =>
   getPollEndpoints(catalog).has(e.id) || /-task-get(-|$)/.test(e.id);
 
+const hasSupportedUnit = (e: CatalogEndpoint): boolean => {
+  const u = String(e.cost?.unit ?? "").toLowerCase();
+  return PER_RECORD_UNITS.has(u) || PER_CALL_UNITS.has(u);
+};
+
+export const isDocumentedFreeEndpoint = (e: CatalogEndpoint): boolean =>
+  e.cost?.type === "free" && endpointCostUsd(e) === 0 && hasSupportedUnit(e);
+
+export const hasUsablePrice = (e: CatalogEndpoint, catalog: TregCatalog): boolean =>
+  unitCost(e, catalog) !== null || isDocumentedFreeEndpoint(e);
+
 export const hasSupportedAsync = (e: CatalogEndpoint, catalog: TregCatalog): boolean => {
   if (!e.async_config) return true;
   const pollEp = (e.async_config as { poll?: { endpoint?: string } } | null | undefined)?.poll?.endpoint;
-  return Boolean(pollEp && isSellable(pollEp, catalog));
+  const poll = pollEp ? catalog.byId.get(pollEp) : undefined;
+  return Boolean(pollEp && poll && isSellable(pollEp, catalog) && hasUsablePrice(poll, catalog));
 };
 
 export const isAsyncTask = (e: CatalogEndpoint): boolean =>
@@ -56,6 +69,7 @@ export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access:
   !isPollOnlyEndpoint(e, catalog) &&
   hasSupportedAsync(e, catalog) &&
   isSellable(e.id, catalog) &&
+  hasUsablePrice(e, catalog) &&
   !blockedEndpointReason(e.id, e.scope ?? null) &&
   policyVerdict(e.id, access).allowed;
 
@@ -102,7 +116,15 @@ export function reliabilityOf(e: CatalogEndpoint): number {
   return (PROVEN.has(e.id) ? 1 : 0) + (ok * 0.6 + hit * 0.4) * stale * (samples > 100 ? 1 : samples > 0 ? 0.9 : 0.8);
 }
 
-export const callUsdOf = (e: CatalogEndpoint): number => Math.max(0, Number(e.cost?.usd ?? 0)) || 0.01;
+export const callUsdOf = (e: CatalogEndpoint, catalog?: TregCatalog): number => {
+  if (isDocumentedFreeEndpoint(e)) return 0;
+  if (catalog) {
+    const c = unitCost(e, catalog);
+    if (c) return c.usd;
+  }
+  const usd = endpointCostUsd(e);
+  return usd !== null && usd > 0 ? usd : 0;
+};
 
 /** The candidates of one capability (and, when it has few, the platform's other tools), best first, at most `max`. */
 /**
@@ -152,7 +174,7 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
 export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
   const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
   if (!isSearchKind(capability)) return base;
-  const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);
+  const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const kind = kindOf(capability);
   const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
   const web = [...(options.web ?? [])];
@@ -163,7 +185,7 @@ export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null
 function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean } = {}): CatalogEndpoint[] {
   const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
-  const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);
+  const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const chosen = [...exact].sort(rank).slice(0, max);
   if (chosen.length >= 3 && !options.alsoSearch) return chosen;
   // a step with a named source AND a topic: the platform's search tools are candidates too (a search whose query names the source and the topic may carry both, where the source's listing carries no topic)
@@ -183,7 +205,8 @@ function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, p
 const clip = (s: unknown, n: number): string => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
 
 /** One endpoint as the model reads it to choose and fill it: what it does, every input with its type, limits and note, how it pages, what an item carries, what one call costs. */
-export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
+export function describeForModel(e: CatalogEndpoint, catalog?: TregCatalog): Record<string, unknown> {
+  const cat = catalog && typeof catalog === "object" && "byId" in catalog ? catalog : undefined;
   const o = e.observed ?? {};
   const isAsync = Boolean((e.async_config as any)?.poll?.endpoint);
   return {
@@ -203,7 +226,8 @@ export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
     })),
     paging_inputs: e.pagination ?? [],
     item_fields: e.item_fields ? Object.keys(e.item_fields).slice(0, 40) : null,
-    usd_per_call: callUsdOf(e),
+    usd_per_call: callUsdOf(e, cat),
+    cost_unit: e.cost?.unit ?? null,
     ...(PROVEN.has(e.id) ? { proven_in_production: true } : {}),
     measured: { ok_rate: num(o.ok_rate), returns_rows_rate: num(o.hit_rate), p50_ms: num(o.p50_ms) },
   };
