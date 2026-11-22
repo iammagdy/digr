@@ -1,5 +1,5 @@
 import { callEstimateUsd, unitCost } from "../modelPlanner/pricing";
-import { endpointCostUsd, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
+import type { CatalogEndpoint, TregCatalog } from "../treg/catalog";
 import type { AccountAccess } from "../treg/dataPolicy";
 import { AGENT_PLANNING_BUDGET_CAP_USD, AGENT_PLANNING_STAGE_RESERVE_SHARE, AGENT_PLANNING_SAMPLES_FIRST_STAGE, AGENT_PLANNING_SAMPLES_LATER_STAGE, AGENT_PLANNING_SAMPLE_MARGIN, AGENT_PLANNING_SLACK_USD } from "./constants";
 import { expectedStageCount, planningBudgetUsd } from "./budget";
@@ -71,12 +71,11 @@ export function jobsOfRequest(request: string): { platform: string | null; stage
   return { platform, stages };
 }
 
-/** What one call of an endpoint costs when asked for its usual page, USD (the catalog's price; a flat guess when it has none). */
+/** What one call of an endpoint costs when asked for its usual page, USD (0 when free or unpriced; usableEndpoint rejects unpriced). */
 export function oneCallUsd(endpoint: CatalogEndpoint, catalog: TregCatalog): number {
   const cost = unitCost(endpoint, catalog);
   if (cost) return Math.max(callEstimateUsd(cost, priorRowsPerCall(endpoint)), 0.000001);
-  const own = endpointCostUsd(endpoint);
-  return own !== null && own > 0 ? own : 0.01;
+  return 0;
 }
 
 export interface BudgetContext { catalog: TregCatalog; access: AccountAccess; stats: StatsMap; now: number }
