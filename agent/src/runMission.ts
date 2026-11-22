@@ -1,3 +1,4 @@
+import { isCompanyStage } from "../../src/lib/agentMission/entities";
 import { getBalance } from "../../src/lib/supabase/ledger";
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
 import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
@@ -32,7 +33,7 @@ import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
-import { qualityResultLineAr } from "../../src/lib/agentMission/companyQuality";
+import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCompanyEvidence } from "../../src/lib/agentMission/companyQuality";
 import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
@@ -1362,7 +1363,30 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
   // the plan as the customer approved it (the delivery contract compares the promised number with the card's)
   const approvedPlan = plan;
   plan = withPromiseCaps(plan);
-  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
+  const droppedByStage = new Map<string, Set<string>>();
+  for (const s of plan.stages) {
+    const parentDrops = s.parent_key ? droppedByStage.get(s.parent_key) : undefined;
+    const companies = isCompanyStage(s) ? new AcceptedCompanies() : null;
+    const dropped = new Set<string>();
+    const rows = [];
+    for (const row of snap.acceptedRows(s.key)) {
+      if (parentDrops?.has(String(row.parent_id))) {
+        dropped.add(String(row.id));
+        continue;
+      }
+      if (!companies) { rows.push(row); continue; }
+      const evidence = storedCompanyEvidence(row, s);
+      const decision = companies.inspect(evidence);
+      if (decision === "duplicate_company" || decision === "company_identity_conflict") {
+        dropped.add(String(row.id));
+        continue;
+      }
+      companies.add(evidence);
+      rows.push(decision === "possible" ? { ...row, [COMPANY_UNCERTAIN_KEY]: "yes" } : row);
+    }
+    if (dropped.size > 0) droppedByStage.set(s.key, dropped);
+    rowsByStage[s.key] = s.deliver ? rows.slice(0, s.planned_rows) : rows;
+  }
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
   const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));
