@@ -9,6 +9,7 @@ import { callEstimateUsd, unitCost } from "../../src/lib/modelPlanner/pricing";
 import { toolCatalogSearch, toolDescribeEndpoint } from "../../src/lib/modelPlanner/tools";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { endpointCostUsd, isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
+import { getPollEndpoints, hasUsablePrice, isDocumentedFreeEndpoint } from "./llmPlanner/catalogView";
 import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { AGENT_FIRST_ROWS, AGENT_PLANNING_STAGE_RESERVE_SHARE } from "../../src/lib/agentMission/constants";
 import { sessionRestriction } from "../../src/lib/agentMission/sources";
@@ -129,8 +130,15 @@ function pageRowsOf(endpoint: CatalogEndpoint, params: Record<string, unknown>):
   return Math.max(1, Math.floor(input?.maximum ? Math.min(n, input.maximum) : n));
 }
 
-/** What a call may cost for the budget check: the catalog price of the call (or of the page asked for, for a per-record price); a flat guess when the catalog has none. */
+export const isCatalogPollEndpoint = (endpointId: string, catalog: TregCatalog): boolean =>
+  getPollEndpoints(catalog).has(endpointId);
+
+export const isZeroFreeEndpoint = (endpoint: CatalogEndpoint): boolean =>
+  isDocumentedFreeEndpoint(endpoint);
+
+/** What a call may cost for the budget check: the catalog price of the call (or of the page asked for, for a per-record price); 0 for a documented free endpoint; a flat guess when the catalog has none. */
 export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string, unknown>, catalog: TregCatalog): number {
+  if (isZeroFreeEndpoint(endpoint)) return 0;
   const cost = unitCost(endpoint, catalog);
   if (cost) return Math.max(callEstimateUsd(cost, pageRowsOf(endpoint, params)), 0.000001);
   const catalogUsd = endpointCostUsd(endpoint);
@@ -139,11 +147,11 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
 
 /**
  * THE ESTIMATED BOUND OF ONE TREG CALL (DT-20261119-11): the catalog estimate for the call the gateway will really send (the parameters the catalog does not know are dropped, the size clamped to the input's maximum), rounded UP to the micro-dollar and floored at 0.001.
- * It is the SMALLEST amount a call is admitted with, and what a capped stage checks a call against. It is NOT what is sent to the provider: the header is the money that is really left (the amount reserved on every ledger, `tregCall` step 6). Null: not a catalog id.
+ * It is the SMALLEST amount a call is admitted with, and what a capped stage checks a call against. It is NOT what is sent to the provider: the header is the money that is really left (the amount reserved on every ledger, `tregCall` step 6). Null: not a catalog id or lacks a usable price.
  */
 export function tregCallBoundOf(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
   const endpoint = catalog.byId.get(endpointId);
-  if (!endpoint) return null;
+  if (!endpoint || !hasUsablePrice(endpoint, catalog)) return null;
   const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
   const kept = Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => known.has(k)));
   return tregCallBoundUsd(estimateCallUsd(endpoint, kept, catalog));
@@ -243,11 +251,14 @@ export function createGateway(deps: GatewayDeps) {
       const endpointId = String(input.endpoint_id ?? "").trim();
       const params: Record<string, unknown> = input.params && typeof input.params === "object" && !Array.isArray(input.params) ? { ...(input.params as Record<string, unknown>) } : {};
 
-      // 1 + 2: sellable, block list
+      // 1 + 2: sellable, usable price, block list
       const endpoint = deps.catalog.byId.get(endpointId);
+      const isCatalogPoll = Boolean(endpoint && isCatalogPollEndpoint(endpointId, deps.catalog));
       const blocked = blockedEndpointReason(endpointId, endpoint?.scope ?? null);
       if (blocked) return refuse(id, endpointId, params, blocked === "not_sellable" ? "not_sellable" : "blocked", blocked);
-      if (!endpoint || !isSellable(endpointId, deps.catalog)) return refuse(id, endpointId, params, "not_sellable");
+      if (!endpoint || !isSellable(endpointId, deps.catalog) || (!hasUsablePrice(endpoint, deps.catalog) && !isCatalogPoll)) {
+        return refuse(id, endpointId, params, "not_sellable");
+      }
 
       // 3: data policy
       const verdict = policyVerdict(endpointId, deps.access);
@@ -268,10 +279,11 @@ export function createGateway(deps: GatewayDeps) {
         return { ...refused, message: restricted } as GatewayCallResult;
       }
 
-      // 5: the mission's USD budget
-      const estimate = estimateCallUsd(endpoint, params, deps.catalog);
+      // 5: the mission's USD budget (a free documented poll endpoint of an async tool is exempt from budget reserve/caps/repeat-sample)
+      const isFreePoll = isCatalogPoll && isZeroFreeEndpoint(endpoint);
+      const estimate = isFreePoll ? 0 : estimateCallUsd(endpoint, params, deps.catalog);
       // 4c: CONTACT-FINDER SAMPLES DO NOT STARVE PLANNING (contactSampling.ts): at most a quarter of the planning budget, one sample per kind, the cheapest ranked finder first, never a finder whose one call costs more than that quarter
-      const finderKind = deps.phase === "planning" ? contactFinderKind(endpoint.capability) : null;
+      const finderKind = deps.phase === "planning" && !isFreePoll ? contactFinderKind(endpoint.capability) : null;
       if (finderKind) {
         const capUsd = contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd);
         const cheapestId = cheapestFinder(finderKind, capUsd);
@@ -281,13 +293,17 @@ export function createGateway(deps: GatewayDeps) {
           return { ...refused, message: contactSampleMessage(why, finderKind, cheapestId) } as GatewayCallResult;
         }
       }
-      if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
+      if (!isFreePoll && !deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
       // what this call holds on the job's money: its estimate now, the money it may take once step 6 has reserved it (DT-20261119-11 D1)
-      let held = estimate;
+      let held = isFreePoll ? 0 : estimate;
       // F4: a contact-finder sample also holds its money on the CONTACT allowance (the quarter cap), in the same synchronous step as the job's hold, and marks its kind as being sampled; every exit below gives it back exactly once
       if (finderKind) { contactHeldUsd += estimate; contactPending.add(finderKind); }
       /** The job's hold of this call is released (settled at `actual`, null = the whole hold stays spent): the contact hold goes with it. */
-      const settleHeld = (amount: number, actual: number | null) => { deps.budget.settle(amount, actual); if (finderKind) { contactHeldUsd = Math.max(0, contactHeldUsd - amount); contactPending.delete(finderKind); } };
+      const settleHeld = (amount: number, actual: number | null) => {
+        if (!isFreePoll) deps.budget.settle(amount, actual);
+        else if (actual !== null && actual > 0) deps.budget.settle(0, actual);
+        if (finderKind) { contactHeldUsd = Math.max(0, contactHeldUsd - amount); contactPending.delete(finderKind); }
+      };
       /** Replaces the hold of this call (job + contact allowance) in ONE synchronous step; false (nothing changed) when either ledger has no room. */
       const reholdAll = (from: number, to: number, capUsd: number | null = null): boolean => {
         if (finderKind && to > from) {
@@ -300,7 +316,7 @@ export function createGateway(deps: GatewayDeps) {
       };
       let planCapUsd: number | null = null;
       // 5a: THE PLANNING BUDGET IS SHARED BY EVERY STAGE: a call may not spend what the first sample of a stage that is still unsampled needs (a new job counts as the stage it samples)
-      if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
+      if (!isFreePoll && deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
         const job = endpoint.capability ?? endpointId;
         const unsampledOthers = Math.max(0, deps.stageBudget.stages - sampledJobs.size - (sampledJobs.has(job) ? 0 : 1));
         const reserves = [...(deps.stageBudget.reservesUsd ?? [])].sort((a, b) => b - a);
@@ -314,7 +330,7 @@ export function createGateway(deps: GatewayDeps) {
       const sampled = samplesWithRows.get(endpointId) ?? 0;
       const perSource = Math.max(GATEWAY_MAX_SAMPLES_PER_SOURCE, deps.maxSamplesPerSource ?? 0);
       const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= perSource || sampled >= Math.max(GATEWAY_MAX_NAMED_SOURCE_SAMPLES, perSource) : sampled >= perSource;
-      if (deps.phase === "planning" && repeated) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
+      if (!isFreePoll && deps.phase === "planning" && repeated) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: THE MONEY THIS CALL MAY TAKE (DT-20261119-11, D1/D2/D5). The header sent to TREG IS the amount reserved here, on EVERY ledger, BEFORE anything is sent: the job's money (the estimate held until now is REPLACED in one step, so two calls in flight can
       // never hold the same money), the planning stages' kept share, a capped stage's money, the provider's daily cap and the owner's grant. TREG refuses a route above the header before billing, so a stale catalog price can never make a call that
@@ -325,72 +341,93 @@ export function createGateway(deps: GatewayDeps) {
       // the attempts the client can make (key-pool hops), or the worker's own count for a gated mission (spendGate.tregAttempts), whichever is more
       const maxAttempts = noKeyPool ? 1 : Math.max(maxTregAttempts({}), deps.spendGate?.tregAttempts ?? 1);
       const gateOn = Boolean(deps.spendGate && deps.spendGate.mode !== "off");
-      const stageLimitUsd = Number.isFinite(Number(input.spend_limit_usd)) ? Number(input.spend_limit_usd) : null;
-      // F4: the contact allowance left (the quarter cap less what was spent and what OTHER contact samples hold) limits what a finder sample may reserve, so the header and the unknown-charge hold can never pass the cap
-      const contactCapUsd = finderKind ? contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd) : null;
-      const contactLeftUsd = contactCapUsd !== null ? floorMicroUsd(contactCapUsd - contactSpentUsd - Math.max(0, contactHeldUsd - held)) : null;
-      const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd, contactLeftUsd].filter((v): v is number => v !== null);
-      // no ceiling anywhere: the one default the client always had (0.05 per request), reserved like any other amount
-      let poolUsd = left.length ? Math.min(...left) : GATEWAY_NO_CEILING_REQUEST_USD * maxAttempts;
-      // the owner gate's existing aggregate limit (bounds.ts MAX_SINGLE_OPERATION_USD) applies to what it reserves: all the attempts together
-      if (gateOn) poolUsd = Math.min(poolUsd, MAX_SINGLE_OPERATION_USD);
-      const minBound = tregCallBoundUsd(estimate);
-      // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
-      // PLANNING (D-0138 follow-up, live re-test R2): one call that cannot be reckoned must never be able to take all the planning money, so a planning call holds at most HALF of what is left (never below its own estimate)
-      const money = callMoney(poolUsd, estimate, maxAttempts, deps.phase === "planning" ? { maxShare: 0.5 } : {});
-      if (!money) { settleHeld(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
-      // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
-      // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.
-      const candidates: Array<{ perRequest: number; attempts: number }> = [];
-      for (let h = money.perRequestUsd; h > 0 && candidates.length < 6; h = Math.max(floorMicroUsd(h / 4), Math.min(minBound, money.perRequestUsd))) { candidates.push({ perRequest: h, attempts: money.attempts }); if (h <= minBound) break; }
-      if (money.attempts > 1) candidates.push({ perRequest: Math.min(minBound, floorMicroUsd(poolUsd)), attempts: 1 });
       let chosen: { perRequest: number; attempts: number; aggregate: number; reservation: Awaited<ReturnType<typeof deps.recorder.reserve>>; gated: GateBefore | null } | null = null;
-      // ONE key for the call: the amounts tried for it share the key (a refused amount leaves no reservation behind); the next call gets its own
       const reservationKey = spendReservationKey("treg", deps.missionId, id);
-      let lastRefusal: { code: RefusalCode; detail: string } = { code: "over_budget", detail: `${deps.phase}` };
-      for (const { perRequest, attempts } of candidates) {
-        const aggregate = Number((perRequest * attempts).toFixed(6));
-        // the job's money (and the planning stages' kept share): replace this call's hold in ONE step
-        if (!reholdAll(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
-        const was = held;
-        held = aggregate;
-        // the provider's daily cap, recorded BEFORE the call
-        const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: aggregate, jobId: deps.jobId });
+      if (isFreePoll) {
+        const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: 0, jobId: deps.jobId });
         if (!reservation.allowed) {
-          reholdAll(held, was); held = was;
-          if (reservation.reason === "cap") { lastRefusal = { code: "daily_cap", detail: reservation.reason ?? "" }; continue; }
-          settleHeld(held, 0);
-          return refuse(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
+          return refuse(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
         }
-        // 6b: THE HARD SPEND GATE: what is reserved against the owner's grant is the amount the header allows, per attempt. Each call (a new call id) is a new paid attempt with its own reservation key.
         let gated: GateBefore | null = null;
         if (gateOn) {
           const op = `treg:${endpointId}`.slice(0, 200);
-          const bound = providerCallBound({ provider: "treg", op: "call", boundUsd: perRequest, ...(attempts > 1 ? { attempts } : {}) });
+          const bound = providerCallBound({ provider: "treg", op: "call", boundUsd: 0.000001 });
           gated = await gateBefore(deps.spendGate, bound.ok
             ? { key: reservationKey, kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
             : { refuse: "no_safe_bound", detail: bound.detail, op });
-          const roomReason = (r: string | undefined): boolean => r === "over_ceiling" || r === "over_op_max" || r === "over_mission_ceiling" || r === "no_safe_bound";
-          // OBSERVE mode forwards a refused reservation without one: while a smaller amount is left to try, ask for it so the call goes out reserved
-          const observedNoRoom = gated.proceed && gated.reservationId === null && roomReason(gated.observedRefusal) && candidates.some((c) => c.attempts * c.perRequest < perRequest * attempts);
-          if (!gated.proceed || observedNoRoom) {
-            // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
-            // F5 (Gate 2): the daily reservation is released AND the release is acknowledged (one more try when it is not) before a smaller amount is tried; an unconfirmed release stops the ladder, so no stale pending row is ever followed by another
+          if (!gated.proceed) {
             const releaseArgs = { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed" as const, durationMs: 0, jobId: deps.jobId };
-            const released = (await commit(deps.client, releaseArgs)) !== false || (await commit(deps.client, releaseArgs)) !== false;
-            reholdAll(held, was); held = was;
-            if (!released) { settleHeld(held, 0); return refuse(id, endpointId, trace, "spend_gate", "release_unconfirmed"); }
-            const reason = gated.proceed ? gated.observedRefusal : gated.reason;
-            // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
-            if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }
-            settleHeld(held, 0);
-            return refuse(id, endpointId, trace, "spend_gate", String(reason));
+            await commit(deps.client, releaseArgs);
+            return refuse(id, endpointId, trace, "spend_gate", String(gated.reason));
           }
         }
-        chosen = { perRequest, attempts, aggregate, reservation, gated };
-        break;
+        chosen = { perRequest: 0, attempts: 1, aggregate: 0, reservation, gated };
+      } else {
+        const stageLimitUsd = Number.isFinite(Number(input.spend_limit_usd)) ? Number(input.spend_limit_usd) : null;
+        // F4: the contact allowance left (the quarter cap less what was spent and what OTHER contact samples hold) limits what a finder sample may reserve, so the header and the unknown-charge hold can never pass the cap
+        const contactCapUsd = finderKind ? contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd) : null;
+        const contactLeftUsd = contactCapUsd !== null ? floorMicroUsd(contactCapUsd - contactSpentUsd - Math.max(0, contactHeldUsd - held)) : null;
+        const left = [deps.budget.leftUsd(estimate, planCapUsd), stageLimitUsd, contactLeftUsd].filter((v): v is number => v !== null);
+        // no ceiling anywhere: the one default the client always had (0.05 per request), reserved like any other amount
+        let poolUsd = left.length ? Math.min(...left) : GATEWAY_NO_CEILING_REQUEST_USD * maxAttempts;
+        // the owner gate's existing aggregate limit (bounds.ts MAX_SINGLE_OPERATION_USD) applies to what it reserves: all the attempts together
+        if (gateOn) poolUsd = Math.min(poolUsd, MAX_SINGLE_OPERATION_USD);
+        const minBound = tregCallBoundUsd(estimate);
+        // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
+        // PLANNING (D-0138 follow-up, live re-test R2): one call that cannot be reckoned must never be able to take all the planning money, so a planning call holds at most HALF of what is left (never below its own estimate)
+        const money = callMoney(poolUsd, estimate, maxAttempts, deps.phase === "planning" ? { maxShare: 0.5 } : {});
+        if (!money) { settleHeld(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
+        // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
+        // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.
+        const candidates: Array<{ perRequest: number; attempts: number }> = [];
+        for (let h = money.perRequestUsd; h > 0 && candidates.length < 6; h = Math.max(floorMicroUsd(h / 4), Math.min(minBound, money.perRequestUsd))) { candidates.push({ perRequest: h, attempts: money.attempts }); if (h <= minBound) break; }
+        if (money.attempts > 1) candidates.push({ perRequest: Math.min(minBound, floorMicroUsd(poolUsd)), attempts: 1 });
+        // ONE key for the call: the amounts tried for it share the key (a refused amount leaves no reservation behind); the next call gets its own
+        let lastRefusal: { code: RefusalCode; detail: string } = { code: "over_budget", detail: `${deps.phase}` };
+        for (const { perRequest, attempts } of candidates) {
+          const aggregate = Number((perRequest * attempts).toFixed(6));
+          // the job's money (and the planning stages' kept share): replace this call's hold in ONE step
+          if (!reholdAll(held, aggregate, planCapUsd)) { lastRefusal = { code: "over_budget", detail: `${deps.phase}` }; continue; }
+          const was = held;
+          held = aggregate;
+          // the provider's daily cap, recorded BEFORE the call
+          const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: aggregate, jobId: deps.jobId });
+          if (!reservation.allowed) {
+            reholdAll(held, was); held = was;
+            if (reservation.reason === "cap") { lastRefusal = { code: "daily_cap", detail: reservation.reason ?? "" }; continue; }
+            settleHeld(held, 0);
+            return refuse(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
+          }
+          // 6b: THE HARD SPEND GATE: what is reserved against the owner's grant is the amount the header allows, per attempt. Each call (a new call id) is a new paid attempt with its own reservation key.
+          let gated: GateBefore | null = null;
+          if (gateOn) {
+            const op = `treg:${endpointId}`.slice(0, 200);
+            const bound = providerCallBound({ provider: "treg", op: "call", boundUsd: perRequest, ...(attempts > 1 ? { attempts } : {}) });
+            gated = await gateBefore(deps.spendGate, bound.ok
+              ? { key: reservationKey, kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
+              : { refuse: "no_safe_bound", detail: bound.detail, op });
+            const roomReason = (r: string | undefined): boolean => r === "over_ceiling" || r === "over_op_max" || r === "over_mission_ceiling" || r === "no_safe_bound";
+            // OBSERVE mode forwards a refused reservation without one: while a smaller amount is left to try, ask for it so the call goes out reserved
+            const observedNoRoom = gated.proceed && gated.reservationId === null && roomReason(gated.observedRefusal) && candidates.some((c) => c.attempts * c.perRequest < perRequest * attempts);
+            if (!gated.proceed || observedNoRoom) {
+              // nothing was sent: the daily reservation and the job's hold are given back exactly as for any other refusal after step 6
+              // F5 (Gate 2): the daily reservation is released AND the release is acknowledged (one more try when it is not) before a smaller amount is tried; an unconfirmed release stops the ladder, so no stale pending row is ever followed by another
+              const releaseArgs = { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed" as const, durationMs: 0, jobId: deps.jobId };
+              const released = (await commit(deps.client, releaseArgs)) !== false || (await commit(deps.client, releaseArgs)) !== false;
+              reholdAll(held, was); held = was;
+              if (!released) { settleHeld(held, 0); return refuse(id, endpointId, trace, "spend_gate", "release_unconfirmed"); }
+              const reason = gated.proceed ? gated.observedRefusal : gated.reason;
+              // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
+              if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }
+              settleHeld(held, 0);
+              return refuse(id, endpointId, trace, "spend_gate", String(reason));
+            }
+          }
+          chosen = { perRequest, attempts, aggregate, reservation, gated };
+          break;
+        }
+        if (!chosen) { settleHeld(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
       }
-      if (!chosen) { settleHeld(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
       const { reservation, gated } = chosen;
       const headerUsd = chosen.perRequest;
       // what the call may be billed, all attempts together: reserved on every ledger, and kept for a call whose charge is unknown (timeout, no charge reported)
@@ -479,7 +516,7 @@ export function createGateway(deps: GatewayDeps) {
         : { digest: null, reading: null };
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
-      if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); if (sourceKey !== null) samplesBySource.set(sourceKey, (samplesBySource.get(sourceKey) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
+      if (!isFreePoll && result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); if (sourceKey !== null) samplesBySource.set(sourceKey, (samplesBySource.get(sourceKey) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId, ...(result.keyRef ? { keyRef: result.keyRef } : {}) });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       // a 402 the key pool checked against the key's own balance (healthy): THIS source refused payment, and the trace says so (source health demotes it, never the key)
