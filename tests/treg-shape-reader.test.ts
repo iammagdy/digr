@@ -332,10 +332,10 @@ describe("the whole snapshot: every example answer is read without an error, and
     ]);
   });
 
-  it("where the file says «NOT FOUND», the module still finds rows for 670 of 1,063 endpoints (393 hold no list or object to read)", () => {
+  it("where the file says «NOT FOUND», the module still finds rows for 725 of 1,063 endpoints (338 hold no list or object to read)", () => {
     const notFound = withExample.filter((e) => e.list_path === "NOT FOUND");
     expect(notFound).toHaveLength(1063);
     const withRows = notFound.filter((e) => readShape(e.example_response_trimmed, hintsOf(e)).rows.length > 0);
-    expect(withRows).toHaveLength(670);
+    expect(withRows).toHaveLength(725);
   });
 });

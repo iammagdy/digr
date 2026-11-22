@@ -45,7 +45,7 @@ export function pageInputValue(cursor: unknown, contract: MissionPageMetadata): 
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
-export type ListStrategy = "list_path" | "declared_missing" | "example" | "common_keys" | "single_object" | "root_object" | "none";
+export type ListStrategy = "list_path" | "declared_missing" | "example" | "common_keys" | "inferred_list" | "single_object" | "root_object" | "none";
 export type CursorStrategy = "cursor_path" | "example" | "common_keys" | "none";
 
 export interface ShapeHints {
@@ -97,7 +97,7 @@ const COMMON_DEPTH = 4;
 const ENVELOPE_KEYS = ["output", "data", "result", "response", "payload", "raw", "body"];
 const LIST_KEYS = [
   "rows", "items", "results", "records", "comments", "replies", "posts", "tweets", "videos", "users", "people", "companies", "leads", "entries", "hashtags", "keywords",
-  "reviews", "messages", "aweme_list", "videoList", "list", "elements", "organic_results", "ads", "products", "jobs",
+  "reviews", "messages", "aweme_list", "videoList", "list", "elements", "organic_results", "ads", "products", "jobs", "listings",
 ];
 const CURSOR_KEYS = ["next_cursor", "nextCursor", "cursor", "next_max_id", "max_cursor", "next_page_token", "nextPageToken", "continuation", "continuation_token", "continuationToken", "next_token", "nextToken", "end_cursor", "endCursor", "after", "next", "token"];
 const HAS_MORE_KEYS = ["has_more", "hasMore", "has_next_page", "hasNextPage", "more"];
@@ -128,9 +128,19 @@ export function findListPaths(value: unknown): Array<{ path: string; length: num
     if (depth > MAX_DEPTH) return;
     if (isObjectList(v)) {
       out.push({ path: path || "root", length: v.length, keys: Object.keys(v[0]).length });
+      if (v.length > 0 && isObj(v[0])) {
+        for (const [k, child] of Object.entries(v[0])) {
+          walk(child, path ? `${path}.0.${k}` : `0.${k}`, depth + 2);
+        }
+      }
       return;
     }
     if (isObj(v)) for (const [k, child] of Object.entries(v)) walk(child, path ? `${path}.${k}` : k, depth + 1);
+    if (Array.isArray(v)) {
+      for (let i = 0; i < Math.min(v.length, 1); i++) {
+        walk(v[i], path ? `${path}.${i}` : `${i}`, depth + 1);
+      }
+    }
   };
   walk(value, "", 0);
   return out;
@@ -147,7 +157,10 @@ export function chooseResultList(paths: Array<{ path: string; length: number; ke
 
 function listAtCommonKeys(value: unknown, path: string, depth: number): { path: string; rows: Obj[] } | null {
   if (depth > COMMON_DEPTH) return null;
-  if (isObjectList(value)) return { path: path || "root", rows: value };
+  if (isObjectList(value)) {
+    if (value.some((item) => Object.values(item).some(isObjectList))) return null;
+    return { path: path || "root", rows: value };
+  }
   if (!isObj(value)) return null;
   for (const key of LIST_KEYS) {
     const v = value[key];
@@ -161,7 +174,10 @@ function listAtCommonKeys(value: unknown, path: string, depth: number): { path: 
     if (found) return found;
   }
   for (const [key, v] of Object.entries(value)) {
-    if (isObjectList(v)) return { path: path ? `${path}.${key}` : key, rows: v };
+    if (isObjectList(v)) {
+      if (v.some((item) => Object.values(item).some(isObjectList))) continue;
+      return { path: path ? `${path}.${key}` : key, rows: v };
+    }
   }
   return null;
 }
@@ -271,15 +287,37 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
   // 3. the common keys
   const common = listAtCommonKeys(body, "", 0);
   if (common) return { rows: common.rows, path: common.path, strategy: "common_keys", warnings };
+  // 3b. inferred list: find list paths in the live response body (ignoring echo keys)
+  const candidates = findListPaths(body).filter((p) => !p.path.split(".").some((k) => ECHO_KEYS.has(k.toLowerCase())));
+  const chosen = chooseResultList(candidates);
+  if (chosen) {
+    const rows = asRows(getPath(body, chosen));
+    if (rows && rows.length > 0) return { rows, path: chosen, strategy: "inferred_list", warnings };
+  }
   // 4. one object that is the record
   if (isObj(body)) {
     for (const key of ["data", "user", "profile", "result", "output"]) {
       const v = body[key];
       if (isObj(v) && Object.keys(v).length > 0 && !Object.values(v).some(isObjectList)) return { rows: [v], path: key, strategy: "single_object", warnings };
     }
+    for (const [key, v] of Object.entries(body)) {
+      if (ECHO_KEYS.has(key.toLowerCase()) || WRAPPER_KEYS.has(key.toLowerCase())) continue;
+      if (isObj(v) && looksLikeOneRecord(v) && !Object.values(v).some(isObjectList)) {
+        return { rows: [v], path: key, strategy: "single_object", warnings };
+      }
+    }
   }
-  // 5. an endpoint that answers one record as the answer itself (only when the caller says this endpoint has no list)
-  if (hints.rootObjectIsRow && isObj(body) && Object.values(body).some((v) => v !== null && v !== undefined && v !== "")) return { rows: [body], path: "root", strategy: "root_object", warnings };
+  // 5. an endpoint that answers one record as the answer itself
+  if (isObj(body)) {
+    if (hints.rootObjectIsRow && Object.values(body).some((v) => v !== null && v !== undefined && v !== "")) {
+      return { rows: [body], path: "root", strategy: "root_object", warnings };
+    }
+    const noListHint = !hints.listPath || NO_LIST_PATH.has(hints.listPath);
+    const noExample = hints.example === undefined || hints.example === null;
+    if (noListHint && noExample && looksLikeOneRecord(body) && !Object.values(body).some(isObjectList)) {
+      return { rows: [body], path: "root", strategy: "root_object", warnings };
+    }
+  }
   return { rows: [], path: null, strategy: "none", warnings };
 }
 
