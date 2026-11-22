@@ -44,7 +44,7 @@ export interface ToolCard {
   status: CardStatus;
   inputs: CardInputs;
   /** Where the items are in a page, and the path inside each item where its fields start (TikHub wraps each video in `aweme_info`). */
-  page: { list: FieldPath; item?: FieldPath; cursor: FieldPath | null; observedRowsPerPage: number };
+  page: { list: FieldPath; item?: FieldPath; cursor: FieldPath | null; observedRowsPerPage: number; singleObject?: boolean };
   /**
    * The mapping: `fields` for a parent card (each row key from a path of the item; `posted_at` is converted to an ISO instant, `link` loses its query string, `country` is
    * written in Arabic), or `replies` for a comments or replies card: the code-built mapping of `replies.ts` (`buildReplyMapCode`), which reads every provider's comment shape.

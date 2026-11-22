@@ -436,7 +436,7 @@ export function pseudoCard(endpoint: CatalogEndpoint, listPath: string | null, m
   for (const e of map.extra) fields[e.key] = e.path;
   return {
     endpointId: endpoint.id, platform: endpoint.platform as never, role: "posts.search", status: "verified",
-    inputs: { cursor: null }, page: { list, cursor: null, observedRowsPerPage: Math.max(1, rowsPerPage) },
+    inputs: { cursor: null }, page: { list, cursor: null, observedRowsPerPage: Math.max(1, rowsPerPage), singleObject: true },
     mapping: { kind: "fields", fields, ...(map.linkTemplate ? { linkTemplate: map.linkTemplate } : {}), ...(keepQuery ? { keepLinkQuery: true as const } : {}), numeric: ["likes", "comments_count", "replies_count", "shares", "views"].filter((k) => fields[k]) },
     counter: null, costUsdPerPage: callUsdOf(endpoint), verifiedOn: [],
   };

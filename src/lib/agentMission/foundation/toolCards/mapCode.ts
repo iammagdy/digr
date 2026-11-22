@@ -52,8 +52,7 @@ const F = ${JSON.stringify(card.mapping.fields)};
 const AR = ${JSON.stringify(COUNTRY_AR)};${numeric.length > 0 ? `\nconst NUM = ${JSON.stringify(numeric)};` : ""}${fb ? FBLINK : ""}
 const at = (o, path) => { let v = o; for (const k of path) { if (v === null || v === undefined || typeof v !== 'object') return undefined; v = v[k]; } return v; };
 const iso = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number' || /^\\d{9,13}$/.test(String(v))) { const n = Number(v); const d = new Date(n < 1e12 ? n * 1000 : n); return Number.isNaN(d.getTime()) ? null : d.toISOString(); } const d = new Date(String(v)); return Number.isNaN(d.getTime()) ? String(v) : d.toISOString(); };
-let list = at(P, LIST);
-if (list && typeof list === 'object' && !Array.isArray(list)) list = [list];
+${card.page.singleObject ? `let list = at(P, LIST);\nif (list && typeof list === 'object' && !Array.isArray(list)) list = [list];` : `const list = at(P, LIST);`}
 if (!Array.isArray(list)) return [];
 return list.map((w) => {
   const it = ITEM.length > 0 ? at(w, ITEM) : w;
