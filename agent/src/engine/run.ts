@@ -280,11 +280,11 @@ async function collectParentChildren(
     const isCatalogPaging = spec.catalog_paging === true && missionPageOf(spec.endpoint_id) !== undefined;
     const MAX_EMPTY_PRIMARY_ALTERNATIVES = 1;
     if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
-      const primaryEmpty200 = childrenOf() === baseline && r.definitiveEmpty === true;
+      const primaryEmpty200 = isPeopleStage(stage) && childrenOf() === baseline && r.definitiveEmpty === true;
       if (primary && childrenOf() === baseline && !isCatalogPaging && !primaryEmpty200) {
         r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
       }
-      const altCap = childrenOf() === baseline
+      const altCap = isPeopleStage(stage) && childrenOf() === baseline
         ? Math.min(spec.alternatives?.length ?? 0, MAX_EMPTY_PRIMARY_ALTERNATIVES)
         : (spec.alternatives?.length ?? 0);
       for (let i = 0; !r.aborted && i < altCap && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
