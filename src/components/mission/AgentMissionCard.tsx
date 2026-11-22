@@ -626,7 +626,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
           <p className={`m-0 font-semibold text-ink ${headlineAr.length > 40 ? "text-[17px] leading-[1.7]" : "font-display text-[27px] leading-[1.3]"}`}>{headlineAr}</p>
         </div>
       ) : null}
-      {finished && !headlineAr && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
+      {(finished || v.phase === "unserved") && !headlineAr && v.resultSummaryAr && v.resultSummaryAr !== v.endLineAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
       {v.phase === "partial" && v.partialReasonAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-partial-reason">{v.partialReasonAr}</p> : null}
       {(v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
         <div className="flex flex-col gap-1" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <MoneyLine key={line} border={false}>{line}</MoneyLine>)}</div>
