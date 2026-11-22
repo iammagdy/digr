@@ -23,9 +23,10 @@ export interface AsyncTregDeps {
   now?: () => number;
 }
 
-export function effectiveChargeUsd(r: { charge_usd?: number | null; reserved_usd?: number | null }): number {
-  if (typeof r.charge_usd === "number" && Number.isFinite(r.charge_usd)) return r.charge_usd;
-  return typeof r.reserved_usd === "number" && Number.isFinite(r.reserved_usd) ? r.reserved_usd : 0;
+export function effectiveChargeUsd(r: { charge_usd?: number | null; reserved_usd?: number | null } | GatewayCallResult): number {
+  const m = r as { charge_usd?: number | null; reserved_usd?: number | null };
+  if (typeof m.charge_usd === "number" && Number.isFinite(m.charge_usd)) return m.charge_usd;
+  return typeof m.reserved_usd === "number" && Number.isFinite(m.reserved_usd) ? m.reserved_usd : 0;
 }
 
 export function attachMoneyFacts<T extends object>(
@@ -104,7 +105,7 @@ export async function callTregWithAsync(
     const pollRes = await callFn(cfg.poll.endpoint, { [cfg.poll.param.name]: taskId });
     callIds.push(pollRes.call_id);
     totalChargeUsd += effectiveChargeUsd(pollRes);
-    totalReservedUsd += Number(pollRes.reserved_usd ?? 0) || 0;
+    totalReservedUsd += Number("reserved_usd" in pollRes ? pollRes.reserved_usd ?? 0 : 0) || 0;
     const facts = moneyFacts();
     if (!pollRes.ok) return attachMoneyFacts(pollRes, facts);
 

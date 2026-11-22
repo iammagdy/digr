@@ -182,7 +182,7 @@ describe("FX-CAT pricing 2: Documented free endpoints stay sellable ($0 provider
     const res = await gateway.tregCall({ endpoint_id: tinyfish.id, params: { query: "ai", domain_type: "news" } });
     expect(res.ok).toBe(true);
     expect(callSpy).toHaveBeenCalledTimes(1);
-    expect(Number(callSpy.mock.calls[0][0].routeMaxCostUsd)).toBeGreaterThanOrEqual(0.001);
+    expect(Number((callSpy.mock.calls[0] as any)?.[0]?.routeMaxCostUsd)).toBeGreaterThanOrEqual(0.001);
     expect(budget.spentUsd()).toBe(0);
     expect((res as any).charge_usd).toBe(0);
 
@@ -319,9 +319,9 @@ describe("FX-CAT pricing 5: Async submit + free poll under exact budget, non-enu
     expect(directEnv.budget.spentUsd()).toBe(0);
     void pollParamKey;
 
-    const reserveSpy = vi.fn(async () => ({ ok: true as const, reservationId: "res_1", grantId: "grant_1", replay: false }));
+    const reserveSpy = vi.fn(async (_req: { boundUsd: number }) => ({ ok: true as const, reservationId: "res_1", grantId: "grant_1", replay: false }));
     const settleSpy = vi.fn(async () => ({ ok: true as const, state: "settled" as const, countedUsd: 0, overrunUsd: 0, replay: false }));
-    const gatedCall = vi.fn(async (opts: { endpointId: string }) =>
+    const gatedCall = vi.fn(async (opts: { endpointId: string; routeMaxCostUsd?: number }) =>
       opts.endpointId === submitId
         ? tregResult({ tasks: [{ id: "task_sg" }] }, 0.006)
         : tregResult({ tasks: [{ status_code: 20000, status_message: "Ok.", result: [{ items: [{ id: "r1", rating: 5 }] }] }] }, 0),
@@ -339,8 +339,8 @@ describe("FX-CAT pricing 5: Async submit + free poll under exact budget, non-enu
     );
     expect(gatedRes.ok).toBe(true);
     expect(reserveSpy).toHaveBeenCalledTimes(2);
-    expect(reserveSpy.mock.calls[1][0].boundUsd).toBe(0.000001);
-    expect(Number(gatedCall.mock.calls[1][0].routeMaxCostUsd)).toBe(0);
+    expect((reserveSpy.mock.calls[1] as any)?.[0]?.boundUsd).toBe(0.000001);
+    expect(Number((gatedCall.mock.calls[1] as any)?.[0]?.routeMaxCostUsd)).toBe(0);
   });
 
   it("accumulates reserve fallback when submit returns null charge_usd", async () => {
