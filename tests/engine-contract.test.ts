@@ -81,7 +81,7 @@ describe.each(SCENARIOS)("$name", (sc: Scenario) => {
     expect(resultEvent.message_ar).toBe(INTERNAL_FAILURE_AR);
     expect(r.finalView.phase).toBe("failed");
     expect(r.finalView.endLineAr).toBe(INTERNAL_FAILURE_AR);
-    expect(r.finalView.resultLinesAr.join(" ")).toContain("حجز مؤقت مُحرَّر");
+    expect(r.finalView.resultLinesAr.join(" ")).toContain("رجع لمحفظتك");
     const everything = [r.finalView.endLineAr, ...r.finalView.resultLinesAr, m.summary_ar].join(" ");
     expect(everything).not.toMatch(/لم نجد|لا يوجد|المصدر لا|خالٍ من النتائج؛ لم/);
     // the notice (in-site and e-mail) says it was ours

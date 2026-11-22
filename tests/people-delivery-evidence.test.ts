@@ -35,9 +35,11 @@ describe("the A1 replay, counted from the delivered file", () => {
   it("the file's own table says what happened to the 31 the source gave: 10 delivered, 21 left out because they are beyond the approved two per company; and its limits row says there is no limit", async () => {
     const r = await a1();
     const sheet = (await readWorkbook(r)).worksheets[0];
+    const peopleTitle = r.plannedPlan.stages.find((s) => s.key === "people")?.title_ar ?? "موظفو كل شركة";
     const rows: string[][] = [];
     sheet.eachRow((row) => rows.push((row.values as unknown[]).slice(1).map(cell)));
-    const people = rows.find((row) => row[0] === "موظفو كل شركة" && row.length >= 4 && /^[٠-٩]+$/.test(row[1]))!;
+    const people = rows.find((row) => row[0] === peopleTitle && row.length >= 4 && /^[٠-٩]+$/.test(row[1]))!;
+    expect(peopleTitle).toBe("مديرون في كل شركة");
     expect(people.slice(1, 4)).toEqual(["٣١", "٢١", "١٠"]);
     const reasons = rows.find((row) => row[0] === "أسباب الاستبعاد")![1];
     expect(reasons).toContain("زاد عن العدد المعتمد");

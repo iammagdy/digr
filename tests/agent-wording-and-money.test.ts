@@ -116,7 +116,7 @@ describe("D. the money is said in ONE line: the charge and the items in the file
     const tweet = knownItemNoun("تغريدة")!;
     expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 202, delivered: 250, noun: tweet })).toBe("خُصم ٢٠٢ نقطة مقابل ٢٥٠ تغريدة");
     expect(moneyLineAr({ reservedPoints: 200, chargedPoints: 128, delivered: 192, noun: tweet })).toBe("خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة");
-    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 0, delivered: 0, noun: tweet })).toBe("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٧٩ نقطة");
+    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 0, delivered: 0, noun: tweet })).toBe("لم يُخصم شيء، ورجع لمحفظتك ٢٧٩ نقطة");
     expect(moneyLineAr({ reservedPoints: 0, chargedPoints: 0, delivered: 0, noun: tweet })).toBe("لم يُحجز أي رصيد ولم يُخصم شيء");
     expect(heldPointsOf({ reservedPoints: 279, chargedPoints: 202, releasedPoints: 77 })).toBe(279);
     // the older shape of the facts (no hold given): the hold is the charge plus what came back

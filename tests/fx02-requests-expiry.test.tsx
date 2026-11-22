@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { checkCustomerText } from "@/lib/agentMission/text";
 import { deliveredChargedLineAr } from "@/lib/jobs/requestStatus";
-import { extractDraftFromQuery } from "@/app/dashboard/chat/page";
+import { extractDraftFromQuery } from "@/lib/chat/extractDraftFromQuery";
 
 describe("FX-02 Phase B: Requests list, details consistency and chat draft prefill", () => {
   const detailsSrc = readFileSync("src/app/dashboard/requests/[id]/page.tsx", "utf8");

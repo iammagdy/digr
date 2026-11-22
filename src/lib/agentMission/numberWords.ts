@@ -201,9 +201,10 @@ export function isSingularPerParentCitation(message: string, cited: string | nul
   if (raw.length < 2 || /\d/.test(raw) || wordNumbersIn(raw, 1).length > 0) return false;
   const cTokens = tokensOf(raw);
   if (cTokens.length === 0) return false;
-  // If `cited` itself contains `<role> كل <parent>` (e.g. «ومدير كل شركة»), the singular noun precedes the distributive token.
+  // If `cited` itself contains `<role> كل <parent>` (e.g. «ومدير كل شركة», «مدير من كل شركة»), the singular noun precedes the distributive token (skipping prepositions).
   const distInCited = cTokens.findIndex((t, idx) => idx > 0 && idx < cTokens.length - 1 && PER_EACH_DISTRIBUTIVE.has(t));
-  const nounOffset = distInCited > 0 ? distInCited - 1 : cTokens.length - 1;
+  const beforeDist = distInCited >= 2 && AFTER_DISTRIBUTIVE_PREP.has(stripLeadingConj(cTokens[distInCited - 1])) ? distInCited - 2 : distInCited - 1;
+  const nounOffset = distInCited > 0 ? beforeDist : cTokens.length - 1;
   const noun = stripLeadingConj(cTokens[nounOffset]);
   if (!isValidSingularIndefiniteNoun(noun)) return false;
   if (cTokens.some((t) => wordNumbersIn(t, 1).length > 0 || /\d/.test(t))) return false;

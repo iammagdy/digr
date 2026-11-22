@@ -29,9 +29,9 @@ describe("the one line of a finished mission (the same text as the panel, the no
     expect(missionWalletLineAr(mission() as any)).toBe(moneyLineAr({ reservedPoints: 200, chargedPoints: 128, delivered: 192, noun: tweet }));
     expect(missionWalletLineAr(mission({ delivered_units: 1, charged_points: 50 }) as any)).toBe("خُصم ٥٠ نقطة مقابل تغريدة واحدة");
   });
-  it("nothing delivered: nothing was charged and the hold is «حجز مؤقت مُحرَّر»", () => {
-    expect(missionWalletLineAr(mission({ status: "unserved", delivered_units: 0, charged_points: 0 }) as any)).toBe("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٠٠ نقطة");
-    expect(missionWalletLineAr(mission({ status: "failed", delivered_units: 0, charged_points: 0 }) as any)).toBe("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٠٠ نقطة");
+  it("nothing delivered: nothing was charged and the hold is «رجع لمحفظتك» (D-0187)", () => {
+    expect(missionWalletLineAr(mission({ status: "unserved", delivered_units: 0, charged_points: 0 }) as any)).toBe("لم يُخصم شيء، ورجع لمحفظتك ٢٠٠ نقطة");
+    expect(missionWalletLineAr(mission({ status: "failed", delivered_units: 0, charged_points: 0 }) as any)).toBe("لم يُخصم شيء، ورجع لمحفظتك ٢٠٠ نقطة");
   });
   it("a mission that is still running, or has no stored charge, has no line (its rows are listed one by one)", () => {
     expect(missionWalletLineAr(mission({ status: "executing", charged_points: null }) as any)).toBeNull();

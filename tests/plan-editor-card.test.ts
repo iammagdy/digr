@@ -105,7 +105,7 @@ describe("THE END IS SAID, ONCE, HONESTLY, ON THE CARD", () => {
     expect(out).toContain('aria-live="polite"');
     expect(out).toContain("تعذّر استكمال تنفيذ طلبك");
     expect(out).not.toContain("خلل من جانبنا");
-    expect(out).toContain("حجز مؤقت مُحرَّر");
+    expect(out).toContain("رجع لمحفظتك");
     expect(out).not.toContain("لم نجد");
   });
   it("unserved says what the run recorded; cancelled says nothing was charged; open missions have no end line", () => {

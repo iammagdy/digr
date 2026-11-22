@@ -3,14 +3,14 @@ import { pointsAr } from "./pointsFormat";
 /**
  * The activity line written when a job settles. The ledger records TWO rows at settlement: the WHOLE hold released, then the charge of
  * what was delivered. The line says exactly that (never «the remainder only»), and the net amount that is back in the balance. Never
- * «استرداد»: a released hold is «حجز مؤقت مُحرَّر».
+ * «استرداد» or «حجز مؤقت مُحرَّر»: a returned hold is «رجع لمحفظتك» (Megz D-0187).
  */
 export function settlementEventAr(input: { reservedPoints: number; chargedPoints: number }, digits: (value: string | number) => string): string {
   const reserved = Math.max(0, Math.round(Number(input.reservedPoints) || 0));
   const charged = Math.max(0, Math.min(reserved, Math.round(Number(input.chargedPoints) || 0)));
   const back = reserved - charged;
-  if (charged === 0) return `حجز مؤقت مُحرَّر كاملًا (${pointsAr(reserved, digits)}) ولم يُخصم أي رصيد.`;
-  return `حجز مؤقت مُحرَّر كاملًا (${pointsAr(reserved, digits)})، ثم خُصم ثمن ما سُلّم فقط (${pointsAr(charged, digits)})، فيبقى في رصيدك ${pointsAr(back, digits)} من هذا الحجز.`;
+  if (charged === 0) return `لم يُخصم شيء، ورجع لمحفظتك ${pointsAr(reserved, digits)}.`;
+  return `حُجز ${pointsAr(reserved, digits)}، وخُصم ثمن ما سُلّم فقط (${pointsAr(charged, digits)})، ورجع لمحفظتك ${pointsAr(back, digits)}.`;
 }
 
 /** `record_chunk_failure` (SQL) stores «Exceeded maximum retry attempts (5): <cause>» on the fifth failure; screens read the text through normalizeReleaseWording, which strips that English prefix. */
