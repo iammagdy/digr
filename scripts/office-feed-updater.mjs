@@ -20,6 +20,7 @@ export const CANONICAL_BOTS = [
   "nafady",
   "hagras",
   "salem",
+  "alatra",
   "hazalqom",
   "fazza",
   "ashraf",
@@ -32,6 +33,7 @@ export const BOT_ROLES = {
   nafady: "المعماري التاني (الشغل اللي مش فلوس)",
   hagras: "المنفّذ الأول",
   salem: "المنفّذ التاني",
+  alatra: "المنفّذ التالت",
   hazalqom: "المصمم",
   fazza: "صائد الأخطاء (الفلوس والمشاكل الخطيرة)",
   ashraf: "صائد الأخطاء التاني",
@@ -44,6 +46,7 @@ export const DEFAULT_BOT_WORK_DIRS = {
   nafady: "/srv/diger-team/architect2/work",
   hagras: "/srv/diger-team/fawaaly/work",
   salem: "/srv/diger-team/fawaaly2/work",
+  alatra: "/srv/diger-team/fawaaly3/work",
   hazalqom: "/srv/diger-team/designer/work",
   fazza: "/srv/diger-team/bughunter/work",
   ashraf: "/srv/diger-team/bughunter2/work",
@@ -61,6 +64,7 @@ export const BOT_ARABIC_NAMES = {
   nafady: "نفادي",
   hagras: "هجرس",
   salem: "سالم",
+  alatra: "العترة",
   hazalqom: "حزلقوم",
   fazza: "فزاع",
   ashraf: "أشرف",
@@ -413,6 +417,7 @@ export function resolveActivityType(botId, state) {
       return "مراجعة فنية ومعمارية";
     case "hagras":
     case "salem":
+    case "alatra":
       return "تطوير وكتابة كود";
     case "marbouha":
       return "فحص جودة واختبارات";
