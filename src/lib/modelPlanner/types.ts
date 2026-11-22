@@ -184,7 +184,8 @@ export interface ValidationIssue {
     | "no_provenance" | "quote_not_in_customer_text" | "id_like_literal" | "invented_value" | "window_not_stated" | "bad_field_path" | "bad_rows_path" | "bad_transform"
     | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose" | "reader_mismatch" | "topic_not_applicable"
     | "volume_not_stated" | "volume_hold_too_high" | "branch_reference" | "fanout_short" | "cheaper_untried"
-    | "platform_choice_missing" | "entity_not_confirmed" | "entity_not_in_sample";
+    | "platform_choice_missing" | "entity_not_confirmed" | "entity_not_in_sample"
+    | "missing_parent_binding";
   /** For the model (English, internal): what is wrong and what to do. */
   message: string;
   stepIndex?: number;
