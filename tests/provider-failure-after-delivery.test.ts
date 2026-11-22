@@ -169,8 +169,8 @@ describe("a provider page that fails after rows were delivered", () => {
     const messages = db.events.map((e) => String(e.message));
     expect(messages.some((m) => m.includes("توقف جلب صفحات إضافية لتعذر الوصول إلى المصدر") && m.includes("مع تسليم السجلات المطابقة التي جُمعت"))).toBe(true);
     expect(messages.some((m) => m.includes("المسلَّم ٢ من ٤ مطلوب") && m.includes("لا يُحتسب عليك إلا ما سُلّم"))).toBe(true);
-    // 14 reserved - 6 charged = 8 released
-    expect(messages.some((m) => m.includes("حجز مؤقت مُحرَّر كاملًا (١٤ نقطة)، ثم خُصم ثمن ما سُلّم فقط (٦ نقاط)، فيبقى في رصيدك ٨ نقاط من هذا الحجز"))).toBe(true);
+    // 14 reserved - 6 charged = 8 released (D-0187: «رجع لمحفظتك»)
+    expect(messages.some((m) => m.includes("حُجز ١٤ نقطة، وخُصم ثمن ما سُلّم فقط (٦ نقاط)، ورجع لمحفظتك ٨ نقاط."))).toBe(true);
     for (const m of messages) expect(m).not.toMatch(/treg|icypeas|http|503|USD|\$/i);
   });
 

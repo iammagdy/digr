@@ -398,7 +398,9 @@ export function AppShell({ children, allowGuest = false }: { children: ReactNode
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
                   <HeaderBalance balance={balance} />
-                  <span className="text-xs font-light text-mut">نقطة</span>
+                  {balance.status === "ready" && (
+                    <span className="text-xs font-light text-mut">نقطة</span>
+                  )}
                 </Link>
               </div>
             ) : authLoading ? (

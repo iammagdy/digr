@@ -243,9 +243,9 @@ describe("5 and 6. wallet wording", () => {
   });
 
   it("the activity line says what the ledger records: the WHOLE hold released, then the charge of what was delivered; never «the remainder only»", () => {
-    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 6 }, toArabicDigits)).toBe("حجز مؤقت مُحرَّر كاملًا (١٤ نقطة)، ثم خُصم ثمن ما سُلّم فقط (٦ نقاط)، فيبقى في رصيدك ٨ نقاط من هذا الحجز.");
-    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 0 }, toArabicDigits)).toBe("حجز مؤقت مُحرَّر كاملًا (١٤ نقطة) ولم يُخصم أي رصيد.");
-    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 99 }, toArabicDigits)).toContain("فيبقى في رصيدك ٠ نقطة"); // a charge is never above the hold
+    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 6 }, toArabicDigits)).toBe("حُجز ١٤ نقطة، وخُصم ثمن ما سُلّم فقط (٦ نقاط)، ورجع لمحفظتك ٨ نقاط.");
+    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 0 }, toArabicDigits)).toBe("لم يُخصم شيء، ورجع لمحفظتك ١٤ نقطة.");
+    expect(settlementEventAr({ reservedPoints: 14, chargedPoints: 99 }, toArabicDigits)).toContain("ورجع لمحفظتك ٠ نقطة"); // a charge is never above the hold
     for (const text of [settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, toArabicDigits)]) {
       expect(text).not.toMatch(/استرداد|متبقية|[A-Za-z0-9]/);
     }

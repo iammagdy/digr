@@ -6,6 +6,7 @@ import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { MobileResultCard, recordToMobileCard } from "@/components/results/MobileResultCard";
 import { relativeDateDisplay } from "@/lib/relativeDateDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import type { LivePreviewSample } from "@/lib/liveJobView";
@@ -437,8 +438,17 @@ export default function ResultsCanvas({
               />
             ) : (
               <div className="overflow-hidden rounded-[20px] border border-sand-200">
-                <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="جدول البيانات: مرّر أفقيًا لرؤية باقي الأعمدة">
-                  <table className="w-full text-right text-xs">
+                {/* Mobile Cards View: <768px (block md:hidden) */}
+                <div className="block md:hidden p-3 space-y-3" data-testid="mobile-results-cards">
+                  {filteredRecords.map((r, idx) => (
+                    <MobileResultCard key={String(r.id ?? idx)} record={recordToMobileCard(r, idx)} index={idx} />
+                  ))}
+                </div>
+
+                {/* Desktop Table View: >=768px (hidden md:block) */}
+                <div className="hidden md:block">
+                  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="جدول البيانات: مرّر أفقيًا لرؤية باقي الأعمدة">
+                    <table className="w-full text-right text-xs">
                     <thead>
                       <tr className="border-b border-sand-200 bg-sand-100/80">
                         {visibleColumns.map((column) => (
@@ -470,6 +480,7 @@ export default function ResultsCanvas({
                       ))}
                     </tbody>
                   </table>
+                </div>
                 </div>
                 {visibleColumns.length > 4 && <p data-testid="table-scroll-hint" className="m-0 border-t border-sand-100 bg-sand-50/60 px-3 py-1.5 text-[11px] text-sand-500">مرّر الجدول جانبًا لرؤية باقي الأعمدة.</p>}
                 {emptyColumns.length > 0 && (

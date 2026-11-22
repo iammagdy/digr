@@ -39,7 +39,7 @@ describe("the places that tell the customer what was charged", () => {
     const worker = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(worker).toContain("settlementEventAr({ reservedPoints: chargedPts + refundedPts, chargedPoints: chargedPts }, toArabicDigits)");
     expect(worker).toContain("(حجز مؤقت مُحرَّر ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء)");
-    expect(settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, toArabicDigits)).toBe("حجز مؤقت مُحرَّر كاملًا (١٣٥ نقطة)، ثم خُصم ثمن ما سُلّم فقط (٤ نقاط)، فيبقى في رصيدك ١٣١ نقطة من هذا الحجز.");
+    expect(settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, toArabicDigits)).toBe("حُجز ١٣٥ نقطة، وخُصم ثمن ما سُلّم فقط (٤ نقاط)، ورجع لمحفظتك ١٣١ نقطة.");
   });
 
   it("the run card and the job notices use it too", () => {

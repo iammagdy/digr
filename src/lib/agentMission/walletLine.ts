@@ -21,7 +21,7 @@ export function missionWalletLineAr(m: MissionForWallet): string | null {
  * THE ONE LINE OF A JOB IN THE WALLET, MADE FROM THE LEDGER. The points are the job's own `credit_ledger` rows summed (see `jobLedgerTotals`: the balance's sign and the wallet month figures' grouping); the mission and job rows
  * supply only the delivered count and the noun of the items, never a point figure. A stored figure on a mission or a job is a display helper and can be stale (3 older jobs disagreed with the ledger when this was written).
  *   - held and not yet lifted or charged (a running job): «حجز مؤقت ٢٣٠ نقطة لطلب قيد التنفيذ»;
- *   - finished: «خُصم ٢٠٠ نقطة مقابل ٥٠ تغريدة» (what the charge rows add up to), or, with nothing charged, «لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٣٠ نقطة»; the hold is then lifted, so nothing is shown as held.
+ *   - finished: «خُصم ٢٠٠ نقطة مقابل ٥٠ تغريدة» (what the charge rows add up to), or, with nothing charged, «لم يُخصم شيء، ورجع لمحفظتك ٢٣٠ نقطة»; the hold is then lifted, so nothing is shown as held.
  * Null when the job has no rows, or has a row of a type this line does not explain (its rows are then listed one by one).
  */
 export interface JobFactsForWallet { delivered: number | null; noun: ItemNoun }

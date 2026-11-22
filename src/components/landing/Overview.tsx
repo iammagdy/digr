@@ -9,7 +9,7 @@ import { homePriceStrip } from "@/lib/pricingPage";
 export const OVERVIEW_STEPS_AR = [
   { title: "اطلب", text: "اكتب طلبك بالعربية كما تقوله لزميل، بالفصحى أو بالعامية." },
   { title: "راجع الخطة والسعر", text: "تظهر لك خطة قابلة للتعديل وسعرها بالنقاط." },
-  { title: "استلم الملف", text: "ملف إكسل أو بي دي إف منظّم، ومعه دليل المتغيرات." },
+  { title: "استلم ملفك", text: "ملف إكسل أو ملف مفصول بفواصل، منظم بدقة ومعه دليل كامل للمتغيرات وحالات التحقق." },
 ] as const;
 
 /** What the customer pays, in one place (the sentence that nothing is charged before approval is the hero's alone). */

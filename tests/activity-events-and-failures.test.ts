@@ -482,8 +482,8 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     });
 
     // T2(viii) (W-1): the composed adapter text carries NO release claim before a confirmed release. ONE it.each over the four paths.
-    const COMPOSED = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`;
-    const CLAIM = /حجز مؤقت مُحرَّر|تم إيقاف الطلب/;
+    const COMPOSED = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`;
+    const CLAIM = /حجز مؤقت مُحرَّر|تم إيقاف الطلب|رجع لمحفظتك/;
     const BASE20 = releaseTextAr(PROVIDER_INCOMPATIBLE_ANSWER_AR, 20);
     type Seen = { json: any; failures: Array<{ name: string; args: any }>; releases: Array<{ name: string; args: any }> };
     const retryOnlyChecks = ({ json, failures, releases }: Seen) => {

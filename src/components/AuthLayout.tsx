@@ -68,16 +68,25 @@ export function PasswordInput({
   value, onChange, placeholder = "كلمة المرور · ٨ خانات على الأقل", autoComplete,
 }: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete: string }) {
   const [show, setShow] = useState(false);
+  const isValueEntered = Boolean(value && value.length > 0);
+
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <input
-        type={show ? "text" : "password"} dir="ltr" required autoComplete={autoComplete}
-        value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className={`${authInput} text-left`} style={{ paddingInline: "76px 22px", paddingLeft: 76, paddingRight: 22 }}
+        type={show ? "text" : "password"}
+        dir={isValueEntered ? "ltr" : "rtl"}
+        required
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`${authInput} ps-4 pe-[80px] text-start transition-all`}
       />
       <button
-        type="button" onClick={() => setShow((v) => !v)} aria-pressed={show}
-        className="absolute left-2.5 top-2.5 h-11 cursor-pointer rounded-[14px] border-0 bg-sf2 px-3.5 text-[13px] text-mut"
+        type="button"
+        onClick={() => setShow((v) => !v)}
+        aria-pressed={show}
+        className="hit absolute end-2 top-1/2 -translate-y-1/2 h-9 cursor-pointer rounded-[12px] border-0 bg-sf2 px-3 text-[12px] font-medium text-mut hover:text-ink hover:bg-ln transition-colors"
       >
         {show ? "إخفاء" : "إظهار"}
       </button>
