@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { createMemoryStore } from "../agent/src/memoryStore";
-import { runContactEnrichment } from "../agent/src/engine/contacts";
+import { CONTACT_ROW_CONCURRENCY, runContactEnrichment } from "../agent/src/engine/contacts";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { RAW_PATH } from "../agent/src/gateway";
 import {
@@ -87,12 +87,6 @@ function companyRow(id: string, name: string, domain: string) {
 }
 
 describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
-  beforeEach(() => {
-    vi.stubEnv("DIGER_STAGE3_COMPANIES", "on");
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
   it("B1.1 Concurrence proof & row-internal order: 6 people rows achieve peak in-flight 2..3 and <= 45% wall clock", async () => {
     const store = createMemoryStore();
     const items = await ItemStore.open(store, MISSION);
@@ -211,9 +205,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     const elapsedMs = Date.now() - wallStart;
@@ -333,9 +325,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     // CRITICAL INVARIANT: Exactly 1 company phone call made for c1, not 2!
@@ -419,9 +409,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     const realDurationMs = Date.now() - startTime;
@@ -521,9 +509,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     const realDurationMs = Date.now() - realStart;
@@ -584,9 +570,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     expect(outcome.filled.email).toBe(1);
@@ -688,9 +672,7 @@ describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
       addEvent: async () => {},
       budget,
       deadlineMs: Date.now() + 60_000,
-      
-      
-      
+      concurrency: CONTACT_ROW_CONCURRENCY,
     });
 
     const rows = items.acceptedRows("people");

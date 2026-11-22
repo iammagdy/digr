@@ -33,7 +33,6 @@ import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { countryOfRequestText } from "../../../src/lib/agentMission/places";
 import { PHONE_STATUS_OTHER_COUNTRY_AR, PHONE_STATUS_VERIFIED_AR, PHONE_TYPE_COMPANY_AR, PHONE_TYPE_PERSONAL_AR, companyCountryOf, companyPhoneOfRow, mapsParamsFor, phoneStatusAr, phoneStatusOf, phoneVerdictIn, placePhoneIn, validatorParamsFor, type PhoneVerdict } from "../../../src/lib/agentMission/phoneValidation";
 import { verifyContactValue } from "../../../src/lib/agentMission/contacts";
-import { stage3FlagMode } from "../../../src/lib/agentMission/stage3/flags";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import type { Gateway } from "../gateway";
@@ -134,7 +133,7 @@ async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_k
 /**
  * DECISION MAKERS FIRST: every person gets the primary e-mail and phone chains in ranked order. A second pass lets people still missing a contact try the ranked alternates. The same limits apply to both passes.
  */
-const CONTACT_ROW_CONCURRENCY = 3;
+export const CONTACT_ROW_CONCURRENCY = 3;
 
 async function runWithConcurrency<T>(
   list: ReadonlyArray<T>,
@@ -239,8 +238,7 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
       }
     };
     const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned, addIncomplete, reserveBudget, signalChange, rowSpent));
-    const isStage3Active = !!deps.attempts || stage3FlagMode("DIGER_STAGE3_COMPANIES") !== "off";
-    const concurrency = deps.concurrency ?? (isStage3Active ? CONTACT_ROW_CONCURRENCY : 1);
+    const concurrency = deps.concurrency ?? 1;
     try {
       await runWithConcurrency(ranked, concurrency, async (row, idx) => {
         if (idx > stoppedByIndex) return;

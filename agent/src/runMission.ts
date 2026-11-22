@@ -93,7 +93,7 @@ import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/
 import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
 import { LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, llmPlannerOn, runLlmPlanning } from "./llmPlanner/run";
 import type { Understanding } from "./llmPlanner/planner";
-import { runContactEnrichment } from "./engine/contacts";
+import { CONTACT_ROW_CONCURRENCY, runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
 import { runInSandbox } from "./sandbox";
@@ -1311,9 +1311,11 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   // THE CONTACT FINDER STEPS (plan.contact_steps, contactFinders.ts): every delivered person is looked up for the e-mail and phone cells, within the job's call budget and the step's priced amount. It fills CELLS of persons already stored: no row is added, so the settlement below counts what it always counted.
   // STAGE 3, PART B (docs/STAGE-3.md S4): only when DIGER_STAGE3_COMPANIES is on for the account, every lookup is recorded per row and column and the contact cells follow the fallthrough (b2bEngine.ts); off (unset: always), null and nothing changes
   const b2bAttempts = b2bEngineOn(redesignIsTest) ? createAttemptLog() : null;
+  const isStage3Active = !!b2bAttempts || b2bFlagSet();
+  const contactConcurrency = isStage3Active ? CONTACT_ROW_CONCURRENCY : 1;
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}), ...(multiStage ? { provenance: true } : {}) });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, concurrency: contactConcurrency, ...(b2bAttempts ? { attempts: b2bAttempts } : {}), ...(multiStage ? { provenance: true } : {}) });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
   }
