@@ -52,20 +52,14 @@ const PRICE_RE = /سعر|اسعار|بكام|بكم|تكلف|كام نقطه|ك�
 const SERVICE_RE = /نقطه|نقاط|سعر|اسعار|بكام|بكم|كام|تكلف|تحاسب|خصم|ادفع|دفع|رصيد|اشحن|شحن|الحد الادني|حد ادني|اشتراك|باقه|باقات|مجاني|مجانا|الخدمه|ديجر|بتعملوا|بتعمل|تقدموا|بتقدموا|تشتغل|بتشتغلوا|انتو مين|انتم مين|من انتم|مين انتو|فاتوره|استرجاع|ترجعوا|تعمل ايه/;
 const HOW_RE = /كيف|ازاي|تعمل|تشتغل|بتعمل|بتشتغل|الخدمه|ديجر|مين|تقدم|تقدموا|بتقدموا|ايه هي|ما هي|ماهي|ماذا/;
 
-/** What a data request is about: the kinds of data and the file kinds the service collects and delivers. */
-const STRONG_NOUN_RE = /تعليق|تغريد|تويت|بوست|منشور|فيديو|ريلز|ريل |ستوري|حسابات|حساب |شركات|شركه|موظف|مديري|مديرين|مسؤول|ايميل|الايميل|بريد|هاتف|هواتف|ارقام|رقم |مراجعات|مراجعه|تقييم|خرائط|مطعم|مطاعم|صيدلي|عياد|مستشفي|فندق|فنادق|متابع|هاشتاج|هاشتاغ|قائمه|قوائم|اكسل|excel|xlsx|csv|منتج|منتجات|اسهم|سهم|مستودع|وظائف|وظيفة|وظايف|عقارات|عقار|اخبار|خبر|مقالات|مقال|tweet|post|comment|video|review|compan|email|lead|follower|account|listing|product|item|profile/;
+/** What a data request is about: the kinds of data, the platforms and the file kinds the service collects and delivers. */
+const STRONG_NOUN_RE = /تعليق|تغريد|تويت|تويتر|بوست|منشور|فيديو|ريلز|ريل |ستوري|حسابات|حساب |شركات|شركه|موظف|مديري|مديرين|مسؤول|ايميل|الايميل|بريد|هاتف|هواتف|ارقام|رقم |مراجعات|مراجعه|تقييم|خرائط|مطعم|مطاعم|صيدلي|عياد|مستشفي|فندق|فنادق|متابع|هاشتاج|هاشتاغ|قائمه|قوائم|اكسل|excel|xlsx|csv|tweet|post|comment|video|review|compan|email|lead|follower|account|ريديت|reddit|tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|لينكد|linkedin|twitter|(?:^| )اكس(?: |$)/;
 /**
- * PR-1.4: true when the words indicate collectible data (structured request cues, ask/collect verbs, quantities or data nouns).
- * The fixed-answer filters that run before the agent (general question, identity question, account and trust rules) use it to STAND ASIDE.
+ * PR-1.4: true when the words NAME something Diger collects (a kind of data or a platform). The fixed-answer filters that run before the agent (the general question, the identity question, the account and trust rules) use it to STAND ASIDE: a message that asks for comments, posts, a
+ * list or a platform is a research request and goes to the agent, whatever sensitive-sounding word its TOPIC contains («عن ChatGPT», «عن نصب الاستثمار», «من انتخابات»). It is the same noun list the message-type classifier above already uses; no second classifier.
  */
 export function namesCollectibleData(text: string): boolean {
-  const t = normalize(text);
-  const words = wordsOf(t);
-  if (words.length === 0) return false;
-  if (STRONG_NOUN_RE.test(` ${t} `)) return true;
-  if (WANTS_DATA_RE.test(t)) return true;
-  if (/(?:https?:\/\/|www\.)\S+|(?:^| )رابط(?: |$)/.test(t)) return true;
-  return false;
+  return STRONG_NOUN_RE.test(normalize(text));
 }
 
 /**
@@ -78,8 +72,11 @@ export function carriesResearchRequest(text: string): boolean {
 /** An explicit ask for data, also with «و» in front («وعايز داتا عن …», «عايز بيانات عن …»). */
 const WANTS_DATA_RE = /(?:^| )و?(?:عايز|عاوز|محتاج|احتاج|اريد|هات|جيب|اجمع|ابغي)\S*(?: \S+){0,2} (?:داتا|بيانات|معلومات|data)(?: |$)/;
 
+/** A platform the service collects from, named in the text (a subset of STRONG_NOUN_RE). */
+const PLATFORM_NAME_RE = /tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|twitter|تويتر|(?:^| )اكس(?: |$)/;
+
 /** «What people say / think about …»: the opinions of the public on a subject (normalized text, padded with spaces). */
-const OPINION_RE = / (?:الناس|الجمهور|العملاء|المستخدمين|المتابعين) (?:\S+ )?(?:بتقول|بيقولوا|بيقول|يقولون|يقولوا|بيتكلموا|يتكلمون|بيتكلم|شايفين|رايهم|رايه|بيعلقوا|يعلقون)|(?: |^)(?:اراء?|راي) (?:ال)?(?:ناس|جمهور|عملاء|مستخدمين|متابعين)| ردود (?:ال)?فعل | what (?:are |do )?(?:people|users|customers|fans) (?:are )?(?:saying|say|think|thinking|feel)| public (?:opinion|reaction|sentiment) /;
+const OPINION_RE = / (?:الناس|الجمهور|العملاء|المستخدمين|المصريين|المتابعين|الشباب) (?:\S+ )?(?:بتقول|بيقولوا|بيقول|يقولون|يقولوا|بيتكلموا|يتكلمون|بيتكلم|شايفين|رايهم|رايه|بيعلقوا|يعلقون)|(?: |^)(?:اراء?|راي) (?:ال)?(?:ناس|جمهور|عملاء|مستخدمين|متابعين)| ردود (?:ال)?فعل | what (?:are |do )?(?:people|users|customers|fans) (?:are )?(?:saying|say|think|thinking|feel)| public (?:opinion|reaction|sentiment) /;
 const ABOUT_RE = / (?:عن|حول|بخصوص|بشان|في|about|on|of|regarding) /;
 const GENERIC_NOUN_RE = /بيانات|داتا|معلومات|(?:^| )data(?: |$)/;
 const ASK_RE = /(?:^| )(?:عايز\S*|عاوز\S*|محتاج\S*|احتاج\S*|اريد|ابغي|ابي|ودي|نفسي|اطلب\S*|ممكن|هات\S*|جيب\S*|اعطني|اعطيني|وفر\S*|اعمل\S*|جهز\S*|want|need|give)(?: |$)/;
@@ -118,37 +115,29 @@ export function classifyMessage(message: string): MessageType {
   if (words.length === 0) return "other";
   if (isOnlyGreeting(words)) return "greeting";
 
-  const isMethodQuestion = /(?:طريقة|طريقه|كيفية|كيفيه)\s+(?:جمع|سحب|استخراج|العمل)/.test(text);
-  const isKnowingInquiry = /(?:^| )(?:عايز اعرف|عاوز اعرف|محتاج اعرف|ممكن اعرف|حابب اعرف|حبيت اعرف)(?: |$)/.test(text);
-  const QUESTION_PHRASES_RE = /(?:^| )(?:عايز اعرف|عاوز اعرف|محتاج اعرف|ممكن اعرف|حابب اعرف|حبيت اعرف|بكام|بكم|ازاي|كيف|هل|طريقة|طريقه|كيفية|كيفيه)(?: |$)/;
-  const asksQuestion = /[؟?]/.test(raw) || QUESTION_WORDS.has(words[0]) || QUESTION_PHRASES_RE.test(text);
+  const asksQuestion = /[؟?]/.test(raw) || QUESTION_WORDS.has(words[0]);
   const strongNoun = STRONG_NOUN_RE.test(` ${text} `);
   const generic = GENERIC_NOUN_RE.test(text);
-  const ask = ASK_RE.test(text) && !isKnowingInquiry;
-  const collectStrong = COLLECT_STRONG_RE.test(text) && !isMethodQuestion;
-  const search = SEARCH_RE.test(text);
-  const get = GET_RE.test(text);
-  const number = /\d|[٠-٩]/.test(text);
-  const hasUrl = /(?:https?:\/\/|www\.)\S+|(?:^| )رابط(?: |$)/.test(text);
-  const url = hasUrl;
+  const ask = ASK_RE.test(text);
+  const collectStrong = COLLECT_STRONG_RE.test(text);
+  const number = /\d/.test(text);
+  const url = /(?:^| )رابط(?: |$)/.test(text);
   const command = collectStrong && (strongNoun || number || url);
-  const hasCollectionVerb = collectStrong || ask || search || get;
-  const hasQuantity = number || /(?:^| )(?:كل|جميع|احدث|أحدث|افضل|أفضل|قائمة|قائمه|ملف|جدول)(?: |$)/.test(text);
-  const hasTargetClause = (strongNoun || hasQuantity || hasUrl || generic) && words.length >= 3;
 
   // a price question is a question, also about the methodology («بكام المنهجية؟»)
   if (asksQuestion && PRICE_RE.test(text) && !command) return "service_question";
   if (METHODOLOGY_RE.test(text) && !command) return "methodology_request";
-  if (asksQuestion && SERVICE_RE.test(text) && !command && !(hasCollectionVerb && (strongNoun || hasQuantity || hasUrl))) return "service_question";
+  if (asksQuestion && SERVICE_RE.test(text) && !command && !(strongNoun && (ask || number || url))) return "service_question";
 
-  if (WANTS_DATA_RE.test(text)) return "data_request";
-  if (strongNoun && (hasCollectionVerb || (!asksQuestion && hasQuantity) || url)) return "data_request";
+  if (strongNoun && (ask || collectStrong || SEARCH_RE.test(text) || GET_RE.test(text) || number || url)) return "data_request";
+  // what PEOPLE SAY about a subject is public-opinion research, whatever the subject (live evaluation 2026-11-12: «الناس بتقول إيه عن تسريب أرقام التليفونات» and «What are people saying about phone number leaks» were refused by the model):
+  // a request, so the WHEN-UNSURE rule never lets a model's refusal stand. Private data itself is refused before this by the privacy guard (guardRules.ts)
   if (OPINION_RE.test(` ${text} `) && ABOUT_RE.test(` ${text} `)) return "data_request";
-  if (strongNoun && !asksQuestion && words.length >= 4) return "data_request";
-  if (hasCollectionVerb && (hasQuantity || hasUrl || hasTargetClause)) return "data_request";
+  // cm-13: a statement that names what to collect AND a platform, with no question («كل التعليقات على بوستات فيسبوك عن غلاء الأسعار»), is a request even without an ask verb
+  if (strongNoun && !asksQuestion && PLATFORM_NAME_RE.test(` ${text} `) && words.length >= 4) return "data_request";
   if (collectStrong && words.length >= 3) return "data_request";
-  if (search && words.length >= 4) return "data_request";
-  if (generic && (ask || collectStrong || get) && words.length >= 3) return "data_request";
+  if (SEARCH_RE.test(text) && words.length >= 4) return "data_request";
+  if (generic && (ask || collectStrong || GET_RE.test(text)) && words.length >= 3) return "data_request";
   return "other";
 }
 
