@@ -29,10 +29,9 @@ import { WalletJobToggle } from "../src/app/dashboard/topup/WalletJobToggle";
 import { AppShell } from "../src/components/app/AppShell";
 import { formatMomentCairo } from "../src/lib/customerDates";
 import { groupMissionRows, toggledSet } from "../src/lib/walletView";
-import { estimateSlug } from "../src/lib/missionEstimate";
+import { estimateSlug, type EstimateKind } from "../src/lib/missionEstimate";
 import { bareNounAr, countKindOfSlug, countPlainAr } from "../src/lib/planCounts";
 import { unitPriceLabelAr } from "../src/lib/pointsFormat";
-import { kindsOfPlatform } from "../src/components/calculator/MissionEstimator";
 import { wordBoundarySheetName } from "../src/lib/agentMission/fileNames";
 
 const src = (file: string) => readFileSync(file, "utf8");
@@ -182,11 +181,16 @@ describe("C. public pages show the signed-in state; «تسجيل الدخول» 
 });
 
 // ================================================================================================================ D. the calculator names the item
+const legacyKinds: Record<string, EstimateKind[]> = {
+  youtube: ["comments", "videos"], facebook: ["comments", "posts"], x: ["posts"],
+  tiktok: ["comments", "videos"], companies: ["companies", "people"],
+};
+
 describe("D. the calculator says «لعدد ٥٠ تغريدة» (the item's own noun), never «٥٠ سجل»", () => {
   it("every platform and kind the calculator offers has its own noun from the existing helper, and none falls back to «سجل»", () => {
     const seen: string[] = [];
     for (const platform of ["youtube", "facebook", "x", "tiktok", "companies"]) {
-      for (const kind of kindsOfPlatform(platform)) {
+      for (const kind of legacyKinds[platform]) {
         const slug = estimateSlug(kind, platform as any);
         expect(slug, `${platform} ${kind}`).toBeTruthy();
         const phrase = countPlainAr(50, countKindOfSlug(slug));
@@ -206,7 +210,7 @@ describe("D. the calculator says «لعدد ٥٠ تغريدة» (the item's own 
     expect(unitPriceLabelAr(0.275, tweet)).toBe("حوالي ٢٧٫٥ نقطة لكل ١٠٠ تغريدة");
     expect(unitPriceLabelAr(6, bareNounAr(countKindOfSlug("social-tiktok-videos")))).toBe("٦ نقطة لكل فيديو");
     for (const platform of ["youtube", "facebook", "x", "tiktok", "companies"]) {
-      for (const kind of kindsOfPlatform(platform)) {
+      for (const kind of legacyKinds[platform]) {
         const noun = bareNounAr(countKindOfSlug(estimateSlug(kind, platform as any)));
         expect(unitPriceLabelAr(0.275, noun), `${platform} ${kind}`).not.toMatch(/سجل/);
       }
@@ -215,8 +219,8 @@ describe("D. the calculator says «لعدد ٥٠ تغريدة» (the item's own 
 
   it("the estimator takes both nouns from the result's own service (not the fixed «records» / «سجل»)", () => {
     const code = src("src/components/calculator/MissionEstimator.tsx");
-    expect(code).toContain("countPlainAr(result.volume, countKindOfSlug(result.slug))");
-    expect(code).toContain("unitPriceLabelAr(result.unitPricePoints, bareNounAr(countKindOfSlug(result.slug)))");
+    expect(code).toContain("stage.rowsAr");
+    expect(code).toContain("card.countLinesAr");
     expect(code).not.toMatch(/countPlainAr\([^)]*"records"/);
   });
 });

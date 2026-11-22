@@ -18,14 +18,11 @@ const estimateRequest = (body: unknown, ip: string) => new NextRequest("http://l
 beforeEach(() => { live.value = 200; });
 
 describe("every public surface reads the same live daily limit", () => {
-  it("the estimate route sizes one job with the live limit, and with the default when it cannot be read", async () => {
-    // companies: the points cap, not the service's record ceiling, limits one job (54 records at a 200-point limit, 164 at 600)
-    const withLive: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.1"))).json();
-    expect(withLive.result.jobCapPoints).toBe(200);
-    live.value = undefined;
-    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.2"))).json();
-    expect(withDefault.result.jobCapPoints).toBe(600);
-    expect(withDefault.result.maxVolumeInOneJob).toBeGreaterThan(withLive.result.maxVolumeInOneJob);
+  it("the public endpoint refuses a count and budget without an owned plan", async () => {
+    const response = await estimatePost(estimateRequest({ kind: "companies", volume: 500, budgetPoints: 150 }, "10.0.0.1"));
+    expect(response.status).toBe(400);
+    expect(await response.json()).not.toHaveProperty("result");
+    expect(await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.2"))).json()).not.toHaveProperty("cards");
   });
 
   it("the cap route returns the same number in points, never a dollar value, and null when unreadable", async () => {

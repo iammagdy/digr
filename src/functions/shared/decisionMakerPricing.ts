@@ -1,4 +1,5 @@
 import { effectiveJobPointsCap } from "../../lib/jobPointsCap";
+import { phoneShape } from "../../lib/agentMission/contactShape";
 import { markedInvalid } from "../../lib/contactVerification";
 import { isPersonalEmail } from "../../lib/peopleIdentity";
 export type ContactField = "work_email" | "phone";
@@ -30,7 +31,7 @@ export function contactValueDelivered(row: Record<string, unknown>, field: Conta
     const present = Boolean(value) && !isPersonalEmail(value);
     return present && !markedInvalid(row.work_email_verification_status ?? row.email_verification_status, present);
   }
-  const present = Boolean(String(row.phone ?? "").trim());
+  const present = phoneShape(row.phone);
   return present && !markedInvalid(row.phone_verification_status, present);
 }
 

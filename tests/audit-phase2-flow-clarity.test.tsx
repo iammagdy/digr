@@ -6,7 +6,6 @@ import nextConfig from "../next.config.mjs";
 import DetailsBlanks from "../src/app/dashboard/chat/components/DetailsBlanks";
 import EmptyChat from "../src/app/dashboard/chat/components/EmptyChat";
 import { TEMPLATE_FORMS, buildTemplateRequest, initialTemplateValues, type TemplateForm } from "../src/lib/templateForms";
-import { kindsOfPlatform } from "../src/components/calculator/MissionEstimator";
 import Composer, { ATTACH_WAIT_AR } from "../src/app/dashboard/chat/components/Composer";
 import MissionEstimator from "../src/components/calculator/MissionEstimator";
 import { proseDigitsAr } from "../src/lib/arabicDigits";
@@ -300,13 +299,10 @@ describe("audit phase 2: the cost form always answers (point 1)", () => {
       if (result.status === "ok") expect(result.expectedPoints).toBeGreaterThan(0);
     }
   });
-  it("the form has exactly three choices (the platform, the type of data, the count) and the platform list holds companies and decision makers, which need no platform (UI pass 1, item 10)", () => {
+  it("the form submits one request and displays the saved plan facts", () => {
     const markup = html(createElement(MissionEstimator));
-    for (const id of ["estimate-platform", "estimate-kind", "estimate-volume"]) expect(markup).toContain(`id="${id}"`);
-    expect(markup).not.toContain("<textarea");
-    expect(markup).toContain('value="companies"');
-    expect(kindsOfPlatform("companies")).toEqual(["companies", "people"]);
-    expect(kindsOfPlatform("x")).toEqual(["posts"]);
+    expect(markup).toContain('id="estimate-request"');
+    expect(src("src/components/calculator/MissionEstimator.tsx")).toContain("card.priceFacts.map");
   });
   it("the kind chosen in the form maps to the detailed service the price uses", () => {
     expect(calculatorSlugForEstimate("companies")).toBe("icypeas-companies-search");

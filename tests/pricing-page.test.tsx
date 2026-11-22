@@ -21,8 +21,8 @@ describe("the pricing page", () => {
     expect(rows.length).toBeGreaterThanOrEqual(6);
     const youtube = rows.find((row) => row.id === "youtube-comments")!;
     expect(youtube.unitPricePoints).toBe(computePublicCalculatorQuote("social-youtube-comments", 1, 1).unitPricePoints);
-    expect(html).toContain('data-testid="price-table"');
-    expect(html).toContain("صنّاع قرار");
+    expect(html).not.toContain('data-testid="price-table"');
+    expect(html).toContain('href="/calculator"');
   });
 
   it("a capacity is what the amount DELIVERS at the real unit price (no reserve buffer), never above the amount", () => {
@@ -41,7 +41,7 @@ describe("the pricing page", () => {
   it("every capacity is worded «حتى حوالي» and a too-small amount says so plainly", () => {
     expect(capacityLineAr({ id: "x", labelAr: "x", unitLabelAr: "تعليق", records: 12 })).toBe("حتى حوالي ١٢ تعليق");
     expect(capacityLineAr({ id: "x", labelAr: "x", unitLabelAr: "تعليق", records: 0 })).toBe("لا يكفي لسجل واحد");
-    expect(html).toContain("حتى حوالي");
+    expect(html).not.toContain('data-testid="capacity-table"');
   });
 
   it("explains when money is taken, the failure state, the one-job limit and the honest limits", () => {
@@ -49,7 +49,7 @@ describe("the pricing page", () => {
     expect(faq).toContain("لا يُخصم شيء أثناء المحادثة");
     expect(faq).toContain(FAILURE_STATE_AR);
     expect(FAILURE_STATE_AR).toContain("لم يُخصم أي رصيد");
-    expect(faq).toContain("أكثر من طلب");
+    expect(faq).toContain("تراجع العدد المناسب من الخطة قبل الموافقة");
     expect(text).toContain("حدود نذكرها بصراحة");
     expect(html).toContain('href="/calculator"');
     expect(html).toContain('href="/register"');

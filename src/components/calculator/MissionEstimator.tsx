@@ -1,149 +1,206 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { toArabicDigits } from "@/lib/arabicDigits";
-import { bareNounAr, countKindOfSlug, countPlainAr } from "@/lib/planCounts";
-import { FAILURE_STATE_AR } from "@/lib/publicCopy";
-import { decisionMakersPerRequestLineAr } from "@/lib/jobSizing";
-import { estimateFormProblemAr, estimateSlug, type EstimateKind, type EstimateResult } from "@/lib/missionEstimate";
-import type { SocialPlatformId } from "@/lib/socialTasks";
-import { unitPriceLabelAr } from "@/lib/pointsFormat";
-import { useOptionalUser } from "@/hooks/useUser";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { customerFacingFailure, readChatResponse, TEMPORARY_FAILURE_NO_CHARGE_AR } from "@/lib/customerError";
+import type { CalculatorCard } from "@/lib/missionEstimate";
+import { newPlannerRequestId } from "@/lib/missionPanelState";
+import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller";
+import { createClient } from "@/lib/supabase/client";
 
-/**
- * THE CALCULATOR: three choices (the platform, the type of data, the count) and ONE result. Every number comes from /api/calculator/estimate, which is pure code (no model, no provider); the expected
- * time is the plan card's own function (`expectedTimeOf`), so the calculator and the card never disagree for the same mission.
- */
-const PLATFORMS: Array<{ id: string; label: string }> = [
-  { id: "youtube", label: "يوتيوب" },
-  { id: "facebook", label: "فيسبوك" },
-  { id: "x", label: "إكس" },
-  { id: "tiktok", label: "تيك توك" },
-  { id: "companies", label: "شركات وصناع قرار" },
-];
-
-const KIND_LABEL: Record<EstimateKind, string> = { comments: "تعليقات", posts: "منشورات وتغريدات", videos: "فيديوهات", companies: "شركات", people: "صنّاع قرار" };
-const COUNT_PRESETS = [50, 100, 500, 1000] as const;
-
-/** The types of data a platform can serve, from the same function the price uses (a pair with no service is not offered). Two types that are the same service are offered once. */
-export function kindsOfPlatform(platform: string): EstimateKind[] {
-  if (platform === "companies") return ["companies", "people"];
-  const seen = new Set<string>();
-  const out: EstimateKind[] = [];
-  for (const kind of ["comments", "posts", "videos"] as const) {
-    const slug = estimateSlug(kind, platform as SocialPlatformId);
-    if (slug && !seen.has(slug)) { seen.add(slug); out.push(kind); }
-  }
-  return out;
+interface CalculatorConversation {
+  id: string;
+  isGuest: boolean;
+  replyScope: "single" | "split";
+  text: string;
+  missionIds: string[];
 }
 
-/** «تغريدات» on X, «منشورات» on the others. */
-export const kindLabelOf = (kind: EstimateKind, platform: string): string => (kind === "posts" ? (platform === "x" ? "تغريدات" : "منشورات") : KIND_LABEL[kind]);
+interface OwnedCard {
+  missionId: string;
+  card: CalculatorCard;
+}
 
-type Answer = { result: EstimateResult | null; expectedAr: string | null; summaryAr: string | null; missingAr: string[] };
+// The owned read route accepts up to six mission IDs per request.
+const POLL_BATCH_SIZE = 6;
+const PLAN_LIMIT_AR = "لو كان الحجز أعلى من الحد المتاح، افتح الخطة لمراجعة العدد المناسب.";
+const textField = "min-h-12 w-full rounded-[14px] border border-ln2 bg-bg px-3.5 py-3 text-[15px] text-ink outline-none focus:border-ac";
+const primary = "inline-flex min-h-11 items-center self-start rounded-full bg-ac px-5 text-sm text-onac no-underline disabled:opacity-50";
+const terminal = (phase: CalculatorCard["phase"]) => ["running", "done", "partial", "unserved", "failed", "cancelled"].includes(phase);
 
-const field = "min-h-12 w-full rounded-[14px] border border-ln2 bg-bg px-3.5 text-[15px] text-ink outline-none focus:border-ac";
+async function chatHeaders(): Promise<Record<string, string>> {
+  const { data } = await createClient().auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
+}
+
+function toConversation(data: Record<string, unknown>, previous: CalculatorConversation | null, cards: OwnedCard[]): CalculatorConversation {
+  const id = data.conversationId;
+  const scope = data.calculatorReplyScope;
+  if (data.planning || data.planQuote || data.revisionQuote || typeof data.contentAr !== "string" ||
+      typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id) ||
+      (scope !== "single" && scope !== "split") || (previous && previous.id !== id)) {
+    throw new Error("Invalid calculator turn");
+  }
+  const marker = data.agentMission as { id?: unknown } | undefined;
+  const parts = Array.isArray(data.agentMissionParts) ? data.agentMissionParts : [];
+  const ids = [marker?.id, ...parts.map((part) => part?.id)]
+    .filter((value): value is string => typeof value === "string" && /^msn_[a-z0-9]{8,40}$/.test(value));
+  const retained = previous?.missionIds.filter((missionId) => !cards.some((item) => item.missionId === missionId && terminal(item.card.phase))) ?? [];
+  return { id, isGuest: data.isGuest === true, replyScope: scope, text: data.contentAr, missionIds: [...new Set([...retained, ...ids])] };
+}
+
+function CalculatorPriceCard({ card }: { card: CalculatorCard }) {
+  const limited = card.limit?.over || (card.affordability !== undefined && card.affordability.mode !== "ready");
+  return (
+    <article className="flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-5" data-testid="estimate-result">
+      {card.summaryAr ? <h3 className="m-0 text-lg text-ink">{card.summaryAr}</h3> : null}
+      {card.countLinesAr.map((line) => <p key={line} className="m-0 text-sm text-ink2">{line}</p>)}
+      {card.countLinesAr.length === 0 && card.stages.filter((stage) => stage.deliver).map((stage, index) => (
+        <p key={index} className="m-0 text-sm text-ink2">{stage.titleAr} · {stage.rowsAr}</p>
+      ))}
+      {[...card.assumptionsAr, ...card.unservedAr].map((line, index) => <p key={index} className="m-0 text-sm text-mut">{line}</p>)}
+      {card.priceFacts.length > 0 ? (
+        <dl className="m-0 grid grid-cols-1 gap-2 min-[560px]:grid-cols-2">
+          {card.priceFacts.map(({ labelAr, valueAr }) => (
+            <div key={labelAr} className="rounded-[14px] border border-ln p-3">
+              <dt className="text-sm text-mut">{labelAr}</dt>
+              <dd className="m-0 mt-1 font-medium text-ink">{valueAr}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : <p className="m-0 text-sm text-ink2">{card.questionAr || card.currentLineAr}</p>}
+      {card.priceNoteAr ? <p className="m-0 text-sm text-ink2">{card.priceNoteAr}</p> : null}
+      {limited ? <p className="m-0 text-sm text-ink2">{PLAN_LIMIT_AR}</p> : null}
+    </article>
+  );
+}
 
 export default function MissionEstimator() {
-  const user = useOptionalUser();
-  const [platform, setPlatform] = useState("youtube");
-  const kinds = useMemo(() => kindsOfPlatform(platform), [platform]);
-  const [kind, setKind] = useState<EstimateKind>("comments");
-  const [volume, setVolume] = useState(toArabicDigits(100));
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [text, setText] = useState("");
+  const [reply, setReply] = useState("");
+  const [conversation, setConversation] = useState<CalculatorConversation | null>(null);
+  const [cards, setCards] = useState<OwnedCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const submitController = useRef<AbortController | null>(null);
 
-  const activeKind = kinds.includes(kind) ? kind : kinds[0];
-  const social = platform !== "companies";
-  const toNumber = (value: string) => Number(value.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\d]/g, "")) || 0;
-  const count = toNumber(volume);
-  const formProblem = estimateFormProblemAr({ kind: activeKind, platform: social ? platform : "n/a", volume: count, budget: 0 });
+  useEffect(() => () => submitController.current?.abort(), []);
+  useEffect(() => {
+    if (!conversation?.missionIds.length) return;
+    const lifetime = new AbortController();
+    let active = true;
+    let ended = false;
+    let delay = 3_000;
+    const ids = conversation.missionIds;
+    const stop = startMissionPolling({
+      keepGoing: () => !ended,
+      nextDelayMs: () => delay,
+      read: async () => {
+        const timed = AbortSignal.any([lifetime.signal, AbortSignal.timeout(MISSION_READ_LIMIT_MS)]);
+        const headers = await chatHeaders();
+        const next: OwnedCard[] = [];
+        for (let start = 0; start < ids.length; start += POLL_BATCH_SIZE) {
+          const missionIds = ids.slice(start, start + POLL_BATCH_SIZE);
+          const response = await fetch("/api/calculator/estimate", {
+            method: "POST", headers, body: JSON.stringify({ missionIds }), signal: timed,
+          });
+          if (response.status === 429) {
+            const seconds = Number(response.headers.get("Retry-After"));
+            delay = seconds > 0 && Number.isFinite(seconds) ? seconds * 1_000 : 15_000;
+            return;
+          }
+          if ([401, 403, 404].includes(response.status)) {
+            if (active) {
+              setCards([]);
+              setError(TEMPORARY_FAILURE_NO_CHARGE_AR);
+              ended = true;
+            }
+            return;
+          }
+          const data = await readChatResponse(response);
+          if (!Array.isArray(data.cards) || data.cards.length !== missionIds.length ||
+              data.cards.some((item: OwnedCard, index: number) => item.missionId !== missionIds[index])) {
+            throw new Error("Invalid calculator readback");
+          }
+          next.push(...data.cards);
+        }
+        if (!active || timed.aborted) return;
+        setCards(next);
+        delay = next.some(({ card }) => card.phase === "waiting" || card.phase === "planning") ? 3_000 : 15_000;
+        ended = next.every(({ card }) => terminal(card.phase));
+      },
+    });
+    return () => { active = false; lifetime.abort(); stop(); };
+  }, [conversation]);
 
-  async function submit() {
+  async function submit(value: string, previous: CalculatorConversation | null) {
+    const message = value.trim();
+    if (!message || submitController.current) return;
+    const controller = new AbortController();
+    submitController.current = controller;
     setBusy(true);
     setError(null);
+    if (!previous) {
+      setConversation(null);
+      setCards([]);
+      setReply("");
+    }
     try {
-      const response = await fetch("/api/calculator/estimate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: activeKind, platform: social ? platform : undefined, volume: count || undefined, openEnded: false }) });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.success) {
-        setAnswer(null);
-        setError(typeof data?.error === "string" ? data.error : "تعذّر الحساب الآن، حاول بعد قليل.");
-      } else {
-        setAnswer({ result: data.result ?? null, expectedAr: typeof data.expectedAr === "string" ? data.expectedAr : null, summaryAr: data.summaryAr ?? null, missingAr: Array.isArray(data.missingAr) ? data.missingAr : [] });
+      const headers = await chatHeaders();
+      const response = await fetch("/api/chat", {
+        method: "POST", headers, signal: controller.signal,
+        body: JSON.stringify({
+          source: "calculator", plannerRequestId: newPlannerRequestId(), message,
+          ...(previous ? { conversationId: previous.id } : {}),
+          ...(!headers.Authorization ? { isGuest: true } : {}),
+        }),
+      });
+      const data = await readChatResponse(response);
+      if (!controller.signal.aborted) {
+        setConversation(toConversation(data, previous, cards));
+        setReply("");
       }
-    } catch {
-      setAnswer(null);
-      setError("تعذّر الحساب الآن، حاول بعد قليل.");
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(customerFacingFailure(cause, { noCharge: true }).text);
     } finally {
-      setBusy(false);
+      submitController.current = null;
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
 
-  // The result follows the choices (after a pause of a third of a second); a missing choice is said in words. Nothing is deducted by it.
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useEffect(() => {
-    if (formProblem) { setAnswer(null); setError(null); return; }
-    const timer = setTimeout(() => { void submitRef.current(); }, 350);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform, activeKind, count, formProblem]);
+  const oneQuestion = cards.length === 1 && cards[0].card.phase === "question" ? cards[0].card : null;
+  const canReply = conversation?.replyScope === "single" && (conversation.missionIds.length === 0 || oneQuestion !== null);
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submit(text, null);
+  };
 
-  const result = answer?.result ?? null;
   return (
     <section data-testid="mission-estimator" className="flex flex-col gap-5 rounded-[22px] border border-ln bg-sf p-5 min-[560px]:p-6">
-      <div>
-        <h2 className="m-0 font-display text-[24px] font-medium text-ink">كم تكلّف مهمتك؟</h2>
-        <p className="mb-0 mt-2 text-sm font-light leading-[1.9] text-ink2">اختر المنصة ونوع البيانات والعدد، ونحسب لك التكلفة والوقت. الحساب هنا دون أي خصم من رصيدك، والرقم تقريبي.</p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 min-[720px]:grid-cols-3">
-        <div className="flex min-w-0 flex-col gap-2">
-          <label htmlFor="estimate-platform" className="text-sm font-medium text-ink">المنصة</label>
-          <select id="estimate-platform" value={platform} onChange={(event) => { setPlatform(event.target.value); setKind(kindsOfPlatform(event.target.value)[0]); }} className={field}>
-            {PLATFORMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
-        </div>
-        <div className="flex min-w-0 flex-col gap-2">
-          <label htmlFor="estimate-kind" className="text-sm font-medium text-ink">نوع البيانات</label>
-          <select id="estimate-kind" value={activeKind} onChange={(event) => setKind(event.target.value as EstimateKind)} className={field}>
-            {kinds.map((item) => <option key={item} value={item}>{kindLabelOf(item, platform)}</option>)}
-          </select>
-        </div>
-        <div className="flex min-w-0 flex-col gap-2">
-          <label htmlFor="estimate-volume" className="text-sm font-medium text-ink">العدد المطلوب</label>
-          <input id="estimate-volume" inputMode="numeric" value={volume} onChange={(event) => setVolume(event.target.value)} placeholder="مثال: ١٠٠" className={field} />
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="أعداد جاهزة">
-            {COUNT_PRESETS.map((n) => <button key={n} type="button" onClick={() => setVolume(toArabicDigits(n))} aria-pressed={count === n} className={`min-h-11 cursor-pointer rounded-full border px-3.5 text-[13px] text-ink ${count === n ? "border-gold bg-sf2" : "border-ln bg-bg"}`}>{toArabicDigits(n)}</button>)}
-          </div>
-        </div>
-      </div>
-
-      {formProblem ? <p role="status" data-testid="estimate-problem" className="m-0 rounded-[14px] border border-ln bg-bg p-4 text-sm text-ink">{formProblem}</p> : null}
-      {error ? <p role="alert" className="m-0 rounded-[14px] border border-ln bg-bg p-4 text-sm text-ink">{error}</p> : null}
-
-      {answer && !formProblem ? (
-        <div role="status" data-testid="estimate-result" className="flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-5">
-          {result?.status === "ok" ? (
-            <>
-              <p className="m-0 font-display text-[26px] font-medium leading-[1.5] text-ink">{answer.summaryAr}</p>
-              <p className="m-0 text-xs text-mut">لعدد {countPlainAr(result.volume, countKindOfSlug(result.slug))}، بسعر {unitPriceLabelAr(result.unitPricePoints, bareNounAr(countKindOfSlug(result.slug)))}.</p>
-              {answer.expectedAr ? (
-                <p data-testid="estimate-duration" className="m-0 text-sm text-ink">الوقت المتوقع: <strong data-testid="estimate-time">{answer.expectedAr}</strong></p>
-              ) : null}
-              {result.notesAr.map((note) => <p key={note} className="m-0 text-xs font-light leading-[1.8] text-mut">{note}</p>)}
-              {result.slug === "professional-people-search" ? (
-                <p data-testid="people-per-request" className="m-0 text-xs font-light leading-[1.8] text-mut">{decisionMakersPerRequestLineAr(result.maxVolumeInOneJob)}</p>
-              ) : null}
-            </>
+      <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+        <label htmlFor="estimate-request" className="text-sm font-medium text-ink">اكتب طلب البحث</label>
+        <textarea id="estimate-request" rows={3} className={textField} value={text} onChange={(event) => setText(event.target.value)} />
+        <button type="submit" className={primary} disabled={busy || !text.trim()}>جهّز خطتي</button>
+      </form>
+      {error ? <p role="alert" className="m-0 text-sm text-ink">{error}</p> : null}
+      {conversation ? (
+        <div role="status" className="flex flex-col gap-3">
+          <p className="m-0 whitespace-pre-line text-sm text-ink2">{conversation.text}</p>
+          {cards.map(({ missionId, card }) => <CalculatorPriceCard key={missionId} card={card} />)}
+          {canReply ? (
+            <form className="flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); void submit(reply, conversation); }}>
+              {oneQuestion?.questionOptionsAr.map((option) => (
+                <button className="min-h-11 self-start rounded-full border border-ln px-4 text-sm" key={option} type="button" disabled={busy} onClick={() => void submit(option, conversation)}>{option}</button>
+              ))}
+              <label htmlFor="estimate-reply" className="text-sm font-medium text-ink">أرسل الإجابة</label>
+              <input id="estimate-reply" className={textField} value={reply} onChange={(event) => setReply(event.target.value)} />
+              <button className={primary} disabled={busy || !reply.trim()}>أرسل الإجابة</button>
+            </form>
           ) : null}
-          {result && result.status !== "ok" ? <p className="m-0 text-sm text-ink">{result.notesAr.join(" ")}</p> : null}
-          <p className="m-0 text-xs font-light leading-[1.8] text-mut">لا يُخصم شيء إلا بعد موافقتك على الخطة. {FAILURE_STATE_AR}</p>
-          {user
-            ? <Link href="/dashboard/chat" className="inline-flex min-h-11 items-center self-start rounded-full bg-ac px-5 text-sm text-onac no-underline">ابدأ طلبك</Link>
-            : <Link href="/register" className="inline-flex min-h-11 items-center self-start rounded-full bg-ac px-5 text-sm text-onac no-underline">ابدأ بحسابك المجاني</Link>}
+          {conversation.isGuest
+            ? <Link href="/register" className={primary}>سجّل لتعتمد</Link>
+            : <Link href={`/dashboard/chat?c=${encodeURIComponent(conversation.id)}`} className={primary}>افتح الخطة في المحادثة</Link>}
         </div>
       ) : null}
     </section>

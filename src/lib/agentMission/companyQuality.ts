@@ -1,3 +1,4 @@
+import { organisationOfRow } from "./customerExclusion";
 import { isCompanyStage } from "./entities";
 import { countAr, knownItemNoun } from "./itemNoun";
 import { exactPlaceLabelAr, isPlaceFragment, placeCellKind, withoutRepeatedWords } from "./places";
@@ -48,7 +49,8 @@ export function describedCompanyOf(description: unknown): string | null {
 /** The company a LinkedIn company page names by its address («linkedin.com/company/vision-cosmetics» → «vision cosmetics»); null for any other address. */
 export function linkedinCompanyOf(url: unknown): string | null {
   const m = /linkedin\.com\/company\/([^/?#\s]+)/i.exec(text(url));
-  return m ? decodeURIComponent(m[1]).replace(/[-_]+/g, " ").trim() : null;
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]).replace(/[-_]+/g, " ").trim(); } catch { return null; }
 }
 /** A name that is only a site's address («yolo-cosmetics.com»). */
 export const nameIsDomain = (name: unknown): boolean => /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z]{2,})+\/?$/i.test(text(name));
@@ -81,6 +83,115 @@ const LINKEDIN_KEY = /linkedin/i;
 const ADDRESS_KEY = /(?:^|_)(?:street_address|address|street|address_line)$/i;
 /** A column that says where a record was read from: a page link or a source address (never the company's own site or its LinkedIn page). */
 const SOURCE_KEY = /(?:^|_)(?:link|source|source_url|source_link|page_url|url|evidence_url)$/i;
+
+// Stored with accepted rows so the same identity decision is available after a restart.
+export const COMPANY_EVIDENCE_KEY = "_company_evidence";
+export const COMPANY_SOURCE_ID_KEY = "_company_source_id";
+export const COMPANY_UNCERTAIN_KEY = "_company_uncertain";
+export const COMPANY_BRANCH_FIELDS = ["branch_id", "outlet_id", "location_id", "store_id"] as const;
+type BranchField = typeof COMPANY_BRANCH_FIELDS[number];
+
+interface CompanyEvidence {
+  keys: string[];
+  name: string;
+  registration: string | null;
+  jurisdiction: string;
+  branches: Partial<Record<BranchField, string>>;
+  address: string;
+  conflict: boolean;
+}
+
+const nameKey = (value: unknown): string => normalizeText(text(value)).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const identityValue = (value: unknown): string => typeof value === "string" || typeof value === "number" ? text(value) : "";
+
+export function companyEvidenceOf(row: Row, stage: QualityStage): CompanyEvidence {
+  const read = (key: RegExp, label?: RegExp): unknown => {
+    const column = columnKey(stage, key, label);
+    return (column ? row[column] : undefined) ?? Object.entries(row).find(([field]) => key.test(field))?.[1];
+  };
+  const displayName = read(NAME_KEY, /^(?:الاسم|اسم الشركة)$/);
+  const website = read(WEBSITE_KEY, /^الموقع الإلكتروني$/);
+  const description = read(DESCRIPTION_KEY, /^الوصف$/);
+  const linkedin = read(LINKEDIN_KEY);
+  const organisation = organisationOfRow(row, { people: false, nameKeys: [columnKey(stage, NAME_KEY, /^(?:الاسم|اسم الشركة)$/) ?? "name"] });
+  const jurisdiction = nameKey(read(/^(?:registration_country|registration_jurisdiction|jurisdiction|country_code|country)$/i, /^الدولة$/));
+  const city = nameKey(read(/^(?:city|city_name|locality|town)$/i, /^المدينة$/));
+  const street = nameKey(read(ADDRESS_KEY, /^العنوان$/));
+  const address = (city || jurisdiction) && /\p{N}/u.test(street) && /\p{L}/u.test(street)
+    ? JSON.stringify([jurisdiction, city, street]) : "";
+  const branches: CompanyEvidence["branches"] = {};
+  for (const field of COMPANY_BRANCH_FIELDS) {
+    if (identityValue(row[field])) branches[field] = identityValue(row[field]);
+  }
+  const keys = new Set<string>();
+  if (organisation.crNumber && jurisdiction) keys.add(JSON.stringify(["registration", jurisdiction, organisation.crNumber]));
+  const profile = nameKey(linkedinCompanyOf(linkedin));
+  if (profile) keys.add(JSON.stringify(["profile", profile]));
+  for (const name of [displayName, ...organisation.names]) {
+    if (organisation.domain && !nameIsDomain(name) && tokensOf(text(name)).length > 0) {
+      keys.add(JSON.stringify(["website", organisation.domain, nameKey(name)]));
+    }
+  }
+  const described = describedCompanyOf(description);
+  const linked = linkedinCompanyOf(linkedin);
+  const conflict = identityConflictOf({ name: displayName ?? organisation.names[0], website: website ?? organisation.domain, description, linkedin });
+  return {
+    keys: [...keys].sort(),
+    name: nameKey(displayName ?? organisation.names[0]),
+    registration: organisation.crNumber ?? null,
+    jurisdiction,
+    branches,
+    address,
+    conflict: Boolean(conflict?.where.length === 2 && overlaps(tokensOf(text(described)), tokensOf(text(linked)))),
+  };
+}
+
+export function storedCompanyEvidence(row: Row, stage: QualityStage): CompanyEvidence {
+  return (row[COMPANY_EVIDENCE_KEY] as CompanyEvidence | undefined) ?? companyEvidenceOf(row, stage);
+}
+
+export function branchesDiffer(a: CompanyEvidence, b: CompanyEvidence): boolean {
+  return COMPANY_BRANCH_FIELDS.some((key) => Boolean(a.branches[key] && b.branches[key] && a.branches[key] !== b.branches[key]))
+    || Boolean(a.address && b.address && a.address !== b.address);
+}
+
+export function companyRelationship(a: CompanyEvidence, b: CompanyEvidence): "same" | "different" | "uncertain" {
+  if (branchesDiffer(a, b) || (a.registration && b.registration
+      && (a.registration !== b.registration || (a.jurisdiction && b.jurisdiction && a.jurisdiction !== b.jurisdiction)))) return "different";
+  if (!a.keys.some((key) => b.keys.includes(key))) return "uncertain";
+  const sameBranch = COMPANY_BRANCH_FIELDS.some((key) => Boolean(a.branches[key] && a.branches[key] === b.branches[key]))
+    || Boolean(a.address && a.address === b.address);
+  return sameBranch ? "same" : "uncertain";
+}
+
+/** Index by positive organisation evidence. Only accepted rows enter the index. */
+export class AcceptedCompanies {
+  private readonly byIdentity = new Map<string, CompanyEvidence[]>();
+
+  inspect(evidence: CompanyEvidence): "duplicate_company" | "company_identity_conflict" | "possible" | null {
+    if (evidence.conflict) return "company_identity_conflict";
+    let possible = false;
+    const seen = new Set<CompanyEvidence>();
+    for (const key of evidence.keys) {
+      for (const previous of this.byIdentity.get(key) ?? []) {
+        if (seen.has(previous)) continue;
+        seen.add(previous);
+        const relationship = companyRelationship(previous, evidence);
+        if (relationship === "same") return "duplicate_company";
+        if (relationship === "uncertain") possible = true;
+      }
+    }
+    return possible ? "possible" : null;
+  }
+
+  add(evidence: CompanyEvidence): void {
+    for (const key of evidence.keys) {
+      const existing = this.byIdentity.get(key);
+      if (existing) existing.push(evidence);
+      else this.byIdentity.set(key, [evidence]);
+    }
+  }
+}
 
 const whereAr = (where: IdentityConflict["where"]): string => (where.length === 2 ? "الوصف وصفحة لينكدإن يذكران" : where[0] === "description" ? "الوصف يذكر" : "صفحة لينكدإن تذكر");
 const quoteAr = (s: string): string => `«${s.length > 40 ? `${s.slice(0, 40)}…` : s}»`;
@@ -137,6 +248,10 @@ export function withCompanyQuality<P extends QualityPlan>(plan: P, rowsIn: Recor
       const nameKey = tokensOf(name).sort().join(" ");
       const twin = (site ? firstBySite.get(site) : undefined) ?? (nameKey ? firstByName.get(nameKey) : undefined);
       if (twin) { report.possibleDuplicates.push(id); out.push(`قد تكون فرعًا أو تكرارًا لـ ${quoteAr(k.name ? text(twin[k.name]) : text(twin.id))} (${site && firstBySite.get(site) === twin ? "نفس الموقع الإلكتروني" : "نفس الاسم"})`); }
+      if (r[COMPANY_UNCERTAIN_KEY] === "yes" && !twin) {
+        report.possibleDuplicates.push(id);
+        out.push("لم تكفِ بيانات المصدر لتمييز هذا الفرع عن الصفوف المشابهة");
+      }
       if (site && !firstBySite.has(site)) firstBySite.set(site, r);
       if (nameKey && !firstByName.has(nameKey)) firstByName.set(nameKey, r);
       if (k.address && isUnusableAddress(r[k.address])) { report.unusableAddress.push(id); badAddresses.push(text(r[k.address])); out.push(`العنوان في المصدر (${quoteAr(text(r[k.address]))}) ليس عنوانًا فتُرك فارغًا`); }

@@ -33,6 +33,16 @@ describe("decision-maker field billing", () => {
     expect(decisionMakerChargePoints(units, prices)).toBe(0);
   });
 
+  it.each([
+    [{ phone: "2026-11-21" }, { baseUnits: 0, emailUnits: 0, phoneUnits: 0 }, 0],
+    [{ work_email: "manager@company.test", phone: "2026-11-21" }, { baseUnits: 1, emailUnits: 1, phoneUnits: 0 }, 203],
+    [{ phone: "+20 100 000 0000" }, { baseUnits: 1, emailUnits: 0, phoneUnits: 1 }, 138],
+  ])("charges only delivered contact fields with usable shape for %j", (row, expectedUnits, expectedCharge) => {
+    const units = decisionMakerDeliveredUnits([row], [...requested]);
+    expect(units).toEqual(expectedUnits);
+    expect(decisionMakerChargePoints(units, { basePerson: 83, workEmail: 120, phone: 55 })).toBe(expectedCharge);
+  });
+
   it("applies the 15 percent buffer only to the reserve and never quotes above the cap", () => {
     expect(decisionMakerQuotePoints(1, [...requested], prices, 0.15, 600)).toBe(98);
     expect(decisionMakerChargePoints({ baseUnits: 10, emailUnits: 10, phoneUnits: 10 }, prices, 600)).toBe(600);

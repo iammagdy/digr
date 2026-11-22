@@ -13,7 +13,7 @@ vi.mock("../src/lib/supabase/server", () => ({
 vi.mock("../src/lib/server/liveDailyCap", () => ({ liveDailyCapPoints: async () => undefined }));
 
 import { GET as walletHistory } from "../src/app/api/wallet/history/route";
-import { POST as estimatePost } from "../src/app/api/calculator/estimate/route";
+import { calculatorCardOf } from "../src/lib/missionEstimate";
 import { customerMissionView, minutesAr } from "../src/lib/agentMission/customerView";
 import { expectedTimeOf } from "../src/lib/agentMission/expectedTime";
 import { estimateMissionMinutes } from "../src/lib/agentMission/price";
@@ -455,17 +455,16 @@ describe("10. the calculator: three choices, one result, and the plan card's own
     for (const rows of [5, 50, 300, 1000]) {
       const view = customerMissionView({ mission: row({ plan_public: { ...plan, stages: [{ ...plan.stages[0], expected_rows: rows, planned_rows: rows }], expected_minutes: estimateMissionMinutes([{ rows }]) } }), events: [], now: T0 });
       expect(view.expectedAr, String(rows)).toBe(expectedTimeOf([{ rows }]).textAr);
+      expect(calculatorCardOf(view).priceFacts).toEqual(view.priceFacts);
+      expect(calculatorCardOf(view).priceFacts).toContainEqual({ labelAr: "الوقت المتوقع", valueAr: view.expectedAr });
     }
-    const body = await (await estimatePost({ headers: new Headers(), json: async () => ({ kind: "posts", platform: "x", volume: 50 }) } as any)).json();
-    expect(body.expectedAr).toBe(expectedTimeOf([{ rows: 50 }]).textAr);
-    expect(body.expectedAr).not.toContain("أقل من دقيقة");
-    expect(src("src/app/api/calculator/estimate/route.ts")).toContain("expectedTimeOf(");
+    expect(src("src/app/api/calculator/estimate/route.ts")).toContain("calculatorCardOf(result.view)");
   });
-  it("the page is the three choices, one result and the rules; no second calculator, no free-text box, no audit table", () => {
+  it("the page has one request form and no second calculator or audit table", () => {
     const page = html(createElement(PublicCalculatorPage));
-    for (const id of ["estimate-platform", "estimate-kind", "estimate-volume"]) expect(page).toContain(`id="${id}"`);
-    expect(page).not.toMatch(/<textarea|capability-select|جدول التدقيق|الكمية المسلَّمة/);
-    expect(src("src/components/calculator/MissionEstimator.tsx")).toContain('data-testid="estimate-duration"');
+    expect(page).toContain('id="estimate-request"');
+    expect(page).not.toMatch(/capability-select|جدول التدقيق|الكمية المسلَّمة/);
+    expect(src("src/components/calculator/MissionEstimator.tsx")).toContain("card.priceFacts.map");
   });
 });
 

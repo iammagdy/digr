@@ -8,7 +8,7 @@ vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => ({}) }))
 vi.mock("../src/lib/server/liveDailyCap", () => ({ liveDailyCapPoints: async () => undefined }));
 
 import PlanQuoteCard, { type PlanQuoteData } from "../src/app/dashboard/chat/components/PlanQuoteCard";
-import { POST as estimatePost } from "../src/app/api/calculator/estimate/route";
+
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { formatStructuredClarificationAnswers } from "../src/functions/shared/clarification";
 import { createChatDb } from "./helpers/chatSession";
@@ -329,28 +329,13 @@ describe("the plan panel and the calculator show it", () => {
     expect(render(baseQuote())).not.toContain('data-testid="plan-duration"');
   });
 
-  it("the calculator endpoint returns the same range logic for one request, and none when there is no price to show", async () => {
-    const call = async (body: any) => (await estimatePost({ headers: new Headers(), json: async () => body } as any)).json();
-    const ok = await call({ kind: "comments", platform: "youtube", volume: 5000 });
-    expect(ok.result.status).toBe("ok");
-    expect(ok.duration.labelAr).toBe("تقديري");
-    expect(ok.duration.rangeAr).toMatch(/^من .+ إلى .+$/u);
-    const people = await call({ kind: "people", volume: 3 });
-    expect(people.duration.rangeAr).toBeTruthy();
-    const open = await call({ kind: "comments", platform: "youtube", openEnded: true });
-    expect(open.duration).toBeNull();
-    // the calculator's range for a request equals the plan's range for the same records
-    // 5,000 comments do not fit one request (the cap of 600 points holds 1,897 at 0.275 points): the endpoint states the duration of the records ONE request holds
-    const same = missionDurationForPlan([{ capabilitySlug: "social-youtube-comments", targetVolumeMax: ok.result.maxVolumeInOneJob, params: {} }], "tab");
-    expect(ok.duration.rangeAr).toBe(same!.rangeAr);
-  });
-
-  it("the estimator component renders the expected time from the endpoint's answer: the plan card's own function (UI pass 1, item 10), not a second range", () => {
+  it("the calculator uses the stored plan timing fact without a second duration calculation", () => {
     const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
-    expect(source).toContain('data-testid="estimate-duration"');
-    expect(source).toContain("answer.expectedAr");
+    expect(source).toContain("card.priceFacts.map");
     expect(source).not.toContain("answer.duration");
-    expect(readFileSync("src/app/api/calculator/estimate/route.ts", "utf8")).toContain("expectedTimeOf(");
+    const route = readFileSync("src/app/api/calculator/estimate/route.ts", "utf8");
+    expect(route).toContain("calculatorCardOf(result.view)");
+    expect(route).not.toMatch(/expectedTimeOf|missionDurationForPlan/);
   });
 });
 

@@ -8,28 +8,27 @@ import PublicCalculatorPage from "../src/app/calculator/page";
 const html = renderToStaticMarkup(createElement(MissionEstimator));
 
 describe("the public estimate form", () => {
-  it("offers exactly three choices (platform, type of data, count), in Arabic only (UI pass 1, item 10: the free-text box and the budget field are gone)", () => {
+  it("accepts the full request in Arabic and does not display a price before submit", () => {
     expect(html).toContain('data-testid="mission-estimator"');
-    expect(html).toContain("المنصة");
-    expect(html).toContain("نوع البيانات");
-    expect(html).toContain("العدد المطلوب");
-    expect(html).not.toContain("<textarea");
-    expect(html).not.toContain("ميزانيتك بالنقاط");
+    expect(html).toContain('id="estimate-request"');
+    expect(html).toContain("اكتب طلب البحث");
+    expect(html).not.toContain('data-testid="estimate-result"');
     expect(html).not.toMatch(/undefined|null|NaN|USD|\$|treg|scrapecreators|tikhub|serpapi|openai|anthropic/i);
   });
 
-  it("promises no charge before approval and offers sign-up", () => {
-    expect(html).toContain("دون أي خصم من رصيدك");
+  it("keeps approval in chat and promises no charge before approval", () => {
+    const page = renderToStaticMarkup(createElement(PublicCalculatorPage));
+    expect(page).toContain("لا يُخصم أي رصيد أثناء المحادثة أو إعداد الخطة");
     const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
     expect(source).toContain('href="/register"');
-    expect(source).toContain("لا يُخصم شيء إلا بعد موافقتك على الخطة");
-    expect(source).toContain("FAILURE_STATE_AR");
+    expect(source).toContain("/dashboard/chat?c=");
+    expect(source).not.toContain('action: "approve"');
   });
 
-  it("gets its numbers from the rate-limited code-only endpoint, never from a model", () => {
+  it("gets its numbers from the rate-limited owned reader, without client pricing", () => {
     const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
     expect(source).toContain("/api/calculator/estimate");
-    expect(source).not.toMatch(/llm|openai|anthropic|executeTurn/i);
+    expect(source).not.toMatch(/llm|openai|anthropic|executeTurn|resolvePlanningPending/i);
     expect(readFileSync("src/app/api/calculator/estimate/route.ts", "utf8")).toContain("createRateLimiter");
     expect(readFileSync("src/app/api/calculator/cap/route.ts", "utf8")).toContain("createRateLimiter");
   });
