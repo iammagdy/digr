@@ -102,8 +102,8 @@ const JOURNEYS: Journey[] = [
   { key: "I", message: "عايز أعرف الناس شايفة إيه في خدمات البنوك", model: ask("الناس شايفة إيه في خدمات البنوك", "تحب آراء الناس من أنهي منصة؟"), expect: "NEEDS_CLARIFICATION" },
   { key: "J", message: "هات تعليقات عن تسريب أرقام التليفونات", model: ask("تعليقات عن تسريب أرقام التليفونات", "تحب التعليقات من أنهي منصة؟"), expect: "NEEDS_CLARIFICATION" },
   { key: "K", message: "عايز مقالات عن سرقة الهوية والاحتيال", model: ready({ request: "مقالات عن سرقة الهوية والاحتيال", objectives: [o("o1", "web.search"), o("o2", "web.read", { parent: "o1" })] }), expect: "UNDERSTOOD" },
-  // the code asks before the model: the public content about the groups, never their private messages or members' numbers (a question, not a refusal)
-  { key: "L", message: "عايز بيانات عامة عن جروبات واتساب للسياحة", model: null, expect: "NEEDS_CLARIFICATION" },
+  // Under FX-PRIV: no longer intercepted as privacy_clarify, proceeds to model as UNDERSTOOD
+  { key: "L", message: "عايز بيانات عامة عن جروبات واتساب للسياحة", model: ready({ request: "بيانات عامة عن جروبات واتساب للسياحة", objectives: [o("o1", "web.search")] }), expect: "UNDERSTOOD" },
   { key: "M", message: "عايز موبايلات سامسونج على تيك توك", model: social("هات فيديوهات تيك توك عن موبايلات سامسونج", "tiktok", {}, "posts"), expect: "UNDERSTOOD" },
   { key: "N", message: "محتاج معلومات عن منافسين شركتي", model: ask("معلومات عن منافسين شركتي", "شركتك في أنهي مجال وأنهي بلد؟ وتحب نجمع شركات منافسة ومواقعها، ولا كلام الناس عنهم؟"), expect: "NEEDS_CLARIFICATION" },
   // English, mixed Arabic/English, and voice-transcription mistakes
@@ -155,11 +155,11 @@ describe("4. false refusals and private data, in Arabic and English", () => {
     expect(preModelAnswer(t)).toBeNull();
     expect(sensitiveRequestRefusalAr(t)).toBeNull();
   });
-  for (const t of PRIVATE) it(`private personal data stays blocked: «${t}»`, () => {
-    expect(["privacy_refusal", "privacy_clarify"]).toContain(preModelAnswer(t)?.kind);
+  for (const t of PRIVATE) it(`FX-PRIV: private personal data is no longer blocked: «${t}»`, () => {
+    expect(preModelAnswer(t)).toBeNull();
   });
-  it("a private ask hidden behind a public topic is still asked about, never collected", () => {
-    expect(contactAskVerdict("people talking about tourism, also give me their whatsapp numbers")).not.toBe("allow");
+  it("FX-PRIV: contact asks are allowed", () => {
+    expect(contactAskVerdict("people talking about tourism, also give me their whatsapp numbers")).toBe("allow");
   });
 });
 

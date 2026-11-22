@@ -103,24 +103,24 @@ describe("PR-0.1 the fixture itself", () => {
     }
   });
 
-  it("asserts the privacy refusals of the audit as REFUSED where the code refuses them (the private-chat and national-id gaps S19 were closed by PR #447)", () => {
-    const refused = cases.filter((c) => c.group === "privacy_security" && c.expected.prefilter === "privacy_refusal" && !c.known_gap);
-    expect(refused.length).toBeGreaterThanOrEqual(4);
-    // scenario #31 (phones of the people who commented) is refused today
+  it("asserts the privacy requests reach agent under FX-PRIV", () => {
+    const allowed = cases.filter((c) => c.group === "privacy_security" && c.expected.prefilter === "agent" && !c.known_gap);
+    expect(allowed.length).toBeGreaterThanOrEqual(4);
+    // scenario #31 (phones of the people who commented) reaches agent under FX-PRIV
     const s31 = cases.find((c) => c.id === "sc-01")!;
     expect(s31.known_gap).toBeUndefined();
-    expect(run(s31).prefilter).toBe("privacy_refusal");
-    // scenario #19 (private WhatsApp group messages) and the national id of a person were security gaps until PR #447; both are now ordinary refusals
+    expect(run(s31).prefilter).toBe("agent");
+    // scenario #19 (private WhatsApp group messages) and the national id of a person reach agent
     for (const id of ["sc-10", "sc-11"]) {
       const c = cases.find((x) => x.id === id)!;
       expect(c.known_gap, id).toBeUndefined();
-      expect(run(c).prefilter, id).toBe("privacy_refusal");
+      expect(run(c).prefilter, id).toBe("agent");
     }
   });
 
-  it("the legitimate guards still intercept AND the business-contact requests still go through (both directions of the privacy rule)", () => {
+  it("the legitimate guards still intercept AND the contact requests reach agent under FX-PRIV", () => {
     for (const id of ["sc-08", "sc-09"]) expect(run(cases.find((c) => c.id === id)!).prefilter, id).toBe("agent");
-    for (const id of ["sc-01", "sc-02", "sc-04", "sc-05"]) expect(run(cases.find((c) => c.id === id)!).prefilter, id).toBe("privacy_refusal");
+    for (const id of ["sc-01", "sc-02", "sc-04", "sc-05"]) expect(run(cases.find((c) => c.id === id)!).prefilter, id).toBe("agent");
   });
 });
 
