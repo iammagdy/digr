@@ -32,6 +32,28 @@ export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
   refunded: "تعذر التنفيذ · رجع لمحفظتك",
 };
 
+export function stateLabelFromPhase(phase: string): string {
+  switch (phase) {
+    case "done":
+      return REQUEST_STATUS_LABEL_AR.done;
+    case "partial":
+      return REQUEST_STATUS_LABEL_AR.partial;
+    case "unserved":
+      return "لم تُنفَّذ";
+    case "failed":
+      return "فشلت";
+    case "cancelled":
+      return "أُلغيت";
+    case "waiting":
+    case "planning":
+    case "question":
+    case "plan":
+    case "running":
+    default:
+      return REQUEST_STATUS_LABEL_AR.running;
+  }
+}
+
 const FINISHED = new Set(["done", "completed"]);
 const NOT_DELIVERED = new Set(["failed", "cancelled", "canceled", "refused"]);
 

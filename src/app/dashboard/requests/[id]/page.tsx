@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/useUser";
@@ -8,10 +8,10 @@ import { createClient } from "@/lib/supabase/client";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { pointsAr } from "@/lib/pointsFormat";
-import { REQUEST_STATUS_LABEL_AR, deliveredChargedLineAr, resolveRequestKind } from "@/lib/jobs/requestStatus";
+import { REQUEST_STATUS_LABEL_AR, deliveredChargedLineAr, jobViewWithMission, resolveRequestKind, stateLabelFromPhase } from "@/lib/jobs/requestStatus";
 import { isSafeRequestId, readRequestFacts, type RequestFacts } from "@/lib/requests/facts";
 import { openJobHref } from "@/lib/requestLinks";
-import AgentMissionCard from "@/components/mission/AgentMissionCard";
+import AgentMissionCard, { type ApprovalCardView } from "@/components/mission/AgentMissionCard";
 import VersionList from "@/components/mission/VersionList";
 import ReviewQuote from "@/components/mission/ReviewQuote";
 import ReviewReport from "@/components/mission/ReviewReport";
@@ -53,6 +53,42 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
   const [read, setRead] = useState<"loading" | "done" | "missing" | "failed">("loading");
   // a review or an edit of this file finished (the status panel saw it): the versions, report and forms are mounted again so they read the new state without a manual reload
   const [deliveredEpoch, setDeliveredEpoch] = useState(0);
+  const [reloadEpoch, setReloadEpoch] = useState(0);
+  const handleSettled = useCallback(() => {
+    setReloadEpoch((n) => n + 1);
+  }, []);
+
+  const handleViewChange = useCallback((v: ApprovalCardView) => {
+    setFacts((prev) => {
+      const stateAr = stateLabelFromPhase(v.phase);
+      const isRunning =
+        v.phase === "running" ||
+        v.phase === "waiting" ||
+        v.phase === "planning" ||
+        v.phase === "plan" ||
+        v.phase === "question";
+
+      const delivered = isRunning
+        ? v.savedSoFar
+        : v.phase === "done"
+          ? v.totalRows
+          : v.phase === "partial"
+            ? v.savedSoFar
+            : v.phase === "unserved" || v.phase === "failed" || v.phase === "cancelled"
+              ? 0
+              : (prev?.delivered ?? null);
+
+      const requested = v.requestedRows || v.totalRows || prev?.requested || null;
+
+      return {
+        ...prev,
+        stateAr,
+        delivered,
+        requested,
+      };
+    });
+  }, []);
+
   useEffect(() => {
     const bump = () => setDeliveredEpoch((n) => n + 1);
     window.addEventListener(FILE_DELIVERED_EVENT, bump);
@@ -74,31 +110,37 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
           supabase.from("missions").select("id, job_id, status, delivered_units, charged_points, reserved_points, created_at, request_text").eq("user_id", user.id).or(`id.eq.${id},job_id.eq.${id}`).limit(1).maybeSingle(),
         ]);
         if (!alive) return;
-        const job: any = jobRes.data;
+        let job: any = jobRes.data;
         const mission: any = missionRes.data;
         if (!job && !mission) { setRead(jobRes.error || missionRes.error ? "failed" : "missing"); return; }
+        if (!job && mission?.job_id) {
+          const secondJobRes = await supabase.from("jobs").select("id, status, delivered_units, target_volume_max, charged_credits, reserved_credits, created_at").eq("user_id", user.id).eq("id", mission.job_id).maybeSingle();
+          if (secondJobRes.data) job = secondJobRes.data;
+        }
         if (mission?.id) setMissionId(String(mission.id));
         setJobId(job?.id ?? mission?.job_id ?? null);
-        const kind = job ? resolveRequestKind({ status: job.status, delivered: job.delivered_units, requested: job.target_volume_max }) : null;
+        const view = jobViewWithMission(job || {}, mission);
+        const kind = (job || mission) ? resolveRequestKind({ status: view.status || mission?.status || job?.status, delivered: view.delivered, requested: job?.target_volume_max }) : null;
         const charged = job?.charged_credits ?? mission?.charged_points;
         const missionDelivered = typeof mission?.delivered_units === "number" ? Number(mission.delivered_units) : null;
         const jobDelivered = typeof job?.delivered_units === "number" ? Number(job.delivered_units) : null;
         const hasContactMismatch = missionDelivered !== null && jobDelivered !== null && missionDelivered > jobDelivered;
+        const resolvedStateAr = kind ? REQUEST_STATUS_LABEL_AR[kind] : (mission?.status === "unserved" ? "لم تُنفَّذ" : stateLabelFromPhase(mission?.status || "") || "قيد التنفيذ");
         setFacts((prev) => ({
           ...prev,
           title: prev?.title ?? (typeof mission?.request_text === "string" ? mission.request_text : null),
-          stateAr: prev?.stateAr || (kind ? REQUEST_STATUS_LABEL_AR[kind] : "قيد التنفيذ"),
+          stateAr: resolvedStateAr,
           createdAt: job?.created_at ?? mission?.created_at ?? prev?.createdAt,
-          delivered: missionDelivered ?? jobDelivered ?? prev?.delivered ?? null,
+          delivered: view.delivered ?? missionDelivered ?? jobDelivered ?? prev?.delivered ?? null,
           requested: typeof job?.target_volume_max === "number" ? job.target_volume_max : prev?.requested ?? null,
-          pointsAr: charged !== undefined && charged !== null ? pointsAr(Number(charged)) : prev?.pointsAr ?? null,
+          pointsAr: charged !== undefined && charged !== null ? (kind === "running" ? "محجوز" : pointsAr(Number(charged))) : prev?.pointsAr ?? null,
           billable: hasContactMismatch ? jobDelivered : (prev?.billable ?? null),
         }));
         setRead("done");
       } catch { if (alive) setRead("failed"); }
     })();
     return () => { alive = false; };
-  }, [user, id, safe]);
+  }, [user, id, safe, reloadEpoch]);
 
   // the link to the conversation is resolved last (it is only for the «افتح المحادثة» button)
   useEffect(() => {
@@ -140,7 +182,7 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
           {facts?.title ? <h1 data-testid="details-title" className="m-0 break-words font-display text-[24px] font-medium leading-[1.5] text-ink sm:text-[28px]">{facts.title}</h1> : <Skeleton className="h-8 w-4/5" />}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-mut" data-testid="details-facts">
             {facts?.stateAr ? <span className="rounded-full bg-sf2 px-3 py-0.5 text-[12px] font-medium text-ink" data-testid="details-state">{facts.stateAr}</span> : <Skeleton className="h-6 w-20" />}
-            {facts?.createdAt ? <span>{dayLabel(facts.createdAt)}</span> : <Skeleton className="h-5 w-24" />}
+            {facts?.createdAt ? <span suppressHydrationWarning>{dayLabel(facts.createdAt)}</span> : <Skeleton className="h-5 w-24" />}
             {facts && facts.delivered !== null && facts.delivered !== undefined ? (
               <span data-testid="details-delivered">
                 {typeof facts.billable === "number" && facts.delivered > facts.billable
@@ -167,7 +209,15 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جارٍ تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
         {/* <AgentMissionCard missionId={missionId} stage2 /> */}
-        {read === "done" && missionId ? <AgentMissionCard missionId={missionId} stage2 onEdit={(requestText) => router.push(`/dashboard/chat?draft=${encodeURIComponent(requestText)}`)} /> : null}
+        {read === "done" && missionId ? (
+          <AgentMissionCard
+            missionId={missionId}
+            stage2
+            onViewChange={handleViewChange}
+            onSettled={handleSettled}
+            onEdit={(requestText) => router.push(`/dashboard/chat?draft=${encodeURIComponent(requestText)}`)}
+          />
+        ) : null}
         {/* STAGE C (behind DIGER_STAGE4_REVIEW or DIGER_STAGE4_EDITS): the truthful STATUS of every review or edit request on this file, decided on the server; it draws nothing while the route answers «not found» */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <FileWorkflow missionId={missionId} /> : null}
         {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
