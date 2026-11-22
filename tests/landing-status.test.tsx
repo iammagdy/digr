@@ -3,9 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Overview } from "../src/components/landing/Overview";
-import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
+import { getLiveServicesCatalog } from "../src/lib/liveServicesCatalog";
 import { DECISION_MAKERS_LINE_AR } from "../src/lib/servicesAvailability";
 import { platformsCountAr, sectorsCountAr } from "../src/lib/servicesCatalogText";
+
+const catalog = getLiveServicesCatalog();
+const SERVICES_CATALOG = catalog.sectors;
+const catalogCounts = () => catalog.counts;
 
 const html = renderToStaticMarkup(createElement(Overview));
 const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
