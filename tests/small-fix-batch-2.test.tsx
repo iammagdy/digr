@@ -107,7 +107,7 @@ describe("2. stored titles and the duplicate note use the plural after a number"
 describe("3. the requests-page tab for a released hold", () => {
   it("reads «حجز مؤقت مُحرَّر», the only customer form", () => {
     const page = src("src/app/dashboard/requests/page.tsx");
-    expect(page).toContain('["refunded", "حجز مؤقت مُحرَّر"]');
+    expect(page).toContain('["refunded", "رجع لمحفظتك"]');
     expect(page).not.toMatch(/\["refunded", "حجز مُحرَّر"\]/);
   });
 });

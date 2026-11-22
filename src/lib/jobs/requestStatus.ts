@@ -29,7 +29,7 @@ export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
   done: "مكتمل",
   partial: PARTIAL_STATUS_AR,
   running: "قيد التنفيذ",
-  refunded: "تعذر التنفيذ · حجز مؤقت مُحرَّر",
+  refunded: "تعذر التنفيذ · رجع لمحفظتك",
 };
 
 const FINISHED = new Set(["done", "completed"]);
@@ -87,7 +87,7 @@ export function deliveredChargedLineAr(input: { delivered: number; charged: numb
   const dStr = delivered === 1 ? "عنصرًا واحدًا" : delivered === 2 ? "عنصرين" : delivered <= 10 ? `${toArabicDigits(delivered)} عناصر` : `${toArabicDigits(delivered)} عنصرًا`;
   const uStr = unmatched === 1 ? "عنصرًا واحدًا" : unmatched === 2 ? "عنصرين" : unmatched <= 10 ? `${toArabicDigits(unmatched)} عناصر` : `${toArabicDigits(unmatched)} عنصرًا`;
   if (input.concise) {
-    return `استلمت ${toArabicDigits(delivered)}، ودُفع ثمن ${toArabicDigits(charged)} لعدم توفر بيانات الاتصال في ${uStr}.`;
+    return `استلمت ${toArabicDigits(delivered)}، ودُفع ثمن ${toArabicDigits(charged)} لعدم توفر بيانات الاتصال في ${unmatched === 1 ? "عنصر واحد" : uStr}.`;
   }
   const uClause = unmatched === 1 ? "عنصرًا واحدًا لم يحتوِ" : `${uStr} لم تحتوِ`;
   return `تم تسليم ${dStr}، وحُسبت تكلفة ${toArabicDigits(charged)} فقط لأن ${uClause} على بيانات الاتصال المطلوبة.`;

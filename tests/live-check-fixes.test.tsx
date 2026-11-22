@@ -181,21 +181,21 @@ describe("live check 4: the plan editor offers a country field when the plan has
 
 describe("live check 5: stored refund wording is read as «حجز مؤقت مُحرَّر» on request cards, activity lines and the wallet", () => {
   const STORED = [
-    ["تم استرداد كامل الرصيد المحجوز دون أي خصم", "حجز مؤقت مُحرَّر كاملًا دون أي خصم"],
-    ["تم استرداد الرصيد المحجوز", "حجز مؤقت مُحرَّر"],
-    ["إرجاع الحجز", "حجز مؤقت مُحرَّر"],
-    ["إرجاع الحجز المؤقت للطلب", "حجز مؤقت مُحرَّر للطلب"],
-    ["تم إرجاع المبلغ المحجوز كاملة إلى رصيدك", "حجز مؤقت مُحرَّر كاملًا"],
-    ["إعادة الرصيد المحجوز إلى حسابك", "حجز مؤقت مُحرَّر"],
-    ["تم إرجاع كامل النقاط المحجوزة", "حجز مؤقت مُحرَّر كاملًا"],
+    ["تم استرداد كامل الرصيد المحجوز دون أي خصم", "رجع لمحفظتك كاملًا دون أي خصم"],
+    ["تم استرداد الرصيد المحجوز", "رجع لمحفظتك"],
+    ["إرجاع الحجز", "رجع لمحفظتك"],
+    ["إرجاع الحجز المؤقت للطلب", "رجع لمحفظتك للطلب"],
+    ["تم إرجاع المبلغ المحجوز كاملة إلى رصيدك", "رجع لمحفظتك كاملًا"],
+    ["إعادة الرصيد المحجوز إلى حسابك", "رجع لمحفظتك"],
+    ["تم إرجاع كامل النقاط المحجوزة", "رجع لمحفظتك كاملًا"],
   ] as const;
   it("every stored form reads the one wording, and a line with no refund word is untouched", () => {
     for (const [stored, shown] of STORED) expect(normalizeReleaseWording(stored), stored).toBe(shown);
     expect(normalizeReleaseWording("شحن الرصيد عبر إنستاباي")).toBe("شحن الرصيد عبر إنستاباي");
   });
   it("the wallet's line explanation and notes go through the same normalizer", () => {
-    expect(walletNoteForDisplay("إرجاع الحجز")).toBe("حجز مؤقت مُحرَّر");
-    expect(walletNoteForDisplay("تم استرداد كامل الرصيد المحجوز دون أي خصم")).toBe("حجز مؤقت مُحرَّر كاملًا دون أي خصم");
+    expect(walletNoteForDisplay("إرجاع الحجز")).toBe("رجع لمحفظتك");
+    expect(walletNoteForDisplay("تم استرداد كامل الرصيد المحجوز دون أي خصم")).toBe("رجع لمحفظتك كاملًا دون أي خصم");
   });
   it("the request cards, the activity panel and the wallet read the normalizer (nothing stored is rewritten)", () => {
     expect(src("src/app/dashboard/requests/page.tsx")).toContain("normalizeReleaseWording(cleaned)");

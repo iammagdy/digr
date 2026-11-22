@@ -28,7 +28,7 @@ const APPROVE_FAILURES: Record<string, string> = {
   plan_changed: "تغيّر سعر الخطة عن المخزّن؛ أعد التخطيط.",
   quote_failed: "تعذّر إنشاء عرض السعر (قد يكون الحد الأقصى للحجز في قاعدة البيانات أقل من هذه المهمة).",
   accept_failed: "تعذّر اعتماد العرض وحجز الرصيد.",
-  claim_failed: "تعذّر إغلاق المهمة أمام المنفّذ القديم؛ حجز مؤقت مُحرَّر ولم يُخصم أي رصيد.",
+  claim_failed: "تعذّر إغلاق المهمة أمام المنفّذ القديم؛ رجع لمحفظتك ولم يُخصم أي رصيد.",
   // a plan with an ESTIMATED people stage is settled per stage (stageUnits.ts): when the database cannot do that yet, nothing is held and nothing is charged
   settle_unavailable: "تعذّر التأكد من جاهزية التسوية لهذه المهمة، ولم يُحجز أي رصيد. حاول بعد قليل.",
 };

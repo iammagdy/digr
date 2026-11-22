@@ -534,7 +534,7 @@ describe("an account job never asks the topic review (the request text of that r
 describe("the sentence of an account job that ends with nothing delivered speaks of the account, never of a topic", () => {
   it("received, held and the period are the job's totals, in Arabic-Indic digits, with the released hold in the house wording", () => {
     const plain = xAccountZeroDeliveryAr({ received: 20, held: 20, dateDropped: 0 });
-    expect(plain).toBe("استلمنا ٢٠ سجلاً من الحساب المطلوب، لكن لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه (أُحيل ٢٠ إلى المراجعة ولم يُحتسب)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(plain).toBe("استلمنا ٢٠ سجلاً من الحساب المطلوب، لكن لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه (أُحيل ٢٠ إلى المراجعة ولم يُحتسب)؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.");
     const windowed = xAccountZeroDeliveryAr({ received: 20, held: 5, dateDropped: 12 });
     expect(windowed).toContain("استُبعد منها ١٢ لأن تاريخها خارج الفترة");
     expect(windowed).toContain("وبقي ٨ داخل الفترة");
@@ -543,7 +543,7 @@ describe("the sentence of an account job that ends with nothing delivered speaks
     for (const text of [plain, windowed]) {
       expect(text).not.toContain("موضوع طلبك");
       expect(text).not.toMatch(/[A-Za-z0-9]/);
-      expect(text).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+      expect(text).toContain("رجع لمحفظتك كاملًا ولم يُخصم أي رصيد");
       CUSTOMER_TEXT_RULES(text);
     }
   });

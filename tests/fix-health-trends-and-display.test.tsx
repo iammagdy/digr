@@ -221,10 +221,10 @@ describe("9. the companies card: the price and the hold are two numbers, said ap
 
 describe("5 and 6. wallet wording", () => {
   it("a released hold is «حجز مؤقت مُحرَّر», everywhere it is shown, never «تحرير حجز» and never «استرداد»", () => {
-    expect(CREDIT_KIND_LABEL_AR.release).toBe("حجز مؤقت مُحرَّر");
+    expect(CREDIT_KIND_LABEL_AR.release).toBe("رجع لمحفظتك");
     for (const stored of ["تحرير حجز مؤقت", "تحرير الحجز المؤقت", "تحرير الحجز المؤقت كاملًا لفشل الاستخراج"]) {
       const shown = walletDisplayText(stored);
-      expect(shown).toContain("حجز مؤقت مُحرَّر");
+      expect(shown).toContain("رجع لمحفظتك");
       expect(shown).not.toMatch(/تحرير|استرداد/);
     }
   });

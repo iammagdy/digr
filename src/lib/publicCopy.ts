@@ -4,4 +4,4 @@
  */
 export const NOTHING_CHARGED_AR = "لم يُخصم أي رصيد";
 
-export const FAILURE_STATE_AR = `إن تعذّر تنفيذ الطلب ${NOTHING_CHARGED_AR}، وكل ما حُجز لطلبك هو حجز مؤقت مُحرَّر.`;
+export const FAILURE_STATE_AR = `إن تعذّر تنفيذ الطلب ${NOTHING_CHARGED_AR}، وكل ما حُجز لطلبك رجع لمحفظتك.`;

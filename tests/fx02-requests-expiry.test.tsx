@@ -22,7 +22,7 @@ describe("FX-02 Phase B: Requests list, details consistency and chat draft prefi
     expect(checkCustomerText(full).issues).toEqual([]);
 
     const concise = deliveredChargedLineAr({ delivered: 6, charged: 5, concise: true });
-    expect(concise).toBe("استلمت ٦، ودُفع ثمن ٥ لعدم توفر بيانات الاتصال في عنصرًا واحدًا.");
+    expect(concise).toBe("استلمت ٦، ودُفع ثمن ٥ لعدم توفر بيانات الاتصال في عنصر واحد.");
     expect(concise).not.toContain("صف");
     expect(concise).not.toContain("سجل");
     expect(checkCustomerText(concise).issues).toEqual([]);

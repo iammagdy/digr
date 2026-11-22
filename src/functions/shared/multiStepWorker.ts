@@ -382,8 +382,8 @@ export async function executeMultiStepJob(
 
   // STRICT GUARD 1: Refuse fake/mock execution in production
   if (isProduction && !isLive) {
-    const errorAr = "تعذر بدء الطلب. حجز مؤقت مُحرَّر كاملًا.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء الطلب وحجز مؤقت مُحرَّر كاملًا: منع البيانات التجريبية في الإنتاج");
+    const errorAr = "تعذر بدء الطلب. رجع لمحفظتك كاملًا.";
+    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء الطلب ورجع لمحفظتك كاملًا: منع البيانات التجريبية في الإنتاج");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -408,13 +408,13 @@ export async function executeMultiStepJob(
 
   // Live data guard: keep deployment configuration details out of customer-facing job state.
   if (!fetchPageFn && process.env.TREG_LIVE !== "true") {
-    const errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
+    const errorAr = "الخدمة غير متاحة حالياً. رجع لمحفظتك كاملًا.";
     const relRes = await releaseReservation(
       tables,
       userId,
       jobId,
       reservedCredits,
-      "حجز مؤقت مُحرَّر لعدم تفعيل مزود البيانات الحقيقي"
+      "رجع لمحفظتك لعدم تفعيل مزود البيانات الحقيقي"
     );
     try {
       await tables.updateRow({
@@ -531,7 +531,7 @@ export async function executeMultiStepJob(
             }
           }
 
-          await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لفشل الاستخراج");
+          await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك كاملًا لفشل الاستخراج");
           await tables.updateRow({
             databaseId: "digr",
             tableId: "jobs",
@@ -690,7 +690,7 @@ export async function executeMultiStepJob(
         if (currentChargeEstimate + estPagePoints > reservedCredits || currentChargeEstimate + estPagePoints > jobPointsCap) {
           if (collectedRows.length === 0) {
             const errorAr = "الرصيد المحجوز غير كافٍ لمعالجة الدفعة الأولى من السجلات.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لعدم كفاية الرصيد للدفعة الأولى");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك كاملًا لعدم كفاية الرصيد للدفعة الأولى");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -716,8 +716,8 @@ export async function executeMultiStepJob(
         const spendCapCheck = await checkProviderDailySpendCap(0.01, tables);
         if (!spendCapCheck.allowed) {
           if (collectedRows.length === 0) {
-            const errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر لبلوغ الحد اليومي للمزود");
+            const errorAr = "الخدمة غير متاحة حالياً. رجع لمحفظتك كاملًا.";
+            await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك لبلوغ الحد اليومي للمزود");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -797,20 +797,20 @@ export async function executeMultiStepJob(
           if (collectedRows.length === 0) {
             let errorAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
             if (callResult.isRouteMaxCost) {
-              errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
+              errorAr = "الخدمة غير متاحة حالياً. رجع لمحفظتك كاملًا.";
             } else if (callResult.isPlatformBalanceLow) {
               errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
             } else if (callResult.httpStatus === 400) {
-              errorAr = "رفض مصدر البيانات تفاصيل الطلب. حجز مؤقت مُحرَّر كاملًا؛ راجع إعدادات البحث أو جرّب مرة أخرى.";
+              errorAr = "رفض مصدر البيانات تفاصيل الطلب. رجع لمحفظتك كاملًا؛ راجع إعدادات البحث أو جرّب مرة أخرى.";
             } else if (callResult.httpStatus === 404) {
               errorAr = "الهدف المطلوب غير موجود أو محمي.";
             } else if (callResult.httpStatus === 422) {
               errorAr = "تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.";
             } else if (callResult.httpStatus === 429) {
-              errorAr = "تعذر إكمال البحث حالياً. حجز مؤقت مُحرَّر كاملًا.";
+              errorAr = "تعذر إكمال البحث حالياً. رجع لمحفظتك كاملًا.";
             }
 
-            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لفشل الاستخراج من المصدر");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك كاملًا لفشل الاستخراج من المصدر");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -872,7 +872,7 @@ export async function executeMultiStepJob(
 
   if (collectedRows.length === 0) {
     const errorAr = "لم يُعثر على أي بيانات مطابقة من المصدر.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لعدم وجود بيانات");
+    await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك كاملًا لعدم وجود بيانات");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -899,8 +899,8 @@ export async function executeMultiStepJob(
   });
 
   if (hasPlaceholder) {
-    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب: حجز مؤقت مُحرَّر كاملًا تلقائياً.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لرصد سجلات تجريبية");
+    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب: رجع لمحفظتك كاملًا تلقائياً.";
+    await releaseCredits(tables, userId, jobId, reservedCredits, "رجع لمحفظتك كاملًا لرصد سجلات تجريبية");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -1080,7 +1080,7 @@ export async function executeMultiStepJob(
   } catch {}
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وحجز مؤقت مُحرَّر ${pointsAr(Number(refundCredits), String)}.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، ورجع لمحفظتك ${pointsAr(Number(refundCredits), String)}.`,
     deliveredUnits,
     "info"
   );
@@ -1153,7 +1153,7 @@ export async function runJobWatchdog(
         job.userId,
         job.$id,
         job.reservedCredits,
-        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب: حجز مؤقت مُحرَّر كاملًا"
+        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب: رجع لمحفظتك كاملًا"
       );
 
       if (releaseRes.alreadyReleased) {

@@ -352,7 +352,7 @@ describe("the mission engine runs a chain of four stages and every row keeps its
     const blocked = async () => ({ ...bad(402), budgetStopped: true } as TregCallResult);
     const none = await runModelPlanChunk(input(mission()), { call: blocked });
     expect(none.ok).toBe(false);
-    expect(none.errorMessageAr).toContain("حجز مؤقت مُحرَّر");
+    expect(none.errorMessageAr).toContain("رجع لمحفظتك");
   });
 });
 
@@ -505,7 +505,7 @@ describe("the model manages the mission at its decision points, inside a budget"
     const out = await runModelPlanChunk(input(mission()), { call: world(), manager: m });
     expect(out.ok).toBe(false);
     expect(out.errorMessageAr).toContain("الشركات التي وجدناها ليست كهروميكانيكية");
-    expect(out.errorMessageAr).toContain("حجز مؤقت مُحرَّر");
+    expect(out.errorMessageAr).toContain("رجع لمحفظتك");
     expect(out.rows).toEqual([]);
   });
 

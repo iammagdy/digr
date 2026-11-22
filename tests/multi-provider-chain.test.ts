@@ -449,7 +449,7 @@ describe("T-7 money and shape guards (source text)", () => {
     expect(watchdogRouteSrc.includes('"release_job_atomic"')).toBe(true);
     expect(watchdogRouteSrc.includes("p_job_id: job.id")).toBe(true);
     expect(watchdogRouteSrc.includes("p_force: true")).toBe(true);
-    expect(countOccurrences(watchdogRouteSrc, "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.")).toBe(1);
+    expect(countOccurrences(watchdogRouteSrc, "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: رجع لمحفظتك كاملًا.")).toBe(1);
 
     expect(countOccurrences(src, "chainStrict: true")).toBe(1);
     expect((src.match(/ok: false/g) ?? []).length).toBe(1);

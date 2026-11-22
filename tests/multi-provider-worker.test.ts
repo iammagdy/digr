@@ -1113,7 +1113,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const delivered = events.filter((t) => t.includes("المسلَّم"));
       expect(delivered).toHaveLength(1);
       expect(delivered[0].startsWith(confirmed)).toBe(true);
-      expect(delivered[0].slice(confirmed.length)).toMatch(/^ \(حجز مؤقت مُحرَّر [^()]+، ولم يُخصم شيء\)\.$/);
+      expect(delivered[0].slice(confirmed.length)).toMatch(/^ \(رجع لمحفظتك [^()]+، ولم يُخصم شيء\)\.$/);
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
@@ -1144,7 +1144,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const events = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of events) {
         if (t.includes("الموثّق منها")) continue;
-        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(رجع لمحفظتك [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
       }
       // at the count the runner emits NO stop line of ANY kind (plan v9 :122 and :276(b); P65): the old line asked for one. Same check as the F15 style of chain.test.ts.
@@ -1279,7 +1279,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
     const confirmEvt = eventTexts.find((t) => t.startsWith("المسلَّم ٠ من ") && t.includes(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" })));
     expect(confirmEvt).toBeTruthy();
-    expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
+    expect(confirmEvt).toContain("رجع لمحفظتك");
     expect(confirmEvt).toContain("ولم يُخصم شيء");
   });
 it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-chain job keeps today's cap", async () => {
@@ -1901,7 +1901,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const relA = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
       expect(relA.args.p_force).toBe(true);
       expect(relA.args.p_error_message).toBe(bodyA.error);
-      expect(String(bodyA.error)).toContain("حجز مؤقت مُحرَّر كاملًا");
+      expect(String(bodyA.error)).toContain("رجع لمحفظتك كاملًا");
       expect(String(bodyA.error)).not.toMatch(/[A-Za-z0-9]/);
       expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
       expectMoney("released", { calls: 1 });
@@ -2032,7 +2032,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       expect(stopLinesSeen).toEqual([stop]);
 
       const relIdx = db.rpcCalls.indexOf(relCall!);
-      const confirmEvt = db.events.find((e: any) => String(e.message ?? "").includes("حجز مؤقت مُحرَّر"));
+      const confirmEvt = db.events.find((e: any) => String(e.message ?? "").includes("رجع لمحفظتك"));
       expect(confirmEvt).toBeDefined();
       // After-confirmation event exists after release RPC
       expect(relIdx).toBeGreaterThanOrEqual(0);
@@ -2250,7 +2250,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       const events = db.events.map((e: any) => String(e.message ?? ""));
       for (const t of events) {
         if (t.includes("الموثّق منها")) continue;
-        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        if (t.startsWith(releaseTextAr(RELEASE_NEUTRAL_REASON_AR, db.targetVolumeMax)) && /\(رجع لمحفظتك [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
         expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|تم إكمال/);
       }
     } finally {
@@ -2915,7 +2915,7 @@ describe("T-M chain (DT-06)", () => {
         expect(released[0].title).toBe(releasedNoticeFull(0).title);
         expect(released[0].body).toBe(releasedNoticeFull(0).body);
         expect(released[0].body).not.toMatch(/[0-9٠-٩]/);
-        expect(released[0].body).toBe("تعذّر استكمال طلبك. حجز مؤقت مُحرَّر كاملًا دون أي خصم.");
+        expect(released[0].body).toBe("تعذّر استكمال طلبك. رجع لمحفظتك كاملًا دون أي خصم.");
       }
     });
   }

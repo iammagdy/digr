@@ -47,7 +47,7 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
   const plan = input.params?.[MODEL_PLAN_PARAM] as StoredModelPlan | undefined;
   const fail = (errorCode: string, errorMessageAr: string, costMicro = 0, calls = 0, tregCallId = "", httpStatus = 500): ProviderAdapterCallOutput =>
     ({ ok: false, httpStatus, rows: [], nextCursor: null, costUsd: Number((costMicro / 1_000_000).toFixed(6)), costMicro, providerCallCount: calls, tregCallId, errorCode, errorMessageAr });
-  if (!plan || plan.v !== 1 || !Array.isArray(plan.steps) || plan.steps.length < 1) return fail("model_plan_missing", "تعذر تنفيذ الخطة المعتمدة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+  if (!plan || plan.v !== 1 || !Array.isArray(plan.steps) || plan.steps.length < 1) return fail("model_plan_missing", "تعذر تنفيذ الخطة المعتمدة؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.");
   const now = deps.now ?? Date.now;
   if (Array.isArray(plan.stages) && plan.stages.length === plan.steps.length) return runMissionChunk(input, plan, deps);
   const state = parseInterpreterState(input.cursor);

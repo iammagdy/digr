@@ -124,8 +124,8 @@ export function sanitizeActivityError(text: string): string {
   if (!text) return "";
   if (INTERNAL_JOB_ERROR_PATTERN.test(text)) {
     if (/422/.test(text)) return "تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.";
-    if (/429|rate\s*limit/i.test(text)) return "تعذر إكمال البحث حالياً. حجز مؤقت مُحرَّر كاملًا.";
-    return "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
+    if (/429|rate\s*limit/i.test(text)) return "تعذر إكمال البحث حالياً. رجع لمحفظتك كاملًا.";
+    return "الخدمة غير متاحة حالياً. رجع لمحفظتك كاملًا.";
   }
   return sanitizeActivityText(text);
 }

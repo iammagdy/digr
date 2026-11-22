@@ -10,7 +10,7 @@ import { BANNED_RELEASE_FORMS_AR, walletDisplayText } from "../src/lib/walletTex
 import { renderEmailTemplate } from "../supabase/functions/send-email/templates";
 import { renderEmailTemplate as renderSharedTemplate } from "../src/functions/shared/emailTemplates";
 
-const RELEASED = "حجز مؤقت مُحرَّر";
+const RELEASED = "رجع لمحفظتك";
 const src = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -48,10 +48,10 @@ describe("audit phase 4: «حجز مؤقت مُحرَّر» is the ONLY customer
   });
 
   it("old stored text (bell, request cards, activity) is read as the noun form", () => {
-    expect(normalizeReleaseWording("حُرّر حجز مؤقت بقيمة ٢٠ نقطة")).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
-    expect(normalizeReleaseWording("تعذّر الإكمال · حُرّر الحجز المؤقت")).toBe("تعذّر الإكمال · حجز مؤقت مُحرَّر");
+    expect(normalizeReleaseWording("حُرّر حجز مؤقت بقيمة ٢٠ نقطة")).toBe("رجع لمحفظتك بقيمة ٢٠ نقطة");
+    expect(normalizeReleaseWording("تعذّر الإكمال · حُرّر الحجز المؤقت")).toBe("تعذّر الإكمال · رجع لمحفظتك");
     expect(normalizeReleaseWording("حُرّر حجزك المؤقت")).toBe(RELEASED);
-    expect(normalizeReleaseWording("ويُحرَّر الباقي من الحجز المؤقت")).toBe("والباقي حجز مؤقت مُحرَّر");
+    expect(normalizeReleaseWording("ويُحرَّر الباقي من الحجز المؤقت")).toBe("والباقي رجع لمحفظتك");
     expect(normalizeReleaseWording("تعذر تحرير الرصيد المحجوز للمهمة.")).toBe("تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.");
   });
 
@@ -60,14 +60,14 @@ describe("audit phase 4: «حجز مؤقت مُحرَّر» is the ONLY customer
     const vars = { Name: "أحمد", Points: "٢٠", JobTitle: "بحث", Reason: "سبب", Balance: "٣٠٠" };
     for (const render of [renderEmailTemplate, renderSharedTemplate]) {
       const refund = render("refund", vars);
-      expect(refund.subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
+      expect(refund.subject).toBe("رجع لمحفظتك ٢٠ نقطة");
       expect(refund.html).not.toMatch(VERB_FORMS);
     }
   });
 
   it("the notification-preference label in settings is the noun form", () => {
     const settings = src("src/app/dashboard/settings/page.tsx");
-    expect(settings).toContain('["refund", "حجز مؤقت مُحرَّر", "عند أي حجز مؤقت مُحرَّر من رصيدك"]');
+    expect(settings).toContain('["refund", "رجع لمحفظتك", "عند رجوع أي رصيد لمحفظتك"]');
     expect(settings).toContain("غير قابل للاسترداد بعد الحذف"); // the account-deletion line is the owner's exception
   });
 

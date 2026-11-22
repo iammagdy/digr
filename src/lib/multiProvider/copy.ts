@@ -161,11 +161,11 @@ export function chainFailureReasonAr(kind: "spend" | "cursor" | "lease"): string
 }
 
 export function staleReleaseReasonAr(target: number): string {
-  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء.`;
 }
 
 export function operatorReleaseReasonAr(target: number): string {
-  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.`;
+  return `المسلَّم ${n(0)} من ${toArabicDigits(target)} مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء.`;
 }
 
 export type GroupCloseReason = "all_parts_done" | "deadline" | "deadline_stuck" | "empty_parts" | "part_unfrozen";
@@ -174,12 +174,12 @@ export const NEUTRAL_STOP_REASON_AR = "السبب: لم يصلنا سبب محد
 export const GROUP_UNAVAILABLE_AR = "تعذّر بدء الطلب المقسَّم الآن، ولم يُحجز أي شيء. حاول مرة أخرى بعد قليل.";
 export const QUOTE_START_UNAVAILABLE_AR = "تعذّر بدء الطلب الآن. حاول مرة أخرى بعد قليل.";
 export const GROUP_OPERATOR_CLOSE_AR = "أوقفنا الأجزاء الباقية من هذا الطلب من جانبنا.";
-export const GROUP_PART_STOPPED_AR = "أوقفنا هذا الجزء من الطلب قبل اكتماله، ولم يُخصم عنه شيء، وما حُجز له حجز مؤقت مُحرَّر.";
+export const GROUP_PART_STOPPED_AR = "أوقفنا هذا الجزء من الطلب قبل اكتماله، ولم يُخصم عنه شيء، وما حُجز له رجع لمحفظتك.";
 export const GROUP_PART_FILE_PENDING_AR = "ملف هذا الجزء قيد التجهيز ولم يُتح للتحميل بعد. حاول مرة أخرى لاحقًا.";
 export const GROUP_PART_FILE_UNAVAILABLE_AR = "تعذّر تحميل ملف هذا الجزء الآن. حاول مرة أخرى لاحقًا.";
 export const GROUP_PARTS_TITLE_AR = "أجزاء هذا الطلب";
 export const GROUP_PARTS_UNAVAILABLE_AR = "تعذّر تحميل روابط أجزاء هذا الطلب الآن. حاول مرة أخرى لاحقًا.";
-export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وما حُجز له حجز مؤقت مُحرَّر.";
+export const GROUP_PART_UNFROZEN_RELEASED_AR = "تعذّر تجهيز ملف هذا الجزء بأمان، فلم نحتسبه من المسلَّم ولم يُخصم عنه شيء، وما حُجز له رجع لمحفظتك.";
 export const GROUP_CLOSING_NOTICE_AR = "انتهت المدة المتاحة لتنفيذ طلبك، ونعمل الآن على إيقاف الجزء الجاري وإنهاء الطلب. تبقى النقاط محجوزة حتى ذلك الحين، ولن يُخصم منها إلا ثمن ما سُلِّم فعلًا.";
 
 export function splitCardLineAr(split: { parts: number; perPart: number; reachable: number; askedOriginal: number; hold: number }): string {
@@ -189,9 +189,9 @@ export function splitCardLineAr(split: { parts: number; perPart: number; reachab
   const K = split.parts;
   const G = split.hold;
   if (Y === X) {
-    return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+    return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، لذلك سننفّذ طلبك على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي رجع لمحفظتك عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
   }
-  return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ${toArabicDigits(40)}، لذلك أقصى ما يمكن تسليمه في هذا الطلب ${countPlainAr(Y, "companies")} على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
+  return `طلبت ${countPlainAr(X, "companies")}، وأقصى ما تتسع له المهمة الواحدة ${countPlainAr(V, "companies")} بسبب الحد الأقصى لحجز المهمة الواحدة، وأقصى عدد أجزاء للطلب الواحد ${toArabicDigits(40)}، لذلك أقصى ما يمكن تسليمه في هذا الطلب ${countPlainAr(Y, "companies")} على ${toArabicDigits(K)} أجزاء متتالية تلقائيًا بموافقة واحدة منك. عند موافقتك نحجز ${pointsAr(G, toArabicDigits)} مرة واحدة لكل الأجزاء، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، والباقي رجع لمحفظتك عند انتهاء الطلب. لن نسلّمك الشركة نفسها مرتين.`;
 }
 
 export function groupStartLineAr(args: { hold: number; parts: number }): string {
@@ -223,7 +223,7 @@ export function groupFinalLineAr(args: { reason: GroupCloseReason; Z: number; X:
     }
     reasonClause = ` السبب: ${R}`;
   }
-  return `المسلَّم ${toArabicDigits(args.Z)} من ${toArabicDigits(args.X)} مطلوب.${reasonClause} الخصم الإجمالي ${pointsAr(args.C, toArabicDigits)}، والباقي حجز مؤقت مُحرَّر.`;
+  return `المسلَّم ${toArabicDigits(args.Z)} من ${toArabicDigits(args.X)} مطلوب.${reasonClause} الخصم الإجمالي ${pointsAr(args.C, toArabicDigits)}، والباقي رجع لمحفظتك.`;
 }
 
 export const ALL_CUSTOMER_STRINGS = (): string[] => [

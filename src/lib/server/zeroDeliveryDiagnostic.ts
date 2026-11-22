@@ -127,7 +127,7 @@ export function xAccountZeroDeliveryAr(input: { received: number; held: number; 
   const part = dropped > 0
     ? `استلمنا ${received} من الحساب المطلوب، استُبعد منها ${toArabicDigits(dropped)} لأن تاريخها خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، وبقي ${toArabicDigits(inside)} داخل الفترة ${onlyRepliesAndReposts ? unconfirmed : `لكن ${unconfirmed}`}`
     : `استلمنا ${received} من الحساب المطلوب${onlyRepliesAndReposts ? "، " : "، لكن "}${unconfirmed}`;
-  return `${part}${kindsText}${heldText}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+  return `${part}${kindsText}${heldText}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`;
 }
 
 /** The records held for review that a customer sentence says: the job's total over every page (never only the last page), and never fewer than the last page held. */
