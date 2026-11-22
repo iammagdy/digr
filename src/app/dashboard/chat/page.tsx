@@ -1,5 +1,7 @@
 "use client";
 
+import { extractDraftFromQuery } from "@/lib/chat/extractDraftFromQuery";
+
 import { pointsAr } from "@/lib/pointsFormat";
 import { appendNewMessages, partCardMessagesOf, storedCardMissionOf } from "@/lib/agentMission/chatCards";
 import { METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
@@ -189,17 +191,6 @@ interface ActiveJobState {
   artifactHistoryAvailable?: boolean;
   /** Real columns of the saved result (for «شيت لكل …» file shaping). */
   resultColumns?: Array<{ key: string; titleAr: string }>;
-}
-
-export function extractDraftFromQuery(searchStr: string): string | null {
-  try {
-    const s = searchStr.startsWith("?") ? searchStr : `?${searchStr}`;
-    const p = new URLSearchParams(s);
-    const d = p.get("draft");
-    return d && d.trim() !== "" ? d : null;
-  } catch {
-    return null;
-  }
 }
 
 export default function ChatWorkspacePage() {
