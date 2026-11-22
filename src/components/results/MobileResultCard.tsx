@@ -149,7 +149,7 @@ export function MobileResultCard({ record, index }: { record: MobileResultRecord
             href={record.sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-9 items-center gap-1 rounded-full bg-sf2 px-3 text-[12px] font-medium text-ink hover:bg-ln transition-colors no-underline"
+            className="hit inline-flex min-h-9 items-center gap-1 rounded-full bg-sf2 px-3 text-[12px] font-medium text-ink hover:bg-ln transition-colors no-underline"
           >
             <span>فتح المصدر</span>
             <span aria-hidden="true" dir="ltr">↗</span>

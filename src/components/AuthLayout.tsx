@@ -86,7 +86,7 @@ export function PasswordInput({
         type="button"
         onClick={() => setShow((v) => !v)}
         aria-pressed={show}
-        className="absolute end-2 top-1/2 -translate-y-1/2 h-9 cursor-pointer rounded-[12px] border-0 bg-sf2 px-3 text-[12px] font-medium text-mut hover:text-ink hover:bg-ln transition-colors"
+        className="hit absolute end-2 top-1/2 -translate-y-1/2 h-9 cursor-pointer rounded-[12px] border-0 bg-sf2 px-3 text-[12px] font-medium text-mut hover:text-ink hover:bg-ln transition-colors"
       >
         {show ? "إخفاء" : "إظهار"}
       </button>
