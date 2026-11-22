@@ -2,10 +2,11 @@ import Link from "next/link";
 import { PLATFORM_GUIDE } from "@/functions/shared/platformGuide";
 import { getLiveServicesCatalog, SERVICE_STATUS_LINE_AR } from "@/lib/liveServicesCatalog";
 import { DECISION_MAKERS_LINE_AR, SERVICES_PRIMARY_CTA_AR } from "@/lib/servicesAvailability";
-import { FEATURED_CORE_NAMES } from "@/lib/servicesCatalogView";
+import { FEATURED_CORE_NAMES, getSellableCatalogView } from "@/lib/servicesCatalogView";
 import { formatAr } from "@/lib/arabicDigits";
 import { platformsCountAr, sectorsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
 import { CatalogBrowser } from "@/components/services/CatalogBrowser";
+import { CatalogDynamicView } from "@/components/services/CatalogDynamicView";
 import { PLATFORM_REQUEST_GROUPS, startRequestHref } from "@/lib/servicesRequestExamples";
 
 export const metadata = { title: "خدماتنا", description: "كل ما يجمعه ديجر من بيانات: القطاعات والمنصات والخدمات، وصناع القرار وبيانات التواصل المهنية." };
@@ -15,6 +16,7 @@ export const dynamic = "force-static";
 
 export default function ServicesCatalogPage() {
   const { counts, core, sectors } = getLiveServicesCatalog();
+  const catalogView = getSellableCatalogView();
   const featured = FEATURED_CORE_NAMES.map((name) => core.find((service) => service.nameAr === name)).filter((service): service is NonNullable<typeof service> => Boolean(service));
   const rest = core.filter((service) => !FEATURED_CORE_NAMES.includes(service.nameAr));
   return (
@@ -28,6 +30,9 @@ export default function ServicesCatalogPage() {
           </div>
           <Link href="/register" className="inline-flex min-h-11 w-fit shrink-0 items-center rounded-full bg-ac px-6 text-sm text-onac no-underline">{SERVICES_PRIMARY_CTA_AR}</Link>
         </header>
+
+        {/* Dynamic Catalog View (FX-CAT Ph3 Redesign) */}
+        <CatalogDynamicView groups={catalogView.groups} />
 
         <section data-testid="request-groups" aria-labelledby="groups-title" className="flex flex-col gap-4">
           <h2 id="groups-title" className="m-0 font-display text-[28px] font-medium text-ink">اختر المنصة</h2>
