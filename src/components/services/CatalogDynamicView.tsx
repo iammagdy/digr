@@ -88,7 +88,7 @@ export function CatalogDynamicView({
             <a
               key={group.id}
               href={`#group-${group.id}`}
-              className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border border-ln bg-sf px-4 text-[13px] font-medium text-ink no-underline transition-colors hover:border-ln2 hover:bg-sf2"
+              className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-ln bg-sf px-4 text-[13px] font-medium text-ink no-underline transition-colors hover:border-ln2 hover:bg-sf2"
             >
               <span>{group.nameAr}</span>
               <span className="text-[11px] text-mut">({group.items.length})</span>
