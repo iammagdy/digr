@@ -27,7 +27,7 @@ vi.mock("../src/lib/supabase/server", () => ({
 
 import * as exportRoute from "../src/app/api/admin/export/route";
 import { middleware } from "../src/middleware";
-import { resolveAdminLayoutRedirect } from "../src/app/admin/layout";
+import { resolveAdminLayoutRedirect } from "../src/lib/adminLayoutRedirect";
 import { isSecretColumn } from "../src/lib/adminExport";
 
 const person = (role?: string) => ({ id: "u1", email: "a@b.c", app_metadata: role ? { role } : {}, user_metadata: {}, email_confirmed_at: "2026-10-01T00:00:00Z" });
