@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
@@ -87,6 +87,12 @@ function companyRow(id: string, name: string, domain: string) {
 }
 
 describe("FX-08 Point P-B: Bounded Concurrency (K=3) & Deduplication", () => {
+  beforeEach(() => {
+    vi.stubEnv("DIGER_STAGE3_COMPANIES", "on");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
   it("B1.1 Concurrence proof & row-internal order: 6 people rows achieve peak in-flight 2..3 and <= 45% wall clock", async () => {
     const store = createMemoryStore();
     const items = await ItemStore.open(store, MISSION);
