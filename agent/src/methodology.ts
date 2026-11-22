@@ -14,7 +14,9 @@ import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
 import { reasonTextAr, shortfallClauseAr, stageTruthBodyAr } from "./finalize";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { decisionMakersLeftOutAr } from "../../src/lib/agentMission/roles";
-import { perParentShortfallAr } from "./perParentLimits";
+import { NORMAL_PARENT_STOPS, perParentShortfallAr } from "./perParentLimits";
+import { contactColumnsOf } from "../../src/lib/agentMission/stage3/b2bEngine";
+import { B2B_NOT_SEARCHED_AR, NOT_AVAILABLE_AR } from "../../src/lib/agentMission/taskContracts";
 import { threadCounterLinesOfPlan } from "./threadCounters";
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../src/lib/agentMission/foundation/topicChoice";
 
@@ -390,10 +392,13 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const truth = stageTruthBodyAr({ found: r.found, duplicates: r.duplicates, delivered: got, excludedByReason: r.excludedByReason, pending: r.pending, reviewStop: facts.reviewStop ?? null, stop: r.stop, people: isPeopleStage(s), noun: itemNounOf(s.title_ar) });
     if (truth) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${truth}.`); continue; }
     // THE COUNTS PER PARENT (companies with no people, with fewer than asked, people beyond the approved number): the shortfall of a child stage is said from them when they explain it (never «the source gave no more» when the other companies had surplus)
-    const perParent = s.parent_key !== null && r.pending === 0 && !s.parent_key.startsWith("__") ? perParentShortfallAr({ parentIds: (rowsByStage[s.parent_key] ?? []).map((x) => String(x.id)), childParentIds: (rowsByStage[s.key] ?? []).map((x) => String(x.parent_id ?? "")), perParent: s.per_parent_rows, surplus: r.excludedByReason.target_reached ?? 0, parentNoun: knownNounOf(stages.find((x) => x.key === s.parent_key)?.title_ar), childNoun: isPeopleStage(s) ? "شخص" : knownNounOf(s.title_ar) ?? "عنصر" }) : null;
+    const perParent = s.parent_key !== null && r.pending === 0 && !s.parent_key.startsWith("__") && NORMAL_PARENT_STOPS.has(r.stop) ? perParentShortfallAr({ parentIds: (rowsByStage[s.parent_key] ?? []).map((x) => String(x.id)), childParentIds: (rowsByStage[s.key] ?? []).map((x) => String(x.parent_id ?? "")), perParent: s.per_parent_rows, surplus: r.excludedByReason.target_reached ?? 0, parentNoun: knownNounOf(stages.find((x) => x.key === s.parent_key)?.title_ar), childNoun: isPeopleStage(s) ? "شخص" : knownNounOf(s.title_ar) ?? "عنصر", stop: r.stop }) : null;
     if (perParent) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${perParent}.`); continue; }
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
+  }
+  for (const line of contactSearchLimitLinesAr(plan, rowsByStage)) {
+    if (!limits.includes(line)) limits.push(line);
   }
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
   const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)), routesOfFacts(facts));
@@ -450,3 +455,24 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
 
   return { title: METHODOLOGY_TITLE_AR, items, table, reasons, tableAfterLabel: RELEVANCE_LABEL };
 }
+
+/**
+ * N6: The limits line stating searched vs not reached / incomplete contact searches.
+ */
+export function contactSearchLimitLinesAr(plan: PricedPlan, rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>): string[] {
+  const out: string[] = [];
+  for (const col of contactColumnsOf(plan)) {
+    const rows = rowsByStage[col.stage] ?? [];
+    if (rows.length === 0) continue;
+    const incomplete = rows.filter((r) => String(r[col.column] ?? "").trim() === B2B_NOT_SEARCHED_AR).length;
+    if (incomplete === 0) continue;
+    const searched = rows.length - incomplete;
+    const nounObj = knownItemNoun(col.noun === "company" ? "شركة" : "شخص")!;
+    const line = searched > 0
+      ? `«${col.titleAr}»: تم البحث لـ ${countAr(searched, nounObj)} من أصل ${countAr(rows.length, nounObj)}، ولم يكتمل البحث لـ ${countAr(incomplete, nounObj)} (تعذّر أو توقف قبل الوصول إليها)؛ كُتب «${B2B_NOT_SEARCHED_AR}» في خلاياها.`
+      : `«${col.titleAr}»: لم يكتمل البحث لـ ${countAr(incomplete, nounObj)} من أصل ${countAr(rows.length, nounObj)} (تعذّر أو توقف قبل إتمام البحث)؛ كُتب «${B2B_NOT_SEARCHED_AR}» في خلاياها.`;
+    out.push(line);
+  }
+  return out;
+}
+

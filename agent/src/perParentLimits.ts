@@ -1,5 +1,17 @@
 import { countAr, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { titleFieldOf, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
+import type { StopReason } from "./items/itemStore";
+
+/**
+ * Normal parent stop reasons where a shortfall can be explained by per-parent findings (source exhausted, no new items, target reached, or normal completion).
+ */
+export const NORMAL_PARENT_STOPS: ReadonlySet<StopReason | null | undefined> = new Set([
+  null,
+  undefined,
+  "source_exhausted",
+  "no_new_items",
+  "target_reached",
+]);
 
 /**
  * THE SHORTFALL OF A CHILD STAGE, FROM THE COUNTS RECORDED PER PARENT (live msn_7539ea17512cf58aa0e7, 2026-11-01: 8 of 10 people delivered; one company had NO people and twelve people were left out as beyond the approved two per company, and the limits row said «المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»).
@@ -18,12 +30,15 @@ export interface PerParentFacts {
   /** The noun of the parent (default «شركة») and of the child (default «شخص»). */
   parentNoun?: string;
   childNoun?: string;
+  /** The stop reason of the child stage, if known. */
+  stop?: StopReason | null;
 }
 
 /** «الفيديوهات», «الشركات»: the plural with the definite article. */
 const definitePlural = (plural: string): string => (plural.startsWith("ال") ? plural : `ال${plural}`);
 
 export function perParentShortfallAr(f: PerParentFacts): string | null {
+  if (f.stop !== undefined && !NORMAL_PARENT_STOPS.has(f.stop)) return null;
   const parentNoun = knownItemNoun(f.parentNoun ?? "شركة");
   const childNoun = knownItemNoun(f.childNoun ?? "شخص");
   if (!parentNoun || !childNoun || f.parentIds.length === 0) return null;
