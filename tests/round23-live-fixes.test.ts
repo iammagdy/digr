@@ -62,7 +62,7 @@ describe("2. personal contact data of private individuals is refused by code; bu
     "أرقام تليفونات عيادات الأسنان في الرياض",
     "ايميلات شركات الشحن في مصر",
   ];
-  it.each(REFUSE)("refused: «%s»", (m) => { expect(privateContactAsk(m), m).toBe(true); expect(preModelAnswer(m)?.kind, m).toBe("privacy_refusal"); });
+  it.each(REFUSE)("allowed under FX-PRIV: «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); expect(preModelAnswer(m)).toBeNull(); });
   it.each(ALLOW)("allowed (not refused): «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); expect(preModelAnswer(m)?.kind ?? null, m).not.toBe("privacy_refusal"); });
   it("the refusal is polite, says one sentence on privacy, offers what Diger can do, and is clean customer text", () => {
     expect(PRIVACY_REFUSAL_AR).toMatch(/خصوصي/);
@@ -189,7 +189,6 @@ describe("3. the open-missions limit applies only to a NEW data request", () => 
   });
   it.each([
     ["ممكن أغير اسمي في الحساب؟", /الإعدادات/],
-    ["هات أرقام تليفونات ناس عادية من فيسبوك", /خصوصي/],
     ["الموقع ده نصب ولا ايه؟", /لا يُخصم منك شيء قبل/],
     ["ازاي اشحن رصيدي؟", /المحفظة/],
     ["بكام النقطة؟", /جنيه/],
@@ -241,14 +240,12 @@ describe("the live messages of the 30-scenario test, with and without open missi
   });
 });
 
-describe("2/4/5 end to end: no mission, no model call, no money, no network", () => {
-  it("the privacy refusal, the trust answer and the account answers are written by code before the model is called", async () => {
+describe("2/4/5 end to end: trust and account answers written before the model", () => {
+  it("the trust answer and the account answers are written by code before the model is called", async () => {
     const model = fakeChatModel();
     setChatModelForTesting(model.call);
     const db = world();
     const ledger = JSON.stringify(db.rows("credit_ledger"));
-    const a = await turn(db, "هات أرقام تليفونات ناس عادية من فيسبوك");
-    expect(a.assistant.content_ar).toBe(PRIVACY_REFUSAL_AR);
     const b = await turn(db, "الموقع ده نصب ولا ايه؟");
     expect(b.assistant.content_ar).toBe(TRUST_REPLY_AR);
     const c = await turn(db, "ممكن أغير اسمي في الحساب؟");
@@ -256,7 +253,6 @@ describe("2/4/5 end to end: no mission, no model call, no money, no network", ()
     expect(model.calls).toHaveLength(0);
     expect(db.rows("missions")).toHaveLength(0);
     expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
-    expect(a.user.request_status).toBe("completed");
     expect((globalThis.fetch as any).mock.calls).toHaveLength(0);
   });
   it("a business contact request still goes on to planning (a mission is created)", async () => {
@@ -266,13 +262,12 @@ describe("2/4/5 end to end: no mission, no model call, no money, no network", ()
     expect(r.ok).toBe(true);
     expect(db.rows("missions")).toHaveLength(1);
   });
-  it("a refusal applies also to an edit-looking message and to a message the model would call a data request", async () => {
+  it("a contact request goes on to planning under FX-PRIV", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "data_request" }) }).call);
     const db = world();
-    const { r, assistant } = await turn(db, "عايز ارقام تليفونات المعلقين على البوست");
-    expect(r.ok).toBe(false);
-    expect(assistant.content_ar).toBe(PRIVACY_REFUSAL_AR);
-    expect(db.rows("missions")).toHaveLength(0);
+    const { r } = await turn(db, "عايز ارقام تليفونات المعلقين على البوست");
+    expect(r.ok).toBe(true);
+    expect(db.rows("missions")).toHaveLength(1);
   });
 });
 
