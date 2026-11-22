@@ -4,6 +4,8 @@ import { tregCallBoundOf, type Gateway } from "../gateway";
 import { floorMicroUsd } from "../../../src/lib/server/callBudget";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { WebGateway } from "../webGateway";
+import type { AgentStore } from "../types";
+import { callTregWithAsync } from "../asyncTreg";
 
 /**
  * PHASE 5 (docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md §9.1, PR-5.1): ONE PROVIDER-NEUTRAL WAY FOR A STAGE TO CALL ITS SOURCE.
@@ -61,14 +63,22 @@ export const isDirectWebSource = (endpointId: string): boolean => WEB_SOURCE_IDS
  * the model path keeps its own checks).
  * `stage.max_usd` (a number, when a plan carries one) is that stage's cap; absent, the job's budget is the only bound, as today.
  */
-export function stageScopeOf(plan: Pick<PricedPlan, "stages">): Record<string, StageScope> {
+export function stageScopeOf(plan: Pick<PricedPlan, "stages">, catalog?: TregCatalog): Record<string, StageScope> {
   const out: Record<string, StageScope> = {};
   for (const s of plan.stages) {
     const endpointId = s.engine?.endpoint_id;
     if (typeof endpointId !== "string" || endpointId === "") continue;
     const cap = (s as { max_usd?: unknown }).max_usd;
     const alternatives = (s.engine?.alternatives ?? []).map((a) => a.endpoint_id).filter((id): id is string => typeof id === "string" && id !== "");
-    out[s.key] = { endpointIds: [...new Set([endpointId, ...alternatives])], capUsd: typeof cap === "number" && Number.isFinite(cap) && cap >= 0 ? cap : null };
+    const pollEndpoints: string[] = [];
+    if (catalog) {
+      for (const id of [endpointId, ...alternatives]) {
+        const ep = catalog.byId.get(id);
+        const poll = (ep?.async_config as any)?.poll?.endpoint;
+        if (typeof poll === "string" && poll !== "") pollEndpoints.push(poll);
+      }
+    }
+    out[s.key] = { endpointIds: [...new Set([endpointId, ...alternatives, ...pollEndpoints])], capUsd: typeof cap === "number" && Number.isFinite(cap) && cap >= 0 ? cap : null };
   }
   return out;
 }
@@ -92,6 +102,11 @@ export function createSourceGateway(deps: {
   budget: { spentUsd(): number };
   /** The verified maximum of one call (`verifiedCallMaxUsdOf`). Asked only for a stage with a cap; absent or null: no maximum is known, and a capped stage makes no call. */
   maxCallUsd?: (endpointId: string, params: Record<string, unknown>) => number | null;
+  catalog?: TregCatalog;
+  store?: AgentStore;
+  missionId?: string;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
 }): SourceGateway {
   const log: SourceCallRecord[] = [];
   const spent = new Map<string, number>();
@@ -153,7 +168,11 @@ export function createSourceGateway(deps: {
           if ("refused" in w) return note({ ok: false, call_id: w.call_id, endpoint_id: input.endpoint_id, refused: w.refused, message: w.message }, "web");
           return note({ ok: false, call_id: w.call_id, endpoint_id: input.endpoint_id, failed: true, http_status: 0, message: w.message }, "web");
         }
-        const t = await deps.gateway.tregCall({ endpoint_id: input.endpoint_id, params: input.params, ...(scope.capUsd !== null ? { spend_limit_usd: bound } : {}) });
+        const callFn = (endpoint_id: string, params: Record<string, unknown>) =>
+          deps.gateway.tregCall({ endpoint_id, params, ...(scope.capUsd !== null ? { spend_limit_usd: bound } : {}) });
+        const t = (deps.catalog && deps.store && deps.missionId)
+          ? await callTregWithAsync({ catalog: deps.catalog, store: deps.store, missionId: deps.missionId, sleep: deps.sleep, now: deps.now }, callFn, input.endpoint_id, input.params)
+          : await callFn(input.endpoint_id, input.params);
         const charge = "charge_usd" in t || "reserved_usd" in t ? { usd: (t as { charge_usd?: number | null }).charge_usd, reserved: (t as { reserved_usd?: number }).reserved_usd } : undefined;
         if (t.ok) return note({ ok: true, call_id: t.call_id, endpoint_id: input.endpoint_id, provider, via: "treg", http_status: t.http_status, rows_in_page: t.rows_in_page, has_more: t.has_more, next_cursor: t.next_cursor }, "treg", charge);
         if ("refused" in t) return note({ ok: false, call_id: t.call_id, endpoint_id: input.endpoint_id, refused: t.refused, message: t.message }, "treg", charge);

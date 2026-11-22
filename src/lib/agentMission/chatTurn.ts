@@ -372,7 +372,7 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
       if (decision.source === "keyword" && decision.type !== "edit_of_open_request" && decision.type !== "greeting_or_small_talk" && decision.type !== "methodology_request") {
         const aboutPlan = planQuestionKind(input.message) !== null || refersToOpenRequest(input.message);
         // a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) still replaces the plan, as before; a follow-up never does
-        const standalone = decision.type === "data_request" && !aboutPlan && namesCollectibleData(input.message);
+        const standalone = decision.type === "data_request" && !aboutPlan;
         if (!standalone && (aboutPlan || decision.type !== "service_question")) return answerAboutOpenRequest(input, open, { ...decision, reply: null });
       }
       // a question about the plan is answered, never planned again: the model sometimes types «where does this data come from?» as a data request or a change (13 Nov replay)

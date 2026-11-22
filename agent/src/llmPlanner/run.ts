@@ -2,6 +2,7 @@ import { MODEL_SONNET } from "../../../src/lib/agentMission/constants";
 import { isPeopleOfCompanyStep } from "../../../src/lib/agentMission/childSources";
 import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
 import { RAW_PATH, type Gateway, type GatewayCallResult } from "../gateway";
+import { callTregWithAsync } from "../asyncTreg";
 import type { WebGateway } from "../webGateway";
 import { webRequestOf } from "../engine/sourceGateway";
 import { directWebEndpoints, peopleOfCompanyCapabilitiesOf } from "./catalogView";
@@ -127,5 +128,10 @@ async function probeAny(input: RunLlmPlanningInput, endpointId: string, params: 
     if ("refused" in w) return { ok: false, call_id: w.call_id, refused: w.refused as never, message: w.message };
     return { ok: false, call_id: w.call_id, failed: true, http_status: 0, message: w.message };
   }
-  return input.gateway.tregCall({ endpoint_id: endpointId, params, purpose: "planning sample", why: "llm planner probe" });
+  return callTregWithAsync(
+    { catalog: input.catalog, store: input.store, missionId: input.mission.id },
+    (id, p) => input.gateway.tregCall({ endpoint_id: id, params: p, purpose: "planning sample", why: "llm planner probe" }),
+    endpointId,
+    params
+  );
 }

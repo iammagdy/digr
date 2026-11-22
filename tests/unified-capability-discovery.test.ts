@@ -16,7 +16,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import {
-  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, planParamsDigest, resealCapabilitySelection, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope,
+  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, planParamsDigest, resealCapabilitySelection, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope, isPrivateCapabilityString,
   type CapabilityRegistry,
 } from "../src/lib/agentMission/capabilities";
 import { CAPABILITY_SCOPE_OPTIONS_AR, runPlanning, type RunnerDeps } from "../agent/src/runMission";

@@ -246,8 +246,9 @@ export interface StageNeed {
 
 /** The chain of stages that carries the need out (empty when the need is unknown or blocked). */
 export function stagesOfNeed(need: ResearchNeed): StageNeed[] {
-  if (need.privacy === "blocked" || need.kind === "unknown") return [];
+  if (need.privacy === "blocked") return [];
   if (need.objectives && need.objectives.length > 0) return stagesOfObjectives(need, need.objectives);
+  if (need.kind === "unknown") return [];
   const out: StageNeed[] = [];
   if (need.kind === "social") {
     // PHASE 4 families: each profile asked is its own first stage (a named account's own data), beside the content chain

@@ -126,6 +126,7 @@ export const ALLOWED_PARENTS: Readonly<Record<Operation, ReadonlyArray<Operation
   "companies.discover": [null], "company.enrich": ["companies.discover"], "company.contacts": ["companies.discover", "company.enrich"], "people.discover": [null, "companies.discover"],
   "places.discover": [null], "places.reviews": ["places.discover"], "web.search": [null], "web.read": ["web.search"], "apps.discover": [null], "apps.reviews": ["apps.discover"],
   "social.profile": [null],
+  "catalog.data": [null],
 };
 
 export function chainBindingIssues(stages: ReadonlyArray<StageDiscovery>): string[] {

@@ -110,7 +110,8 @@ Rules:
 - A child step: "parent_input" names the input that takes the parent item, and "from_field" which field of the parent sample item fills it (choose the field whose value the input expects: an id, a link, a handle). Do not put the parent's value in params.
 - Give up to 3 options, best first: prefer tools proven in production, with high ok_rate and returns_rows_rate, that carry every condition, then the cheaper.
 - Filter language and source criteria: Structured B2B tools and tools whose documentation or input notes use English expect English filter values (e.g., location_city: "Cairo" rather than "القاهرة", industry: "software" rather than "برمجيات", and standard country codes like "EG"). Emit filter values and query terms in the language the tool expects, according to its note and input documentation.
-- Dates: "YYYY-MM-DD" unless the input note says otherwise.`;
+- Dates: "YYYY-MM-DD" unless the input note says otherwise.
+- Match nested object fields and exact scalar, array, boolean and enum types declared in inputs: for an input with fields, pass an object matching its schema; for an array, pass a list; for a boolean, pass true or false; for an enum, use only allowed values.`;
 
 export const TOOL_CHOICE_SCHEMA: Record<string, unknown> = {
   type: "object",

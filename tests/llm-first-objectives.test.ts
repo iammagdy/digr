@@ -98,7 +98,8 @@ const COMPANY_CONTACTS = [obj("o1", "companies.discover"), obj("o2", "company.co
 
 describe("1. the model's objectives are the primary reading and map to real capabilities", () => {
   it("the objective vocabulary is exactly the registry's operations (plus «unsupported», which is never executed)", () => {
-    expect(OBJECTIVE_OPERATIONS.filter((o) => o !== "unsupported")).toEqual([...OPERATIONS]);
+    expect(OBJECTIVE_OPERATIONS.filter((o) => o !== "unsupported")).toEqual(OPERATIONS.filter((o) => o !== "catalog.data"));
+    expect(OPERATIONS).toContain("catalog.data");
   });
 
   it("each kind of research goal (social conversations, companies and official contacts, public professionals, places and reviews, public articles) becomes stages served by real capabilities of the three providers", () => {
