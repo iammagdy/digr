@@ -12,7 +12,10 @@ import { selfReferenceQuestionAr } from "../src/lib/agentMission/selfReference";
 import { pointsAr } from "../src/lib/pointsFormat";
 import { POST } from "../src/app/api/calculator/estimate/route";
 
-const fixture = vi.hoisted(() => ({ db: null as MemoryDb | null, viewer: "u1", guest: false }));
+const { fixture, owner } = vi.hoisted(() => {
+  const owner = "00000000-0000-0000-0000-0000000000aa";
+  return { owner, fixture: { db: null as MemoryDb | null, viewer: owner, guest: false } };
+});
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => fixture.db }));
 vi.mock("../src/lib/server/missionViewer", async (original) => ({
   ...(await original<typeof import("../src/lib/server/missionViewer")>()),
@@ -23,16 +26,16 @@ const at = "2026-11-21T06:00:00.000Z";
 const missionId = "msn_calculatorfixture";
 function world() {
   const db = createMemoryDb();
-  db.seed("conversations", [{ id: "conv1", user_id: "u1", title: "محادثة جديدة", status: "active" }]);
-  db.seed("profiles", [{ id: "u1" }]);
-  db.seed("credit_ledger", [{ id: "topup_fixture", user_id: "u1", delta: 40_000 }]);
-  db.seed("agent_settings", [{ key: CHAT_RESEARCH_BRIEF_FLAG_KEY, value: { user_ids: ["u1"] } }, { key: CAPABILITY_DISCOVERY_FLAG_KEY, value: { user_ids: ["u1"] } }]);
+  db.seed("conversations", [{ id: "conv1", user_id: owner, title: "محادثة جديدة", status: "active" }]);
+  db.seed("profiles", [{ id: owner }]);
+  db.seed("credit_ledger", [{ id: "topup_fixture", user_id: owner, delta: 40_000 }]);
+  db.seed("agent_settings", [{ key: CHAT_RESEARCH_BRIEF_FLAG_KEY, value: { user_ids: [owner] } }, { key: CAPABILITY_DISCOVERY_FLAG_KEY, value: { user_ids: [owner] } }]);
   fixture.db = db;
   return db;
 }
 
 beforeEach(() => {
-  fixture.viewer = "u1";
+  fixture.viewer = owner;
   fixture.guest = false;
   vi.stubEnv("JOB_MAX_POINTS_CAP", "");
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("unexpected network request"); }));
@@ -89,7 +92,7 @@ function fundedComments(base: PricedPlan): PricedPlan {
 }
 
 function storeCard(db: MemoryDb, plan: PricedPlan, id = missionId) {
-  const row = { id, user_id: "u1", status: "plan_ready", plan, plan_public: customerPlanView(plan),
+  const row = { id, user_id: owner, status: "plan_ready", plan, plan_public: customerPlanView(plan),
     created_at: at, updated_at: at, reserved_points: plan.price.reservePoints };
   const saved = db.rows("missions").find((r) => r.id === id);
   if (saved) Object.assign(saved, row);
@@ -99,7 +102,7 @@ function storeCard(db: MemoryDb, plan: PricedPlan, id = missionId) {
 function noMoney(db: MemoryDb) {
   expect(db.rows("plans_quotes")).toEqual([]);
   expect(db.rows("jobs")).toEqual([]);
-  expect(db.rows("credit_ledger")).toEqual([{ id: "topup_fixture", user_id: "u1", delta: 40_000 }]);
+  expect(db.rows("credit_ledger")).toEqual([{ id: "topup_fixture", user_id: owner, delta: 40_000 }]);
 }
 
 describe("calculator prices come only from the owned sealed card", () => {
@@ -110,7 +113,7 @@ describe("calculator prices come only from the owned sealed card", () => {
   ])("projects the complete-delivery charge $charge and hold $hold as distinct facts", async ({ build, charge, hold }) => {
     const db = world();
     storeCard(db, build(companyPlan()));
-    const expected = await loadCustomerMission(db, { id: missionId, userId: "u1" });
+    const expected = await loadCustomerMission(db, { id: missionId, userId: owner });
     if (!expected.ok) throw new Error(expected.error);
     const response = await request({ missionIds: [missionId] });
     const result = await response.json();
@@ -155,7 +158,7 @@ it("answers a calculator clarification before creating a mission, then retains i
   const text = "محتاج معلومات عن منافسين شركتي";
   const clarified = "شركات السياحة المنافسة في الغردقة";
   scriptBriefs(brief(text, "needs_clarification"), brief(clarified, "ready"));
-  const initial = { userId: "u1", conversationId: "conv1", userBalance: 40_000, isGuest: true, calculatorPlanOnly: true } as const;
+  const initial = { userId: owner, conversationId: "conv1", userBalance: 40_000, isGuest: true, calculatorPlanOnly: true } as const;
   const question = await handler.handleUserMessage({ ...initial, message: text });
   expect(question).toMatchObject({ conversationId: "conv1", contentAr: selfReferenceQuestionAr("company"), calculatorReplyScope: "single" });
   expect(question).not.toHaveProperty("agentMission");
@@ -173,7 +176,7 @@ it("keeps an agent-only request out of legacy planning when the agent is disable
   const handler = new ChatHandler(db as never);
   handler.agentChat = { enabled: false };
   await expect(handler.handleUserMessage({
-    userId: "u1", message: "هات ٣٠٠ تغريدة عن محمد صلاح", calculatorPlanOnly: true,
+    userId: owner, message: "هات ٣٠٠ تغريدة عن محمد صلاح", calculatorPlanOnly: true,
   } as const)).rejects.toThrow();
   expect(db.rows("messages")).toEqual([]);
   expect(db.rows("missions")).toEqual([]);

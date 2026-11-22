@@ -68,10 +68,10 @@ describe("D5: the sentence and its number", () => {
 describe("D5: where it appears", () => {
   const pricing = renderToStaticMarkup(createElement(PricingPage));
 
-  it("the pricing page states it under the capacity table and under the price table", () => {
-    expect((pricing.match(/data-testid="people-per-request-capacity"/g) || []).length).toBe(1);
-    expect((pricing.match(/data-testid="people-per-request-price"/g) || []).length).toBe(1);
-    expect(textOf(pricing).split(SENTENCE).length - 1).toBe(2);
+  it("the pricing page links to an owned plan instead of printing a fixed people capacity", () => {
+    expect(pricing).toContain('href="/calculator"');
+    expect(pricing).not.toMatch(/data-testid="people-per-request-(capacity|price)"/);
+    expect(textOf(pricing)).not.toContain(SENTENCE);
     expect(textOf(pricing)).not.toMatch(/[0-9]/);
   });
 
@@ -92,7 +92,8 @@ describe("D5: where it appears", () => {
 
   it("the calculator: its one result reads the sizing function (UI pass 1, item 10: the second, per-service list under the form is gone)", () => {
     const estimator = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
-    expect(estimator).toContain("decisionMakersPerRequestLineAr(result.maxVolumeInOneJob)");
+    expect(estimator).toContain("card.affordability");
+    expect(estimator).not.toContain("maxVolumeInOneJob");
     const page = readFileSync("src/app/calculator/page.tsx", "utf8");
     expect(page).toContain("<MissionEstimator />");
     expect(page).not.toContain("computePublicCalculatorQuote");

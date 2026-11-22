@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { RESEARCH_GROUP_MAX_PARTS } from "@/lib/agentMission/researchGroup";
 import { customerFacingFailure, readChatResponse, TEMPORARY_FAILURE_NO_CHARGE_AR } from "@/lib/customerError";
 import type { CalculatorCard } from "@/lib/missionEstimate";
 import { newPlannerRequestId } from "@/lib/missionPanelState";
@@ -22,6 +21,8 @@ interface OwnedCard {
   card: CalculatorCard;
 }
 
+// The owned read route accepts up to six mission IDs per request.
+const POLL_BATCH_SIZE = 6;
 const PLAN_LIMIT_AR = "لو كان الحجز أعلى من الحد المتاح، افتح الخطة لمراجعة العدد المناسب.";
 const textField = "min-h-12 w-full rounded-[14px] border border-ln2 bg-bg px-3.5 py-3 text-[15px] text-ink outline-none focus:border-ac";
 const primary = "inline-flex min-h-11 items-center self-start rounded-full bg-ac px-5 text-sm text-onac no-underline disabled:opacity-50";
@@ -99,8 +100,8 @@ export default function MissionEstimator() {
         const timed = AbortSignal.any([lifetime.signal, AbortSignal.timeout(MISSION_READ_LIMIT_MS)]);
         const headers = await chatHeaders();
         const next: OwnedCard[] = [];
-        for (let start = 0; start < ids.length; start += RESEARCH_GROUP_MAX_PARTS) {
-          const missionIds = ids.slice(start, start + RESEARCH_GROUP_MAX_PARTS);
+        for (let start = 0; start < ids.length; start += POLL_BATCH_SIZE) {
+          const missionIds = ids.slice(start, start + POLL_BATCH_SIZE);
           const response = await fetch("/api/calculator/estimate", {
             method: "POST", headers, body: JSON.stringify({ missionIds }), signal: timed,
           });

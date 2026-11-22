@@ -173,15 +173,16 @@ describe("the public endpoints", () => {
     expect((await last!.json()).error).toMatch(/انتظر/);
   });
 
-  it("answers a structured request and a text request with computed numbers", async () => {
+  it("refuses the former structured and text inputs before calculating a price", async () => {
     vi.resetModules();
     const { POST } = await import("../src/app/api/calculator/estimate/route");
-    const call = async (body: unknown) => POST(new Request("http://x", { method: "POST", headers: { "x-forwarded-for": "8.8.8.8" }, body: JSON.stringify(body) }) as any).then((r) => r.json());
-    const a = await call({ kind: "comments", platform: "youtube", volume: 100 });
-    expect(a.result.status).toBe("ok");
-    expect(a.summaryAr).toMatch(/حوالي/);
-    const b = await call({ text: "عايز ٢٠٠ تعليق من يوتيوب" });
-    expect(b.result?.status).toBe("ok");
-    expect((await call({})).success).toBe(false);
+    for (const body of [{ kind: "comments", platform: "youtube", volume: 100 }, { text: "عايز ٢٠٠ تعليق من يوتيوب" }, {}]) {
+      const response = await POST(new Request("http://x", {
+        method: "POST", headers: { "x-forwarded-for": "8.8.8.8", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }) as never);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ success: false });
+    }
   });
 });

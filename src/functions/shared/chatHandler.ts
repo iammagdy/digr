@@ -1549,7 +1549,7 @@ export class ChatHandler {
    * question, file-shaping notice, result follow-up) or ended by an error gets one here, so rows reconcile with messages.
    */
   async handleUserMessage(input: ChatHandlerInput): Promise<ChatHandlerResponse> {
-    if (input.calculatorPlanOnly && (!this.agentChat?.enabled || typeof this.tables?.from !== "function")) {
+    if (input.calculatorPlanOnly && (!this.agentChat?.enabled || typeof (this.tables as unknown as { from?: unknown } | null)?.from !== "function")) {
       throw new Error(CHAT_PREP_REASON_AR);
     }
     const turn: TurnUsageLog = { written: false, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 }, model: "" };
