@@ -363,10 +363,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
   for (const e of catalog.endpoints) {
     if (isMediaGen(e) || isPollOnly(e)) continue;
     let operation = operationOfCapability(e.capability) ?? (availability.extendedFamilies ? extendedOperationOf(e.capability) : null);
-    if (!operation) {
-      if (isPrivateCapabilityString(e.capability)) continue;
-      operation = "catalog.data";
-    }
+    if (!operation) continue;
     const card = cardOf.get(e.id);
     if (card && CARD_ROLE_OPERATION[card.role]) continue;
     const platformOf = String(e.capability ?? "").split(".")[0];
