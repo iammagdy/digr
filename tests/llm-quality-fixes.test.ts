@@ -134,11 +134,14 @@ describe("finding 2: research ABOUT a sensitive subject is a request, never a re
     expect(r.contentAr).not.toContain("أرقام هواتف أو بيانات شخصية");
     expect(missions(db)).toHaveLength(1);
   });
-  it("the real refusal («ديجر … لا تجمع أرقام هواتف») of the public question is re-typed as a request: no refusal reaches the customer", async () => {
-    scripted([{ type: "service_question", reason: "x", reply: "ديجر تجمع بيانات بحث عامة، ولا تجمع أرقام هواتف أو بيانات شخصية لأفراد.", count: null }]);
+  // D-0086 (N16): prompt instructs the model that public research about leaks is data_request;
+  // when model classifies as data_request, it proceeds. Regex does not overrule model's service_question.
+  it("the public question classified as data_request by model proceeds to planning (D-0086)", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "جمع آراء الناس عن تسريب أرقام التليفونات", topic: "تسريب أرقام التليفونات" }) }]);
     const db = world();
     const { r } = await turn(db, "الناس بتقول إيه عن تسريب أرقام التليفونات");
-    expect(r.contentAr).not.toContain("لا تجمع أرقام");
+    expect(r.ok).toBe(true);
+    expect(missions(db)).toHaveLength(1);
     expect(lastLog().type).toBe("data_request");
   });
   it("the prompt states the rule and its example", () => {
@@ -219,13 +222,15 @@ describe("findings 4–7: corrections, invented places, empty questions, unsuppo
     expect(missions(db)).toHaveLength(0);
     expect(lastLog().brief).toBe("clarify_code_question");
   });
-  it("O1: the honest «Snapchat is not offered», re-typed as a request by the keyword rule, is answered honestly: no mission that could only end «unserved»", async () => {
+  // D-0086 (N16): honest refusal from model is delivered directly without keyword overrule
+  it("O1: the honest «Snapchat is not offered» from model is delivered directly (D-0086)", async () => {
     scripted([{ type: "other", reason: "x", reply: "للأسف لا نجمع حاليًا بيانات من سناب شات.", count: null }]);
     const db = world();
     const { r } = await turn(db, "هات ستوريز سناب شات عن السياحة في مصر");
     expect(r.ok).toBe(false);
     expect(missions(db)).toHaveLength(0);
-    expect(lastLog().brief).toBe("words_unsupported_platform");
+    expect(lastLog().brief).toBe("not_a_request");
+    expect(r.contentAr).toContain("لا نجمع حاليًا بيانات من سناب شات");
   });
   it("a new request's own number the model's sentence dropped is asked, never silently lost", async () => {
     scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة", platforms: ["tiktok"], content: ["comments"], objectives: [o("o1", "social.parents", { platform: "tiktok" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })] }) }]);
@@ -287,12 +292,13 @@ describe("round 1: no mission from words that name no data", () => {
       expect(missions(db)).toHaveLength(0);
     });
   }
-  it("a refusal the keyword rule overruled is never shown as the question: the code asks", async () => {
+  // D-0086 (N16): keyword overrule is removed; model refusal for out-of-scope services is delivered directly
+  it("out-of-scope service answer from model is delivered directly without keyword overrule (D-0086)", async () => {
     scripted([{ type: "service_question", reason: "x", reply: "ديجر لا تقدم التحليل الإحصائي.", count: null }]);
     const db = world();
     const { r } = await turn(db, "اعملي تحليل إحصائي للبيانات واكتبلي فصل النتائج");
     expect(missions(db)).toHaveLength(0);
-    expect(r.contentAr).not.toContain("لا تقدم");
+    expect(r.contentAr).toContain("ديجر لا تقدم التحليل الإحصائي");
   });
   it("«تيك توك» alone: the model's invented topic («الموضوع المطلوب») is asked, not planned; a real topic the parser cannot read is not asked", async () => {
     scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "منشورات وفيديوهات تيك توك عن الموضوع المطلوب", platforms: ["tiktok"], content: ["posts", "videos"], objectives: [o("o1", "social.parents", { platform: "tiktok" })] }) }]);

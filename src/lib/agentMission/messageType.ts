@@ -52,8 +52,8 @@ const PRICE_RE = /سعر|اسعار|بكام|بكم|تكلف|كام نقطه|ك�
 const SERVICE_RE = /نقطه|نقاط|سعر|اسعار|بكام|بكم|كام|تكلف|تحاسب|خصم|ادفع|دفع|رصيد|اشحن|شحن|الحد الادني|حد ادني|اشتراك|باقه|باقات|مجاني|مجانا|الخدمه|ديجر|بتعملوا|بتعمل|تقدموا|بتقدموا|تشتغل|بتشتغلوا|انتو مين|انتم مين|من انتم|مين انتو|فاتوره|استرجاع|ترجعوا|تعمل ايه/;
 const HOW_RE = /كيف|ازاي|تعمل|تشتغل|بتعمل|بتشتغل|الخدمه|ديجر|مين|تقدم|تقدموا|بتقدموا|ايه هي|ما هي|ماهي|ماذا/;
 
-/** What a data request is about: the kinds of data, the platforms and the file kinds the service collects and delivers. */
-const STRONG_NOUN_RE = /تعليق|تغريد|تويت|تويتر|بوست|منشور|فيديو|ريلز|ريل |ستوري|حسابات|حساب |شركات|شركه|موظف|مديري|مديرين|مسؤول|ايميل|الايميل|بريد|هاتف|هواتف|ارقام|رقم |مراجعات|مراجعه|تقييم|خرائط|مطعم|مطاعم|صيدلي|عياد|مستشفي|فندق|فنادق|متابع|هاشتاج|هاشتاغ|قائمه|قوائم|اكسل|excel|xlsx|csv|tweet|post|comment|video|review|compan|email|lead|follower|account|ريديت|reddit|tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|لينكد|linkedin|twitter|(?:^| )اكس(?: |$)/;
+/** What a data request is about: the kinds of data and the file kinds the service collects and delivers (no platform lists per D-0086). */
+const STRONG_NOUN_RE = /تعليق|تغريد|تويت|بوست|منشور|فيديو|ريلز|ريل |ستوري|حسابات|حساب |شركات|شركه|موظف|مديري|مديرين|مسؤول|ايميل|الايميل|بريد|هاتف|هواتف|ارقام|رقم |مراجعات|مراجعه|تقييم|خرائط|مطعم|مطاعم|صيدلي|عياد|مستشفي|فندق|فنادق|متابع|هاشتاج|هاشتاغ|قائمه|قوائم|اكسل|excel|xlsx|csv|tweet|post|comment|video|review|compan|email|lead|follower|account/;
 /**
  * PR-1.4: true when the words NAME something Diger collects (a kind of data or a platform). The fixed-answer filters that run before the agent (the general question, the identity question, the account and trust rules) use it to STAND ASIDE: a message that asks for comments, posts, a
  * list or a platform is a research request and goes to the agent, whatever sensitive-sounding word its TOPIC contains («عن ChatGPT», «عن نصب الاستثمار», «من انتخابات»). It is the same noun list the message-type classifier above already uses; no second classifier.
@@ -71,9 +71,6 @@ export function carriesResearchRequest(text: string): boolean {
 }
 /** An explicit ask for data, also with «و» in front («وعايز داتا عن …», «عايز بيانات عن …»). */
 const WANTS_DATA_RE = /(?:^| )و?(?:عايز|عاوز|محتاج|احتاج|اريد|هات|جيب|اجمع|ابغي)\S*(?: \S+){0,2} (?:داتا|بيانات|معلومات|data)(?: |$)/;
-
-/** A platform the service collects from, named in the text (a subset of STRONG_NOUN_RE). */
-const PLATFORM_NAME_RE = /tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|twitter|تويتر|(?:^| )اكس(?: |$)/;
 
 /** «What people say / think about …»: the opinions of the public on a subject (normalized text, padded with spaces). */
 const OPINION_RE = / (?:الناس|الجمهور|العملاء|المستخدمين|المصريين|المتابعين|الشباب) (?:\S+ )?(?:بتقول|بيقولوا|بيقول|يقولون|يقولوا|بيتكلموا|يتكلمون|بيتكلم|شايفين|رايهم|رايه|بيعلقوا|يعلقون)|(?: |^)(?:اراء?|راي) (?:ال)?(?:ناس|جمهور|عملاء|مستخدمين|متابعين)| ردود (?:ال)?فعل | what (?:are |do )?(?:people|users|customers|fans) (?:are )?(?:saying|say|think|thinking|feel)| public (?:opinion|reaction|sentiment) /;
@@ -133,8 +130,8 @@ export function classifyMessage(message: string): MessageType {
   // what PEOPLE SAY about a subject is public-opinion research, whatever the subject (live evaluation 2026-11-12: «الناس بتقول إيه عن تسريب أرقام التليفونات» and «What are people saying about phone number leaks» were refused by the model):
   // a request, so the WHEN-UNSURE rule never lets a model's refusal stand. Private data itself is refused before this by the privacy guard (guardRules.ts)
   if (OPINION_RE.test(` ${text} `) && ABOUT_RE.test(` ${text} `)) return "data_request";
-  // cm-13: a statement that names what to collect AND a platform, with no question («كل التعليقات على بوستات فيسبوك عن غلاء الأسعار»), is a request even without an ask verb
-  if (strongNoun && !asksQuestion && PLATFORM_NAME_RE.test(` ${text} `) && words.length >= 4) return "data_request";
+  // cm-13: a statement that names what to collect, with no question («كل التعليقات على منشورات عن غلاء الأسعار»), is a request even without an ask verb
+  if (strongNoun && !asksQuestion && words.length >= 4) return "data_request";
   if (collectStrong && words.length >= 3) return "data_request";
   if (SEARCH_RE.test(text) && words.length >= 4) return "data_request";
   if (generic && (ask || collectStrong || GET_RE.test(text)) && words.length >= 3) return "data_request";
