@@ -183,13 +183,6 @@ function getCatalogPollIds(catalog: TregCatalog): Set<string> {
 }
 
 const MEDIA_GEN_PLATFORMS = new Set(["image-gen", "video-gen", "voice-gen", "music-gen"]);
-const OWN_ACCOUNT_ONLY_PLATFORMS = new Set([
-  "google-analytics",
-  "search-console",
-  "google-tag-manager",
-  "google-ads",
-  "slack",
-]);
 
 export function isLiveCatalogEndpoint(
   e: CatalogEndpoint,
@@ -197,7 +190,6 @@ export function isLiveCatalogEndpoint(
   pollIds?: Set<string>,
 ): boolean {
   if (!e.platform || !e.id) return false;
-  if (OWN_ACCOUNT_ONLY_PLATFORMS.has(e.platform)) return false;
   if (!isSellable(e.id, catalog)) return false;
 
   const block = blockedEndpointReason(e.id, e.scope ?? null);
@@ -251,40 +243,156 @@ function sanitizeArabicCustomerText(raw: string): string {
   return s;
 }
 
+const ENTITY_TOKEN_MAP: Record<string, { entity: string; group: string }> = {
+  reviews: { entity: "تقييمات ومراجعات", group: "التقييمات والمراجعات" },
+  review: { entity: "تقييمات ومراجعات", group: "التقييمات والمراجعات" },
+  comments: { entity: "تعليقات وردود", group: "التعليقات والردود" },
+  comment: { entity: "تعليقات وردود", group: "التعليقات والردود" },
+  replies: { entity: "تعليقات وردود", group: "التعليقات والردود" },
+  reply: { entity: "تعليقات وردود", group: "التعليقات والردود" },
+  posts: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  post: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  tweets: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  tweet: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  articles: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  article: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  feed: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  notes: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  note: { entity: "منشورات ومحتوى", group: "المنشورات والمحتوى" },
+  videos: { entity: "مقاطع فيديو", group: "الفيديوهات والبث" },
+  video: { entity: "مقاطع فيديو", group: "الفيديوهات والبث" },
+  reels: { entity: "مقاطع فيديو", group: "الفيديوهات والبث" },
+  reel: { entity: "مقاطع فيديو", group: "الفيديوهات والبث" },
+  stream: { entity: "مقاطع فيديو", group: "الفيديوهات والبث" },
+  followers: { entity: "متابعين وتفاعل", group: "المتابعون والتفاعل" },
+  follower: { entity: "متابعين وتفاعل", group: "المتابعون والتفاعل" },
+  following: { entity: "متابعين وتفاعل", group: "المتابعون والتفاعل" },
+  likes: { entity: "متابعين وتفاعل", group: "المتابعون والتفاعل" },
+  like: { entity: "متابعين وتفاعل", group: "المتابعون والتفاعل" },
+  products: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  product: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  items: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  item: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  prices: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  price: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  shop: { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  profile: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  user: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  users: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  account: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  channel: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  creator: { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  company: { entity: "بيانات شركات", group: "الشركات" },
+  companies: { entity: "بيانات شركات", group: "الشركات" },
+  business: { entity: "بيانات شركات", group: "الشركات" },
+  people: { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  employee: { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  employees: { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  contact: { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  contacts: { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  jobs: { entity: "وظائف معلنة", group: "المجتمعات المهنية والوظائف" },
+  job: { entity: "وظائف معلنة", group: "المجتمعات المهنية والوظائف" },
+  keywords: { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  keyword: { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  serp: { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  rankings: { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  rank: { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  trends: { entity: "موضوعات رائجة", group: "الترندات والأكثر رواجًا" },
+  trend: { entity: "موضوعات رائجة", group: "الترندات والأكثر رواجًا" },
+  trending: { entity: "موضوعات رائجة", group: "الترندات والأكثر رواجًا" },
+  stocks: { entity: "أسعار وأسواق مالية", group: "الأسواق والأسعار المالية" },
+  stock: { entity: "أسعار وأسواق مالية", group: "الأسواق والأسعار المالية" },
+  market: { entity: "أسعار وأسواق مالية", group: "الأسواق والأسعار المالية" },
+  repos: { entity: "مستودعات وبرمجيات", group: "المطورون والأكواد" },
+  repo: { entity: "مستودعات وبرمجيات", group: "المطورون والأكواد" },
+  commits: { entity: "مستودعات وبرمجيات", group: "المطورون والأكواد" },
+  commit: { entity: "مستودعات وبرمجيات", group: "المطورون والأكواد" },
+  ads: { entity: "إعلانات وحملات", group: "الإعلانات والحملات" },
+  ad: { entity: "إعلانات وحملات", group: "الإعلانات والحملات" },
+  campaigns: { entity: "إعلانات وحملات", group: "الإعلانات والحملات" },
+  campaign: { entity: "إعلانات وحملات", group: "الإعلانات والحملات" },
+  places: { entity: "أماكن ومواقع جغرافية", group: "الأماكن والأنشطة التجارية" },
+  place: { entity: "أماكن ومواقع جغرافية", group: "الأماكن والأنشطة التجارية" },
+  locations: { entity: "أماكن ومواقع جغرافية", group: "الأماكن والأنشطة التجارية" },
+  location: { entity: "أماكن ومواقع جغرافية", group: "الأماكن والأنشطة التجارية" },
+};
+
+const CATEGORY_MAP: Record<string, { entity: string; group: string }> = {
+  "E-commerce": { entity: "منتجات وأسعار", group: "المنتجات والأسعار" },
+  "Social": { entity: "بيانات ملف وحساب", group: "الحسابات والملفات الشخصية" },
+  "SEO/AEO": { entity: "كلمات مفتاحية ونتائج", group: "الكلمات المفتاحية ونتائج البحث" },
+  "Reviews & Apps": { entity: "تقييمات ومراجعات", group: "التقييمات والمراجعات" },
+  "Enrichment": { entity: "أشخاص وموظفين", group: "الأشخاص وصناع القرار" },
+  "Financial": { entity: "أسعار وأسواق مالية", group: "الأسواق والأسعار المالية" },
+  "Developer": { entity: "مستودعات وبرمجيات", group: "المطورون والأكواد" },
+  "Advertising": { entity: "إعلانات وحملات", group: "الإعلانات والحملات" },
+  "Jobs": { entity: "وظائف معلنة", group: "المجتمعات المهنية والوظائف" },
+  "Real Estate": { entity: "أماكن ومواقع جغرافية", group: "الأماكن والأنشطة التجارية" },
+};
+
 function composeTier2(e: CatalogEndpoint): { nameAr: string; explainAr: string; group: string } {
-  const rawText = `${e.capability ?? ""} ${e.name ?? ""}`.toLowerCase();
+  const capParts = (e.capability ?? "").toLowerCase().split(".").filter(Boolean);
+  const inputNames = new Set((e.inputs ?? []).map((inp) => String(inp.name ?? "").toLowerCase()));
+
   let action = "استخراج";
-  if (/search|find|query/.test(rawText)) action = "البحث عن";
+  if (
+    capParts.includes("search") ||
+    capParts.includes("find") ||
+    capParts.includes("query") ||
+    inputNames.has("query") ||
+    inputNames.has("q")
+  ) {
+    action = "البحث عن";
+  } else if (capParts.includes("detail") || capParts.includes("details") || capParts.includes("info")) {
+    action = "تفاصيل وبيانات";
+  } else if (capParts.includes("list") || capParts.includes("all")) {
+    action = "قائمة";
+  } else if (capParts.includes("verify") || capParts.includes("validate")) {
+    action = "التحقق من صحة";
+  } else if (capParts.includes("enrich") || capParts.includes("lookup")) {
+    action = "استكمال وتدقيق";
+  }
 
   let entity = "بيانات عامة";
   let group = "البحث والاستكشاف";
 
-  if (/review/.test(rawText)) { entity = "تقييمات ومراجعات"; group = "التقييمات والمراجعات"; }
-  else if (/comment|reply/.test(rawText)) { entity = "تعليقات وردود"; group = "التعليقات والردود"; }
-  else if (/post|tweet|article|feed|content/.test(rawText)) { entity = "منشورات ومحتوى"; group = "المنشورات والمحتوى"; }
-  else if (/video|reel|stream/.test(rawText)) { entity = "مقاطع فيديو"; group = "الفيديوهات والبث"; }
-  else if (/follower|following|like|engagement/.test(rawText)) { entity = "متابعين وتفاعل"; group = "المتابعون والتفاعل"; }
-  else if (/product|item|price|shop|store/.test(rawText)) { entity = "منتجات وأسعار"; group = "المنتجات والأسعار"; }
-  else if (/profile|user|seller|account|channel/.test(rawText)) { entity = "بيانات ملف وحساب"; group = "الحسابات والملفات الشخصية"; }
-  else if (/company|business|firm/.test(rawText)) { entity = "بيانات شركات"; group = "الشركات"; }
-  else if (/people|employee|contact|staff/.test(rawText)) { entity = "أشخاص وموظفين"; group = "الأشخاص وصناع القرار"; }
-  else if (/job|vacancy/.test(rawText)) { entity = "وظائف معلنة"; group = "المجتمعات المهنية والوظائف"; }
-  else if (/keyword|serp|ranking/.test(rawText)) { entity = "كلمات مفتاحية ونتائج"; group = "الكلمات المفتاحية ونتائج البحث"; }
-  else if (/trend/.test(rawText)) { entity = "موضوعات رائجة"; group = "الترندات والأكثر رواجًا"; }
-  else if (/stock|market|eod|ticker/.test(rawText)) { entity = "أسعار وأسواق مالية"; group = "الأسواق والأسعار المالية"; }
-  else if (/issue|repo|commit|code/.test(rawText)) { entity = "مستودعات وبرمجيات"; group = "المطورون والأكواد"; }
-  else if (/ad|campaign|sponsor/.test(rawText)) { entity = "إعلانات وحملات"; group = "الإعلانات والحملات"; }
-  else if (/location|place|venue|map/.test(rawText)) { entity = "أماكن ومواقع جغرافية"; group = "الأماكن والأنشطة التجارية"; }
+  let found = false;
+  for (let i = capParts.length - 1; i >= 0; i--) {
+    const part = capParts[i];
+    if (part && ENTITY_TOKEN_MAP[part]) {
+      entity = ENTITY_TOKEN_MAP[part].entity;
+      group = ENTITY_TOKEN_MAP[part].group;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found && e.category && CATEGORY_MAP[e.category]) {
+    entity = CATEGORY_MAP[e.category].entity;
+    group = CATEGORY_MAP[e.category].group;
+  }
 
   let qualifier = "";
-  if (/url|link/.test(rawText)) qualifier = " بالرابط";
-  else if (/keyword|query/.test(rawText) && action !== "البحث عن") qualifier = " بالكلمة المفتاحية";
-  else if (/country|code/.test(rawText)) qualifier = " حسب الدولة";
-  else if (/category/.test(rawText)) qualifier = " حسب التصنيف";
-  else if (/user|storefront|account/.test(rawText) && !entity.includes("حساب")) qualifier = " للحساب";
+  if (inputNames.has("url") || inputNames.has("link")) {
+    qualifier = " بالرابط";
+  } else if (
+    (inputNames.has("keyword") || inputNames.has("keywords") || inputNames.has("q")) &&
+    action !== "البحث عن"
+  ) {
+    qualifier = " بالكلمة المفتاحية";
+  } else if (inputNames.has("country") || inputNames.has("country_code") || inputNames.has("location_code")) {
+    qualifier = " حسب الدولة";
+  } else if (inputNames.has("category") || inputNames.has("category_id")) {
+    qualifier = " حسب التصنيف";
+  } else if (
+    (inputNames.has("username") || inputNames.has("user") || inputNames.has("user_id") || inputNames.has("account_id")) &&
+    !entity.includes("حساب")
+  ) {
+    qualifier = " للحساب";
+  }
 
-  let nameAr = `${action} ${entity}${qualifier}`.trim();
-  let explainAr = `جمع ${nameAr} من هذه المنصة وإخراجها في ملف منظم جاهز للاستخدام.`;
+  const nameAr = `${action} ${entity}${qualifier}`.trim();
+  const explainAr = `جمع ${nameAr} من هذه المنصة وإخراجها في ملف منظم جاهز للاستخدام.`;
   return { nameAr, explainAr, group };
 }
 

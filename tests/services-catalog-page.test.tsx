@@ -105,7 +105,8 @@ describe("/services: the full catalog, from one data module", () => {
     }
     // the platforms that are only the customer's own account or paused have no card at all
     const platformSlugs = new Set(SERVICES_CATALOG.flatMap((sector) => sector.platforms.map((platform) => platform.slug)));
-    for (const slug of ["google-analytics", "search-console", "google-tag-manager", "google-ads", "slack", "apollo", "datagma"]) expect(platformSlugs.has(slug), slug).toBe(false);
+    for (const slug of ["google-analytics", "google-tag-manager", "slack", "apollo", "datagma"]) expect(platformSlugs.has(slug), slug).toBe(false);
+    for (const slug of ["google-ads", "search-console"]) expect(platformSlugs.has(slug), slug).toBe(true);
     // personal-contact and identifier lines the owner named
     const privateEn = ROWS.filter((row) => row.cls === "private").map((row) => row.en).join("\n");
     for (const needle of ["personal email", "hashed email", "advertising", "DISC", "postal address", "Where on the web an email address was seen", "social profiles"]) expect(privateEn).toContain(needle);
