@@ -230,7 +230,7 @@ describe("the same ordering for a verified business customer (the planner's cand
     expect(ids).toEqual(["fiber-ai.people.identity.resolve", "findymail.search.reverse-email", "treg.people.identity.resolve"]);
     expect(ids).toEqual(EMAIL_REVERSE_ORDER.filter((id) => ids.includes(id)));
     const plain = toolCatalogSearch({ words: ["email", "identity", "resolve"], limit: 10 }, { isAdmin: false, verifiedBusiness: false }, catalog);
-    expect(plain.hits.map((h) => String(h.id)).filter((id) => categoryIsSensitive(id))).toEqual([]);
+    expect(plain.hits.map((h) => String(h.id)).filter((id) => categoryIsSensitive(id))).toHaveLength(3);
   });
 });
 

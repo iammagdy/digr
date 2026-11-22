@@ -182,7 +182,7 @@ export async function runSensitiveCall<T>(input: SensitiveCallInput<T>): Promise
 
   const verdict = policyVerdict(endpointId, account.access);
   if (!verdict.allowed) return refuse(verdict.reason, verdict.category === "sensitive" ? "refused_access" : null);
-  if (verdict.category !== "sensitive") {
+  if (verdict.category !== "sensitive" && !input.requireAudit) {
     // not a sensitive endpoint: no audit, no limit, just the call
     const out = await input.call();
     return { ok: true, result: out.result, auditId: id, auditWritten: false };
