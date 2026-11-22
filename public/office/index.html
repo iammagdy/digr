@@ -451,7 +451,17 @@
   }
 
   @media (max-width: 960px) {
-    .hud-bar .kpi-strip { display: none; }
+    .hud-bar .kpi-strip {
+      display: inline-flex;
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+    .hud-bar .kpi-strip > .kpi-chip:not(.achievements-chip) { display: none; }
+    .achievements-chip {
+      min-height: 44px;
+      padding: 6px 11px;
+    }
     .hint-pill { display: none; }
   }
 

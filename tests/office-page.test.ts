@@ -353,4 +353,13 @@ describe("DT-20261120-office-megz v2: Megz pure fullscreen office page", () => {
     expect(openText).toContain("سجل إنجازات المكتب");
     expect(openText).toContain("#٦٢٤");
   });
+
+  it("keeps the achievements chip visible and tappable on mobile (not inside hidden selector below 960px)", () => {
+    const m960Start = html.indexOf("@media (max-width: 960px)");
+    expect(m960Start).toBeGreaterThan(0);
+    const m960Block = html.slice(m960Start, html.indexOf("@media", m960Start + 1));
+    expect(m960Block).not.toMatch(/\.hud-bar\s+\.kpi-strip\s*\{\s*display\s*:\s*none/);
+    expect(m960Block).toMatch(/\.hud-bar\s+\.kpi-strip\s*>\s*\.kpi-chip:not\(\.achievements-chip\)\s*\{\s*display\s*:\s*none/);
+    expect(m960Block).toMatch(/\.achievements-chip\s*\{[^}]*min-height\s*:\s*44px/);
+  });
 });
