@@ -229,11 +229,13 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // the person's professional page read from the source's raw answer (engine/run.ts, DT-20261118-05 item 4a): kept on the stored row for the finders, never a column of the file
     if (typeof raw[SOURCE_PROFILE_KEY] === "string" && raw[SOURCE_PROFILE_KEY] !== "" && !(SOURCE_PROFILE_KEY in row)) row[SOURCE_PROFILE_KEY] = raw[SOURCE_PROFILE_KEY];
     if (companyEvidence) {
-      row[COMPANY_EVIDENCE_KEY] = companyEvidence;
-      row[COMPANY_SOURCE_ID_KEY] = sourceId;
+      if (id !== sourceId) row[COMPANY_SOURCE_ID_KEY] = sourceId;
       if (uncertainCompany) row[COMPANY_UNCERTAIN_KEY] = "yes";
       for (const field of COMPANY_BRANCH_FIELDS) {
         if (companyEvidence.branches[field] !== undefined && !(field in row)) row[field] = raw[field];
+      }
+      if (JSON.stringify(companyEvidenceOf(row, stage)) !== JSON.stringify(companyEvidence)) {
+        row[COMPANY_EVIDENCE_KEY] = companyEvidence;
       }
       const sameId = companyObservations.get(sourceId) ?? [];
       sameId.push(row);

@@ -9,7 +9,7 @@ import { advanceMissionDelivery } from "../agent/src/missionSettlement";
 import { runExecution, type RunnerDeps } from "../agent/src/runMission";
 import { createSourceGateway, stageScopeOf } from "../agent/src/engine/sourceGateway";
 import { buildMissionFiles } from "../agent/src/workbook";
-import { COMPANY_EVIDENCE_KEY, COMPANY_UNCERTAIN_KEY, companyEvidenceOf, companyRelationship, withCompanyQuality } from "../src/lib/agentMission/companyQuality";
+import { COMPANY_EVIDENCE_KEY, COMPANY_UNCERTAIN_KEY, companyEvidenceOf, companyRelationship, storedCompanyEvidence, withCompanyQuality } from "../src/lib/agentMission/companyQuality";
 import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { fakeMoneyClient, quoteJobId } from "./helpers/agentMoney";
@@ -180,7 +180,7 @@ describe("M6 branch-first company deduplication and child binding", () => {
     const rows = items.acceptedRows("companies");
     expect(rows.some((r) => r.id === "conflict_1")).toBe(false);
     expect(rows.find((r) => r.id === "u2")?.[COMPANY_UNCERTAIN_KEY]).toBe("yes");
-    expect(rows.every((r) => Boolean(r[COMPANY_EVIDENCE_KEY]))).toBe(true);
+    expect(rows.every((r) => storedCompanyEvidence(r, plan.stages[0]).keys.length > 0)).toBe(true);
 
     const quality = withCompanyQuality(plan, { companies: rows });
     expect(quality.reports[0]?.possibleDuplicates).toContain("u2");

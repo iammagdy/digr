@@ -328,7 +328,7 @@ it.each([
     park: (id, due) => Object.assign(store.missions.get(id)!, { status: "approved", worker_id: null, lease_until: due }),
   });
   const comments = Array.from({ length: count }, (_, i) => ({ name: `ع${i}`, created_at: at }));
-  const deps = { store, client: money.client, ownerId: "w1" };
+  const deps = { store, client: money.client, ownerId: "w1" } as unknown as Parameters<typeof advanceMissionDelivery>[0];
   const settle = await advanceMissionDelivery(deps, { ...mission }, async () => ({
     workbook: count === 0 ? null : await buildMissionFiles(plan, { posts: [], comments }),
     notes: { date: "2026-11-22", llm: 0, executionTregUsd: 0, summary: null, outputError: null, costUsd: 0 },

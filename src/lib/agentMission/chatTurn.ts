@@ -1115,7 +1115,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const summarySaved = await saveSummary(sb, input, summary, group, savedCards.length > 0);
   if (!summarySaved) console.warn("[chat:agent_group_summary_unsaved]");
   if (savedCards.length === 0) {
-    if (!summarySaved && (placed.size > 0 || keptWithoutCard.length > 0)) return { ok: false, contentAr: GROUP_NOT_SAVED_AR, status: 200, splitSummary: true };
+    if (!summarySaved && (placed.size > 0 || keptWithoutCard.length > 0)) return { ok: false, contentAr: GROUP_NOT_SAVED_AR, status: 200 };
     return { ok: false, contentAr: summary, status: 200, splitSummary: true };
   }
   return { ok: true, missionId: savedCards[0].id, contentAr: summary, summaryOnly: true, splitSummary: true, extraMissions: savedCards.map((c) => ({ id: c.id, messageId: c.messageId, contentAr: c.contentAr })) };

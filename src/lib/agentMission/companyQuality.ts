@@ -138,7 +138,7 @@ export function companyEvidenceOf(row: Row, stage: QualityStage): CompanyEvidenc
   return {
     keys: [...keys].sort(),
     name: nameKey(displayName ?? organisation.names[0]),
-    registration: organisation.crNumber,
+    registration: organisation.crNumber ?? null,
     jurisdiction,
     branches,
     address,

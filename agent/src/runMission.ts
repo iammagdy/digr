@@ -1350,23 +1350,12 @@ type ExecutionEnd = {
   memory?: ItemStore;
 };
 
-async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, a: ExecutionEnd) {
-  const { store } = deps;
-  const fresh = (await store.getMission(mission.id)) ?? mission;
-  const spent = Number((fresh.planning_treg_usd ?? 0) + a.executionTregUsd);
-  // Read the saved log only during the initial preparation. A storage fault leaves the durable finalization journal in control.
-  const log = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
-  const snap = log.snapshotOfMemory();
-  const flags: string[] = [];
-  const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
-  // THE PROMISE FOR COMMENTS AND REPLIES TOGETHER (S5): each of the two stages was read up to the total; the delivery is counted up to it
-  // the plan as the customer approved it (the delivery contract compares the promised number with the card's)
-  const approvedPlan = plan;
-  plan = withPromiseCaps(plan);
+function dedupeCompanyStages(plan: PricedPlan, snap: Pick<ItemSnapshot, "acceptedRows">, rowsByStage: Record<string, Record<string, unknown>[]>) {
   const droppedByStage = new Map<string, Set<string>>();
   for (const s of plan.stages) {
     const parentDrops = s.parent_key ? droppedByStage.get(s.parent_key) : undefined;
     const companies = isCompanyStage(s) ? new AcceptedCompanies() : null;
+    if (!companies && !parentDrops) continue;
     const dropped = new Set<string>();
     const rows = [];
     for (const row of snap.acceptedRows(s.key)) {
@@ -1387,6 +1376,23 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
     if (dropped.size > 0) droppedByStage.set(s.key, dropped);
     rowsByStage[s.key] = s.deliver ? rows.slice(0, s.planned_rows) : rows;
   }
+}
+
+async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, a: ExecutionEnd) {
+  const { store } = deps;
+  const fresh = (await store.getMission(mission.id)) ?? mission;
+  const spent = Number((fresh.planning_treg_usd ?? 0) + a.executionTregUsd);
+  // Read the saved log only during the initial preparation. A storage fault leaves the durable finalization journal in control.
+  const log = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
+  const snap = log.snapshotOfMemory();
+  const flags: string[] = [];
+  const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
+  // THE PROMISE FOR COMMENTS AND REPLIES TOGETHER (S5): each of the two stages was read up to the total; the delivery is counted up to it
+  // the plan as the customer approved it (the delivery contract compares the promised number with the card's)
+  const approvedPlan = plan;
+  plan = withPromiseCaps(plan);
+  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
+  if (plan.stages.some((s) => isCompanyStage(s))) dedupeCompanyStages(plan, snap, rowsByStage);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
   const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));

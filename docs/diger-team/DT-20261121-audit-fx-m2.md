@@ -29,6 +29,7 @@ DT-20261121-audit / FX-M2 (M7, M8, L4) and FX-M3 (M6, M9, M10) under D-0180 / D-
 - `tests/calculator-estimator.test.tsx`
 - `tests/decision-maker-pricing.test.ts`
 - `tests/live-cap-surfaces.test.ts`
+- `tests/live-check-fixes.test.tsx`
 - `tests/mission-duration.test.tsx`
 - `tests/mission-estimate.test.ts`
 - `tests/pricing-page.test.tsx`
