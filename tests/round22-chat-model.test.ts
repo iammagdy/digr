@@ -157,11 +157,12 @@ describe("the type is the model's, VALIDATED by code", () => {
     const d = await decideTurn(ctx("خليها ٥ تعليقات بس"), model.call);
     expect(d.type).toBe("data_request");
   });
-  it("WHEN UNSURE THE ANSWER IS «data_request»: a message the keyword rules read as a clear request is never refused, whatever the model said", async () => {
-    for (const wrong of ["other", "greeting_or_small_talk", "service_question", "methodology_request"]) {
-      const model = fakeChatModel([], { override: () => ({ type: wrong, reply: "أهلًا بك في ديجر." }) });
+  // D-0086 (N16): model decision is authoritative and not overruled by regex keywords
+  it("the model decision is respected and not overruled by keywords (D-0086)", async () => {
+    for (const chosen of ["other", "greeting_or_small_talk", "service_question", "methodology_request"] as const) {
+      const model = fakeChatModel([], { override: () => ({ type: chosen, reply: "أهلًا بك في ديجر." }) });
       const d = await decideTurn(ctx("هات ٥٠ تعليق من فيسبوك عن الغلاء"), model.call);
-      expect(d.type, wrong).toBe("data_request");
+      expect(d.type, chosen).toBe(chosen);
     }
   });
   it("…but with an OPEN request the model's «edit» wins over the keywords («خليها ٥٠٠ تعليق» reads as a request to the keywords)", async () => {
@@ -347,13 +348,14 @@ describe("a non-data message: one model call, no mission, no money, no provider 
     expect(assistant.content_ar).toBe("أهلًا بك يا دكتور، يسعدني أن أخدمك. ما البيانات التي تحتاجها لبحثك؟");
     expect(user.request_status).toBe("completed");
   });
-  it("only CODE routes to planning: a data request creates the mission (the model's reply to it is never shown), and a model that says «greeting» for a clear request does not stop it", async () => {
+  // D-0086 (N16): model decision governs; when model says greeting, no mission is created from keywords
+  it("model decision governs: greeting does not route to planning even if text contains request-like words (D-0086)", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "greeting_or_small_talk", reply: "أهلًا بك" }) }).call);
     const db = world();
     const { r, user } = await turn(db, "عايز ١٠٠ تعليق من بوست على فيسبوك عن الغلاء");
-    expect(r.ok).toBe(true);
-    expect(db.rows("missions")).toHaveLength(1);
-    expect(user.request_status).toBe("planning");
+    expect(r.ok).toBe(false);
+    expect(db.rows("missions")).toHaveLength(0);
+    expect(user.request_status).toBe("completed");
   });
   it("a data request through the model: a mission, the card message, no reply text from the model", async () => {
     setChatModelForTesting(fakeChatModel().call);
