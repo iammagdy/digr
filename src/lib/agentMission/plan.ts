@@ -13,7 +13,7 @@ import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { CONTRACT_ONLY_CLASSES, REPLY_TO_KEY, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
-import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, summaryWithoutAnyRoleClaimAr, summaryWithoutRoleClaimAr, type RoleKey } from "./roles";
+import { impersonalAr, namesRoleAr, neutralPeopleTitleAr, roleDefOf, roleLineAr, roleOfNoun, summaryWithoutAnyRoleClaimAr, summaryWithoutRoleClaimAr, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { isPeopleNoun } from "./childSources";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -542,7 +542,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // a default language the measured page could not show is left OFF, and the card says so (one line per language)
   const languageOffNotes = new Set<string>();
   if (stagesIn.length < 1 || stagesIn.length > MAX_PLAN_STAGES) return { ok: false, issues: [`a plan has 1 to ${MAX_PLAN_STAGES} stages`] };
-  const summary = checkCustomerText(input.summary_ar, { maxChars: 600 });
+  const rawSummary = typeof (input as any)?.summary_ar === "string" ? (input as any).summary_ar : String((input as any)?.summary_ar ?? "");
+  const summary = checkCustomerText(impersonalAr(rawSummary), { maxChars: 600 });
   if (summary.issues.length) issues.push(`summary_ar: ${summary.issues.join("; ")}`);
 
   const keys = new Set<string>();
@@ -586,7 +587,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       ...(u.per_parent === null ? { implied: true } : {}),
     };
     if (peopleIdx < 0) perParentAsks.push(handedAsk);
-    else if (u.per_parent !== null && existing?.implied === true) perParentAsks[peopleIdx] = handedAsk;
+    else if (u.per_parent !== null && (!existing || existing.implied === true)) perParentAsks[peopleIdx] = handedAsk;
   }
   /** The implied ask (people of the companies, no number) a child stage of this plan serves: its count is code's default and the card says so. */
   let impliedUsed: { noun: string; parent: string } | null = null;
@@ -1033,10 +1034,25 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     settings: lookup.pricingSettings,
     ...(supportsReduction && lookup.holdCapPoints !== undefined ? { capPoints: lookup.holdCapPoints } : {}),
   });
-  // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
-  for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
-  // THE HEADLINE too: a sentence of the summary that names the role the people are only ranked by is replaced by the code's own (roles.ts, DT-20261118-09 item 7)
-  let summaryText = summary.text;
+  // THE TITLE OF A PEOPLE STAGE: when role_preference IS set, keep the requested role in title_ar; when NOT set, neutralPeopleTitleAr strips role claims
+  for (const st of priced) {
+    if (st.parent_key !== null) {
+      const parentNoun = itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular;
+      if (st.role_preference) {
+        const roleDef = roleDefOf(st.role_preference.role);
+        const roleNoun = roleDef ? roleDef.pluralAr : "المطلوبين";
+        if (!namesRoleAr(st.title_ar, st.role_preference.role)) {
+          const perP = Number(st.per_parent_rows) || 1;
+          const singRole = roleDef?.singularAr || "مدير";
+          st.title_ar = perP === 1 ? `${singRole} في كل ${parentNoun}` : `${roleNoun} في كل ${parentNoun}`;
+        }
+      } else if (isPeopleStage(st)) {
+        st.title_ar = neutralPeopleTitleAr(st.title_ar, "manager", parentNoun);
+      }
+    }
+  }
+  // THE HEADLINE too: when role_preference IS set, preserve the asked role backed by roleLineAr on the card; when NOT set, strip any unbacked role claims
+  let summaryText = impersonalAr(summary.text);
   for (const st of priced) {
     if (st.parent_key === null || !st.deliver) continue;
     const parent = priced.find((p) => p.key === st.parent_key);
@@ -1046,7 +1062,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (isPeopleStage({ parent_key: st.parent_key, title_ar: st.title_ar, ...(st.capability ? { capability: st.capability } : {}) })) summaryText = summaryWithoutAnyRoleClaimAr(summaryText, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
       continue;
     }
-    summaryText = summaryWithoutRoleClaimAr(summaryText, st.role_preference.role, parent.title_ar, Number(st.per_parent_rows) > 0 ? Math.floor(Number(st.per_parent_rows)) : null, itemNounOf(parent.title_ar).singular);
+    // When st.role_preference IS set, do NOT invoke summaryWithoutRoleClaimAr; keep the asked role in the summary
   }
   // an estimated people stage says so on the card, in the code's own words (peopleEstimate.ts)
   if (priced.some((st) => st.estimated === true) && !assumptions.includes(PEOPLE_ESTIMATE_NOTE_AR)) assumptions.push(PEOPLE_ESTIMATE_NOTE_AR);

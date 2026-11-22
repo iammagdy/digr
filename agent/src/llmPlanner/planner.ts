@@ -127,8 +127,8 @@ const COLUMN_TITLES: Record<string, string> = {
 };
 const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link", "likes", "comments_count", "replies_count", "shares", "views", "language", "country"];
 
-/** The card describes what is collected, never the person (live, 16 Nov 2026: «الطالب يريد قائمة بأربعين مطعمًا…»): a leading «الطالب/العميل يريد» becomes «المطلوب». */
-export const impersonalAr = (t: string): string => t.replace(/^\s*(?:ال)?(?:طالب|عميل|باحث)(?:ة)?\s+(?:ي|ت)(?:ريد|طلب|حتاج)\s+(?:أن\s+)?/u, "المطلوب: ");
+import { impersonalAr } from "../../../src/lib/agentMission/roles";
+export { impersonalAr };
 
 /** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */
 export const PLATFORM_LABEL_FALLBACK_AR = SOURCE_LABEL_FALLBACK_AR;

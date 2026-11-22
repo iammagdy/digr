@@ -15,6 +15,10 @@ interface RoleDef {
   nounStems: string[];
   /** The plural as a subject, for the card's sentence. */
   pluralAr: string;
+  /** Plural as a grammatical object (منصوب: مديرين، مهندسين، مسؤولي مبيعات...). */
+  pluralAccAr: string;
+  /** Singular role noun for singular stage title («مدير», «مهندس»). */
+  singularAr: string;
   /** Title words (Arabic and Latin, lower case) that name the role. */
   words: string[];
   /** Phrases (several words) that name the role. */
@@ -23,11 +27,11 @@ interface RoleDef {
 
 const ROLES: ReadonlyArray<RoleDef> = [
   // the DECISION MAKERS («صناع القرار») are this role: the owner, the founders, the chairman, the chiefs, the general manager, the directors, the managers and the heads
-  { key: "manager", nounStems: ["مدير", "مدرا", "مسؤول", "مسئول", "رئيس", "قيادي", "صناع", "صانع", "manager", "director", "decision"], pluralAr: "مديرون", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "owner", "owners", "founder", "founders", "cofounder", "co-founder", "chairman", "chairwoman", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام", "مالك", "مالكة", "صاحب", "صاحبة", "مؤسس", "مؤسسة"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
-  { key: "engineer", nounStems: ["مهندس", "engineer"], pluralAr: "مهندسون", words: ["engineer", "engineers", "engineering", "مهندس", "مهندسة", "مهندسين"] },
-  { key: "sales", nounStems: ["مبيع", "مندوب", "sales"], pluralAr: "مسؤولو مبيعات", words: ["sales", "salesman", "salesperson", "مبيعات", "مندوب", "business development"] },
-  { key: "hr", nounStems: ["موارد", "hr"], pluralAr: "مسؤولو موارد بشرية", words: ["hr", "recruiter", "recruitment", "talent", "موارد", "توظيف"], phrases: ["human resources"] },
-  { key: "accountant", nounStems: ["محاسب", "accountant"], pluralAr: "محاسبون", words: ["accountant", "accounting", "finance", "financial", "محاسب", "محاسبة", "حسابات"] },
+  { key: "manager", nounStems: ["مدير", "مدرا", "مسؤول", "مسئول", "رئيس", "قيادي", "صناع", "صانع", "manager", "director", "decision"], pluralAr: "مديرون", pluralAccAr: "مديرين", singularAr: "مدير", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "owner", "owners", "founder", "founders", "cofounder", "co-founder", "chairman", "chairwoman", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام", "مالك", "مالكة", "صاحب", "صاحبة", "مؤسس", "مؤسسة"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
+  { key: "engineer", nounStems: ["مهندس", "engineer"], pluralAr: "مهندسون", pluralAccAr: "مهندسين", singularAr: "مهندس", words: ["engineer", "engineers", "engineering", "مهندس", "مهندسة", "مهندسين"] },
+  { key: "sales", nounStems: ["مبيع", "مندوب", "sales"], pluralAr: "مسؤولو مبيعات", pluralAccAr: "مسؤولي مبيعات", singularAr: "مسؤول مبيعات", words: ["sales", "salesman", "salesperson", "مبيعات", "مندوب", "business development"] },
+  { key: "hr", nounStems: ["موارد", "hr"], pluralAr: "مسؤولو موارد بشرية", pluralAccAr: "مسؤولي موارد بشرية", singularAr: "مسؤول موارد بشرية", words: ["hr", "recruiter", "recruitment", "talent", "موارد", "توظيف"], phrases: ["human resources"] },
+  { key: "accountant", nounStems: ["محاسب", "accountant"], pluralAr: "محاسبون", pluralAccAr: "محاسبين", singularAr: "محاسب", words: ["accountant", "accounting", "finance", "financial", "محاسب", "محاسبة", "حسابات"] },
 ];
 
 /** Titles that do not say what the person does (a person of such a title may or may not hold the role): unclear, never «other». */
@@ -136,11 +140,24 @@ export function decisionMakersLeftOutAr(people: ReadonlyArray<Record<string, unk
   return `لم يوجد في المصدر عدد كافٍ من صناع القرار في ${countAr(companies.size, company)}، فاكتمل العدد بـ${countAr(notDm, person)} من غيرهم بأقرب المسميات الوظيفية المتاحة`;
 }
 
-/** The one line the card shows for a people stage that prefers a role: what is preferred, and that when fewer match the count is completed from the company's other people, with the titles exactly as the source gives them. No number, no provider. */
+/** The one line the card shows for a people stage that prefers a role: what is sought, honest fallback when sources lack the role, and file marking ONLY where the workbook computes the decision-maker flag («manager»). No number, no provider. */
 export const roleLineAr = (role: RoleKey, parentNounSingularAr: string): string => {
   const def = roleDefOf(role);
-  return `نفضّل في كل ${parentNounSingularAr} من تدل مسمياتهم الوظيفية على أنهم ${def ? def.pluralAr : "المطلوبون"}؛ وإن لم يذكر المصدر عددًا كافيًا منهم يكتمل العدد من بقية موظفي ${parentNounSingularAr === "شركة" ? "الشركة" : `ال${parentNounSingularAr}`} بمسمياتهم كما ذكرها المصدر، ولا نضيف أي مسمى لم يذكره.`;
+  const pluralAcc = def ? def.pluralAccAr : "المطلوبين";
+  const singular = def ? def.singularAr : "المسمى المطلوب";
+  const completion = `وإن لم يتوفر ${singular} في المصادر يكتمل العدد من أقرب الموظفين الأعلى مسؤولية`;
+  if (role === "manager") {
+    return `نستخرج ${pluralAcc} في كل ${parentNounSingularAr}؛ ${completion}، ويُوضِّح الملف صانع القرار من غيره.`;
+  }
+  return `نستخرج ${pluralAcc} في كل ${parentNounSingularAr}؛ ${completion}.`;
 };
+
+/** Shared helper: normalizes third-person customer phrasing (Egyptian or standard) to impersonal card phrasing. */
+export const impersonalAr = (t: string): string =>
+  t.replace(
+    /^\s*(?:ال)?(?:طالب|عميل|باحث|مستخدم)(?:ة)?\s+(?:عايز(?:ة)?|عاوز(?:ة)?|محتاج(?:ة)?|(?:ب)?(?:ي|ت)(?:ريد|طلب|حتاج|رغب|بحث\s+عن))\s+(?:أن\s+)?/u,
+    "المطلوب: "
+  );
 
 /**
  * THE TITLE OF A PEOPLE STAGE DOES NOT PROMISE A ROLE THE STAGE DOES NOT FILTER. The customer's «اتنين من المديرين» only RANKS the people of each company by the job title the source gives (never excludes: when fewer match, the count is completed from

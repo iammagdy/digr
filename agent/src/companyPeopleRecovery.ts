@@ -701,6 +701,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   assumptionsHint?: unknown;
   understoodCompanies?: UnderstoodCompaniesSummary;
   understoodPeople?: UnderstoodPeopleSummary;
+  peopleRoleTitleAr?: string | null;
   runSandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   loadEvidenceMap: (stagesList: Array<Record<string, unknown>>) => Promise<Map<string, string | null>>;
   makeLookup: (evMap: Map<string, string | null>) => Parameters<typeof validateAndPricePlan>[1];
@@ -709,7 +710,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   inspection?: SavedEvidenceInspection;
   log?: (line: string) => void;
 }): Promise<RecoveryResult> {
-  const { mission, store, catalog, access, capabilities, gateway, forceCompaniesOnly, isRecoveryRetry, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
+  const { mission, store, catalog, access, capabilities, gateway, forceCompaniesOnly, isRecoveryRetry, callParams, codeRuns, stagesIn = [], summaryHint, assumptionsHint, understoodCompanies, understoodPeople, peopleRoleTitleAr, runSandbox, loadEvidenceMap, makeLookup, finalizePlan, log } = params;
   let calls = params.calls;
   let inspection = params.inspection ?? await inspectSavedCompanyAndPeople({ mission, store, catalog, calls, callParams, stagesIn });
 
@@ -1046,12 +1047,13 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
   }
 
   const wants = requestWantsContacts(requestText);
-  const rawPeopleTitle = understoodPeople?.noun_ar?.trim() ? `${understoodPeople.noun_ar.trim()} كل شركة` : "مسؤولو كل شركة";
-  const peopleTitle = roleEval.isManagerAsk && !roleEval.allConfirmedSenior
-    ? "مسؤولون وممثلون متاحون لكل شركة"
-    : roleEval.isManagerAsk
-      ? rawPeopleTitle
-      : neutralPeopleTitleAr(rawPeopleTitle, "manager", "شركة");
+  const asksManagerRole = roleEval.isManagerAsk || (typeof peopleRoleTitleAr === "string" && /مدير/.test(peopleRoleTitleAr));
+  const rawPeopleTitle = understoodPeople?.noun_ar?.trim()
+    ? `${understoodPeople.noun_ar.trim()} كل شركة`
+    : (typeof peopleRoleTitleAr === "string" && peopleRoleTitleAr.trim() ? (peopleRoleTitleAr.includes("كل") ? peopleRoleTitleAr.trim() : `${peopleRoleTitleAr.trim()} كل شركة`) : "مسؤولو كل شركة");
+  const peopleTitle = asksManagerRole
+    ? rawPeopleTitle
+    : neutralPeopleTitleAr(rawPeopleTitle, "manager", "شركة");
   const perCount = Math.max(1, understoodPeople?.per_parent ?? 1);
   let sawOverCap = false;
   let preview: { plan: PricedPlan; evidence: Map<string, string | null> } | undefined;
@@ -1191,8 +1193,9 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       const rootExpected = Math.max(1, Number(rootStage.expected_rows) || companiesTarget);
       const parentTitle = String(rootStage.title_ar ?? "الشركات").trim();
       const baseSummary = summaryHint ? firstSentenceAr(summaryHint).replace(/[.،]+$/, "") : "";
-      const hintedSummary = `${baseSummary || `ستحصل على ${parentTitle}`}، ومع كل شركة مسؤولها حسب المتاح.`;
-      const neutralSummary = `ستحصل على ${parentTitle}، ومع كل شركة مسؤولها حسب المتاح.`;
+      const rolePhrase = asksManagerRole ? (perCount === 1 ? "مديرها" : `${perCount} من مديريها`) : "مسؤولها";
+      const hintedSummary = `${baseSummary || `ستحصل على ${parentTitle}`}، ومع كل شركة ${rolePhrase} حسب المتاح.`;
+      const neutralSummary = `ستحصل على ${parentTitle}، ومع كل شركة ${rolePhrase} حسب المتاح.`;
       const textVariants: Array<{ summary: string; assumptions: unknown }> = [
         { summary: hintedSummary, assumptions: assumptionsHint },
         ...(hintedSummary !== neutralSummary || assumptionsHint !== undefined ? [{ summary: neutralSummary, assumptions: undefined }] : []),

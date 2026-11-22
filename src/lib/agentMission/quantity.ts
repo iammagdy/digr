@@ -139,7 +139,7 @@ const isOneParent = (t: Token | undefined): boolean => t !== undefined && !/^(?:
  * or before the number («ومن كل فيديو ١٠ تعليقات», «ومع كل بوست ١٠ تعليقات», «وجوه كل شركة موظفين اتنين», «ولكل واحد ١٠ تعليقات», «كل بوست فيه ١٠ تعليقات», «تعليقات كل فيديو ١٠»). The marker must touch the number or
  * its noun: «٥ فيديوهات ... ومن كل فيديو ...» does not make the 5 a per-parent number. Pure.
  */
-function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, hasOf: boolean): { perEach: boolean; noun: string | null; parent: string | null } {
+function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, hasOf: boolean, countedNoun?: string | null): { perEach: boolean; noun: string | null; parent: string | null } {
   // after: [number] [noun]? [من المديرين]? [preposition]? كل <one parent>
   let a = i + used + (counted ? 1 + (hasOf ? 1 : 0) : 0);
   if (counted && hasOf) a = i + used + 2;
@@ -151,6 +151,10 @@ function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, h
     if (isNumberToken(tokens[k]) && !(tokens[k].n === "واحد" && isEvery(tokens[k - 1]))) return { perEach: false, noun: null, parent: null };
     if (!isEvery(tokens[k])) continue;
     if (k + 1 > i - 1 || !isOneParent(tokens[k + 1])) return { perEach: false, noun: null, parent: null };
+    // If the number already counts the parent noun («٣ شركات» after «كل شركة»), it counts the parent, NOT per_parent
+    if (counted && countedNoun && tokens[k + 1] && sameNounStem(countedNoun, tokens[k + 1].raw)) {
+      return { perEach: false, noun: null, parent: null };
+    }
     const between = tokens.slice(k + 2, i);
     const own = between.find((t) => isCountedNoun(t.raw));
     const before = tokens[k - 1] && !isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 1].raw) ? tokens[k - 1] : tokens[k - 2] && isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 2].raw) ? tokens[k - 2] : undefined;
@@ -196,7 +200,7 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
     if ((prev === "اخر" || prev === "منذ" || prev === "خلال") && nounBare && NOT_A_COUNT.has(nounBare)) { i += used - 1; continue; }
     if (value >= 1900 && value <= 2100 && !dm?.[2] && (!nounBare || !isCountedNoun(nounBare))) { i += used - 1; continue; }
     const counted = nounToken !== undefined && (isCountedNoun(nounToken.raw) || (nounAfterOf !== null && isCountedNoun(nounAfterOf)));
-    const each = perEachOf(tokens, i, used, counted, nounAfterOf !== null);
+    const each = perEachOf(tokens, i, used, counted, nounAfterOf !== null, counted ? (nounAfterOf ?? nounToken?.raw ?? null) : null);
     // a number word with no item noun after it is ordinary speech, unless it is the per-parent number of a noun that stood before it («كل شركة موظفين اتنين»)
     if (!dm && !counted && !(each.perEach && each.noun)) { i += used - 1; continue; }
     const childNoun = counted ? nounToken!.raw : each.perEach && each.noun ? each.noun : nounToken ? nounToken.raw : null;
@@ -253,16 +257,33 @@ export function impliedPeopleAsk(text: unknown, value: number): RequestedQuantit
   if (!top || !top.noun || !COMPANY_NOUN.test(bare(top.noun)) || isPeopleNoun(top.noun)) return null;
   const tokens = tokensOf(text);
   const at = tokens.findIndex((t) => bare(t) === bare(top.noun!));
-  const after = at >= 0 ? tokens.slice(at + 1) : tokens;
-  const strong = after.findIndex((t) => isPeopleNoun(bare(t)) && !bare(t).startsWith(JOB_TITLE_STEM));
-  const titleOnly = strong < 0 ? after.findIndex((t) => bare(t).startsWith(JOB_TITLE_STEM)) : -1;
-  if (strong < 0 && titleOnly < 0) return null;
+  const candidateIndices = tokens.map((_, idx) => idx).filter((idx) => idx !== at);
+  const strongIdx = candidateIndices.find((idx) => isPeopleNoun(bare(tokens[idx])) && !bare(tokens[idx]).startsWith(JOB_TITLE_STEM));
+  const titleOnlyIdx = strongIdx === undefined ? candidateIndices.find((idx) => bare(tokens[idx]).startsWith(JOB_TITLE_STEM)) : undefined;
+  if (strongIdx === undefined && titleOnlyIdx === undefined) return null;
   let noun: string;
-  if (strong >= 0) {
-    const word = after[strong].replace(/^و(?=.{3,})/, "");
-    noun = bare(word).startsWith("صناع") && after[strong + 1] && bare(after[strong + 1]).startsWith("قرار") ? `${word} ${after[strong + 1]}` : word;
-  } else noun = "المسمى الوظيفي";
-  return { value, noun, digits: false, perEach: true, of: null, parent: top.noun, implied: true };
+  let effectiveValue = value;
+  if (strongIdx !== undefined) {
+    const rawWord = tokens[strongIdx];
+    const word = rawWord.replace(/^و(?=.{3,})/, "");
+    noun = bare(word).startsWith("صناع") && tokens[strongIdx + 1] && bare(tokens[strongIdx + 1]).startsWith("قرار") ? `${word} ${tokens[strongIdx + 1]}` : word;
+    // Check if singular role noun adjacent to PER_EACH_DISTRIBUTIVE or AFTER_DISTRIBUTIVE_PREP + PER_EACH_DISTRIBUTIVE
+    const isSingular = !/(?:ون|ين|ان|ات|اء)$/u.test(bare(word));
+    if (isSingular) {
+      const isEveryToken = (t: string | undefined): boolean => Boolean(t && /^(?:و)?(?:ل)?كل$/u.test(norm(t)));
+      const isPrepToken = (t: string | undefined): boolean => Boolean(t && EVERY_PREPOSITIONS.has(norm(t)));
+      const hasDistributiveAfter = (strongIdx + 1 < tokens.length && isEveryToken(tokens[strongIdx + 1])) ||
+        (strongIdx + 2 < tokens.length && isPrepToken(tokens[strongIdx + 1]) && isEveryToken(tokens[strongIdx + 2]));
+      const hasDistributiveBefore = (strongIdx >= 2 && isEveryToken(tokens[strongIdx - 2])) ||
+        (strongIdx >= 3 && isPrepToken(tokens[strongIdx - 3]) && isEveryToken(tokens[strongIdx - 2]));
+      if (hasDistributiveAfter || hasDistributiveBefore) {
+        effectiveValue = 1;
+      }
+    }
+  } else {
+    noun = "المسمى الوظيفي";
+  }
+  return { value: effectiveValue, noun, digits: false, perEach: true, of: null, parent: top.noun, implied: true };
 }
 
 /** The words that name a SOURCE the customer lists («٥ فيديوهات من كل قناة»: the channel is a source, not a step of the plan): channel, account, page, source. */

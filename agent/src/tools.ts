@@ -128,6 +128,8 @@ export interface ToolContext {
   understoodPeople?: UnderstoodPeopleSummary;
   /** The companies parent step the planner understood (used to preserve scale count/title when recovering from saved evidence). */
   understoodCompanies?: UnderstoodCompaniesSummary;
+  /** The Arabic title of the asked people role from the planner (e.g. «مدير»). */
+  peopleRoleTitleAr?: string | null;
   phase: CallPhase;
   mission: MissionRecord;
   /** The approved plan (execution phase). */
@@ -463,6 +465,7 @@ function createPlanCoordinator(ctx: ToolContext) {
       calls, callParams: state.callParams, codeRuns: state.codeRuns, outSeq: state.outSeq,
       stagesIn, summaryHint: opts.summaryHint, assumptionsHint: opts.assumptionsHint,
       understoodCompanies: ctx.understoodCompanies, understoodPeople: ctx.understoodPeople,
+      peopleRoleTitleAr: ctx.peopleRoleTitleAr,
       runSandbox, loadEvidenceMap, makeLookup: build.makeLookup,
       finalizePlan: (p, ev, o) => build.finalizeAcceptedPlan(p, ev, { ...o, persist: false }),
       onCallsRefreshed: build.refreshCalls,

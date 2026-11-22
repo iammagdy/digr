@@ -177,9 +177,9 @@ describe("Companies «عايز ٣ شركات مقاولات في مصر، ومن
     expect(r.planView.totalRows).toBe(9);
     expect(r.plannedPlan.price.deliveredRows).toBe(9);
     expect(JSON.stringify(r.planView)).not.toContain("مرحلة وسيطة");
-    const line = r.planView.notesAr.find((n) => n.startsWith("نفضّل"));
+    const line = r.planView.notesAr.find((n) => n.startsWith("نستخرج"));
     expect(line).toBeTruthy();
-    expect(line).toMatch(/مديرون/);
+    expect(line).toMatch(/مديرين/);
     expect(line).toMatch(/أقل|يكتمل العدد/);
     expect(line).not.toMatch(/صف|سجل|[A-Za-z]/);
   });
