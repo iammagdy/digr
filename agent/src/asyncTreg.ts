@@ -97,9 +97,10 @@ export async function callTregWithAsync(
         // preserve original file
       }
       const pollEndpoint = deps.catalog.byId.get(cfg.poll.endpoint) ?? endpoint;
-      let reading = readShape(target, hintsOf(pollEndpoint));
+      const hints = pollEndpoint ? hintsOf(pollEndpoint) : {};
+      let reading = readShape(target, hints);
       if (reading.rows.length === 0 && target !== pollRaw) {
-        const fallbackReading = readShape(pollRaw, hintsOf(pollEndpoint));
+        const fallbackReading = readShape(pollRaw, hints);
         if (fallbackReading.rows.length > 0) reading = fallbackReading;
       }
       const rows = reading.rows.length;

@@ -134,7 +134,7 @@ describe("FX-CAT Ph1 Phase 4B: Async Polling (async_config)", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.rows_in_page).toBe(1);
+    expect((result as any).rows_in_page).toBe(1);
     expect((result as any).first_rows?.[0]?.id).toBe("r1");
     expect((result as any).rows_in_code).toBe("inputs.call_0003[0].items");
     expect(callsMade).toHaveLength(3);
@@ -170,7 +170,7 @@ describe("FX-CAT Ph1 Phase 4B: Async Polling (async_config)", () => {
 
     expect(result.ok).toBe(false);
     expect((result as any).failed).toBe(true);
-    expect(result.http_status).toBe(500);
+    expect((result as any).http_status).toBe(500);
   });
 
   it("sourceGateway stageScopeOf includes poll.endpoint in stage scope", () => {
