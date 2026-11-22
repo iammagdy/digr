@@ -111,7 +111,8 @@ Rules:
 - "more_params_json": to reach the customer's count, write 2 to 6 FURTHER complete input sets for the same tool, each using other search terms that items ABOUT the topic contain (still with every condition), from the most precise to broader. Every set must be specific enough that most of its results are about the topic, built from unambiguous phrases (see the step's search_terms): never a set made of generic words (e.g. «توعية», «تحقق», «تنبيه», "news", "update") that mostly match other subjects. They are read in order after the first runs out, and duplicates are removed. Leave it empty when there is no topic or the tool lists everything already (a listing of an account's posts).
 - A child step: "parent_input" names the input that takes the parent item, and "from_field" which field of the parent sample item fills it (choose the field whose value the input expects: an id, a link, a handle). Do not put the parent's value in params.
 - Give up to 3 options, best first: prefer tools proven in production, with high ok_rate and returns_rows_rate, that carry every condition, then the cheaper.
-- Dates: "YYYY-MM-DD" unless the input note says otherwise.`;
+- Dates: "YYYY-MM-DD" unless the input note says otherwise.
+- Match nested object fields and exact scalar, array, boolean and enum types declared in inputs: for an input with fields, pass an object matching its schema; for an array, pass a list; for a boolean, pass true or false; for an enum, use only allowed values.`;
 
 export const TOOL_CHOICE_SCHEMA: Record<string, unknown> = {
   type: "object",

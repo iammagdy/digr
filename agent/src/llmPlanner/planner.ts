@@ -22,6 +22,7 @@ import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quant
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
+import { validateInputShape } from "../tools";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
@@ -132,11 +133,8 @@ export { impersonalAr };
 
 /** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */
 export const PLATFORM_LABEL_FALLBACK_AR = SOURCE_LABEL_FALLBACK_AR;
-/** The table's label for a platform, with the step's capability: Google is Maps only for places and their reviews (live, 16 Nov 2026: a news request's card read «خرائط جوجل»), news read from the web are «مواقع الأخبار». */
-const tableLabelOf = (p: string, capability?: string): string | null => {
-  const cap = String(capability ?? "");
-  if (/(^|\.)news(\.|$)/.test(cap)) return p === "google" ? "أخبار جوجل" : "مواقع الأخبار";
-  if (p === "google" && cap !== "") return /maps|place|reviews/.test(cap) ? "خرائط جوجل" : "بحث جوجل";
+/** The table's label for a platform, with the step's capability. */
+const tableLabelOf = (p: string, _capability?: string): string | null => {
   return PLATFORM_AR[p] ?? null;
 };
 /** The label of a platform, only when the customer wrote it in their own words (`said`); else «المصدر». A platform the table does not know stays «المنصة». */
@@ -280,6 +278,14 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
         if (input && Array.isArray(input.enum) && input.enum.length > 0 && !input.enum.map(String).includes(String(v))) continue;
         let value = v;
         if (input && (input.type === "integer" || input.type === "number") && typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) value = Number(v);
+        if (input && input.type === "boolean") {
+          if (typeof v === "string") {
+            if (v.trim().toLowerCase() === "true" || v.trim() === "1") value = true;
+            else if (v.trim().toLowerCase() === "false" || v.trim() === "0") value = false;
+          } else if (typeof v === "boolean") {
+            value = v;
+          }
+        }
         if (input && typeof value === "number") { const n: number = value; if (typeof input.maximum === "number" && n > input.maximum) value = input.maximum; else if (typeof input.minimum === "number" && n < input.minimum) value = input.minimum; }
         res[k] = value;
       }
@@ -293,6 +299,7 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
     if (cursor) delete params[cursor];
     const missing = endpoint.inputs.filter((i) => i.required && !filled(params[i.name]) && i.name !== parent?.param && i.name !== cursor);
     if (missing.length > 0) continue;
+    if (validateInputShape(endpoint, params) !== null) continue;
     const more = (Array.isArray(o.more_params) ? o.more_params : Array.isArray(o.more_params_json) ? o.more_params_json.map(jsonObject) : []).map(clean).filter((p) => Object.keys(p).length > 0 && JSON.stringify(p) !== JSON.stringify(params)).slice(0, 6);
     if (cfg && parent) for (const m of more) delete m[parent.param];
     const notCarried = (Array.isArray(o.conditions_not_carried) ? o.conditions_not_carried : []).map(str).filter((c) => CONDITION_AR[c] !== undefined);
@@ -722,7 +729,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const webRows: Array<Record<string, unknown>> = [];
     const phrases = [...new Set([step.topic, ...(Array.isArray(step.search_terms) ? step.search_terms : [])].map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2))].slice(0, 5);
     let triedFirstWeb = false;
-    const webEligible = !step.parent && Boolean(step.topic) && SEARCH_ENGINE_PLATFORMS.has(step.platform) && !got.hasMore && sampleRows.length + secondRows.length < (step.count.total ?? DEFAULT_COUNT) && phrases.length > 0;
+    const webEligible = !step.parent && Boolean(step.topic) && /(^|\.)(search|serp|news|articles?)(\.|$)/.test(String(step.capability ?? "")) && !got.hasMore && sampleRows.length + secondRows.length < (step.count.total ?? DEFAULT_COUNT) && phrases.length > 0;
     const searchOrNews = /(^|\.)(search|news)(\.|$)/.test(String(step.capability ?? ""));
     const webTool = deps.webTools?.[0];
     const usedWeb = [got.option.endpoint.id, second?.option.endpoint.id].some((id) => (deps.webTools ?? []).some((w) => w.id === id));

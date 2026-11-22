@@ -6,6 +6,8 @@ import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../../src/lib/agentMission/ch
 import { PHONE_CAPABILITIES } from "../../../src/lib/agentMission/peopleCheck";
 import { EMAIL_FINDER_CAPABILITIES } from "../../../src/lib/agentMission/contactSampling";
 import productionEligible from "../../../data/capabilities/production-eligible.json";
+import { WEB_SOURCES } from "../../../src/lib/agentMission/sources";
+import type { WebAvailability } from "../../../src/lib/agentMission/webAvailability";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
 const PROVEN: ReadonlySet<string> = new Set(((productionEligible as { ids?: unknown }).ids as string[] | undefined) ?? []);
@@ -17,16 +19,45 @@ export const isProven = (id: string): boolean => PROVEN.has(id);
  */
 
 /** Families that produce media rather than collect data: never offered to a data request. */
-const NOT_DATA_FAMILIES: ReadonlySet<string> = new Set(["image-gen", "video-gen", "voice-gen", "ai-search", "creators"]);
+const MEDIA_GEN_PLATFORMS: ReadonlySet<string> = new Set(["image-gen", "video-gen", "voice-gen", "music-gen"]);
+export const isMediaGen = (e: CatalogEndpoint): boolean =>
+  MEDIA_GEN_PLATFORMS.has(e.platform) || /(^|\.)(image|video|voice|music)-gen(\.|$)/.test(capabilityOf(e));
 
-/**
- * An ASYNC TASK tool (submit a task, then poll another endpoint for its result: 212 endpoints of the catalog) answers a probe with a task id, never items; the worker has no poller, so such a tool is never offered
- * (live eval, 16 Nov 2026: a TripAdvisor request got a task tool as its only option).
- */
-export const isAsyncTask = (e: CatalogEndpoint): boolean => Boolean(e.async) || Boolean(e.async_config) || /-task-(post|get)(-|$)/.test(e.id);
+const pollEndpointsCache = new WeakMap<TregCatalog, Set<string>>();
+
+export function getPollEndpoints(catalog: TregCatalog): Set<string> {
+  let s = pollEndpointsCache.get(catalog);
+  if (!s) {
+    s = new Set<string>();
+    for (const e of catalog.endpoints) {
+      const pollEp = (e.async_config as { poll?: { endpoint?: string } } | null | undefined)?.poll?.endpoint;
+      if (pollEp) s.add(pollEp);
+    }
+    pollEndpointsCache.set(catalog, s);
+  }
+  return s;
+}
+
+export const isPollOnlyEndpoint = (e: CatalogEndpoint, catalog: TregCatalog): boolean =>
+  getPollEndpoints(catalog).has(e.id) || /-task-get(-|$)/.test(e.id);
+
+export const hasSupportedAsync = (e: CatalogEndpoint, catalog: TregCatalog): boolean => {
+  if (!e.async_config) return true;
+  const pollEp = (e.async_config as { poll?: { endpoint?: string } } | null | undefined)?.poll?.endpoint;
+  return Boolean(pollEp && isSellable(pollEp, catalog));
+};
+
+export const isAsyncTask = (e: CatalogEndpoint): boolean =>
+  (Boolean(e.async) || Boolean(e.async_config) || /-task-(post|get)(-|$)/.test(e.id)) &&
+  !(Boolean((e.async_config as any)?.poll?.endpoint));
 
 export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access: AccountAccess | null): boolean =>
-  !NOT_DATA_FAMILIES.has(e.platform) && !isAsyncTask(e) && isSellable(e.id, catalog) && !blockedEndpointReason(e.id, e.scope ?? null) && policyVerdict(e.id, access).allowed;
+  !isMediaGen(e) &&
+  !isPollOnlyEndpoint(e, catalog) &&
+  hasSupportedAsync(e, catalog) &&
+  isSellable(e.id, catalog) &&
+  !blockedEndpointReason(e.id, e.scope ?? null) &&
+  policyVerdict(e.id, access).allowed;
 
 /** The capability of an endpoint, or a name made from its id when the catalog gave none (`platform.other`). */
 export const capabilityOf = (e: CatalogEndpoint): string => (e.capability && e.capability.trim() !== "" ? e.capability : `${e.platform}.other`);
@@ -84,33 +115,46 @@ const isSearchKind = (capability: string): boolean => /(^|\.)(search|serp|news|o
 const kindOf = (capability: string): string => (/(^|\.)news(\.|$)/.test(capability) ? "news" : /(^|\.)(organic|search)$/.test(capability) || /serp\.organic/.test(capability) ? "organic" : capability.split(".").pop() ?? "");
 
 /**
- * THE DIRECT WEB TOOLS (Firecrawl and Context.dev, our own keys, outside the TREG catalog), shaped as catalog entries so the planning model reads and fills them like any other tool. Offered only when the worker
+ * THE DIRECT WEB TOOLS (shaped from WEB_SOURCES metadata), shaped as catalog entries so the planning model reads and fills them like any other tool. Offered only when the worker
  * has their key. Their names never reach the customer: the card says «الويب» / «مواقع الأخبار», and every customer sentence passes the customer-text check.
  */
-export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?: boolean } | null | undefined): CatalogEndpoint[] {
+export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?: boolean } | WebAvailability | null | undefined): CatalogEndpoint[] {
+  if (!available) return [];
+  const searchSources = WEB_SOURCES.filter((s) => s.kind === "search" && Boolean((available as Record<string, boolean>)[s.provider])).sort((a, b) => a.usdPerCall - b.usdPerCall);
   const inputs = [
     { name: "query", in: "body", type: "string", required: true, enum: null, minimum: null, maximum: null, default: null, example: "أسعار الذهب في مصر", note: "a plain search phrase in the language of the pages wanted; no operators" },
     { name: "limit", in: "body", type: "integer", required: false, enum: null, minimum: 10, maximum: 30, default: 10, example: 30, note: "results per call (10 to 30)" },
     { name: "country", in: "body", type: "string", required: false, enum: null, minimum: null, maximum: null, default: null, example: "SA", note: "two-letter country code of the results, only when the customer named a country" },
   ];
-  const make = (id: string, provider: string, usd: number): CatalogEndpoint => ({
-    id, provider, platform: "web", category: "SEO/AEO", capability: "web.search", name: "Web search", method: "POST", path: "", kind: "direct", tier: "core", async: null, async_config: null,
-    summary: "General web search (news sites, articles, blogs, official pages): title, address and description of up to 30 results per call. Each further input set (another phrase of the same topic) gives other results.",
-    inputs, pagination: [], cost: { unit: "call", usd, type: null, currency: "USD", value: null, per: null, billing_note: null, failed_or_empty_billed: null },
-    observed: { ok_rate: 0.97, hit_rate: 0.95, samples: 200 }, scope: "public", item_fields: { title: { type: "string", example: "" }, url: { type: "string", example: "" }, description: { type: "string", example: "" } },
-  }) as unknown as CatalogEndpoint;
-  const out: CatalogEndpoint[] = [];
-  if (available?.contextdev) out.push(make("contextdev.search", "contextdev", 0.0076));
-  if (available?.firecrawl) out.push(make("firecrawl.search", "firecrawl", 0.03));
-  return out;
+  return searchSources.map((s) => ({
+    id: s.id,
+    provider: s.provider,
+    platform: s.platform,
+    category: "SEO/AEO",
+    capability: s.capability ?? "web.search",
+    name: "Web search",
+    method: "POST",
+    path: "",
+    kind: "direct",
+    tier: "core",
+    async: null,
+    async_config: null,
+    summary: s.summary,
+    inputs,
+    pagination: [],
+    cost: { unit: "call", usd: s.usdPerCall, type: null, currency: "USD", value: null, per: null, billing_note: null, failed_or_empty_billed: null },
+    observed: { ok_rate: 0.97, hit_rate: 0.95, samples: 200 },
+    scope: "public",
+    item_fields: { title: { type: "string", example: "" }, url: { type: "string", example: "" }, description: { type: "string", example: "" } },
+  })) as unknown as CatalogEndpoint[];
 }
 
 export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
   const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
-  if (!SEARCH_ENGINE_PLATFORMS.has(platform) || !isSearchKind(capability)) return base;
+  if (!isSearchKind(capability)) return base;
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);
   const kind = kindOf(capability);
-  const others = catalog.endpoints.filter((e) => e.platform !== platform && SEARCH_ENGINE_PLATFORMS.has(e.platform) && !base.includes(e) && usableEndpoint(e, catalog, access) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
+  const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
   const web = [...(options.web ?? [])];
   const extra = [...others, ...web];
   return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra];
@@ -141,10 +185,12 @@ const clip = (s: unknown, n: number): string => { const t = String(s ?? "").repl
 /** One endpoint as the model reads it to choose and fill it: what it does, every input with its type, limits and note, how it pages, what an item carries, what one call costs. */
 export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
   const o = e.observed ?? {};
+  const isAsync = Boolean((e.async_config as any)?.poll?.endpoint);
   return {
     id: e.id,
     capability: capabilityOf(e),
     what: clip(e.summary ?? e.name, 400),
+    ...(isAsync ? { is_async: true } : {}),
     inputs: e.inputs.map((i) => ({
       name: i.name, type: i.type, required: i.required,
       ...(Array.isArray(i.enum) && i.enum.length > 0 ? { enum: i.enum.slice(0, 20) } : {}),
@@ -152,6 +198,7 @@ export function describeForModel(e: CatalogEndpoint): Record<string, unknown> {
       ...(i.maximum !== null && i.maximum !== undefined ? { max: i.maximum } : {}),
       ...(i.default !== null && i.default !== undefined ? { default: i.default } : {}),
       ...(i.example !== null && i.example !== undefined ? { example: i.example } : {}),
+      ...(i.fields ? { fields: i.fields } : {}),
       ...(i.note ? { note: clip(i.note, 450) } : {}),
     })),
     paging_inputs: e.pagination ?? [],
