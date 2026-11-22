@@ -261,14 +261,14 @@ describe("«حجز مؤقت مُحرَّر»: the leftover refund wording is gon
     const sent: Array<{ title: string; body: string }> = [];
     const client: any = { from: () => ({ insert: async (row: any) => { sent.push({ title: row.title, body: row.body }); return { data: row, error: null }; }, select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), maybeSingle: async () => ({ data: null, error: null }) }) }) };
     void client;
-    const { subject, html } = renderEmailTemplate("refund", { Points: "٢٠", Reason: "حجز مؤقت مُحرَّر", JobTitle: "بحث", Name: "أحمد", Balance: "٣٠٠٠" });
-    expect(subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
+    const { subject, html } = renderEmailTemplate("refund", { Points: "٢٠", Reason: "رجع لمحفظتك", JobTitle: "بحث", Name: "أحمد", Balance: "٣٠٠٠" });
+    expect(subject).toBe("رجع لمحفظتك ٢٠ نقطة");
     expect(`${subject} ${html}`).not.toMatch(OLD);
     expect(html).not.toContain("استرداد");
-    expect(html).toContain("حجز مؤقت مُحرَّر");
+    expect(html).toContain("رجع لمحفظتك");
     const done = renderEmailTemplate("job-done", { Name: "أحمد", JobTitle: "بحث", Delivered: "١٠", Requested: "١٠٠", Charged: "٨٠", Refunded: "٢٠", JobURL: "https://diger.tech" });
     expect(done.html).not.toContain("رجع لرصيدك");
-    expect(done.html).toContain("حجز مؤقت مُحرَّر");
+    expect(done.html).toContain("رجع لمحفظتك");
     expect(typeof notifyJobOutcome).toBe("function");
   });
 
@@ -285,7 +285,7 @@ describe("«حجز مؤقت مُحرَّر»: the leftover refund wording is gon
   });
 
   it("the plan's cost line says the rest of the hold is released", () => {
-    expect(read("src/lib/planExplanation.ts")).toContain("والباقي حجز مؤقت مُحرَّر");
+    expect(read("src/lib/planExplanation.ts")).toContain("والباقي رجع لمحفظتك");
   });
 
   it("no customer-facing file of the app shows these old words (admin files are checked above)", () => {

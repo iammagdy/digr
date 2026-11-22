@@ -213,7 +213,7 @@ describe("worker: X account jobs", () => {
     expect(message).not.toContain("موضوع طلبك");
     expect(message).toContain("من الحساب المطلوب");
     expect(message).toContain("أُحيل ١٠ إلى المراجعة ولم يُحتسب");
-    expect(message).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+    expect(message).toContain("رجع لمحفظتك كاملًا ولم يُخصم أي رصيد");
     expect(message).not.toMatch(/[A-Za-z]/);
     // the panel, the message and the job's own line agree
     expect(summarizeActivityCounts(lines().map((textAr) => ({ textAr }))).underReview).toBe(10);

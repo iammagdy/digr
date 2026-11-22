@@ -337,7 +337,7 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
       const deps = t.deps(createFakeDriver(execScript(8, 10)));
       await runExecution(deps, mission);
       await retryDelivery(store, deps, 4);
-      const expected = "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+      const expected = "تعذّر إكمال المهمة؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
       expect(store.missions.get("msn_e1")!).toMatchObject({ status: "failed", summary_ar: expected, charged_points: 0, delivered_units: 0 });
       expect(store.events.filter((e) => e.kind === "result").map((e) => e.message_ar)).toEqual([expected]);
       expect(money.ledger.map((entry) => entry.type)).toEqual(["topup", "reserve", "release"]);

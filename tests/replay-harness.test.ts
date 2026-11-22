@@ -99,7 +99,7 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(out.json.deliveredUnits ?? 0).toBe(0);
     expect(out.release).toBeDefined();
     expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
-    expect(String(out.release!.args.p_error_message)).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+    expect(String(out.release!.args.p_error_message)).toContain("رجع لمحفظتك كاملًا ولم يُخصم أي رصيد");
     expect(world.lines().some((l) => l.includes("قيد المراجعة ١"))).toBe(true);
   });
 
@@ -178,7 +178,7 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     // what the provider billed: two calls, not 175 (0.866 USD)
     const spent = world.db.costs.reduce((sum, c) => sum + c.cost_usd, 0);
     expect(spent).toBeLessThan(0.02);
-    expect(String(world.db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message)).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+    expect(String(world.db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message)).toContain("رجع لمحفظتك كاملًا ولم يُخصم أي رصيد");
   });
 
   it("the job's call budget, at the worker: the first page is bought and delivers 3 posts; the second would pass the ceiling of the 2-point hold (the 0.005 USD floor, as 40% of the hold is only 0.001455), so it is NOT requested and the job settles on what it has", async () => {

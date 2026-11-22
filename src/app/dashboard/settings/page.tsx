@@ -12,7 +12,7 @@ import { AvatarPicker } from "./AvatarPicker";
 const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: string, sub: string]> = [
   ["topup", "اعتماد أو رفض الشحن", "بريد إلكتروني + إشعار داخل التطبيق"],
   ["done", "اكتمال البحث", "بريد إلكتروني عند جاهزية الملفات"],
-  ["refund", "حجز مؤقت مُحرَّر", "عند أي حجز مؤقت مُحرَّر من رصيدك"],
+  ["refund", "رجع لمحفظتك", "عند رجوع أي رصيد لمحفظتك"],
   ["news", "أخبار ونصائح بحثية", "رسالة شهرية على الأكثر"],
 ];
 const DEFAULT_PREFS = { topup: true, done: true, refund: true, news: false };

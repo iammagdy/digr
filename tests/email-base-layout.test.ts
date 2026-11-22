@@ -138,15 +138,15 @@ describe("customer rules, for every template", () => {
     expect(html).not.toContain("الرقم المرجعي");
   });
 
-  it.each(IDS)("%s: «حجز مؤقت مُحرَّر» is the only released-hold wording", (id) => {
+  it.each(IDS)("%s: «رجع لمحفظتك» is the only released-hold wording", (id) => {
     const text = subject(id) + visibleText(render(id).html);
     for (const banned of ["رجع لرصيدك", "يرجع لرصيدك", "فرق الحجز", "فرق في الحجز", "استرداد", "مسترد", "ريفند", "refund"]) expect(text, banned).not.toContain(banned);
   });
   const subject = (id: PlatformEmailTemplateId) => render(id).subject;
 
   it("the templates that speak of a released hold use the exact words", () => {
-    for (const id of ["refund", "job-done"] as const) expect(visibleText(render(id).html), id).toContain("حجز مؤقت مُحرَّر");
-    expect(render("refund").subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠٧ نقطة");
+    for (const id of ["refund", "job-done"] as const) expect(visibleText(render(id).html), id).toContain("رجع لمحفظتك");
+    expect(render("refund").subject).toBe("رجع لمحفظتك ٢٠٧ نقطة");
   });
 
   it("welcome (DT-20261119-02b copy): comma subject, «طلبك إلى ملفات بيانات», the point note without a hold sentence", () => {

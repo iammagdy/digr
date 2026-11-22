@@ -1479,7 +1479,7 @@ async function acknowledgeDelivery(deps: RunnerDeps, mission: MissionRecord, pla
   const partial = physical > 0 && physical - top.repliesDelivered < requestedRowsOf(plan) - top.repliesPlanned;
   const partialMessage = "تم تسليم مهمتك بعدد أقل من المطلوب";
   const message = releasedWithoutSnapshot
-    ? "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."
+    ? "تعذّر إكمال المهمة؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد."
     : partial ? `${partialMessage}.` : physical > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء.";
   await ensureOwned(deps, mission.id);
   const freeRerun = mission.created_by && mission.created_by !== mission.user_id

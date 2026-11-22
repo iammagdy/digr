@@ -29,11 +29,11 @@ export interface InterpreterDeps {
 
 export const failureAr = (result: TregCallResult): string => {
   if (result.budgetStopped) return JOB_BUDGET_STOP_AR;
-  if (result.blocked) return "هذه الخدمة غير متاحة حاليًا؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-  if (result.httpStatus === 404) return "لم نجد المصدر المطلوب؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-  if (result.httpStatus === 422 || result.httpStatus === 400) return "رفض المصدر مدخلات الطلب؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-  if (result.httpStatus === 429) return "المصدر مشغول حاليًا؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
-  return "تعذر الحصول على البيانات من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+  if (result.blocked) return "هذه الخدمة غير متاحة حاليًا؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
+  if (result.httpStatus === 404) return "لم نجد المصدر المطلوب؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
+  if (result.httpStatus === 422 || result.httpStatus === 400) return "رفض المصدر مدخلات الطلب؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
+  if (result.httpStatus === 429) return "المصدر مشغول حاليًا؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
+  return "تعذر الحصول على البيانات من المصدر؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
 };
 
 export function stepParams(step: PlanStep & { facts: StepFacts }, parent: Record<string, string | number> | null, state: PageCursor, pageRows: number): Record<string, unknown> {

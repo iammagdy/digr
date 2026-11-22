@@ -58,8 +58,8 @@ export function jobStartedNotice(input: { targetVolumeMax: number; driver?: Driv
   return {
     title: "بدأ تنفيذ طلبك الكبير",
     body: canClose
-      ? `بدأ جمع حتى ${count}. تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص. وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`
-      : `بدأ جمع حتى ${count}. الطلب الكبير يعمل على دفعات؛ أبقِ الصفحة مفتوحة حتى تكتمل المهمة. وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`,
+      ? `بدأ جمع حتى ${count}. تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص. وإذا تعذر استكماله رجع لمحفظتك كاملًا دون خصم.`
+      : `بدأ جمع حتى ${count}. الطلب الكبير يعمل على دفعات؛ أبقِ الصفحة مفتوحة حتى تكتمل المهمة. وإذا تعذر استكماله رجع لمحفظتك كاملًا دون خصم.`,
     link: "/dashboard/requests",
   };
 }
@@ -75,8 +75,8 @@ export function shouldSendStartedNotice(input: { workerStarted: boolean; volume:
 /** The daily watchdog found the job without progress and released it with its whole reserve. */
 export function jobStalledNotice(): JobNotice {
   return {
-    title: "توقف طلبك: حجز مؤقت مُحرَّر",
-    body: "توقف تنفيذ طلبك عن التقدم قبل اكتماله، وهو الآن حجز مؤقت مُحرَّر كاملًا دون أي خصم. يمكنك إعادة الطلب متى شئت.",
+    title: "توقف طلبك: رجع لمحفظتك",
+    body: "توقف تنفيذ طلبك عن التقدم قبل اكتماله، ورجع لمحفظتك كاملًا دون أي خصم. يمكنك إعادة الطلب متى شئت.",
     link: "/dashboard/requests",
   };
 }
@@ -113,7 +113,7 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
   // The title (and the e-mail subject and heading) already says «اكتمل طلبك جزئيًا»: the body starts with the facts, never with the title again.
   const lead = `${deliveredOfRequestedAr(facts.delivered, facts.requested)}، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
   const detail1 = `خُصم ${pointsAr(facts.chargedPoints, arCount)} مقابل ما سُلّم فقط.`;
-  const detail2 = facts.refundedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(facts.refundedPoints, arCount)}.` : "";
+  const detail2 = facts.refundedPoints > 0 ? `ورجع لمحفظتك ${pointsAr(facts.refundedPoints, arCount)}.` : "";
   return {
     kind: "partial",
     title: PARTIAL_SENTENCE_AR,
@@ -125,9 +125,9 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
 
 /** The request could not finish and its whole reserve came back with no charge. */
 export function releasedNoticeFull(refundedPoints: number, options: { withEmail?: boolean } = {}): JobNoticeFull {
-  const detail = refundedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(refundedPoints, arCount)} كاملًا دون أي خصم.` : "حجز مؤقت مُحرَّر كاملًا دون أي خصم.";
+  const detail = refundedPoints > 0 ? `رجع لمحفظتك ${pointsAr(refundedPoints, arCount)} كاملًا دون أي خصم.` : "رجع لمحفظتك كاملًا دون أي خصم.";
   const lead = "تعذّر استكمال طلبك.";
-  const title = "تعذّر تنفيذ طلبك: حجز مؤقت مُحرَّر";
+  const title = "تعذّر تنفيذ طلبك: رجع لمحفظتك";
   // By default in-app only: the release that goes through the refund e-mail already has one. A release made inside the failure record has no
   // other e-mail, so its caller asks for this one (the same notice id and e-mail key, so it is sent at most once per job).
   return {

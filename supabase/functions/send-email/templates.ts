@@ -31,7 +31,7 @@ export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = 
   "topup-approved": `أُضيف {{ .Credits }} نقطة إلى رصيدك`,
   "topup-rejected": `تعذّر اعتماد طلب الشحن`,
   "job-done": `ملفاتك جاهزة: {{ .JobTitle }}`,
-  "refund": `حجز مؤقت مُحرَّر بقيمة {{ .Points }} نقطة`,
+  "refund": `رجع لمحفظتك {{ .Points }} نقطة`,
   // A status update of a long job (started, stalled, partially completed): the words come from the caller, in plain Arabic.
   "job-update": `{{ .Subject }}`,
   // The owner's alert for a new top-up request (sent by the app to the address in ADMIN_ALERT_EMAIL).
@@ -207,7 +207,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
     facts: [
       { label: "السجلات المسلَّمة", value: "{{ .Delivered }} من {{ .Requested }}" },
       { label: "النقاط المخصومة", value: "{{ .Charged }} نقطة" },
-      { label: "حجز مؤقت مُحرَّر", value: "{{ .Refunded }} نقطة" },
+      { label: "رجع لمحفظتك", value: "{{ .Refunded }} نقطة" },
       { label: "الملفات", value: "إكسل · بي دي إف · سي إس في" },
     ],
     button: { href: "{{ .JobURL }}", label: "تحميل الملفات" },
@@ -216,12 +216,12 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
   "refund": layout("refund", {
     audience: "customer",
     preheader: "لم يُخصم شيء مقابل السجلات غير المسلَّمة.",
-    chip: { text: "حجز مؤقت مُحرَّر", tone: "pending" },
-    heading: "حجز مؤقت مُحرَّر",
-    paragraphs: ["أهلًا {{ .Name }}، حجز مؤقت مُحرَّر بقيمة {{ .Points }} نقطة من بحث «{{ .JobTitle }}»، ولم يُخصم منك شيء مقابله."],
+    chip: { text: "رجع لمحفظتك", tone: "pending" },
+    heading: "رجع لمحفظتك",
+    paragraphs: ["أهلًا {{ .Name }}، رجع لمحفظتك {{ .Points }} نقطة من بحث «{{ .JobTitle }}»، ولم يُخصم منك شيء مقابله."],
     reason: { text: "{{ .Reason }}", tone: "pending" },
     facts: [
-      { label: "حجز مؤقت مُحرَّر", value: "+{{ .Points }} نقطة" },
+      { label: "رجع لمحفظتك", value: "+{{ .Points }} نقطة" },
       { label: "رصيدك الآن", value: "{{ .Balance }} نقطة" },
     ],
     button: { href: "{{ .SiteURL }}/dashboard/requests", label: "إعادة المحاولة" },

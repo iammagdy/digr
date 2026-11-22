@@ -52,6 +52,261 @@ export const DEFAULT_BOT_WORK_DIRS = {
 
 export const STALE_AFTER_MINUTES = 45;
 export const STALE_AFTER_MS = STALE_AFTER_MINUTES * 60 * 1000;
+export const MERGED_SINCE_ISO = "2026-11-20T00:00:00Z";
+export const MAX_FEED_BYTES = 60_000;
+
+export const BOT_ARABIC_NAMES = {
+  elkebir: "الكبير",
+  johnny: "جوني",
+  nafady: "نفادي",
+  hagras: "هجرس",
+  salem: "سالم",
+  hazalqom: "حزلقوم",
+  fazza: "فزاع",
+  ashraf: "أشرف",
+  marbouha: "مربوحة",
+};
+
+const BOT_ALIASES = Object.entries(BOT_ARABIC_NAMES);
+const BOT_ALIAS_MAP = new Map();
+for (const [id, ar] of BOT_ALIASES) {
+  BOT_ALIAS_MAP.set(id, id);
+  BOT_ALIAS_MAP.set(ar, id);
+}
+
+export function cleanArabicTitle(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  const cleaned = raw
+    .replace(/^#+\s*/, "")
+    .replace(/\b(?:DT-\d{8}(?:[-/][A-Za-z0-9._-]+)*|NEW-ISSUES-\d+|FX-[A-Za-z0-9-]+|O\d+-[A-Za-z0-9._-]+|PR\s*#?\d+|D-\d+)\b/gi, " ")
+    .replace(/\/srv\/\S+|refs\/pull\/\S+|https?:\/\/\S+|\S+\.(?:ts|tsx|mjs|js|md|sql)\b/gi, " ")
+    .replace(/\b(?:Gate\s*\d+|round\s*\d+|pre-push|check|plan|v\d+(?:\.\d+)?|MUST\s*\d+[-–]\d+|N\d+)\b/gi, " ")
+    .replace(/توثيق المهمة\s*[:：]|توثيق تعديلات\s*/g, " ")
+    .replace(/\([^()]*[A-Za-z][^()]*\)/g, " ")
+    .replace(/(?:^|\s)الـ\s*[A-Za-z0-9._-]+/g, " ")
+    .replace(/[A-Za-z0-9_.-]+/g, (tok) => (/^\d+$/.test(tok) ? tok : " "))
+    .replace(/\bالـ(?=\s|$|[=+/،.:؛])/g, " ")
+    .replace(/[()[\]`]+/g, " ")
+    .replace(/\s+[+=]\s+/g, " ")
+    .replace(/\s*[=+/]+\s*$/g, "")
+    .replace(/^\s*[=+/]+\s*/g, "")
+    .replace(/^[\s:：—–\-·•،/=]+|[\s:：—–\-·•،/=]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (!/[\u0600-\u06FF]/.test(cleaned)) return "";
+  if (/^(?:دمج|مراجعة|فحص|نشر|تحديث|إصلاح)$/.test(cleaned)) return "";
+  return cleaned;
+}
+
+function isBoilerplateArabicTitle(title) {
+  return /^(?:دمج|مراجعة|فحص|نشر|تشغيل|تم دفع)\b/.test(title);
+}
+
+function extractTaskKeys(text) {
+  if (!text || typeof text !== "string") return [];
+  const matches = text.match(/\b(?:DT-\d{8}(?:-[A-Za-z0-9._-]+)?|NEW-ISSUES-\d+)\b/gi) || [];
+  const keys = [];
+  for (const m of matches) {
+    const norm = m.toLowerCase().replace(/\//g, "-");
+    if (!keys.includes(norm)) keys.push(norm);
+  }
+  return keys;
+}
+
+function extractPrNumbers(text) {
+  if (!text || typeof text !== "string") return [];
+  const nums = new Set();
+  const re = /(?:PR\s*#?|\/pull\/|#)(\d{2,5})\b/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) nums.add(n);
+  }
+  return Array.from(nums);
+}
+
+function extractBotsFromAttributionLines(text) {
+  if (!text || typeof text !== "string") return [];
+  const found = new Set();
+  const lines = text.split(/\r?\n/).slice(0, 60);
+  for (const line of lines) {
+    if (!/(?:Implementer|المنفذ|المنفّذ|المراجع|المصمم|الجودة|المعماري|خطوات|Review|QA|مراجعة|الاعتماد)/i.test(line)) {
+      continue;
+    }
+    for (const [id, ar] of BOT_ALIASES) {
+      if (line.includes(ar) || new RegExp(`\\b${id}\\b`, "i").test(line)) {
+        found.add(id);
+      }
+    }
+  }
+  return CANONICAL_BOTS.filter((id) => found.has(id));
+}
+
+function loadDocsIndex(docsDir) {
+  const entries = [];
+  if (!docsDir || typeof docsDir !== "string") return entries;
+  try {
+    if (!fs.existsSync(docsDir)) return entries;
+  } catch {
+    return entries;
+  }
+
+  function walk(dir, depth) {
+    if (depth > 3) return;
+    let list = [];
+    try {
+      list = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of list) {
+      if (ent.name.startsWith(".")) continue;
+      const fullPath = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        walk(fullPath, depth + 1);
+      } else if (ent.isFile() && ent.name.endsWith(".md")) {
+        const rel = path.relative(docsDir, fullPath).replace(/\\/g, "/");
+        if (depth === 0 && ["DECISIONS.md", "LESSONS.md", "README.md", "TEAM.md"].includes(ent.name)) {
+          continue;
+        }
+        try {
+          const content = fs.readFileSync(fullPath, "utf8");
+          const h1Match = content.match(/^#\s+(.+)$/m);
+          const title = h1Match ? cleanArabicTitle(h1Match[1]) : "";
+          const bots = extractBotsFromAttributionLines(content);
+          const prNumbers = extractPrNumbers(content);
+          const baseKey = path.basename(ent.name, ".md").toLowerCase();
+          const parentKey = depth > 0 ? path.basename(dir).toLowerCase() : "";
+          const taskKeys = Array.from(
+            new Set([
+              ...extractTaskKeys(rel),
+              ...(baseKey.startsWith("dt-") || baseKey.startsWith("new-issues-") ? [baseKey] : []),
+              ...(parentKey.startsWith("dt-") || parentKey.startsWith("new-issues-") ? [parentKey] : []),
+            ]),
+          );
+          const priority =
+            !rel.includes("/") ? 3 : ent.name === "README.md" ? 2 : ent.name === "plan.md" ? 1 : 0;
+          entries.push({ rel, title, bots, prNumbers, taskKeys, priority });
+        } catch {
+          // ignore unreadable doc
+        }
+      }
+    }
+  }
+
+  walk(docsDir, 0);
+  entries.sort((a, b) => b.priority - a.priority);
+  return entries;
+}
+
+function loadStatusHistoryIndex(statusDir) {
+  const byTask = new Map();
+  const byPr = new Map();
+  if (!statusDir || typeof statusDir !== "string") return { byTask, byPr };
+
+  function pushBucket(map, key, botId, title) {
+    if (!key) return;
+    if (!map.has(key)) map.set(key, { titles: [], bots: new Set() });
+    const bucket = map.get(key);
+    if (botId && CANONICAL_BOTS.includes(botId)) bucket.bots.add(botId);
+    if (title && !bucket.titles.includes(title)) bucket.titles.push(title);
+  }
+
+  for (const canonicalId of CANONICAL_BOTS) {
+    const filePath = path.join(statusDir, `${canonicalId}.jsonl`);
+    let raw = "";
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      raw = fs.readFileSync(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const obj = JSON.parse(trimmed);
+        if (!obj || typeof obj !== "object") continue;
+        const rawBot = obj.bot ? String(obj.bot).trim() : canonicalId;
+        const botId = BOT_ALIAS_MAP.get(rawBot) || BOT_ALIAS_MAP.get(rawBot.toLowerCase()) || canonicalId;
+        const cleanedTitle = cleanArabicTitle(obj.task_title ? String(obj.task_title) : "");
+        const rawTid = obj.task_id ?? obj.task;
+        const tid = rawTid ? String(rawTid).trim().split(/\s+/)[0].toLowerCase().replace(/\//g, "-") : "";
+        if (tid && tid !== "dt-20261121-audit") {
+          pushBucket(byTask, tid, botId, cleanedTitle);
+        }
+        const prNums = extractPrNumbers(`${obj.task_title || ""} ${obj.step || ""}`);
+        for (const pn of prNums) {
+          pushBucket(byPr, pn, botId, cleanedTitle);
+        }
+      } catch {
+        // ignore malformed jsonl line
+      }
+    }
+  }
+  return { byTask, byPr };
+}
+
+function pickBestStatusTitle(titles) {
+  if (!Array.isArray(titles) || titles.length === 0) return "";
+  const nonBoilerplate = titles.filter((t) => !isBoilerplateArabicTitle(t));
+  const pool = nonBoilerplate.length > 0 ? nonBoilerplate : titles;
+  return pool[0] || "";
+}
+
+function resolvePrEntry(pr, docsIndex, statusIndex, isMerged) {
+  const num = Number(pr && pr.number);
+  if (!Number.isFinite(num) || num <= 0) return null;
+
+  const searchBlob = `${pr.headRef || ""} ${pr.head?.ref || ""} ${pr.title || ""} ${pr.body || ""}`;
+  const taskKeys = extractTaskKeys(searchBlob);
+
+  let matchedDoc = null;
+  for (const key of taskKeys) {
+    matchedDoc = docsIndex.find((d) => d.taskKeys.includes(key) || d.rel.toLowerCase().includes(key));
+    if (matchedDoc) break;
+  }
+  if (!matchedDoc) {
+    matchedDoc = docsIndex.find((d) => d.prNumbers.includes(num)) || null;
+  }
+
+  const prBucket = statusIndex.byPr.get(num) || null;
+  let taskBucket = null;
+  for (const key of taskKeys) {
+    if (statusIndex.byTask.has(key)) {
+      taskBucket = statusIndex.byTask.get(key);
+      break;
+    }
+  }
+
+  const rawTitle =
+    (matchedDoc && matchedDoc.title) ||
+    pickBestStatusTitle(prBucket?.titles) ||
+    pickBestStatusTitle(taskBucket?.titles) ||
+    "";
+  const safeTitle = cleanArabicTitle(rawTitle);
+
+  const botIds = new Set([
+    ...(matchedDoc ? matchedDoc.bots : []),
+    ...(prBucket ? prBucket.bots : []),
+    ...(taskBucket ? taskBucket.bots : []),
+  ]);
+  const bots = CANONICAL_BOTS.filter((id) => botIds.has(id)).map((id) => BOT_ARABIC_NAMES[id]);
+
+  const item = {
+    number: Math.floor(num),
+    title: safeTitle,
+  };
+  if (isMerged) {
+    const mergedIso = normalizeIsoUtc(pr.merged_at || pr.mergedAt);
+    if (!mergedIso) return null;
+    item.merged_at = mergedIso;
+  }
+  if (bots.length > 0) {
+    item.bots = bots;
+  }
+  return item;
+}
 
 function clampPercent(val) {
   const n = Number(val);
@@ -180,8 +435,11 @@ export function resolveActivityType(botId, state) {
 export function buildOfficeFeed({
   statusDir,
   tasksDir = process.env.OFFICE_TASKS_DIR || "/srv/diger-team/commander/tasks",
+  docsDir = process.env.OFFICE_DOCS_DIR || "/srv/diger-team/repo/digr/docs/diger-team",
   workDirs = DEFAULT_BOT_WORK_DIRS,
   openPrs = [],
+  mergedPrs = [],
+  sinceIso = MERGED_SINCE_ISO,
   nowMs = Date.now(),
 }) {
   const bots = {};
@@ -330,33 +588,76 @@ export function buildOfficeFeed({
     ? Math.max(0, Math.floor(Number(openPrs)))
     : 0;
 
-  return {
+  const docsIndex = loadDocsIndex(docsDir);
+  const statusIndex = loadStatusHistoryIndex(statusDir);
+
+  const openPrsList = Array.isArray(openPrs)
+    ? openPrs
+        .map((pr) => resolvePrEntry(pr, docsIndex, statusIndex, false))
+        .filter(Boolean)
+        .sort((a, b) => b.number - a.number)
+    : [];
+
+  const mergedSeen = new Map();
+  if (Array.isArray(mergedPrs)) {
+    for (const pr of mergedPrs) {
+      const entry = resolvePrEntry(pr, docsIndex, statusIndex, true);
+      if (!entry) continue;
+      if (sinceIso && entry.merged_at < sinceIso) continue;
+      mergedSeen.set(entry.number, entry);
+    }
+  }
+  const mergedList = Array.from(mergedSeen.values()).sort((a, b) => {
+    const cmp = b.merged_at.localeCompare(a.merged_at);
+    return cmp !== 0 ? cmp : b.number - a.number;
+  });
+  const mergedTotal = mergedList.length;
+
+  const feed = {
     version: 1,
     generated_at: new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z"),
     stale_after_minutes: STALE_AFTER_MINUTES,
     open_prs: prCount,
+    open_prs_list: openPrsList,
+    merged_total: mergedTotal,
+    merged_prs: mergedList,
     bots,
   };
+
+  while (feed.merged_prs.length > 0 && Buffer.byteLength(JSON.stringify(feed), "utf8") > MAX_FEED_BYTES) {
+    feed.merged_prs.pop();
+  }
+  return feed;
 }
 
-export async function fetchOpenPrs({
+export async function fetchGithubPrs({
   repo = "iammagdy/digr",
   cachePath = "/tmp/diger-office-prs-cache.json",
   nowMs = Date.now(),
   minIntervalMs = 180_000,
+  timeoutMs = 12_000,
+  sinceIso = MERGED_SINCE_ISO,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  let cached = { fetchedAt: 0, etag: "", count: 0 };
+  let cached = { schemaVersion: 2, fetchedAt: 0, etag: "", openPrs: [], mergedPrs: [] };
   try {
     if (cachePath && fs.existsSync(cachePath)) {
-      cached = JSON.parse(fs.readFileSync(cachePath, "utf8")) || cached;
+      const parsed = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+      if (
+        parsed &&
+        parsed.schemaVersion === 2 &&
+        Array.isArray(parsed.openPrs) &&
+        Array.isArray(parsed.mergedPrs)
+      ) {
+        cached = parsed;
+      }
     }
   } catch {
-    cached = { fetchedAt: 0, etag: "", count: 0 };
+    cached = { schemaVersion: 2, fetchedAt: 0, etag: "", openPrs: [], mergedPrs: [] };
   }
 
-  if (nowMs - (cached.fetchedAt || 0) < minIntervalMs && typeof cached.count === "number") {
-    return cached.count;
+  if (nowMs - (cached.fetchedAt || 0) < minIntervalMs && cached.fetchedAt > 0) {
+    return { openPrs: cached.openPrs, mergedPrs: cached.mergedPrs };
   }
 
   const headers = {
@@ -366,32 +667,89 @@ export async function fetchOpenPrs({
   if (cached.etag) headers["If-None-Match"] = cached.etag;
 
   try {
-    const res = await fetchImpl(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=1`, { headers });
+    const fetchOpts = { headers };
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      fetchOpts.signal = AbortSignal.timeout(timeoutMs);
+    }
+    const res = await fetchImpl(
+      `https://api.github.com/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`,
+      fetchOpts,
+    );
     if (res.status === 304) {
       cached.fetchedAt = nowMs;
-      if (cachePath) fs.writeFileSync(cachePath, JSON.stringify(cached), "utf8");
-      return cached.count || 0;
+      try {
+        if (cachePath) fs.writeFileSync(cachePath, JSON.stringify(cached), "utf8");
+      } catch {
+        // ignore cache write failure
+      }
+      return { openPrs: cached.openPrs, mergedPrs: cached.mergedPrs };
     }
-    if (!res.ok) return cached.count || 0;
-    const linkHeader = res.headers.get("link") || "";
-    let totalCount = 0;
-    const lastMatch = linkHeader.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/);
-    if (lastMatch) {
-      totalCount = parseInt(lastMatch[1], 10);
-    } else {
-      const data = await res.json();
-      totalCount = Array.isArray(data) ? data.length : 0;
+    if (!res.ok) {
+      return { openPrs: cached.openPrs, mergedPrs: cached.mergedPrs };
     }
+
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      return { openPrs: cached.openPrs, mergedPrs: cached.mergedPrs };
+    }
+
+    const openPrs = data
+      .filter((pr) => pr && pr.state === "open")
+      .map((pr) => ({
+        number: Number(pr.number),
+        title: String(pr.title || ""),
+        headRef: String(pr.head?.ref || ""),
+        created_at: normalizeIsoUtc(pr.created_at) || null,
+      }))
+      .filter((pr) => Number.isFinite(pr.number) && pr.number > 0)
+      .sort((a, b) => b.number - a.number);
+
+    const mergedByNumber = new Map();
+    for (const prev of cached.mergedPrs) {
+      if (prev && Number.isFinite(Number(prev.number)) && prev.merged_at && prev.merged_at >= sinceIso) {
+        mergedByNumber.set(Number(prev.number), prev);
+      }
+    }
+    for (const pr of data) {
+      if (!pr || !pr.merged_at) continue;
+      if (pr.base?.ref && pr.base.ref !== "main") continue;
+      const mergedIso = normalizeIsoUtc(pr.merged_at);
+      if (!mergedIso || mergedIso < sinceIso) continue;
+      const num = Number(pr.number);
+      if (!Number.isFinite(num) || num <= 0) continue;
+      mergedByNumber.set(num, {
+        number: num,
+        title: String(pr.title || ""),
+        headRef: String(pr.head?.ref || ""),
+        merged_at: mergedIso,
+      });
+    }
+    const mergedPrs = Array.from(mergedByNumber.values()).sort((a, b) => {
+      const cmp = b.merged_at.localeCompare(a.merged_at);
+      return cmp !== 0 ? cmp : b.number - a.number;
+    });
+
     const nextCache = {
+      schemaVersion: 2,
       fetchedAt: nowMs,
-      etag: res.headers.get("etag") || "",
-      count: totalCount,
+      etag: res.headers?.get?.("etag") || "",
+      openPrs,
+      mergedPrs,
     };
-    if (cachePath) fs.writeFileSync(cachePath, JSON.stringify(nextCache), "utf8");
-    return totalCount;
+    try {
+      if (cachePath) fs.writeFileSync(cachePath, JSON.stringify(nextCache), "utf8");
+    } catch {
+      // ignore cache write failure
+    }
+    return { openPrs, mergedPrs };
   } catch {
-    return cached.count || 0;
+    return { openPrs: cached.openPrs, mergedPrs: cached.mergedPrs };
   }
+}
+
+export async function fetchOpenPrs(opts = {}) {
+  const res = await fetchGithubPrs(opts);
+  return res.openPrs.length;
 }
 
 export async function uploadFeed({ feedJson, uploadUrl, uploadKey, fetchImpl = globalThis.fetch }) {
@@ -419,13 +777,14 @@ export async function main(argv = process.argv.slice(2)) {
   const isDryRun = argv.includes("--dry-run");
   const statusDir = process.env.OFFICE_STATUS_DIR || "/srv/diger-team/shared/office-status";
   const tasksDir = process.env.OFFICE_TASKS_DIR || "/srv/diger-team/commander/tasks";
+  const docsDir = process.env.OFFICE_DOCS_DIR || "/srv/diger-team/repo/digr/docs/diger-team";
   const repo = process.env.OFFICE_GITHUB_REPO || "iammagdy/digr";
   const uploadUrl = process.env.OFFICE_UPLOAD_URL || "";
   const uploadKey = process.env.OFFICE_UPLOAD_KEY || "";
   const cachePath = process.env.OFFICE_PR_CACHE_PATH || "/tmp/diger-office-prs-cache.json";
 
-  const openPrCount = await fetchOpenPrs({ repo, cachePath });
-  const feed = buildOfficeFeed({ statusDir, tasksDir, openPrs: openPrCount });
+  const { openPrs, mergedPrs } = await fetchGithubPrs({ repo, cachePath });
+  const feed = buildOfficeFeed({ statusDir, tasksDir, docsDir, openPrs, mergedPrs });
 
   if (isDryRun) {
     console.log(JSON.stringify(feed, null, 2));

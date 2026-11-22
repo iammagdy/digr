@@ -49,7 +49,7 @@ describe("landing clarity (Part 3)", () => {
   });
 
   it("what is paid is said once, in the merged section: only what is delivered, the rest is a released hold (the approval line is the hero's alone)", () => {
-    expect(OVERVIEW_PAYMENT_AR).toBe("تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط. يُحجز مبلغ مؤقت يشمل احتياطيًا، وما لا يُستخدم منه حجز مؤقت مُحرَّر.");
+    expect(OVERVIEW_PAYMENT_AR).toBe("تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط. يُحجز مبلغ مؤقت يشمل احتياطيًا، وما لا يُستخدم منه رجع لمحفظتك.");
     expect(html).toContain(OVERVIEW_PAYMENT_AR);
     expect(text).not.toContain("قبل موافقتك");
     expect(text).not.toContain("قبل أي خصم");

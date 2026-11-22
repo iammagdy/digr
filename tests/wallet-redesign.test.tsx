@@ -157,7 +157,7 @@ describe("the design's rules for this page", () => {
   it("the word «حجز مؤقت مُحرَّر» and the tab «حجز مُحرَّر» are kept; one review sentence only; no Google Fonts; no emoji", () => {
     const page = src(PAGE);
     expect(page).toContain('["refund", "حجز مُحرَّر"]');
-    expect(src("src/lib/creditKinds.ts")).toContain("حجز مؤقت مُحرَّر");
+    expect(src("src/lib/creditKinds.ts")).toContain("رجع لمحفظتك");
     const form_ = src("src/app/dashboard/topup/TopupForm.tsx");
     expect(form_.match(/topupReviewSentenceAr\(/g)).toHaveLength(1);
     expect(form_).not.toContain("غالبًا يتم الاعتماد خلال ١٥ دقيقة</"); // the header copy of the mock is not added

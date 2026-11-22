@@ -173,7 +173,7 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const reservePoints = Math.max(minCharge, fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve);
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
-  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل النتائج المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه حجز مؤقت مُحرَّر.`];
+  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل النتائج المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه رجع لمحفظتك.`];
   if (minCharge > 0) notesAr.push(minimumLineAr(DEFAULT_MISSION_PRICING_SETTINGS));
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0

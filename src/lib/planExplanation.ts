@@ -56,7 +56,7 @@ export function planExplanationLinesAr(input: PlanExplanationInput): string[] {
   } else {
     lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه النتائج المطابقة لطلبك، حتى ${countPlainAr(input.targetVolumeMax, kind)}، بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
   }
-  lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${oneMatchedAr(kind)}) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا، والباقي حجز مؤقت مُحرَّر.`);
+  lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${oneMatchedAr(kind)}) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا، والباقي رجع لمحفظتك.`);
   if (!input.countStated) {
     lines.push(`لم تحدد عددًا، فاقترحت عينة من ${countPlainAr(input.targetVolumeMax, kind)}. غيّر العدد من بطاقة الخطة قبل الموافقة إن أردت أكثر.`);
   }

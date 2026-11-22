@@ -123,7 +123,7 @@ describe("the job's call budget (pure)", () => {
   it("the sentence of a job the budget ends is the sentence of the per-job ceiling, in Arabic only", () => {
     expect(JOB_BUDGET_STOP_AR).toBe(CEILING_MESSAGE_AR.job);
     expect(JOB_BUDGET_STOP_AR).not.toMatch(/[A-Za-z0-9]|\$|USD|دولار|استرداد/);
-    expect(JOB_BUDGET_STOP_AR).toContain("حجز مؤقت مُحرَّر");
+    expect(JOB_BUDGET_STOP_AR).toContain("رجع لمحفظتك");
   });
 });
 

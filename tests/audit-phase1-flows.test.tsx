@@ -465,7 +465,7 @@ describe("point 12: each plan card says whether the PDF is included or costs ٥�
 });
 
 describe("point 13: no «استرداد» wording on the request cards", () => {
-  it("every stored variant is read as «حجز مؤقت مُحرَّر»", () => {
+  it("every stored variant is read as «رجع لمحفظتك»", () => {
     for (const stored of [
       "تعذر بدء الطلب. تم إرجاع النقاط المحجوزة إلى رصيدك.",
       "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.",
@@ -476,7 +476,7 @@ describe("point 13: no «استرداد» wording on the request cards", () => {
       "رفض المصدر تفاصيل الطلب. تم إرجاع النقاط المحجوزة كاملة؛ راجع إعدادات البحث.",
     ]) {
       const shown = normalizeReleaseWording(stored);
-      expect(shown, stored).toContain("حجز مؤقت مُحرَّر");
+      expect(shown, stored).toContain("رجع لمحفظتك");
       expect(shown, stored).not.toMatch(/إرجاع|استرداد|استرجاع|أُعيد|أعيد|رجعت/);
     }
     expect(normalizeReleaseWording("نص عادي")).toBe("نص عادي");

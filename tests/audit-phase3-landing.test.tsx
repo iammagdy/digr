@@ -177,7 +177,7 @@ describe("audit phase 3: two merged sections", () => {
     expect(markup).toContain("إزاي بيشتغل وإيه اللي بتدفعه");
     for (const step of ["اطلب", "راجع الخطة والسعر", "استلم ملفك"]) expect(markup).toContain(step);
     expect(markup).toContain("تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط");
-    expect(markup).toContain("حجز مؤقت مُحرَّر");
+    expect(markup).toContain("رجع لمحفظتك");
   });
   it("«إيه اللي ممكن تطلبه» holds the sectors and the decision makers with their statuses", () => {
     const markup = text(page[3]);

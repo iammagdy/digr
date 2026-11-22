@@ -218,16 +218,16 @@ describe("e-mail: what the customer is sent", () => {
     const source = readFileSync("supabase/functions/send-email/templates.ts", "utf8");
     expect(source).not.toMatch(/رجعت|>استرداد</);
     const refund = renderEmailTemplate("refund", { Name: "أحمد", Points: "٢٠", JobTitle: "بحث تيك توك", Reason: "سبب", Balance: "٣٠٠" });
-    expect(refund.subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
-    expect(refund.html).toContain("حجز مؤقت مُحرَّر");
+    expect(refund.subject).toBe("رجع لمحفظتك ٢٠ نقطة");
+    expect(refund.html).toContain("رجع لمحفظتك");
     expect(refund.html).not.toContain("{{");
   });
 
   it("a request released inside the failure record is e-mailed once (same notice id, idempotent e-mail key)", async () => {
     expect(releasedNoticeFull(590).email).toBeNull();
     const withEmail = releasedNoticeFull(590, { withEmail: true });
-    expect(withEmail.email).toMatchObject({ subject: "تعذّر تنفيذ طلبك: حجز مؤقت مُحرَّر", buttonLabel: "افتح طلباتي" });
-    expect(withEmail.email!.detail1).toContain("حجز مؤقت مُحرَّر ٥٩٠ نقطة كاملًا دون أي خصم");
+    expect(withEmail.email).toMatchObject({ subject: "تعذّر تنفيذ طلبك: رجع لمحفظتك", buttonLabel: "افتح طلباتي" });
+    expect(withEmail.email!.detail1).toContain("رجع لمحفظتك ٥٩٠ نقطة كاملًا دون أي خصم");
     expect(JSON.stringify(withEmail)).not.toMatch(PROVIDER_WORDS);
     const worker = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(worker).toContain("releasedNoticeFull(Number(lastFailureData?.released_credits) || 0, { withEmail: true })");
@@ -255,7 +255,7 @@ describe("e-mail: what the customer is sent", () => {
     };
     const { sendPlatformEmail } = await import("../src/lib/server/sendPlatformEmail");
     expect(await sendJobNotice(admin, "u1", "job_9", releasedNoticeFull(100, { withEmail: true }))).toEqual({ inApp: true, email: true });
-    expect(vi.mocked(sendPlatformEmail)).toHaveBeenCalledWith("job-update", "c@example.test", expect.objectContaining({ Heading: "تعذّر تنفيذ طلبك: حجز مؤقت مُحرَّر" }), "job-update:released:job_9");
+    expect(vi.mocked(sendPlatformEmail)).toHaveBeenCalledWith("job-update", "c@example.test", expect.objectContaining({ Heading: "تعذّر تنفيذ طلبك: رجع لمحفظتك" }), "job-update:released:job_9");
     void sent;
   });
 });

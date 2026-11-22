@@ -12,7 +12,7 @@ export const CREDIT_KIND_LABEL_AR: Record<CreditKind, string> = {
   admin_grant: "هدية من الإدارة",
   reserve: "حجز مؤقت",
   charge: "خصم التسليم",
-  release: "حجز مؤقت مُحرَّر",
+  release: "رجع لمحفظتك",
 };
 
 export interface LedgerKindInput {

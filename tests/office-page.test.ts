@@ -31,7 +31,14 @@ function createMegzOfficeHarness(
       tagName: tag.toUpperCase(),
       style: {} as Record<string, string>,
       className: "",
-      textContent: "",
+      _textContent: "",
+      get textContent() {
+        return el._textContent;
+      },
+      set textContent(v: string) {
+        el._textContent = String(v ?? "");
+        el.children = [];
+      },
       src: "",
       clientWidth: opts.width,
       clientHeight: opts.height,
@@ -231,5 +238,128 @@ describe("DT-20261120-office-megz v2: Megz pure fullscreen office page", () => {
     await ctx.fetchLiveFeed();
     expect(vm.runInContext("BOTS.elkebir.status", ctx)).toBe("working");
     expect(consoleErrors).toEqual([]);
+  });
+
+  it("parses both numeric and array open_prs, computes all-time and today merged PR totals, and renders Arabic history newest-first with XSS safety", async () => {
+    const nowIso = new Date().toISOString();
+    const earlierDayIso = "2026-11-20T16:36:05Z";
+    const midDayIso = "2026-11-21T14:00:00Z";
+
+    const { ctx, elements } = createMegzOfficeHarness(
+      html,
+      async () => ({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            version: 1,
+            generated_at: nowIso,
+            open_prs: 2,
+            open_prs_list: [
+              { number: 624, title: "سجل إنجازات المكتب", bots: ["نفادي", "حزلقوم"] },
+              { number: 625, title: "" },
+            ],
+            merged_total: 3,
+            merged_prs: [
+              { number: 602, title: "صفحة المكتب المباشرة", merged_at: earlierDayIso, bots: ["هجرس"] },
+              { number: 622, title: "<img src=x onerror=alert(1)> تسوية المهام", merged_at: nowIso, bots: ["جوني"] },
+              { number: 619, title: "", merged_at: midDayIso },
+            ],
+            bots: {
+              elkebir: { bot: "elkebir", state: "idle", updated_at: nowIso },
+            },
+          };
+        },
+      }),
+      { width: 1440, height: 900, stackedPortrait: false, reducedMotion: true },
+    );
+
+    await new Promise((r) => setTimeout(r, 20));
+    const stats1 = vm.runInContext("getTodayStats()", ctx);
+    expect(stats1.openPrs).toBe(2);
+    expect(stats1.openPrsList).toHaveLength(2);
+    expect(stats1.hasMergedData).toBe(true);
+    expect(stats1.mergedAllTime).toBe(3);
+    expect(stats1.mergedToday).toBe(1);
+    expect(stats1.mergedItems.map((m: any) => m.number)).toEqual([622, 619, 602]);
+
+    // Legacy array open_prs without merged_prs (backwards compatibility)
+    vm.runInContext(
+      `applyLiveFeed({
+        version: 1,
+        generated_at: "${nowIso}",
+        open_prs: [{ number: 701, title: "مهمة قديمة" }],
+        bots: { elkebir: { bot: "elkebir", state: "idle", updated_at: "${nowIso}" } }
+      })`,
+      ctx,
+    );
+    const stats2 = vm.runInContext("getTodayStats()", ctx);
+    expect(stats2.openPrs).toBe(1);
+    expect(stats2.openPrsList).toHaveLength(1);
+    expect(stats2.hasMergedData).toBe(false);
+
+    // Numeric open_prs without open_prs_list
+    vm.runInContext(
+      `applyLiveFeed({
+        version: 1,
+        generated_at: "${nowIso}",
+        open_prs: 3,
+        bots: { elkebir: { bot: "elkebir", state: "idle", updated_at: "${nowIso}" } }
+      })`,
+      ctx,
+    );
+    const stats3 = vm.runInContext("getTodayStats()", ctx);
+    expect(stats3.openPrs).toBe(3);
+    expect(stats3.openPrsList).toEqual([]);
+
+    const historyEl = elements.get("achievements-list");
+    expect(historyEl).toBeDefined();
+
+    // Render with the new payload again and verify XSS-safe DOM (no injected img from title) + search filter
+    vm.runInContext(
+      `applyLiveFeed({
+        version: 1,
+        generated_at: "${nowIso}",
+        open_prs: 1,
+        open_prs_list: [{ number: 624, title: "سجل إنجازات المكتب", bots: ["نفادي"] }],
+        merged_total: 2,
+        merged_prs: [
+          { number: 622, title: "<img src=x onerror=alert(1)> تسوية المهام", merged_at: "${nowIso}", bots: ["جوني"] },
+          { number: 602, title: "صفحة المكتب المباشرة", merged_at: "${earlierDayIso}" }
+        ],
+        bots: { elkebir: { bot: "elkebir", state: "idle", updated_at: "${nowIso}" } }
+      })`,
+      ctx,
+    );
+    const collectNodes = (root: any): any[] => {
+      const out = [root];
+      for (const ch of root?.children || []) out.push(...collectNodes(ch));
+      return out;
+    };
+    const allNodes = collectNodes(historyEl);
+    const achImgs = allNodes.filter((n) => n.tagName === "IMG");
+    expect(achImgs.length).toBe(1);
+    expect(achImgs[0].className).toContain("achievement-bot-avatar");
+    expect(allNodes.some((n) => String(n.textContent || "").includes("<img src=x onerror=alert(1)>"))).toBe(true);
+
+    const summaryNodes = collectNodes(elements.get("achievements-summary"));
+    const summaryText = summaryNodes.map((n) => n.textContent || "").join(" ");
+    expect(summaryText).toContain("الإجمالي: ٢");
+    expect(summaryText).toContain("اليوم: ١");
+    expect(summaryText).toContain("مفتوح: ١");
+
+    const openNodes = collectNodes(elements.get("open-prs-list"));
+    const openText = openNodes.map((n) => n.textContent || "").join(" ");
+    expect(openText).toContain("سجل إنجازات المكتب");
+    expect(openText).toContain("#٦٢٤");
+  });
+
+  it("keeps the achievements chip visible and tappable on mobile (not inside hidden selector below 960px)", () => {
+    const m960Start = html.indexOf("@media (max-width: 960px)");
+    expect(m960Start).toBeGreaterThan(0);
+    const m960Block = html.slice(m960Start, html.indexOf("@media", m960Start + 1));
+    expect(m960Block).not.toMatch(/\.hud-bar\s+\.kpi-strip\s*\{\s*display\s*:\s*none/);
+    expect(m960Block).toMatch(/\.hud-bar\s+\.kpi-strip\s*>\s*\.kpi-chip:not\(\.achievements-chip\)\s*\{\s*display\s*:\s*none/);
+    expect(m960Block).toMatch(/\.achievements-chip\s*\{[^}]*min-height\s*:\s*44px/);
   });
 });
