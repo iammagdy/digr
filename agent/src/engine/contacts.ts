@@ -48,6 +48,7 @@ import type { AgentStore, MissionEventInput } from "../types";
  * call is made when the job budget (40% of the approved reserve's value) has no room for its price. The first refusal for the budget or the daily limit ends the enrichment. The step fills CELLS: it adds no row, so the delivered count and the charge are what they were.
  */
 export type ContactStop = "budget" | "daily_cap" | "time_limit" | "aborted";
+export interface IncompleteContactCell { stage: string; rowId: string; column: string }
 export interface ContactEnrichmentOutcome {
   filled: { email: number; phone: number; unverified: number; verified: number };
   /** People a call was made for / people who had nothing to ask with. */
@@ -61,6 +62,7 @@ export interface ContactEnrichmentOutcome {
   verifier: VerifierTally;
   /** Personal mailboxes seen (kept and labelled per D-0118), counts only. */
   withheld: { personal_email: number };
+  incompleteCells: IncompleteContactCell[];
 }
 export interface VerifierTally { calls: number; deliverable: number; catch_all: number; undeliverable: number; unknown: number; failed: number; second_opinion: number }
 const emptyTally = (): VerifierTally => ({ calls: 0, deliverable: 0, catch_all: 0, undeliverable: 0, unknown: 0, failed: 0, second_opinion: 0 });
@@ -130,6 +132,9 @@ async function writeAttempts(deps: ContactDeps, step: Pick<ContactStep, "stage_k
  */
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const out = await runContactSteps(deps);
+  if (out.incompleteCells.length > 0) {
+    await deps.store.putFile(deps.missionId, "contacts/incomplete_cells.json", JSON.stringify(out.incompleteCells), "application/json").catch(() => undefined);
+  }
   // WHAT THE VERIFIERS SAID, as counts only (audit F3: «غير موثّق» for 7 of 8 addresses could not be told from a skipped verifier): an internal report for the admin page, no address, no provider name
   if (out.verifier.calls + out.verifier.failed > 0) {
     try { await deps.addEvent({ kind: "call", message_ar: "تقرير داخلي لتوثيق الإيميلات.", counts: { ver_calls: out.verifier.calls, ver_deliverable: out.verifier.deliverable, ver_catch_all: out.verifier.catch_all, ver_undeliverable: out.verifier.undeliverable, ver_unknown: out.verifier.unknown, ver_failed: out.verifier.failed, ver_second_opinion: out.verifier.second_opinion } }); } catch { /* a lost note never stops a run */ }
@@ -139,7 +144,15 @@ export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEn
 
 async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const { items, plan } = deps;
-  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null, companies: { email: 0, phone: 0, notAvailable: 0 }, verifier: emptyTally(), withheld: { personal_email: 0 } };
+  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null, companies: { email: 0, phone: 0, notAvailable: 0 }, verifier: emptyTally(), withheld: { personal_email: 0 }, incompleteCells: [] };
+  const seenIncomplete = new Set<string>();
+  const addIncomplete = (stage: string, rowId: string, column: string) => {
+    const k = `${stage}|${rowId}|${column}`;
+    if (!seenIncomplete.has(k)) {
+      seenIncomplete.add(k);
+      out.incompleteCells.push({ stage, rowId, column });
+    }
+  };
   // e-mail before phone for one person (the phone helpers are asked only after the e-mail's)
   const steps = [...(plan.contact_steps ?? [])].filter((x) => x.level === undefined).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
   // THE COMPANY'S OWN E-MAIL AND HQ PHONE FIRST (the owner's top priority, reference A columns 5 and 6): before the people's steps spend any of the job's budget
@@ -147,10 +160,17 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
   const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
   // A PEOPLE STEP THE RUN NEVER REACHED still writes its attempts file, with the reason (QA #575 FAIL 3: a stop in the company stage left no file)
   const notReached = async (keys: ReadonlyArray<string>, stop: ContactStop): Promise<void> => {
-    for (const step of steps.filter((x) => keys.includes(x.stage_key))) await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+    for (const step of steps.filter((x) => keys.includes(x.stage_key))) {
+      await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+      for (const r of items.acceptedRows(step.stage_key)) {
+        if (String(r[step.column_key] ?? "").trim() === "") {
+          addIncomplete(step.stage_key, String(r.id), step.column_key);
+        }
+      }
+    }
   };
   for (const stageKey of [...new Set(companySteps.map((x) => x.stage_key))]) {
-    const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out);
+    const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out, addIncomplete);
     if (stopped) { out.stopped = stopped; await notReached(stageKeys, stopped); return out; }
   }
   for (const [i, stageKey] of stageKeys.entries()) {
@@ -160,7 +180,7 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
     const ranked = rankPeopleByRole(rows, (stage as { role_preference?: { role: Parameters<typeof rankPeopleByRole>[1] } }).role_preference?.role ?? "manager").rows;
     // WHAT ONE STEP LEARNED ABOUT A PERSON FOR THE NEXT (DT-20261118-05 item 4): the work e-mail the e-mail step found, the professional page the phone step looked up
     const learned = new Map<string, LearnedFacts>();
-    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned));
+    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length, learned, addIncomplete));
     const groupStart = deps.budget.spentUsd();
     let stopped: ContactStop | null = null;
     const deferred: ResumeContact[] = [];
@@ -173,6 +193,15 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
     } finally {
       // the group's stop is every step's stop (Gate 2 P2: only the runner that saw it said why)
       for (const runner of runners) await runner.finish(stopped);
+      if (stopped) {
+        for (const step of steps.filter((x) => x.stage_key === stageKey)) {
+          for (const r of items.acceptedRows(stageKey)) {
+            if (String(r[step.column_key] ?? "").trim() === "") {
+              addIncomplete(stageKey, String(r.id), step.column_key);
+            }
+          }
+        }
+      }
       out.spentUsd += deps.budget.spentUsd() - groupStart;
     }
     if (stopped) { out.stopped = stopped; await notReached(stageKeys.slice(i + 1), stopped); break; }
@@ -216,7 +245,7 @@ async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attem
  *   - the HQ PHONE: the source's own value is kept (zero cost, never dropped); only a company whose data has none is looked up, once, on a map search (the company must be the place found: its website or its name). Nothing found: «غير متوفر».
  * The steps fill CELLS of companies already delivered: no row is added, so the delivered count and the charge are untouched. Each step keeps its own spend against its priced cap (max_person_usd x the companies); the job budget is shared. A step stopped by the budget, the daily limit or the time leaves the companies it did not reach EMPTY, and so does a company every lookup of which FAILED (a source that is down): «غير متوفر» is written only when a source ANSWERED and had nothing (or there was nothing to look with).
  */
-async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: ContactStep[], out: ContactEnrichmentOutcome): Promise<ContactStop | null> {
+async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: ContactStep[], out: ContactEnrichmentOutcome, addIncomplete: (stage: string, rowId: string, column: string) => void): Promise<ContactStop | null> {
   const { items, plan, budget } = deps;
   const stage = plan.stages.find((s) => s.key === stageKey);
   if (!stage) return null;
@@ -307,9 +336,19 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             if (verdict.stop) stopped = verdict.stop;
           } else if (deps.attempts) {
             // STAGE 3 PART B: «غير متوفر» only when every lister of the chain answered with nothing, else «لم يكتمل البحث»
-            cells[emailStep.column_key] = deps.attempts.cellFor(stageKey, id, emailStep.column_key, emailStep.finders.map((f) => f.id));
-            if (cells[emailStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1;
-          } else if (asked || !domain || emailStep.finders.length === 0) { cells[emailStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+            const marker = deps.attempts.cellFor(stageKey, id, emailStep.column_key, emailStep.finders.map((f) => f.id));
+            if (marker === NOT_AVAILABLE_AR) {
+              cells[emailStep.column_key] = NOT_AVAILABLE_AR;
+              out.companies.notAvailable += 1;
+            } else {
+              addIncomplete(stageKey, id, emailStep.column_key);
+            }
+          } else if (asked || !domain || emailStep.finders.length === 0) {
+            cells[emailStep.column_key] = NOT_AVAILABLE_AR;
+            out.companies.notAvailable += 1;
+          } else if (stopped || (!asked && domain && emailStep.finders.length > 0)) {
+            addIncomplete(stageKey, id, emailStep.column_key);
+          }
         }
       }
       if (phoneStep && !stopped) {
@@ -350,8 +389,23 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
           if (value !== "") { cells[phoneStep.column_key] = value; const o = origin as { endpointId: string; callId: string } | null; /* set inside lookup() */ if (o && deps.provenance) Object.assign(cells, provenanceOf(phoneStep.column_key, o.endpointId, o.callId)); phoneFound += 1; }
           else if (deps.attempts) {
             // STAGE 3 PART B: the same rule over the map searches; a step stopped here leaves the cell to the pass after the steps
-            if (!stopped) { cells[phoneStep.column_key] = deps.attempts.cellFor(stageKey, id, phoneStep.column_key, helpers.map((h) => h.id)); if (cells[phoneStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1; }
-          } else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+            if (!stopped) {
+              const marker = deps.attempts.cellFor(stageKey, id, phoneStep.column_key, helpers.map((h) => h.id));
+              if (marker === NOT_AVAILABLE_AR) {
+                cells[phoneStep.column_key] = NOT_AVAILABLE_AR;
+                out.companies.notAvailable += 1;
+              } else {
+                addIncomplete(stageKey, id, phoneStep.column_key);
+              }
+            } else {
+              addIncomplete(stageKey, id, phoneStep.column_key);
+            }
+          } else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) {
+            cells[phoneStep.column_key] = NOT_AVAILABLE_AR;
+            out.companies.notAvailable += 1;
+          } else if (stopped || (!asked && (phoneStep.company_phone ?? []).length > 0)) {
+            addIncomplete(stageKey, id, phoneStep.column_key);
+          }
         }
       }
       if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: stageKey, id, cells });
@@ -359,6 +413,15 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
       if (stopped) break;
     }
   } finally {
+    if (stopped) {
+      for (const step of steps) {
+        for (const r of items.acceptedRows(stageKey)) {
+          if (String(r[step.column_key] ?? "").trim() === "") {
+            addIncomplete(stageKey, String(r.id), step.column_key);
+          }
+        }
+      }
+    }
     await flush();
     await items.mirror(stageKey);
     out.spentUsd += budget.spentUsd() - groupStart;
@@ -414,7 +477,7 @@ function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: Fin
 
 type ResumeContact = (stop: ContactStop | null) => Promise<ContactStop | null>;
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map()): { process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number, learned: Map<string, LearnedFacts> = new Map(), addIncomplete: (stage: string, rowId: string, column: string) => void = () => {}): { process(row: Row, deferred: ResumeContact[]): Promise<ContactStop | null>; finish(stop?: ContactStop | null): Promise<void> } {
   // the finders not tried for a person and the input each lacked (written to the mission's own file at the end of the step)
   const notTried = new Map<string, number>();
   // WHAT EVERY FINDER ANSWERED, per outcome (DT-20261118-05): written to the mission's own file at the end of the step whether or not the stage-3 attempt log is on, with the reason the run stopped, so a person left empty is always explained
@@ -689,6 +752,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
             pending.push({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: NOT_AVAILABLE_AR } });
           } else if (hadMarker) {
             pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+          }
+          if (!unavailable && !(step.finders.length === 0 && legacyCompanyLookup && !stopRun)) {
+            addIncomplete(stageKey, id, step.column_key);
           }
         }
         if (stopRun) stoppedBy = stopRun;

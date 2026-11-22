@@ -13,7 +13,7 @@ import { isCompanyStage } from "./entities";
 import { emailOnOtherDomain } from "./emailVerification";
 import { isRoleMailbox } from "./people";
 import { isPersonalMailDomain } from "../multiProvider/policy";
-import { COMPANY_EMAIL_STATUS_TITLE_AR, COMPANY_EMAIL_TITLE_AR } from "./taskContracts";
+import { COMPANY_EMAIL_STATUS_TITLE_AR, COMPANY_EMAIL_TITLE_AR, COMPANY_PHONE_TITLE_AR } from "./taskContracts";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -653,6 +653,38 @@ export function buildCompanySteps(
     if (withPeople && maps && maps.length > 0) {
       const first = chainPriceUsd(maps, 1);
       out.push({ kind: "phone", level: "company", stage_key: st.key, column_key: COMPANY_PHONE_KEY, status_key: statusKeyOf(COMPANY_PHONE_KEY), per_person_usd: first, max_person_usd: Math.max(first, chainPriceUsd(maps, FINDERS_PER_STEP)), finders: [], company_phone: maps });
+    }
+  }
+  return out;
+}
+
+interface PlanLikeForColumns {
+  stages: ReadonlyArray<{ key: string; parent_key: string | null; columns: ReadonlyArray<{ key: string; title_ar: string; status_of?: string }> }>;
+  contact_steps?: ReadonlyArray<ContactStep>;
+}
+export interface ContactColumn { stage: string; column: string; titleAr: string; chain: string[]; noun: "company" | "person" }
+
+/**
+ * THE CONTACT COLUMNS AND THEIR CHAINS: each step's column with its lookups in the step's order (a company's HQ phone: its map searches; every other step: its finders, the compiled chain for a code-built
+ * plan), and each of the reference's company contact columns that no step fills (no verified tool for it: its chain is empty, so its cells can only be «لم يكتمل البحث»).
+ */
+export function contactColumnsOf(plan: PlanLikeForColumns): ContactColumn[] {
+  const out: ContactColumn[] = [];
+  for (const step of plan.contact_steps ?? []) {
+    const stage = plan.stages.find((s) => s.key === step.stage_key);
+    if (!stage) continue;
+    const finders = step.level === undefined ? [...step.finders, ...personAlternatesOf(step)] :
+      step.kind === "phone" ? step.company_phone ?? [] : step.finders;
+    const chain = finders.map((f) => f.id);
+    const title = stage.columns.find((c) => c.key === step.column_key)?.title_ar ?? (step.kind === "email" ? COMPANY_EMAIL_TITLE_AR : COMPANY_PHONE_TITLE_AR);
+    out.push({ stage: stage.key, column: step.column_key, titleAr: title, chain: [...new Set(chain)], noun: step.level === "company" ? "company" : "person" });
+  }
+  for (const stage of plan.stages) {
+    if (stage.parent_key !== null) continue;
+    for (const c of stage.columns) {
+      if (c.status_of || (c.title_ar !== COMPANY_EMAIL_TITLE_AR && c.title_ar !== COMPANY_PHONE_TITLE_AR)) continue;
+      if (out.some((x) => x.stage === stage.key && x.column === c.key)) continue;
+      out.push({ stage: stage.key, column: c.key, titleAr: c.title_ar, chain: [], noun: "company" });
     }
   }
   return out;

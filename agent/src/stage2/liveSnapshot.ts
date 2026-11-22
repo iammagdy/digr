@@ -9,7 +9,8 @@ import { cairoCellDate, cairoText, dateOnlyCellDate, dateOnlyText, isDateValues,
 import { counterAr, type LiveCell, type LiveRow, type LiveSheet, type LiveSnapshot, type LiveStatus } from "../../../src/lib/agentMission/stage2/liveSheet";
 import { workLogFromEvents, workLogLine, type WorkLogLine } from "../../../src/lib/agentMission/stage2/workLog";
 import type { ItemSnapshot } from "../items/itemStore";
-import { COUNTER_UNAVAILABLE_AR, deliveredSheetsOf, ID_HEADER_AR, PARENT_HEADER_AR, type CompanyMailboxes, type SheetLayout } from "../workbook";
+import { COUNTER_UNAVAILABLE_AR, deliveredSheetsOf, displayMissingValue, ID_HEADER_AR, MISSING_LABELS, PARENT_HEADER_AR, type CompanyMailboxes, type SheetLayout } from "../workbook";
+import { dateUnreadColumnsOf } from "../../../src/lib/agentMission/relativeDates";
 import type { MissionFacts } from "../methodology";
 
 type Row = Record<string, unknown>;
@@ -47,7 +48,13 @@ function numericColumn(values: unknown[], contact: boolean): boolean {
 const EMPTY: LiveCell = { k: "empty", v: "" };
 
 /** The cells of one sheet, by the writer's rules (buildMissionFiles): language labels in a new-pipeline file, dates in Cairo time, numbers, links, «نعم» / «لا». */
-function sheetRows(lay: SheetLayout, parentById: Map<string, Row>, newPipeline: boolean): LiveRow[] {
+function sheetRows(
+  lay: SheetLayout,
+  parentById: Map<string, Row>,
+  newPipeline: boolean,
+  markMissing: boolean,
+  incompleteKeys: ReadonlySet<string>,
+): LiveRow[] {
   const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentById.get(text(r.parent_id)) ?? null)));
   const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
   const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
@@ -60,17 +67,19 @@ function sheetRows(lay: SheetLayout, parentById: Map<string, Row>, newPipeline: 
       const got = c.get(record, parent);
       const labelled = newPipeline && languageAt[k] ? languageLabelAr(got) : got;
       const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && labelled.trim() === "")) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
-      if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) return EMPTY;
+      const keepBlank = (newPipeline && languageAt[k]) || (c.key !== undefined && dateUnreadColumnsOf(record).includes(c.key));
+      const shown = displayMissingValue(lay.stage.key, text(record.id), c, v, keepBlank, markMissing, incompleteKeys);
+      if (shown === null || shown === undefined || (typeof shown === "string" && shown.trim() === "")) return EMPTY;
       if (dateAt[k]) {
-        const day = parseDateOnly(v);
+        const day = parseDateOnly(shown);
         if (day) return { k: "date", v: dateOnlyCellDate(day).toISOString(), d: dateOnlyText(day) };
-        const moment = parseMoment(v);
+        const moment = parseMoment(shown);
         if (moment) return { k: "date", v: cairoCellDate(moment).toISOString(), d: cairoText(moment) };
       }
-      if (typeof v === "number" && Number.isFinite(v)) return { k: "number", v: String(v) };
-      if (typeof v === "boolean") return { k: "text", v: v ? "نعم" : "لا" };
-      const t = text(v);
-      if (t === COUNTER_UNAVAILABLE_AR) return { k: "text", v: t };
+      if (typeof shown === "number" && Number.isFinite(shown)) return { k: "number", v: String(shown) };
+      if (typeof shown === "boolean") return { k: "text", v: shown ? "نعم" : "لا" };
+      const t = text(shown);
+      if (MISSING_LABELS.has(t)) return { k: "text", v: t };
       if (numericAt[k]) return { k: "number", v: String(Number(t.trim())) };
       if (isUrl(t)) return { k: "link", v: t.trim() };
       return { k: "text", v: t };
@@ -98,12 +107,15 @@ export function buildLiveSnapshot(input: LiveSnapshotInput): LiveSnapshot {
   const { plan, rowsByStage, repliesJudged } = deliveryRowsOf(input.plan, input.snap);
   const { rowsByStage: laidRows, layouts } = deliveredSheetsOf(plan, rowsByStage, input.facts, input.companyMailboxes, { repliesJudged, approvedPlan: input.plan, now: input.nowMs });
   const newPipeline = Object.values(laidRows).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
+  const incompleteList = input.facts?.incompleteCells ?? [];
+  const incompleteKeys = new Set(incompleteList.map((x) => `${x.stage}|${x.rowId}|${x.column}`));
+  const markMissing = (newPipeline || input.plan.compiled?.by === "compiler" || input.plan.stages.some((s) => s.engine?.built_by === "code"));
   const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);
   const sheets: LiveSheet[] = layouts.map((lay) => {
     const nameAr = wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`);
     const parentById = new Map((laidRows[lay.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     const headers = [...lay.columns.map((c) => c.title), ID_HEADER_AR, ...(lay.hasParent ? [PARENT_HEADER_AR] : [])];
-    return { stageKey: lay.stage.key, nameAr, headers, rows: sheetRows(lay, parentById, newPipeline) };
+    return { stageKey: lay.stage.key, nameAr, headers, rows: sheetRows(lay, parentById, newPipeline, markMissing, incompleteKeys) };
   });
   const deliveredByStage = Object.fromEntries(plan.stages.map((s) => [s.key, (rowsByStage[s.key] ?? []).length]));
   const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, repliesJudged);
