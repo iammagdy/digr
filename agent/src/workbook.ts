@@ -88,6 +88,32 @@ const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (t
 
 export const MISSING_LABELS: ReadonlySet<string> = new Set([COUNTER_UNAVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR]);
 
+export const isMetaColumnKey = (c: { availability?: boolean; key?: string }): boolean =>
+  c.availability === true ||
+  c.key === undefined ||
+  c.key === "__row_number" ||
+  c.key === VERIFICATION_NOTE_KEY ||
+  c.key === COMMENT_KIND_KEY ||
+  c.key === REPLY_TO_KEY ||
+  c.key.startsWith("__") ||
+  /_status$|_type$/i.test(c.key);
+
+export function displayMissingValue(
+  stageKey: string,
+  rowId: string,
+  c: { availability?: boolean; key?: string },
+  rawVal: unknown,
+  keepBlank: boolean,
+  markMissing: boolean,
+  incompleteKeys?: ReadonlySet<string>,
+): unknown {
+  if (!markMissing || c.availability || isMetaColumnKey(c) || keepBlank) return rawVal;
+  if (c.key && incompleteKeys?.has(`${stageKey}|${rowId}|${c.key}`)) return B2B_NOT_SEARCHED_AR;
+  if (rawVal === B2B_NOT_SEARCHED_AR) return B2B_NOT_SEARCHED_AR;
+  if (isBlankCell(rawVal) || rawVal === COUNTER_UNAVAILABLE_AR) return NOT_AVAILABLE_AR;
+  return rawVal;
+}
+
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
 function numericColumn(values: unknown[], contact: boolean): boolean {
   if (contact) return false;
@@ -117,25 +143,8 @@ function textGetter(stage: PricedStage, key: string): ((row: Row) => unknown) | 
   return (row) => (isBlankText(row[key]) ? marker : row[key]);
 }
 
-const isMetaOrAnnotationColumn = (c: { key: string; computed?: unknown; status_of?: unknown; type_of?: unknown }): boolean =>
-  c.computed !== undefined ||
-  c.status_of !== undefined ||
-  c.type_of !== undefined ||
-  c.key === VERIFICATION_NOTE_KEY ||
-  c.key === COMPANY_MAILBOXES_KEY ||
-  c.key === COMMENT_KIND_KEY ||
-  c.key === REPLY_TO_KEY ||
-  c.key.startsWith("__");
-
-const normalizeRequestedCell = (val: unknown, keepBlank: boolean): unknown => {
-  if (val === B2B_NOT_SEARCHED_AR) return B2B_NOT_SEARCHED_AR;
-  if (isBlankCell(val) || val === COUNTER_UNAVAILABLE_AR) return keepBlank ? "" : NOT_AVAILABLE_AR;
-  return val;
-};
-
 export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): SheetLayout[] {
   const stageByKey = new Map(plan.stages.map((s, i) => [s.key, { s, i }]));
-  const newPipeline = Object.values(rowsByStage).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
   const layouts: SheetLayout[] = [];
   // THE REFERENCE'S SHEETS (taskContracts.ts, audit 2026-11 reference A): for «companies and their decision makers» each sheet starts with «م» (a running number of its rows), the decision-maker marker and the per-company notes are computed from the delivered people's titles, and the title and name cells read «العربية (English)»
   const referenced = contractTypeOf(plan.stages) === "companies_people";
@@ -202,35 +211,19 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         continue;
       }
       const special = specialGet(c);
-      const ownText = textGetter(stage, c.key);
-      const availability = isAvailabilityKey(plan, stage, c.key);
-      const isMeta = isMetaOrAnnotationColumn(c);
-      const baseGet = special
-        ? (r: Row) => special(r)
-        : ownText
-        ? (r: Row) => ownText(r)
-        : availability
-        ? (r: Row) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key])
-        : (r: Row) => r[c.key];
-
-      const columnGet = (r: Row): unknown => {
-        const val = baseGet(r);
-        if (availability || isMeta) return val;
-        const keepBlank = (newPipeline && isLanguageColumn(c.title_ar, c.key)) || dateUnreadColumnsOf(r).includes(c.key);
-        return normalizeRequestedCell(val, keepBlank);
-      };
-
-      const values = rows.map((r) => columnGet(r));
+      const values = rows.map((r) => (special ? special(r) : r[c.key]));
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
       // ROUND 27 (item 4): a counter (or a field the tool may not give) is never merged into another column because their numbers coincide («0» shares and «0» saves on nine of ten videos dropped «الحفظ»)
+      const availability = isAvailabilityKey(plan, stage, c.key);
       // Identical missing-contact markers make no claim that two contact fields are the same.
       const unavailableContact = (c.kind === "work_email" || c.kind === "phone") && values.some((value) => value === NOT_AVAILABLE_AR);
-      const hasMissingMarker = values.some((value) => value === NOT_AVAILABLE_AR || value === B2B_NOT_SEARCHED_AR);
-      if (!onlyContactOfKind && c.key !== COMMENT_KIND_KEY && !rawSheet && !availability && !unavailableContact && !hasMissingMarker && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      if (!onlyContactOfKind && c.key !== COMMENT_KIND_KEY && !rawSheet && !availability && !unavailableContact && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       for (const kind of askedKinds) retainedContacts.add(kind);
-      columns.push({ title: c.title_ar, get: columnGet, kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
+      const ownText = textGetter(stage, c.key);
+      const counterWords = availability;
+      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
       // EVERY APPROXIMATE DATE SAYS SO IN THE FILE (round 14): a date column that holds any date computed from a relative time gets a column beside it, «دقة التاريخ»: «تقريبي» for a computed day, «دقيق» for a real moment, empty when there is no date. The date cell itself stays a date (sortable, filterable);
       // the word «تقريبًا» in its number format stays too, but a reader of values never saw it
       if (rows.some((r) => approxColumnsOf(r).includes(c.key))) {
@@ -488,11 +481,14 @@ export function fileLayoutsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, c
  * THE SHEETS OF A DELIVERY AS THEY ARE WRITTEN: `fileLayoutsOf`, then the methodology and the delivery contract, whose completions fill a missing mark or precision cell from data already in
  * the row (moved here unchanged from `buildMissionFiles`). Exported for the Stage 2 live sheet: what the customer watches is laid out and completed by the same code as the file.
  */
-export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; approvedPlan?: PricedPlan; completeContract?: boolean; now?: number } = {}) {
+export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; approvedPlan?: PricedPlan; completeContract?: boolean; now?: number; incompleteCells?: ReadonlyArray<{ stage: string; rowId: string; column: string }>; markMissingCells?: boolean } = {}) {
   const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, qualityLines, qualityReports } = fileLayoutsOf(plan, rowsIn, companyMailboxes);
   // THE DELIVERY CONTRACT (round 14, foundation/deliveryContract.ts): it checks the four rules on the file as it is about to be written. It is not a filter: it never removes a row or changes a value. R2, R3 and R4 only COMPLETE the description (a missing limits line, a precision cell, a mark cell
   // filled from data already in the row); R1 only reports. What it found is returned for the worker to record.
-  const methodology = buildMethodology({ plan, layouts, rowsByStage, facts });
+  const factsWithIncomplete = facts
+    ? { ...facts, ...(options.incompleteCells ? { incompleteCells: options.incompleteCells } : {}) }
+    : (options.incompleteCells ? { incompleteCells: options.incompleteCells } : undefined);
+  const methodology = buildMethodology({ plan, layouts, rowsByStage, facts: factsWithIncomplete });
   // ROUND 59: what the company check found (and that no site was visited) joins the summary's «حدود هذا التسليم»
   if (qualityLines.length > 0) {
     const limits = methodology.items.find((i) => i.label === "حدود هذا التسليم");
@@ -504,7 +500,7 @@ export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]
   return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string> } = {}): Promise<{ xlsx: Buffer; csv: string; billingLayout: WorkbookBillingLayout; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number }; /** ROUND 59: what the company check found (companyQuality.ts), for the delivery line. */ companyQuality: CompanyQualityReport[] }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string>; incompleteCells?: ReadonlyArray<{ stage: string; rowId: string; column: string }>; markMissingCells?: boolean } = {}): Promise<{ xlsx: Buffer; csv: string; billingLayout: WorkbookBillingLayout; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number }; /** ROUND 59: what the company check found (companyQuality.ts), for the delivery line. */ companyQuality: CompanyQualityReport[] }> {
   const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports } = deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);
   // STAGE 3 S2: the lines a B2B delivery states (each gap, each mark, the exact duplicates removed) join the limits row of the summary; with none, nothing changes
   if (options.extraLimitLines && options.extraLimitLines.length > 0) {
@@ -530,6 +526,12 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   const newPipeline = Object.values(rowsByStage).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
   let hasDateColumn = false;
   let hasApproxDates = false;
+
+  const incompleteList = options.incompleteCells ?? facts?.incompleteCells ?? [];
+  const incompleteKeys = new Set(incompleteList.map((x) => `${x.stage}|${x.rowId}|${x.column}`));
+  const markMissing =
+    options.markMissingCells ??
+    (newPipeline || plan.compiled?.by === "compiler" || plan.stages.some((s) => s.engine?.built_by === "code"));
 
   for (const lay of layouts) sheetNameOf.set(lay.stage.key, wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
   // the replies stage has no sheet of its own: its row of the first sheet points to the thread sheet
@@ -599,8 +601,6 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         const textKey = newPipeline && languageAt[k] ? textColumnKeyOf(lay.columns.map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
         const textAt = textKey !== null ? lay.columns.findIndex((x) => x.key === textKey) : -1;
         const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && labelled.trim() === "")) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
-        // a missing value is an EMPTY cell, never an empty text
-        if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) { cellFormat[k] = null; return null; }
         if (dateAt[k]) {
           // a date with no time stays a date (no time of day, no zone shift); only a real timestamp is written in Cairo time
           const day = parseDateOnly(v);
@@ -614,9 +614,12 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
           const moment = parseMoment(v);
           if (moment) { cellFormat[k] = DATE_NUMBER_FORMAT; return cairoCellDate(moment); }
         }
-        if (typeof v === "number" && Number.isFinite(v)) return v;
-        if (typeof v === "boolean") return v ? "نعم" : "لا";
-        const t = text(v);
+        const keepBlank = (newPipeline && languageAt[k]) || (c.key !== undefined && dateUnreadColumnsOf(record).includes(c.key));
+        const shown = displayMissingValue(lay.stage.key, text(record.id), c, v, keepBlank, markMissing, incompleteKeys);
+        if (shown === null || shown === undefined || (typeof shown === "string" && shown.trim() === "")) { cellFormat[k] = null; return null; }
+        if (typeof shown === "number" && Number.isFinite(shown)) return shown;
+        if (typeof shown === "boolean") return shown ? "نعم" : "لا";
+        const t = text(shown);
         if (MISSING_LABELS.has(t)) return textCell(t);
         if (numericAt[k]) return Number(t.trim());
         if (isUrl(t)) return { text: t.trim(), hyperlink: t.trim(), tooltip: t.trim() };
@@ -741,7 +744,24 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
     const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
-    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); if (lastDates[k]) { const day = parseDateOnly(v); if (day) return approxColumnsOf(r).includes(c.key ?? "") ? `${dateOnlyText(day)} (${APPROX_WORD_AR})` : dateOnlyText(day); const moment = parseMoment(v); if (moment) return cairoText(moment); } return v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
+    for (const r of last.rows) {
+      lines.push([
+        ...last.columns.map((c, k) => {
+          const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null);
+          if (lastDates[k]) {
+            const day = parseDateOnly(v);
+            if (day) return approxColumnsOf(r).includes(c.key ?? "") ? `${dateOnlyText(day)} (${APPROX_WORD_AR})` : dateOnlyText(day);
+            const moment = parseMoment(v);
+            if (moment) return cairoText(moment);
+          }
+          const keepBlank = (newPipeline && isLanguageColumn(c.title, c.key)) || (c.key !== undefined && dateUnreadColumnsOf(r).includes(c.key));
+          const shown = displayMissingValue(last.stage.key, text(r.id), c, v, keepBlank, markMissing, incompleteKeys);
+          return shown;
+        }),
+        r.id,
+        ...(last.hasParent ? [r.parent_id] : []),
+      ].map(esc).join(","));
+    }
   }
   // the CSV gets the same last look
   const csvOut = withoutProviderUrls(`﻿${lines.join("\r\n")}`, providers);

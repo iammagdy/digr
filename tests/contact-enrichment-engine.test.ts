@@ -130,7 +130,7 @@ describe("the engine fills the cells of the people it delivered", () => {
     // a hit costs 0.0005; a ceiling that leaves room for two hits only
     const w = await world({ ceilingUsd: 0.0011, steps: [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.0005, finders: [EMAIL_A] }], answers: (ep, p) => (ep === EMAIL_A.id ? hitEmail(String(p.person_linkedin_url).split("/in/")[1]) : null) });
     const out = await w.run();
-    const filled = ["p1", "p2", "p3", "p4", "p5"].filter((id) => cellsOf(w.items, id).email !== "" && cellsOf(w.items, id).email !== "لم يكتمل البحث");
+    const filled = ["p1", "p2", "p3", "p4", "p5"].filter((id) => cellsOf(w.items, id).email !== "");
     expect(filled.sort()).toEqual(["p2", "p4"]);
     expect(out.stopped).toBe("budget");
     expect(w.budget.spentUsd()).toBeLessThanOrEqual(0.0011);
@@ -147,7 +147,7 @@ describe("the engine fills the cells of the people it delivered", () => {
     const w = await world({ answers: (ep, p) => (ep === EMAIL_A.id ? (++n > 2 ? "refuse" : hitEmail(String(p.person_linkedin_url).split("/in/")[1])) : null) });
     const out = await w.run();
     expect(out.stopped).toBe("budget");
-    expect(PEOPLE.filter((p) => cellsOf(w.items, p.id).email !== "" && cellsOf(w.items, p.id).email !== "لم يكتمل البحث").length).toBe(2);
+    expect(PEOPLE.filter((p) => cellsOf(w.items, p.id).email !== "").length).toBe(2);
     // CHANGED (item 4): the people are taken in ONE pass, decision makers first, each with every step: the chief executive and the general manager each had their e-mail call AND their phone call (4 calls) before the third person's e-mail call was refused (the 5th). Before, all e-mails came first (3 calls).
     expect(w.calls.length).toBe(5);
   });

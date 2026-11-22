@@ -15,7 +15,7 @@ import { reasonTextAr, shortfallClauseAr, stageTruthBodyAr } from "./finalize";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { decisionMakersLeftOutAr } from "../../src/lib/agentMission/roles";
 import { NORMAL_PARENT_STOPS, perParentShortfallAr } from "./perParentLimits";
-import { contactColumnsOf } from "../../src/lib/agentMission/stage3/b2bEngine";
+import { contactColumnsOf } from "../../src/lib/agentMission/contactFinders";
 import { B2B_NOT_SEARCHED_AR, NOT_AVAILABLE_AR } from "../../src/lib/agentMission/taskContracts";
 import { threadCounterLinesOfPlan } from "./threadCounters";
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../src/lib/agentMission/foundation/topicChoice";
@@ -58,6 +58,7 @@ export interface MissionFacts {
   stages?: Record<string, StageRecord>;
   /** How the automatic review ended (it ran out of its budget, or the source of the review failed). */
   reviewStop?: "budget" | "failed" | null;
+  incompleteCells?: ReadonlyArray<{ stage: string; rowId: string; column: string }>;
 }
 
 /** The alternative routes that ANSWERED for each parent, from the streams the item store persisted (the engine's keys: `p:<parent>` the main route, `p:<parent>:alt<i>` the i-th alternative). A route that never answered left no stream, so it is not counted: the number is a floor, never an overstatement. */
@@ -397,7 +398,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }
-  for (const line of contactSearchLimitLinesAr(plan, rowsByStage)) {
+  for (const line of contactSearchLimitLinesAr(plan, rowsByStage, facts.incompleteCells)) {
     if (!limits.includes(line)) limits.push(line);
   }
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
@@ -459,12 +460,19 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
 /**
  * N6: The limits line stating searched vs not reached / incomplete contact searches.
  */
-export function contactSearchLimitLinesAr(plan: PricedPlan, rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>): string[] {
+export function contactSearchLimitLinesAr(
+  plan: PricedPlan,
+  rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>,
+  incompleteCells: ReadonlyArray<{ stage: string; rowId: string; column: string }> = [],
+): string[] {
   const out: string[] = [];
+  const incompleteSet = new Set(incompleteCells.map((x) => `${x.stage}|${x.rowId}|${x.column}`));
   for (const col of contactColumnsOf(plan)) {
     const rows = rowsByStage[col.stage] ?? [];
     if (rows.length === 0) continue;
-    const incomplete = rows.filter((r) => String(r[col.column] ?? "").trim() === B2B_NOT_SEARCHED_AR).length;
+    const incomplete = rows.filter(
+      (r) => String(r[col.column] ?? "").trim() === B2B_NOT_SEARCHED_AR || incompleteSet.has(`${col.stage}|${String(r.id ?? "")}|${col.column}`),
+    ).length;
     if (incomplete === 0) continue;
     const searched = rows.length - incomplete;
     const nounObj = knownItemNoun(col.noun === "company" ? "شركة" : "شخص")!;

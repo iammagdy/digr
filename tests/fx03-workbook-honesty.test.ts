@@ -198,21 +198,13 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
         per_person_usd: 0.05,
         finders: [A],
       };
-      const plan = {
-        stages: [
-          { key: "companies", parent_key: null, title_ar: "الشركات", columns: [{ key: "name", title_ar: "اسم الشركة" }] },
-          {
-            key: "people",
-            parent_key: "companies",
-            title_ar: "صناع القرار",
-            columns: [
-              { key: "full_name", title_ar: "الاسم" },
-              { key: "email", title_ar: "الإيميل", kind: "work_email" as const },
-            ],
-          },
-        ],
-        contact_steps: [emailStep],
-      } as Parameters<typeof runContactEnrichment>[0]["plan"];
+      const plan = planOf([
+        stageOf("companies", "الشركات", 1, null, [{ key: "name", title_ar: "اسم الشركة" }]),
+        stageOf("people", "صناع القرار", 5, "companies", [
+          { key: "full_name", title_ar: "الاسم" },
+          { key: "email", title_ar: "الإيميل", kind: "work_email" as const },
+        ]),
+      ], { contact_steps: [emailStep] });
 
       const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
       let callCount = 0;
@@ -269,10 +261,33 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
       const rows = items.acceptedRows("people");
       expect(rows[0].email).toBe("person1@example.com");
       expect(rows[1].email).toBe("person2@example.com");
-      // Failed, stopped, and unreached must be B2B_NOT_SEARCHED_AR
-      expect(rows[2].email).toBe(B2B_NOT_SEARCHED_AR);
-      expect(rows[3].email).toBe(B2B_NOT_SEARCHED_AR);
-      expect(rows[4].email).toBe(B2B_NOT_SEARCHED_AR);
+      // Raw ItemStore rows remain untouched empty strings
+      expect(rows[2].email).toBe("");
+      expect(rows[3].email).toBe("");
+      expect(rows[4].email).toBe("");
+      expect(out.incompleteCells).toEqual([
+        { stage: "people", rowId: "p3", column: "email" },
+        { stage: "people", rowId: "p4", column: "email" },
+        { stage: "people", rowId: "p5", column: "email" },
+      ]);
+
+      const built = await buildMissionFiles(
+        plan as PricedPlan,
+        { companies: [{ id: "c1", name: "Company 1" }], people: rows },
+        { requestText: "test", deliveredAt: new Date(), incompleteCells: out.incompleteCells },
+        undefined,
+        { incompleteCells: out.incompleteCells, markMissingCells: true, completeContract: false },
+      );
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(built.xlsx as never);
+      const sheet = wb.worksheets.find((w) => w.name === "صناع القرار") ?? wb.worksheets[2];
+      expect(sheet.getCell(4, 3).value).toBe(B2B_NOT_SEARCHED_AR); // p3 email
+      expect(sheet.getCell(5, 3).value).toBe(B2B_NOT_SEARCHED_AR); // p4 email
+      expect(sheet.getCell(6, 3).value).toBe(B2B_NOT_SEARCHED_AR); // p5 email
+
+      const exp = await csvExportFromWorkbook(built.xlsx);
+      expect(exp.stages[1].csv).toContain(B2B_NOT_SEARCHED_AR);
+      expect(exp.methodologyCsv).toContain("لم يكتمل البحث لـ ٣ أشخاص");
     });
 
     it("counter-case: completely searched contact with no result gets «غير متوفر» (NOT_AVAILABLE_AR)", async () => {
@@ -304,21 +319,13 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
         per_person_usd: 0.05,
         finders: [A],
       };
-      const plan = {
-        stages: [
-          { key: "companies", parent_key: null, title_ar: "الشركات", columns: [{ key: "name", title_ar: "اسم الشركة" }] },
-          {
-            key: "people",
-            parent_key: "companies",
-            title_ar: "صناع القرار",
-            columns: [
-              { key: "full_name", title_ar: "الاسم" },
-              { key: "email", title_ar: "الإيميل", kind: "work_email" as const },
-            ],
-          },
-        ],
-        contact_steps: [emailStep],
-      } as Parameters<typeof runContactEnrichment>[0]["plan"];
+      const plan = planOf([
+        stageOf("companies", "الشركات", 1, null, [{ key: "name", title_ar: "اسم الشركة" }]),
+        stageOf("people", "صناع القرار", 5, "companies", [
+          { key: "full_name", title_ar: "الاسم" },
+          { key: "email", title_ar: "الإيميل", kind: "work_email" as const },
+        ]),
+      ], { contact_steps: [emailStep] });
 
       const budget = createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 });
       const gateway: Parameters<typeof runContactEnrichment>[0]["gateway"] = {
@@ -383,6 +390,7 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
 
       const built = await buildMissionFiles(plan, rowsByStage, undefined, undefined, {
         completeContract: false,
+        markMissingCells: true,
       });
 
       // 1. Check Excel
@@ -393,7 +401,8 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
       expect(sheet.getCell(3, 2).value).toBe(NOT_AVAILABLE_AR); // c2 website
       expect(sheet.getCell(3, 3).value).toBe(NOT_AVAILABLE_AR); // c2 address (was "غير متاح")
 
-      // 2. Check customer CSV export
+      // 2. Check worker CSV and customer CSV export
+      expect(built.csv).toContain(NOT_AVAILABLE_AR);
       const exp = await csvExportFromWorkbook(built.xlsx);
       const stageCsv = exp.stages[0].csv;
       expect(stageCsv).toContain(NOT_AVAILABLE_AR);
@@ -422,6 +431,7 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
 
       const built = await buildMissionFiles(plan, rowsByStage, undefined, undefined, {
         completeContract: false,
+        markMissingCells: true,
       });
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(built.xlsx as never);
@@ -430,7 +440,7 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
       expect(sheet.getCell(2, 2).value).toBe(COUNTER_UNAVAILABLE_AR);
     });
 
-    it("companyQuality sets unusable address to «غير متوفر» and notes it truthfully", () => {
+    it("companyQuality sets unusable address to null on raw row while workbook renders «غير متوفر»", async () => {
       const plan = planOf([
         stageOf("companies", "الشركات", 1, null, [
           { key: "name", title_ar: "اسم الشركة" },
@@ -441,10 +451,39 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
         companies: [{ id: "c1", name: "شركة تجريبية", address: "31.25" }],
       };
       const res = withCompanyQuality(plan, rowsIn);
-      expect(res.rowsByStage.companies[0].address).toBe(NOT_AVAILABLE_AR);
-      expect(res.limitLines.some((l) => l.includes(NOT_AVAILABLE_AR))).toBe(true);
+      expect(res.rowsByStage.companies[0].address).toBeNull();
+      expect(res.limitLines.some((l) => l.includes("العنوان"))).toBe(true);
       const note = String(res.rowsByStage.companies[0][VERIFICATION_NOTE_KEY] ?? "");
-      expect(note.includes(NOT_AVAILABLE_AR)).toBe(true);
+      expect(note.includes("ليس عنوانًا")).toBe(true);
+
+      const built = await buildMissionFiles(plan, res.rowsByStage, undefined, undefined, {
+        completeContract: false,
+        markMissingCells: true,
+      });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(built.xlsx as never);
+      const sheet = wb.worksheets[1];
+      expect(sheet.getCell(2, 2).value).toBe(NOT_AVAILABLE_AR);
+    });
+
+    it("counter-case: flags-off (markMissingCells false/omitted) keeps missing cells null/empty", async () => {
+      const plan = planOf([
+        stageOf("companies", "الشركات", 1, null, [
+          { key: "name", title_ar: "اسم الشركة" },
+          { key: "address", title_ar: "العنوان" },
+        ]),
+      ]);
+      const rowsByStage = {
+        companies: [{ id: "c1", name: "شركة تجريبية", address: "" }],
+      };
+      const built = await buildMissionFiles(plan, rowsByStage, undefined, undefined, {
+        completeContract: false,
+        markMissingCells: false,
+      });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(built.xlsx as never);
+      const sheet = wb.worksheets[1];
+      expect(sheet.getCell(2, 2).value).toBeNull();
     });
   });
 

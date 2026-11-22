@@ -1333,7 +1333,14 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     } catch (e) { deps.log?.(`names_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a name that cannot be spelled stays as the source gave it */ }
   }
 
-  await settleExecution(deps, mission, plan, reserve, { llm: Number(llm + namesCostUsd), executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
+  await settleExecution(deps, mission, plan, reserve, {
+    llm: Number(llm + namesCostUsd),
+    executionTregUsd: budget.spentUsd(),
+    summary: state.finish?.summary_ar ?? null,
+    outputError: output.error ?? null,
+    memory: items,
+    markMissingCells: b2bEngineOn(redesignIsTest) || redesignStages.size > 0 || plan.compiled?.by === "compiler" || anyRedesignFlag(redesignFlags, platformFlags) || readCapabilityDiscoveryFlag(redesignSettings, mission.user_id),
+  });
 }
 
 const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage => ({
@@ -1347,6 +1354,7 @@ type ExecutionEnd = {
   summary: string | null;
   outputError: string | null;
   memory?: ItemStore;
+  markMissingCells?: boolean;
 };
 
 async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, a: ExecutionEnd) {
@@ -1380,9 +1388,32 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
   let qualityLine: string | null = null;
   let parentFixedRows = 0;
   if (builtCount > 0) {
+    let incompleteCells: Array<{ stage: string; rowId: string; column: string }> = [];
+    if (plan.contact_steps && plan.contact_steps.length > 0) {
+      try {
+        const rawInc = await store.getFile(mission.id, "contacts/incomplete_cells.json");
+        if (rawInc) incompleteCells = JSON.parse(rawInc);
+      } catch { /* internal display metadata only */ }
+    }
     // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
     const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
-    const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, customerWords: (await executionResearchSpec(deps, store, mission, plan).catch(() => null))?.customerWords ?? null, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
+    const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({
+        requestText: mission.request_text,
+        customerWords: (await executionResearchSpec(deps, store, mission, plan).catch(() => null))?.customerWords ?? null,
+        plan,
+        snap,
+        reviewStop: checked.stop,
+        ...(incompleteCells.length > 0 ? { incompleteCells } : {}),
+      }),
+      companyMailboxesOf(plan, snap),
+      {
+        ...(hadOpenReplies ? { repliesJudged: true } : {}),
+        approvedPlan,
+        ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}),
+        ...(incompleteCells.length > 0 ? { incompleteCells } : {}),
+        ...(a.markMissingCells ? { markMissingCells: true } : {}),
+      },
+    );
     workbook = built;
     qualityLine = qualityResultLineAr(built.companyQuality);
     // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value

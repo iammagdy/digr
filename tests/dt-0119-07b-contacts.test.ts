@@ -142,11 +142,11 @@ it("P6 junk has only finder/call IDs and counts, with typed or truncated scan di
 it.each([
   ["answered", B, {}, false, "غير متوفر"],
   ["junk answered", B, { email: "j***@company.example" }, false, "غير متوفر"],
-  ["failed", B, "failed", false, "لم يكتمل البحث"],
-  ["refused", B, "refused", false, "لم يكتمل البحث"],
-  ["unreadable answer", B, "raw_missing", false, "لم يكتمل البحث"],
-  ["missing input", finder("finder.profile", "linkedin"), {}, false, "لم يكتمل البحث"],
-  ["expired before call", B, {}, true, "لم يكتمل البحث"],
+  ["failed", B, "failed", false, ""],
+  ["refused", B, "refused", false, ""],
+  ["unreadable answer", B, "raw_missing", false, ""],
+  ["missing input", finder("finder.profile", "linkedin"), {}, false, ""],
+  ["expired before call", B, {}, true, ""],
 ] as const)("P7 %s produces the same engine cell with and without the attempt log", async (_name, second, answer, expire, expected) => {
   for (const log of [false, true]) {
     const w = await world([email({ finders: [A, second] })], (id) => id === A.id ? { email: null } : answer, { log, expire });
@@ -189,7 +189,7 @@ it("L1 gives all five people their primary call before alternates spend the twel
   expect(new Set(w.calls.slice(0, 5).map((c) => c.params.full_name)).size).toBe(5);
   expect(out.filled.email).toBe(3);
   expect(out.stopped).toBe("budget");
-  expect(w.row("p5").email).toBe("لم يكتمل البحث");
+  expect(w.row("p5").email).toBe("");
 });
 
 it("L1 keeps an unvalidated office result when another person's primary chain stops the alternate pass", async () => {
@@ -197,7 +197,7 @@ it("L1 keeps an unvalidated office result when another person's primary chain st
     (_id, params) => String(params.full_name).endsWith("1") ? { office_phone: office } : "refused", { people: 2 });
   expect((await w.run()).stopped).toBe("daily_cap");
   expect(w.row()).toMatchObject({ phone: office, phone_type: "رقم الشركة" });
-  expect(w.row("p2").phone).toBe("لم يكتمل البحث");
+  expect(w.row("p2").phone).toBe("");
   expect(w.ids()).toEqual([A.id, A.id]);
 });
 
@@ -208,7 +208,7 @@ it("L1 an answered primary hit skips alternates, and an unaffordable alternate c
   const noRoom = await world([email({ finders: [{ ...A, bill: "call" }], alternates: [X] })], () => ({}));
   await noRoom.run();
   expect(noRoom.ids()).toEqual([A.id]);
-  expect(noRoom.row().email).toBe("لم يكتمل البحث");
+  expect(noRoom.row().email).toBe("");
   expect((await noRoom.file("contacts/attempts_people_email.json")).outcomes).toMatchObject({ "finder.x|not_tried:person_budget": 1 });
 });
 
@@ -217,8 +217,8 @@ it("L1 calls at most three extra alternates and records failed alternates as inc
   const w = await world([email({ alternates })], (id) => id === X.id ? "failed" : {}, { log: true });
   await w.run();
   expect(w.ids()).toEqual([A.id, X.id, "finder.y", "finder.z"]);
-  expect(w.row().email).toBe("لم يكتمل البحث");
-  const ops = b2bContactCells(w.plan, { people: [{ ...w.row(), email: "" }] }, w.attempts!);
+  expect(w.row().email).toBe("");
+  const ops = b2bContactCells(w.plan, { people: w.items.acceptedRows("people") }, w.attempts!);
   expect(ops[0].cells.email).toBe("لم يكتمل البحث");
 });
 
@@ -270,11 +270,11 @@ it("FIX1 P1: scan-truncated miss stays incomplete (never «غير متوفر»),
   for (const log of [false, true]) {
     const w = await world([phone()], () => truncatedMiss, { log });
     expect((await w.run()).filled.phone).toBe(0);
-    expect(w.row().phone).toBe("لم يكتمل البحث");
+    expect(w.row().phone).toBe("");
     expect(await w.file("contacts/rejected_people_phone.json")).toEqual({ "finder.a|call_1": { rejected: 0, number_typed: 0, scan_truncated: 1 } });
     expect((await w.file("contacts/attempts_people_phone.json")).outcomes).toMatchObject({ "finder.a|not_tried:scan_truncated": 1 });
     if (log) {
-      const ops = b2bContactCells(w.plan, { people: [{ ...w.row(), phone: "" }] }, w.attempts!);
+      const ops = b2bContactCells(w.plan, { people: w.items.acceptedRows("people") }, w.attempts!);
       expect(ops[0].cells.phone).toBe("لم يكتمل البحث");
     }
   }
