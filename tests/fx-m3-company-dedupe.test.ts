@@ -228,4 +228,30 @@ describe("M6 branch-first company deduplication and child binding", () => {
     const built = await buildMissionFiles(plan, { companies: items.acceptedRows("companies"), contacts: [] });
     expect(built.xlsx.byteLength).toBeGreaterThan(0);
   });
+
+  it("deduplicates repeated company rows after placeCellsAr localization across restarts", async () => {
+    const store = createMemoryStore();
+    const stage: PricedStage = {
+      key: "companies", title_ar: "الشركات", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true,
+      filters: [{ kind: "place", field: "city", values: ["EG"] }],
+      columns: [
+        { key: "name", title_ar: "الاسم" },
+        { key: "city", title_ar: "المدينة" },
+        { key: "country", title_ar: "الدولة" },
+        { key: "address", title_ar: "العنوان" },
+        { key: "website", title_ar: "الموقع الإلكتروني" },
+      ],
+      sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.001,
+    };
+    const plan = { summary_ar: "شركات", stages: [stage], price: { deliveredRows: 5, unitPricePoints: 100, reservePoints: 575, maxChargePoints: 500, totalCostUsd: 0.005, costPerFinalRowUsd: 0.001, overCap: false } } as unknown as PricedPlan;
+    const raw = { id: "co_loc_1", name: "Orascom Electromechanical", website: "orascom.com.eg", city: "al qahirah", country: "EG", address: "1234 egypt" };
+    const items1 = await ItemStore.open(store, "msn_loc_dedupe");
+    const first = await ingestRows({ items: items1, plan, addEvent: async () => undefined }, stage, [raw]);
+    expect(first.newlyAccepted).toBe(1);
+    const items2 = await ItemStore.open(store, "msn_loc_dedupe");
+    const second = await ingestRows({ items: items2, plan, addEvent: async () => undefined }, stage, [raw]);
+    expect(second.newlyAccepted).toBe(0);
+    expect(second.duplicates_ignored).toBe(1);
+    expect(items2.acceptedRows("companies")).toHaveLength(1);
+  });
 });

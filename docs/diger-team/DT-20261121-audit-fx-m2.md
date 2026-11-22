@@ -25,7 +25,9 @@ DT-20261121-audit / FX-M2 (M7, M8, L4) and FX-M3 (M6, M9, M10) under D-0180 / D-
 
 ## Adapted existing tests (approved under FX-M2/FX-M3 Gate 1)
 
+- `tests/account-suspension-route-inventory.test.ts`
 - `tests/audit-phase2-flow-clarity.test.tsx`
+- `tests/audit-phase4-mobile.test.tsx`
 - `tests/calculator-estimator.test.tsx`
 - `tests/decision-maker-pricing.test.ts`
 - `tests/live-cap-surfaces.test.ts`

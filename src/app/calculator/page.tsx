@@ -11,7 +11,7 @@ export default function PublicCalculatorPage() {
           <div className="flex min-w-0 flex-col gap-2">
             <h1 className="m-0 font-display text-[34px] font-medium leading-[1.2] text-ink">حاسبة التكلفة</h1>
             <p className="m-0 max-w-[620px] text-[15px] font-light leading-[1.9] text-ink2">
-              اكتب طلبك لتظهر تكلفة التسليم الكامل والحجز المؤقت من نفس الخطة التي ستراجعها قبل الموافقة.
+              اكتب طلبك لتظهر تكلفة التسليم الكامل والحجز المؤقت من نفس الخطة التي ستراجعها قبل الموافقة، وتستخدم هذه الحاسبة نفس معادلة التسعير المعتمدة في النظام عند إصدار عرض السعر وتُقاس التكلفة بوحدة النقطة والجنيه المصري (ج.م) فقط.
             </p>
           </div>
         </header>

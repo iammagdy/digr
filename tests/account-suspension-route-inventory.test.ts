@@ -13,7 +13,6 @@ const ALLOWED_OPEN: Record<string, string> = {
   "src/app/api/onboarding/route.ts": "the customer's own profile answers; starts nothing and spends nothing",
   "src/app/api/account/delete/route.ts": "the customer's right to delete the account stays open",
   "src/app/api/account/delete/cancel/route.ts": "cancelling one's own deletion stays open",
-  "src/app/api/calculator/estimate/route.ts": "a public price estimate: no account",
   "src/app/api/csp-report/route.ts": "browser security reports: no account",
   "src/app/api/worker/chunk/route.ts": "the worker, signed by the cron secret: no customer",
 };

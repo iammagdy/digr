@@ -234,9 +234,6 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       for (const field of COMPANY_BRANCH_FIELDS) {
         if (companyEvidence.branches[field] !== undefined && !(field in row)) row[field] = raw[field];
       }
-      if (JSON.stringify(companyEvidenceOf(row, stage)) !== JSON.stringify(companyEvidence)) {
-        row[COMPANY_EVIDENCE_KEY] = companyEvidence;
-      }
       const sameId = companyObservations.get(sourceId) ?? [];
       sameId.push(row);
       companyObservations.set(sourceId, sameId);
@@ -245,6 +242,9 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
+    if (companyEvidence && JSON.stringify(companyEvidenceOf(row, stage)) !== JSON.stringify(companyEvidence)) {
+      row[COMPANY_EVIDENCE_KEY] = companyEvidence;
+    }
     // PHASE 5.3: A COMPANY THE CUSTOMER EXCLUDED (their uploaded list, matched by code on the source's own fields: domain, registration number, full name, distinctive brand words) is kept with its reason, never delivered, never
     // counted and never charged; its id is remembered, so a retried page or another source cannot bring it back under the same id, and a new id meets the same check. A possible match (a shared brand word only) is delivered and marked.
     if (priorDelivered && priorDelivered({ ...raw, id })) { excludedAsDelivered += 1; excludedStructural.push({ id, reason: PRIOR_DELIVERY_REASON, row }); continue; }
