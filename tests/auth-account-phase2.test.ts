@@ -25,7 +25,8 @@ describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
   const useBalanceFile = readFileSync("src/hooks/useBalance.tsx", "utf8") + readFileSync("src/lib/readBalance.ts", "utf8");
   const useNotificationsFile = readFileSync("src/hooks/useNotifications.ts", "utf8");
   const adminGateFile = readFileSync("src/components/admin/AdminGate.tsx", "utf8");
-  const adminLayoutFile = readFileSync("src/app/admin/layout.tsx", "utf8");
+  // The admin layout redirect resolver moved to src/lib/adminLayoutRedirect.ts; the guard contract reads both files.
+  const adminLayoutFile = readFileSync("src/app/admin/layout.tsx", "utf8") + readFileSync("src/lib/adminLayoutRedirect.ts", "utf8");
 
   beforeEach(() => {
     mockAuthState.user = null;
