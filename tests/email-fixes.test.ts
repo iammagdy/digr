@@ -199,7 +199,7 @@ describe("the refund e-mails use Arabic-Indic digits too", () => {
       expect(block, file).not.toMatch(/String\(/);
     }
     const { subject, html } = renderEmailTemplate("refund", { Name: "سلمى", Points: "٢٠٧", JobTitle: "طلبك", Reason: "سبب", Balance: "٥١٢٣" });
-    expect(subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠٧ نقطة");
+    expect(subject).toBe("رجع لمحفظتك ٢٠٧ نقطة");
     expect(visibleText(html)).not.toMatch(LATIN_DIGIT);
   });
 });

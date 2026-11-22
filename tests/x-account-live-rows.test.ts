@@ -279,7 +279,7 @@ describe("worker: the real rows of an X account", () => {
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
     const message = String(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message);
     expectReleased(message, xAccountZeroDeliveryAr({ received: 7, held: 0, dateDropped: 0, replies: 5, reposts: 2 }));
-    expectReleased(message, "استلمنا ٧ سجلات من الحساب المطلوب، لكنها كلها ردود على منشورات أخرى أو إعادات نشر، وليست منشورات كتبها الحساب نفسه (ردود: ٥، إعادات نشر: ٢)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expectReleased(message, "استلمنا ٧ سجلات من الحساب المطلوب، لكنها كلها ردود على منشورات أخرى أو إعادات نشر، وليست منشورات كتبها الحساب نفسه (ردود: ٥، إعادات نشر: ٢)؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.");
     expect(message).not.toContain("موضوع طلبك");
     expect(message).not.toContain("أُحيل");
     expect(lines().some((line) => line.includes("لم يُسلَّم شيء") && line.includes("٥ ردًّا على منشورات أخرى") && line.includes("٢ إعادة نشر لمنشورات غيرها"))).toBe(true);

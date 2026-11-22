@@ -149,4 +149,4 @@ export function jobCallCeilingUsd(input: { perJobUsd: number | null; reservePoin
 export const JOB_BUDGET_ERROR_CODE = "job_budget_exceeded";
 
 /** What the customer reads when the budget ends a job that delivered nothing (the same sentence as the per-job ceiling of the chunk gate; a test keeps them equal). */
-export const JOB_BUDGET_STOP_AR = "تم الوصول إلى الحد الأقصى المسموح لمعالجة هذا الطلب؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+export const JOB_BUDGET_STOP_AR = "تم الوصول إلى الحد الأقصى المسموح لمعالجة هذا الطلب؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";

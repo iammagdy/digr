@@ -9,7 +9,7 @@ import { PRICING_FAQ_AR } from "../src/lib/pricingPage";
 import { FAILURE_STATE_AR } from "../src/lib/publicCopy";
 import { WORKER_START_FINAL_REASON_AR } from "../src/lib/server/workerStartFailure";
 
-const RELEASED = "حجز مؤقت مُحرَّر";
+const RELEASED = "رجع لمحفظتك";
 /** A released hold said as a refund: the words the owner banned for customer-facing money text. */
 const REFUND_STYLE = /يُرد إلى|وعادت [^.]*إلى رصيدك|استرداد|إرجاع (?:ال)?(?:نقاط|رصيد)|إرجاع كامل|أُعيدت (?:ال)?نقاط|أعدنا (?:\S+ )?(?:نقاط|[٠-٩]+ نقطة)|يعود إليك|تعود إليك|تعود نقاطك|يعود إلى رصيدك|يعود كل ما|إلى رصيدك المتاح/;
 
@@ -62,14 +62,14 @@ describe("audit phase 3: a released hold is «حجز مؤقت مُحرَّر», 
     for (const [, answer] of FAQS) expect(answer).not.toMatch(REFUND_STYLE);
     expect(FAQS[0][1]).toBe(PRICING_FAQ_AR[0][1]);
     expect(FAQS[2][1]).toBe(PRICING_FAQ_AR[1][1]);
-    expect(OVERVIEW_PAYMENT_AR).toContain("حجز مؤقت مُحرَّر");
+    expect(OVERVIEW_PAYMENT_AR).toContain("رجع لمحفظتك");
   });
 
   it("notices stored BEFORE this rule are read through the normalizer, so an old bell row shows the new wording", () => {
     expect(normalizeReleaseWording("توقف طلبك وأعدنا نقاطك")).toBe(`توقف طلبك: ${RELEASED}`);
     expect(normalizeReleaseWording("فأعدنا نقاطك المحجوزة كاملة لرصيدك دون أي خصم")).toBe(`${RELEASED} كاملًا دون أي خصم`);
     expect(normalizeReleaseWording("أعدنا ٣٠ نقطة محجوزة كاملة إلى رصيدك دون أي خصم.")).toBe(`${RELEASED} ٣٠ نقطة كاملًا دون أي خصم.`);
-    expect(normalizeReleaseWording("خُصم ١٠٠ نقطة. وعادت ٤٨ نقطة إلى رصيدك.")).toBe(`خُصم ١٠٠ نقطة. وحجز مؤقت مُحرَّر ٤٨ نقطة.`);
+    expect(normalizeReleaseWording("خُصم ١٠٠ نقطة. وعادت ٤٨ نقطة إلى رصيدك.")).toBe(`خُصم ١٠٠ نقطة. ورجع لمحفظتك ٤٨ نقطة.`);
     expect(normalizeReleaseWording("وإذا تعذر استكماله تعود نقاطك المحجوزة كاملة.")).toBe(`وإذا تعذر استكماله فهو ${RELEASED} كاملًا.`);
     expect(readFileSync("src/components/app/AppShell.tsx", "utf8")).toContain("notificationDisplay(n.title, n.body).body");
   });

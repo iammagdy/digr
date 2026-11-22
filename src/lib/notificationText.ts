@@ -2,7 +2,7 @@ import { normalizeReleaseWording } from "./releaseWording";
 
 /**
  * The title and the body of a notification as the bell shows them. A body that starts with its own title («اكتمل طلبك جزئيًا: تم تسليم …») would
- * read the title twice, so the repeated start is removed (old stored rows carry it); the old refund wording is read as «حجز مؤقت مُحرَّر».
+ * read the title twice, so the repeated start is removed (old stored rows carry it); the old refund wording is read as «رجع لمحفظتك».
  * Nothing stored is rewritten.
  */
 export function notificationDisplay(title: unknown, body: unknown): { title: string; body: string } {

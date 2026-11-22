@@ -373,7 +373,7 @@ export function groupLedgerEntries(entries: RawLedgerEntry[]): GroupedLedgerRow[
     if (netDelta < 0) {
       actionPrefix = `خصم ${formatPoints(Math.abs(netDelta))}`;
     } else if (netDelta === 0) {
-      actionPrefix = `حجز مؤقت مُحرَّر كاملًا (٠ نقطة)`;
+      actionPrefix = `رجع لمحفظتك كاملًا (٠ نقطة)`;
     } else {
       actionPrefix = `إيداع ${formatPoints(netDelta)}`;
     }

@@ -310,7 +310,7 @@ describe("decision makers: a refusal caused by the request is not shown as a hic
   });
 
   it("a failed job whose source refused the request's own input offers no «إعادة المحاولة»; a busy source still does", () => {
-    const liveJobText = "تعذر استكمال الاستخراج: تعذر معالجة مدخلات الطلب لدى المصدر. (حجز مؤقت مُحرَّر ٦٦٦ نقطة، ولم يُخصم شيء).";
+    const liveJobText = "تعذر استكمال الاستخراج: تعذر معالجة مدخلات الطلب لدى المصدر. (رجع لمحفظتك ٦٦٦ نقطة، ولم يُخصم شيء).";
     expect(providerFailureMessageAr({ httpStatus: 422, isRouteMaxCost: false, isPlatformBalanceLow: false })).toBe(PROVIDER_INPUT_REJECTED_AR);
     expect(isDeterministicFailureAr(liveJobText)).toBe(true);
     expect(isDeterministicFailureAr(PROVIDER_INPUT_REJECTED_AR)).toBe(true);

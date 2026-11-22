@@ -283,7 +283,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
     expect(release.args).toMatchObject({ p_job_id: JOB, p_error_message: releaseTextAr(reason, db.targetVolumeMax) });
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-    expect(messages().some((line) => line.includes(reason) && line.includes("حجز مؤقت مُحرَّر"))).toBe(true);
+    expect(messages().some((line) => line.includes(reason) && line.includes("رجع لمحفظتك"))).toBe(true);
   });
 
   it("valid empty answer: released with a different reason (no matching records), not a failure message", async () => {
@@ -293,7 +293,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
 
     expect(status).toBe(422);
     expect(json).toMatchObject({ success: false, released: true, chargedCredits: 0 });
-    expect(json.error).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(json.error).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.");
     expect(db.rpcCalls.some((call) => call.name === "record_chunk_failure")).toBe(false);
     expect(db.rpcCalls.filter((call) => call.name === "release_job_atomic")).toHaveLength(1);
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
@@ -308,8 +308,8 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     expect(status).toBe(422);
     expect(json.released).toBe(true);
     expect(json.error).toContain("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك");
-    expect(json.error).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
-    expect(json.error).not.toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    expect(json.error).toContain("رجع لمحفظتك كاملًا ولم يُخصم أي رصيد");
+    expect(json.error).not.toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.");
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
   });
 
@@ -421,7 +421,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
       setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [tweet("m1")], nextCursor: null, costUsd: 0.001, costMicro: 1000, tregCallId: "mm" }));
       await callWorker();
       const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
-      expect(release.args).toEqual({ p_job_id: JOB, p_error_message: releaseTextAr("عدم تطابق في عدد السجلات المجمعة (1) مع الوحدات المسجلة (6)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.", 1), p_force: true });
+      expect(release.args).toEqual({ p_job_id: JOB, p_error_message: releaseTextAr("عدم تطابق في عدد السجلات المجمعة (1) مع الوحدات المسجلة (6)؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.", 1), p_force: true });
       expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
     });
 
@@ -441,7 +441,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     // T2(iii)-(v): P10's compare-and-set, ONE it.each over four outcomes.
     const RETRY_TEXT = `Exceeded maximum retry attempts (5): ${RETRY_CAUSE_AR}`;
     const FINAL = releaseTextAr(RELEASE_NEUTRAL_REASON_AR, 20);
-    const OTHER = "لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+    const OTHER = "لم يُعثر على أي بيانات مطابقة من المصدر؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
     it.each([
       { name: "match", arrange: () => undefined, stored: FINAL, finalEvents: 1, warned: false },
       { name: "other writer", arrange: () => { db.onFifthFailure = (job) => { job.error_message = OTHER; }; }, stored: OTHER, finalEvents: 0, warned: false },
@@ -508,7 +508,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
           expect(failures[0].args.p_error_message).toBe(PROVIDER_INCOMPATIBLE_ANSWER_AR);
           expect(releases).toHaveLength(1);
           expect(releases[0].args).toEqual({ p_job_id: JOB, p_error_message: BASE20, p_force: true });
-          const line = `${BASE20} (حجز مؤقت مُحرَّر ${pointsAr(Math.round(db.reserved), toArabicDigits)}، ولم يُخصم شيء).`;
+          const line = `${BASE20} (رجع لمحفظتك ${pointsAr(Math.round(db.reserved), toArabicDigits)}، ولم يُخصم شيء).`;
           expect(messages().filter((message) => CLAIM.test(message))).toEqual([line]);
           expect(json.error).toBe(BASE20);
           expect(isDeterministicFailureAr(BASE20)).toBe(true);
@@ -545,8 +545,8 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
   });
   describe("T3 zero delivery, non-chain (DT-06 M3)", () => {
     it.each([
-      { name: "known total, held", seeded: true, expected: releaseTextAr("استلمنا من المصدر نتائج عددها ١٢ خلال هذا الطلب، ولم يُسلَّم منها شيء لأنها لم تجتز التحقق من مطابقة طلبك (منها ٣ أُحيلت إلى المراجعة ولم تُحتسب)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.", 20), absent: null },
-      { name: "total unknown", seeded: false, expected: releaseTextAr("لم يُسلَّم أي عنصر مطابق لطلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.", 20), absent: "استلمنا" },
+      { name: "known total, held", seeded: true, expected: releaseTextAr("استلمنا من المصدر نتائج عددها ١٢ خلال هذا الطلب، ولم يُسلَّم منها شيء لأنها لم تجتز التحقق من مطابقة طلبك (منها ٣ أُحيلت إلى المراجعة ولم تُحتسب)؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.", 20), absent: null },
+      { name: "total unknown", seeded: false, expected: releaseTextAr("لم يُسلَّم أي عنصر مطابق لطلبك؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.", 20), absent: "استلمنا" },
     ])("T3 $name", async ({ seeded, expected, absent }) => {
       resetDb();
       const partials = (await import("../src/lib/supabase/server")).createAdminClient().storage.from("partials");

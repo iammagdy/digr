@@ -227,7 +227,7 @@ async function executeReleaseConfirmation(
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: jobRow.user_id,
-                message: `${textAr}${textAr.includes("حجز مؤقت مُحرَّر") ? "" : ` (حجز مؤقت مُحرَّر ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء).`}`,
+                message: `${textAr}${textAr.includes("رجع لمحفظتك") || textAr.includes("حجز مؤقت مُحرَّر") ? "" : ` (رجع لمحفظتك ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء).`}`,
                 units: 0,
                 event_type: "error",
               });
@@ -439,7 +439,7 @@ export async function POST(req: NextRequest) {
     if (!useMockProvider && !isLiveProviderReady && !(await chainJobBypassesTregGate())) {
       console.warn("[worker_chunk:gate_blocked]", { jobId, reasonCode: gateStatus.reasonCode });
       const releaseReason =
-        "محرك استخراج البيانات المباشر غير مفعل حالياً؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+        "محرك استخراج البيانات المباشر غير مفعل حالياً؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason, claimTargetN);
 
       if (!rel.confirmed) {
@@ -472,7 +472,7 @@ export async function POST(req: NextRequest) {
 
     // A chain job whose feature was switched off after the quote was approved: nothing is called, the whole reserve is released with zero charge.
     if (isChainSlug(spec.capabilitySlug) && !multiProviderEnabled()) {
-      const switchedOffAr = "هذه الخدمة غير متاحة حاليًا؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+      const switchedOffAr = "هذه الخدمة غير متاحة حاليًا؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, switchedOffAr, claimTargetN);
       if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
       return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: switchedOffAr, release: rel.data }, { status: 503 });
@@ -621,7 +621,7 @@ export async function POST(req: NextRequest) {
     if (spendErr || !spendReserve?.allowed) {
       const capErrorMsg = ceilingHit
         ? CEILING_MESSAGE_AR[ceilingHit]
-        : "تم الوصول إلى حد المعالجة اليومي؛ حاول مرة أخرى لاحقاً. حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+        : "تم الوصول إلى حد المعالجة اليومي؛ حاول مرة أخرى لاحقاً. رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
       if (effectiveDelivered > 0) {
         // Do not make another billable call. Keep the matching rows already
         // collected and let the existing atomic settlement charge only them.
@@ -1754,31 +1754,31 @@ export async function POST(req: NextRequest) {
         : reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : reviewBudgetUsedUp && unreviewedRows.length > 0
-        ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وحجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+        ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، ورجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`
         : receivedFromSource > 0
         ? socialCapability && feedHasWindow && datesDroppedKnown && datesDroppedTotal > 0 && receivedShown - datesDroppedTotal > 0
           // Some rows were removed by date and the rest (inside the window) did not match the topic: say both, with the job's own totals.
           // «وتواريخها داخل الفترة» would be false here, and it used to be said whenever the LAST page had a row left after the date filter.
-          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, heldShown)}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
+          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, heldShown)}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
         : socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
-          : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
+          : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
           ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
           : videoSelectionReviewed > 0
             // Videos were found and reviewed but none could be confirmed (off the topic or not settled): nothing was read, nothing is charged.
-            ? `راجعنا ${videosCountAr(videoSelectionReviewed, socialCapability.platform === "facebook" ? "posts" : "videos")} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد. ${noConfirmedHintAr}`
-            : `وجدنا ${socialCapability.platform === "facebook" ? "منشورات" : "فيديوهات"} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+            ? `راجعنا ${videosCountAr(videoSelectionReviewed, socialCapability.platform === "facebook" ? "posts" : "videos")} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد. ${noConfirmedHintAr}`
+            : `وجدنا ${socialCapability.platform === "facebook" ? "منشورات" : "فيديوهات"} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
-        ? `لم يجد البحث أي ${socialCapability.platform === "facebook" ? "منشور" : "فيديو"} عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : socialCapability.platform === "facebook" ? "فيسبوك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+        ? `لم يجد البحث أي ${socialCapability.platform === "facebook" ? "منشور" : "فيديو"} عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : socialCapability.platform === "facebook" ? "فيسبوك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`
         : receivedSoFar !== null && receivedSoFar > 0 && receivedFromSource === 0
-        ? `استلمنا من المصدر نتائج عددها ${toArabicDigits(receivedSoFar)} خلال هذا الطلب، ولم يُسلَّم منها شيء لأنها لم تجتز التحقق من مطابقة طلبك${heldShown ? ` (منها ${toArabicDigits(heldShown)} أُحيلت إلى المراجعة ولم تُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+        ? `استلمنا من المصدر نتائج عددها ${toArabicDigits(receivedSoFar)} خلال هذا الطلب، ولم يُسلَّم منها شيء لأنها لم تجتز التحقق من مطابقة طلبك${heldShown ? ` (منها ${toArabicDigits(heldShown)} أُحيلت إلى المراجعة ولم تُحتسب)` : ""}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`
         : receivedSoFar === null
-        ? "لم يُسلَّم أي عنصر مطابق لطلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."
-        : "لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+        ? "لم يُسلَّم أي عنصر مطابق لطلبك؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد."
+        : "لم يُعثر على أي بيانات مطابقة من المصدر؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
       // The page that ends the job with nothing delivered leaves its own line too, so the panel counts it like every other page.
       try {
         await adminClient.from("job_events").insert({
@@ -2090,7 +2090,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!stepObj) {
-          const partialCorruptMsg = `تعذر قراءة بيانات الدفعة المرحلية (${s}) للمهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+          const partialCorruptMsg = `تعذر قراءة بيانات الدفعة المرحلية (${s}) للمهمة؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`;
           console.error(
             `[worker:assembly_failed] step=${s} reason=${stepCorrupt ? "corrupted_step_file" : "missing_step_file"}`
           );
@@ -2130,7 +2130,7 @@ export async function POST(req: NextRequest) {
 
       // Strict reconciliation: generated data row count must strictly match recorded delivered units
       if (collectedRows.length !== recordedDeliveredUnits || collectedRows.length === 0) {
-        const mismatchMsg = `عدم تطابق في عدد السجلات المجمعة (${collectedRows.length}) مع الوحدات المسجلة (${recordedDeliveredUnits})؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+        const mismatchMsg = `عدم تطابق في عدد السجلات المجمعة (${collectedRows.length}) مع الوحدات المسجلة (${recordedDeliveredUnits})؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`;
         console.error(
           `[worker:assembly_failed] reason=row_count_mismatch collected=${collectedRows.length} expected=${recordedDeliveredUnits}`
         );
@@ -2159,7 +2159,7 @@ export async function POST(req: NextRequest) {
       // The Facebook topic report: its posts, axes and counts are the record the LAST chunk saved. Without it the report cannot be built, and nothing is charged.
       const reportRecord: ReportState | null = isReportJob && reportStore ? await reportStore.load(currentStep) : null;
       if (isReportJob && !reportRecord) {
-        const reportLostMsg = "تعذر تجهيز التقرير لفقد بيانات الجمع؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+        const reportLostMsg = "تعذر تجهيز التقرير لفقد بيانات الجمع؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
         console.error("[worker:assembly_failed] reason=report_record_missing");
         const rel = await executeReleaseConfirmation(adminClient, jobId, reportLostMsg, claimTargetN);
         if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -2407,7 +2407,7 @@ export async function POST(req: NextRequest) {
           fileErrors.join("; ")
         );
         const uploadFailReason =
-          "تعذر حفظ ملفات النتائج النهائية؛ تم الاحتفاظ بنسخة البيانات في النظام؛ حجز مؤقت مُحرَّر كاملًا دون أي خصم.";
+          "تعذر حفظ ملفات النتائج النهائية؛ تم الاحتفاظ بنسخة البيانات في النظام؛ رجع لمحفظتك كاملًا دون أي خصم.";
         const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -2456,7 +2456,7 @@ export async function POST(req: NextRequest) {
           avErr?.message || ""
         );
         const avFailReason =
-          "تعذر تسجيل نسخة المستندات النهائية؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+          "تعذر تسجيل نسخة المستندات النهائية؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.";
         const rel = await executeReleaseConfirmation(adminClient, jobId, avFailReason, claimTargetN);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);

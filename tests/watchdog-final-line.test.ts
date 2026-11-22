@@ -79,9 +79,9 @@ expect(FORBIDDEN_IDS.length).toBeGreaterThan(0);
 for (const id of FORBIDDEN_IDS) expect(recorded.includes(id), id).toBe(false);
 }
 
-const STALL_45 = "المسلَّم ٠ من ٤٥ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
-const STALL_30 = "المسلَّم ٠ من ٣٠ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
-const TODAY = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.";
+const STALL_45 = "المسلَّم ٠ من ٤٥ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء.";
+const STALL_30 = "المسلَّم ٠ من ٣٠ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء.";
+const TODAY = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: رجع لمحفظتك كاملًا.";
 
 describe("T-WD the watchdog SWEEP path", () => {
   it.each([
@@ -103,7 +103,7 @@ describe("T-WD the watchdog SWEEP path", () => {
   });
 });
 
-const OPER_45 = "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
+const OPER_45 = "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء.";
 
 describe("T-WD the TARGETED ?jobId= path chooses its own reason (plan v9)", () => {
   it.each([
@@ -143,13 +143,13 @@ describe("T-WD the TARGETED ?jobId= path chooses its own reason (plan v9)", () =
 });
 
 describe("T-WD the two sentences themselves", () => {
-  it.each([["sweep", staleReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء."], ["targeted", operatorReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء."]])("T-WD text %s", (_name, t, literal) => {
+  it.each([["sweep", staleReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: توقفت المعالجة عن التقدم قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء."], ["targeted", operatorReleaseReasonAr(45), "المسلَّم ٠ من ٤٥ مطلوب. السبب: أوقفنا معالجة هذا الطلب من جانبنا قبل اكتمال العدد، ورجع لمحفظتك كاملًا ولم يُخصم منك شيء."]])("T-WD text %s", (_name, t, literal) => {
     expect(t).toBe(literal);
     expect(checkCustomerText(t).issues).toEqual([]);
     expect(customerSafeText(t)).toBe(t);
     expect(normalizeReleaseWording(t)).toBe(t);
     for (const word of ["تلقائياً", "لتأخر التنفيذ", "لتجاوز المهلة الزمنية"]) expect(t).not.toContain(word);
-    expect(t).toContain("حجز مؤقت مُحرَّر");
+    expect(t).toContain("رجع لمحفظتك");
     expect(t).not.toMatch(PROVIDER_WORDS);
   });
 });

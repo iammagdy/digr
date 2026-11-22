@@ -222,7 +222,7 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
         if (decision.action === "stop") {
           const why = safeArabicSentence(decision.reasonAr) ?? "رأينا أن نتائج هذه المرحلة لا تطابق طلبك فأوقفناها.";
           stopStage(i, why);
-          if (stages.every((_, j) => state.stages[j].stopped || satisfied(j))) { if (nothingDeliveredYet()) return fail("mission_stopped", `${why}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`, 200); missionStopped = true; }
+          if (stages.every((_, j) => state.stages[j].stopped || satisfied(j))) { if (nothingDeliveredYet()) return fail("mission_stopped", `${why}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`, 200); missionStopped = true; }
           continue;
         }
       }
@@ -326,7 +326,7 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
   const missionProgress = { stages: stages.map((st, i) => ({ c: state.stages[i].collected, d: state.stages[i].delivered, x: state.stages[i].excluded, e: st.effVolume, q: state.stages[i].queue.length, done: stageDone[i], ...(state.stages[i].stopped ? { stopped: state.stages[i].stopped } : {}) })) };
   const totalDelivered = state.stages.reduce((sum, s) => sum + s.delivered, 0);
   if (finished && totalDelivered === 0 && delivered.length === 0 && state.stages.some((s) => s.stopped)) {
-    return fail("mission_stopped", `${state.stages.find((s) => s.stopped)?.stopped ?? "تعذّر استكمال المهمة"}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`, 200);
+    return fail("mission_stopped", `${state.stages.find((s) => s.stopped)?.stopped ?? "تعذّر استكمال المهمة"}؛ رجع لمحفظتك كاملًا ولم يُخصم أي رصيد.`, 200);
   }
   return {
     ok: true, httpStatus: lastHttp, rows: delivered, nextCursor: finished ? null : JSON.stringify(state),

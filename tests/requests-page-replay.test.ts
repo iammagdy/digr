@@ -234,7 +234,7 @@ describe("3. the tabs filter the whole page, and each count is what its tab list
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     const ids = [...page.matchAll(/^\s*\["(all|running|done|ended|refunded)", "([^"]+)"\],$/gm)];
     expect(ids.map((m) => m[1])).toEqual([...REQUEST_TAB_IDS]);
-    expect(ids.map((m) => m[2])).toEqual(["الكل", "قيد التنفيذ", "مكتملة", "فشلت أو أُلغيت", "حجز مؤقت مُحرَّر"]);
+    expect(ids.map((m) => m[2])).toEqual(["الكل", "قيد التنفيذ", "مكتملة", "فشلت أو أُلغيت", "رجع لمحفظتك"]);
     expect(page).toContain("hashOfTab(next)");
     expect(page).toContain("tabFromHash(window.location.hash)");
   });

@@ -50,7 +50,7 @@ async function abandonedReleased(w: SafetyWorld, id: string): Promise<void> {
   w.injectError("claim_job_chunk", "before");
   expect(await approve(w, id)).toMatchObject({ ok: false, code: "claim_failed" });
 }
-const watchdogReleases = (w: SafetyWorld, jobId: string) => w.client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.", p_force: true });
+const watchdogReleases = (w: SafetyWorld, jobId: string) => w.client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: رجع لمحفظتك كاملًا.", p_force: true });
 
 describe("THE MONEY STATE OF A JOB: a read-only look at the job and its ledger rows, five states and one «unknown»", () => {
   it("no job and no ledger row: «none» (confirmed: nothing was ever reserved)", async () => {
@@ -170,7 +170,7 @@ describe("FIX C: a request whose abandoned job was RELEASED is ended safely, onc
   it("the customer's sentences for the ended request pass the customer-text check, use the released-hold wording, and never say anything was charged", () => {
     for (const s of [ADDON_RELEASED_SUMMARY_AR, ADDON_APPROVE_MESSAGES_AR.released_before_start]) {
       expect(checkCustomerText(s).issues).toEqual([]);
-      expect(s).toMatch(/حجز مؤقت مُحرَّر/); // the owner's released-hold wording, never a refund wording
+      expect(s).toMatch(/رجع لمحفظتك/); // the owner's released-hold wording, never a refund wording
       expect(s).not.toMatch(/خُصم|سُجّل خصم|اكتمل/);
       expect(s).not.toMatch(/[0-9]/);
     }
