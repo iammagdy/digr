@@ -25,9 +25,9 @@ const ident = async (_code: string, inputs: Record<string, unknown>) => ({ ok: t
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(START); });
 afterEach(() => vi.useRealTimers());
 
-function makePlan(perCompany = 1): PricedPlan {
+function makePlan(perCompany = 1, plannedCompanies = 2): PricedPlan {
   const companies: PricedStage = {
-    key: "companies", title_ar: "الشركات", endpoint_id: "fixture.companies.search", expected_rows: 2, planned_rows: 2,
+    key: "companies", title_ar: "الشركات", endpoint_id: "fixture.companies.search", expected_rows: plannedCompanies, planned_rows: plannedCompanies,
     parent_key: null, deliver: true,
     columns: [
       { key: "name", title_ar: "الاسم" },
@@ -140,12 +140,19 @@ describe("M6 branch-first company deduplication and child binding", () => {
       }
 
       // Seal workbook and verify duplicate settlement debits once.
-      const deps = { store, client: money.client, ownerId: "first", call: vi.fn(), driver: { run: vi.fn() }, models: { execution: "fixture" } } as unknown as RunnerDeps;
+      const deps = {
+        store, client: money.client, ownerId: "first",
+        catalog: { endpoints: [], byId: new Map() },
+        resolveAccess: async () => ({ sensitive: true, blockedCategories: [] }),
+        recorder: { reserve: async () => ({ allowed: true, costId: "c1" }) },
+        commit: vi.fn(), call: vi.fn(), sandbox: ident,
+        driver: { run: vi.fn() }, models: { planning: "fixture", execution: "fixture" },
+      } as unknown as RunnerDeps;
       await runExecution(deps, { ...store.missions.get(MISSION)! });
-      expect(store.missions.get(MISSION)?.status).toBe("completed");
-      const receipt = await advanceMissionDelivery(deps, { ...store.missions.get(MISSION)! });
-      expect(receipt).toMatchObject({ receipt: { physical_units: 4, billable_units: 4, charged_credits: 400 } });
+      expect(store.missions.get(MISSION)).toMatchObject({ status: "completed", delivered_units: 4, charged_points: 400 });
+      expect(money.balance()).toBe(1_600);
       expect(money.ledger.filter((e) => e.job_id === JOB && e.type === "charge")).toHaveLength(1);
+      expect(money.ledger.filter((e) => e.job_id === JOB && e.type === "release")).toHaveLength(1);
       const xlsx = await store.getFileBytes(MISSION, "result/result.xlsx");
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(xlsx as never);
@@ -154,7 +161,7 @@ describe("M6 branch-first company deduplication and child binding", () => {
   );
 
   it("excludes identity conflicts, separates homonyms with conflicting registration, and keeps uncertain branches annotated", async () => {
-    const plan = makePlan(1);
+    const plan = makePlan(1, 10);
     const items = await ItemStore.open(createMemoryStore(), "msn_conflicts");
     const homonym1 = { id: "h1", name: "Delta Logistics", website: "https://delta.example", registration_number: "CR-111", country: "EG", city: "Cairo" };
     const homonym2 = { id: "h2", name: "Delta Logistics", website: "https://delta.example", registration_number: "CR-222", country: "EG", city: "Cairo" };
@@ -175,8 +182,8 @@ describe("M6 branch-first company deduplication and child binding", () => {
     expect(rows.find((r) => r.id === "u2")?.[COMPANY_UNCERTAIN_KEY]).toBe("yes");
     expect(rows.every((r) => Boolean(r[COMPANY_EVIDENCE_KEY]))).toBe(true);
 
-    const quality = withCompanyQuality(plan, rows);
-    expect(quality.report.possibleDuplicates).toContain("u2");
+    const quality = withCompanyQuality(plan, { companies: rows });
+    expect(quality.reports[0]?.possibleDuplicates).toContain("u2");
   });
 
   it("never assigns children to one branch by order when only a shared parent identity is available", async () => {

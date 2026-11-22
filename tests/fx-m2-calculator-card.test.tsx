@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createMemoryDb, type MemoryDb } from "./helpers/memoryDb";
+import { fakeMoneyClient, quoteJobId } from "./helpers/agentMoney";
+import { createMemoryStore, newMission } from "../agent/src/memoryStore";
+import { advanceMissionDelivery } from "../agent/src/missionSettlement";
+import { buildMissionFiles } from "../agent/src/workbook";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { CHAT_RESEARCH_BRIEF_FLAG_KEY } from "../src/lib/agentMission/chatTurn";
 import { CAPABILITY_DISCOVERY_FLAG_KEY } from "../src/lib/agentMission/capabilities";
@@ -278,10 +282,11 @@ it("never enters modelPlanner or pending session for marked calculator turns eve
   const handler = new ChatHandler(db as never);
   handler.agentChat = { enabled: true };
   const transport = vi.fn(async () => ({ stopReason: "end_turn", text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } }));
+  handler.modelPlannerFor = () => true;
   handler.modelPlanner = {
-    enabledFor: () => true,
     transport: { model: "fixture", call: transport } as never,
-  };
+    limits: { maxSteps: 4, wallMs: 5_000, llmBudgetUsd: 0.05 },
+  } as never;
   scriptBriefs(brief("عايز ٢٠ شركة مقاولات", "ready"));
   const res = await handler.handleUserMessage({
     userId: owner, conversationId: "conv1", userBalance: 40_000,
@@ -291,4 +296,46 @@ it("never enters modelPlanner or pending session for marked calculator turns eve
   expect(transport).not.toHaveBeenCalled();
   expect(db.rows("missions")).toHaveLength(1);
   noMoney(db);
+});
+
+it.each([
+  { count: 162, expectedCharge: 168, expectedRefund: 584, debits: 1 },
+  { count: 0, expectedCharge: 0, expectedRefund: 752, debits: 0 },
+])("settles funded comments parity replay at $count delivered rows ($expectedCharge charged / $expectedRefund refunded)", async ({ count, expectedCharge, expectedRefund, debits }) => {
+  const plan = fundedComments(companyPlan());
+  const start = Date.now();
+  const store = createMemoryStore();
+  const money = fakeMoneyClient({ balance: 2_000 });
+  const quoteId = `quote_fx_m2_${count}`;
+  const msnId = `msn_fx_m2_${count}`;
+  const jobId = quoteJobId(quoteId);
+  await money.client.rpc("create_quote_atomic", {
+    p_quote_id: quoteId, p_user_id: owner, p_quote_hash: "c".repeat(64), p_total_points: plan.price.reservePoints,
+    p_items: [{ endpointId: "agent-mission", missionId: msnId, unitPricePoints: plan.price.unitPricePoints, targetVolumeMin: 1, targetVolumeMax: plan.price.deliveredRows }],
+    p_output_formats: ["xlsx", "csv"], p_expires_at: new Date(start + 3_600_000).toISOString(),
+  });
+  await money.client.rpc("accept_quote_atomic", { p_quote_id: quoteId, p_user_id: owner, p_expected_quote_hash: "c".repeat(64) });
+  await money.client.rpc("claim_job_chunk", { p_job_id: jobId, p_expected_step: 0, p_lease_seconds: 21_600 });
+  const mission = newMission({
+    id: msnId, user_id: owner, request_text: "٢٠٠ تعليق", plan, status: "executing",
+    worker_id: "w1", job_id: jobId, quote_id: quoteId,
+    lease_until: new Date(start + 120_000).toISOString(),
+    reserved_points: plan.price.reservePoints, unit_price_points: plan.price.unitPricePoints,
+  });
+  store.missions.set(msnId, mission);
+  money.bindDeliveryMissions({
+    get: (id) => store.missions.get(id),
+    park: (id, due) => Object.assign(store.missions.get(id)!, { status: "approved", worker_id: null, lease_until: due }),
+  });
+  const comments = Array.from({ length: count }, (_, i) => ({ name: `ع${i}`, created_at: at }));
+  const deps = { store, client: money.client, ownerId: "w1" };
+  const settle = await advanceMissionDelivery(deps, { ...mission }, async () => ({
+    workbook: count === 0 ? null : await buildMissionFiles(plan, { posts: [], comments }),
+    notes: { date: "2026-11-22", llm: 0, executionTregUsd: 0, summary: null, outputError: null, costUsd: 0 },
+  }));
+  expect(settle).toMatchObject({ receipt: { physical_units: count, charged_credits: expectedCharge, refunded_credits: expectedRefund } });
+  const dup = await advanceMissionDelivery(deps, { ...mission });
+  expect(dup).toMatchObject({ receipt: { physical_units: count, charged_credits: expectedCharge, refunded_credits: expectedRefund } });
+  expect(money.ledger.filter((e) => e.job_id === jobId && e.type === "charge")).toHaveLength(debits);
+  expect(money.ledger.filter((e) => e.job_id === jobId && e.type === "release")).toHaveLength(1);
 });
