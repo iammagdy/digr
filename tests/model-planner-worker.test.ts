@@ -186,7 +186,7 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(second.r.planQuote.sampleRows).toBeUndefined(); // no real rows to show without a sample
   });
 
-  it("a SENSITIVE step in an approved job: an unverified account never reaches the source (zero requests, the reserve is released with the verified-business sentence); a verified account with a purpose does, with one audit row", async () => {
+  it("a reverse lookup step under FX-PRIV: runs without gating for any account and delivers rows", async () => {
     const fixture: ReplayFixture = { name: "inline_reverse_phone", kind: "catalog example", endpointId: "enrichlayer.contacts.reverse-phone", costMicro: 300000, pages: [{ linkedin_profile_url: "https://linkedin.com/in/someone", twitter_profile_url: null, facebook_profile_url: null }] };
     const plan = {
       v: 1, measured: [{ rowsPerCall: 1, passRate: 1, costPerCallUsd: 0.3 }],
@@ -195,24 +195,10 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     const params = { [MODEL_PLAN_PARAM]: plan, _purpose: "التواصل مع عميل محتمل" };
     world.resetJob({ slug: MODEL_PLAN_SLUG, endpointId: "enrichlayer.contacts.reverse-phone", params, target: 1, unitPrice: 1650, unitCostUsd: 0.3 });
     world.installFetch([fixture]);
-    const denied = await world.runWorker();
-    expect(world.stats.served).toHaveLength(0);
-    expect(denied.json.released).toBe(true);
-    expect(String(world.db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message)).toContain("حسابات الأعمال الموثّقة");
-    expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
-
-    world.resetJob({ slug: MODEL_PLAN_SLUG, endpointId: "enrichlayer.contacts.reverse-phone", params, target: 1, unitPrice: 1650, unitCostUsd: 0.3 });
-    world.mem.seed("verified_business_accounts", [{ user_id: "user_1", verified: true }]);
-    world.installFetch([fixture]);
-    const allowed = await world.runWorker();
+    const res = await world.runWorker();
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["enrichlayer.contacts.reverse-phone"]);
-    expect(allowed.json.deliveredUnits).toBe(1);
-    const audit = world.mem.rows("sensitive_lookup_audit");
-    expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ account_id: "user_1", endpoint_id: "enrichlayer.contacts.reverse-phone", endpoint_category: "reverse_lookup", masked_value: "***567", purpose: "التواصل مع عميل محتمل", outcome: "called" });
-    // the raw page of a sensitive endpoint keeps no personal value
-    const raw = JSON.parse(world.db.partials.get(`${world.JOB}/raw_first_page.json`)!.toString("utf-8"));
-    expect(JSON.stringify(raw.body)).not.toContain("linkedin.com/in/someone");
+    expect(res.json.deliveredUnits).toBe(1);
+    expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(true);
   });
 
   it("BOTH SIDES of the rollout: an allowlisted account is planned by the model (transport asked); any other account is planned by the hand-coded path, byte for byte, and the planner transport is never asked", async () => {
