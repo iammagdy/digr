@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { servicesByGroup } from "@/lib/servicesCatalog";
+import { servicesByGroup } from "@/lib/liveServicesCatalog";
 import { SERVICES_PRIMARY_CTA_AR, platformsProvenFirst } from "@/lib/servicesAvailability";
-import { PLATFORM_ENTRIES, featuredServices, platformEntryBySlug, platformHref, remainingServices } from "@/lib/servicesCatalogView";
+import {
+  featuredServices,
+  getPlatformEntries,
+  getPlatformEntryBySlug,
+  platformHref,
+  remainingServices,
+} from "@/lib/servicesCatalogView";
 import { servicesCountAr } from "@/lib/servicesCatalogText";
 
 /** Static: one page per platform, generated at build from the catalog module. Nothing here depends on the request. */
@@ -13,16 +19,16 @@ export const dynamicParams = false;
 const FEATURED_COUNT = 6;
 
 export function generateStaticParams() {
-  return PLATFORM_ENTRIES.map(({ platform }) => ({ platform: platform.slug }));
+  return getPlatformEntries().map(({ platform }) => ({ platform: platform.slug }));
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ platform: string }> }) {
-  const entry = platformEntryBySlug((await params).platform);
+  const entry = getPlatformEntryBySlug((await params).platform);
   return entry ? { title: `${entry.platform.nameAr} — خدماتنا`, description: entry.platform.descAr } : {};
 }
 
 export default async function PlatformServicesPage({ params }: { params: Promise<{ platform: string }> }) {
-  const entry = platformEntryBySlug((await params).platform);
+  const entry = getPlatformEntryBySlug((await params).platform);
   if (!entry) notFound();
   const { platform, sector } = entry;
   const featured = featuredServices(platform, FEATURED_COUNT);

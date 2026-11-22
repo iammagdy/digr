@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PLATFORM_GUIDE } from "@/functions/shared/platformGuide";
-import { SERVICE_STATUS_LINE_AR, catalogCounts, coreServices } from "@/lib/servicesCatalog";
+import { getLiveServicesCatalog, SERVICE_STATUS_LINE_AR } from "@/lib/liveServicesCatalog";
 import { DECISION_MAKERS_LINE_AR, SERVICES_PRIMARY_CTA_AR } from "@/lib/servicesAvailability";
 import { FEATURED_CORE_NAMES } from "@/lib/servicesCatalogView";
 import { formatAr } from "@/lib/arabicDigits";
@@ -14,8 +14,7 @@ export const metadata = { title: "خدماتنا", description: "كل ما يج�
 export const dynamic = "force-static";
 
 export default function ServicesCatalogPage() {
-  const counts = catalogCounts();
-  const core = coreServices();
+  const { counts, core, sectors } = getLiveServicesCatalog();
   const featured = FEATURED_CORE_NAMES.map((name) => core.find((service) => service.nameAr === name)).filter((service): service is NonNullable<typeof service> => Boolean(service));
   const rest = core.filter((service) => !FEATURED_CORE_NAMES.includes(service.nameAr));
   return (
@@ -87,7 +86,7 @@ export default function ServicesCatalogPage() {
 
         <section aria-labelledby="browse-title" className="flex flex-col gap-5">
           <h2 id="browse-title" className="m-0 font-display text-[30px] font-medium text-ink">كل القطاعات والمنصات</h2>
-          <CatalogBrowser />
+          <CatalogBrowser sectors={sectors} />
         </section>
 
           </div>
