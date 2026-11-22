@@ -69,6 +69,7 @@ export function createWorker(deps: WorkerDeps) {
   let stopping = false;
   // ROUND 26 (item 1): when the worker last took a mission (null: none yet)
   let lastTakeAt: number | null = null;
+  let completedMissions = 0;
   /** The measured memory of each running mission: where it started, its highest readings, and whether the worker had to stop it. */
   const peaks = new Map<string, { phase: 0 | 1; startedAt: number; startRss: number; startTree: number | null; peakRss: number; peakTree: number | null; samples: number; stopped: boolean }>();
   const sample = (reading: MemoryReading) => {
@@ -139,7 +140,8 @@ export function createWorker(deps: WorkerDeps) {
     if (!blocked) waitingSince = null;
     else if (active.size === 0) {
       waitingSince = waitingSince ?? now().getTime();
-      if (!recycled && now().getTime() - waitingSince >= recycleAfterMs && now().getTime() - startedAt >= recycleMinUptimeMs) {
+      const uptimeOk = completedMissions >= 1 || (now().getTime() - startedAt >= recycleMinUptimeMs);
+      if (!recycled && now().getTime() - waitingSince >= recycleAfterMs && uptimeOk) {
         recycled = true;
         deps.log?.(`memory_recycle tree=${usedMb(reading)}MB: idle for ${Math.round((now().getTime() - waitingSince) / 1000)}s at or above ${admitLimit}MB, asking for a restart with a fresh heap`);
         try { deps.onRecycle?.(reading); } catch { /* best effort */ }
@@ -202,7 +204,7 @@ export function createWorker(deps: WorkerDeps) {
       try { startReading = readMem(); } catch { startReading = null; }
       const claimed = mission;
       if (startReading) peaks.set(claimed.id, { phase: claimed.status === "executing" ? 1 : 0, startedAt: now().getTime(), startRss: startReading.rssMb, startTree: startReading.treeRssMb, peakRss: startReading.rssMb, peakTree: startReading.treeRssMb, samples: 1, stopped: false });
-      const run = deps.runMission(claimed).catch((e) => deps.log?.(`mission_crashed ${claimed.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).then(() => recordPeak(claimed.id)).finally(() => { lost.delete(claimed.id); active.delete(claimed.id); });
+      const run = deps.runMission(claimed).catch((e) => deps.log?.(`mission_crashed ${claimed.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).then(() => recordPeak(claimed.id)).finally(() => { lost.delete(claimed.id); active.delete(claimed.id); completedMissions += 1; });
       active.set(claimed.id, run);
       started += 1;
     }

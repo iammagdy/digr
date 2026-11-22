@@ -615,7 +615,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const started = await updateRunState(store, mission.id, (r) => ({ ...r, planningStarts: r.planningStarts + 1 }), deps.log);
   if (started.planningStarts > AGENT_PHASE_STARTS_MAX) { await endPlanningUnserved(deps, mission, `planning started ${started.planningStarts} times`); return; }
   await store.updateMission(mission.id, { planning_model: model, error: null });
-  await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
+  await store.addEvent(mission.id, { kind: "system", message_ar: started.planningStarts > 1 ? "استأنف الوكيل دراسة طلبك من حيث توقّف." : "بدأ الوكيل دراسة طلبك." });
   // PR-1.2: THE SETTINGS, read ONCE for the whole planning run, and the flag `semantic_normalization_v1` taken from them (OFF unless the owner set it; never from the customer). The same boolean reads the request at every place below that builds its contract, and goes to the
   // compiler, so the platform decision, the route and the plan's parameters can never disagree about it. The stored plan is what execution runs, so the worker does not read the request again there.
   const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
@@ -851,7 +851,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   let llmBase = baseLlm;
   const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((llmBase + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
   // THE PLANNING CHECKPOINT (S1 item 1.11, redesigned mode only): what an earlier, stopped run of this planning learned is restored, and after every tool the state is saved again, so a restart or the memory guard no longer throws the run away
-  const checkpointOn = socialRedesignActive(ctx);
+  const checkpointOn = (ctx.redesign !== undefined && anyRedesignFlag(ctx.redesign.flags, ctx.redesign.platformFlags)) || readCapabilityDiscoveryFlag(settings, mission.user_id);
   let resumeNote = "";
   let lastNote: string | null = null;
   if (checkpointOn) {
