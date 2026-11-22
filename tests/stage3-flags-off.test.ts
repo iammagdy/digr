@@ -26,6 +26,7 @@ const sha = (v: unknown): string => createHash("sha256").update(JSON.stringify(v
 const RECORDED_AT = "2026-11-05T13:21:11Z";
 const RECORDED_DAY_AR = "تاريخ التسليم: ٥ نوفمبر ٢٠٢٦.";
 // DT-20261119-07 PR-B (#586): re-pinned `plan`, `rows`, and `file` for stored person e-mail alternates and «غير متوفر» markers on confirmed empty chains; `status` («completed:15:2234:») and company rows are unchanged.
+// DT-20261121-audit/FX-01B: re-pinned `plan` and `file` ONLY on the three manager-role worlds (stage title «مديرون في كل شركة» and headline role line); `rows` and `status` are byte-identical.
 async function onClock<T>(iso: string, run: () => Promise<T>): Promise<T> {
   vi.useFakeTimers({ toFake: ["Date"], now: new Date(iso), shouldAdvanceTime: true });
   try { return await run(); } finally { vi.useRealTimers(); }

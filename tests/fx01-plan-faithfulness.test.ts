@@ -121,12 +121,19 @@ describe("FX-01B: Plan Faithfulness (Count, Role & Impersonal Card)", () => {
     const card = customerPlanView(res.plan);
     const cardStr = JSON.stringify(card);
     expect(cardStr).not.toContain("العميل عايز");
-    expect(cardStr).toContain("نستخرج مديرون في كل شركة");
+    expect(cardStr).toContain("نستخرج مديرين في كل شركة");
 
     const note = roleLineAr("manager", "شركة");
     const check = checkCustomerText(note);
     expect(check.issues).toHaveLength(0);
-    expect(note).toContain("يُستكمل من أقرب مسمى قيادي متاح");
+    expect(note).toContain("يكتمل العدد");
+    expect(note).toContain("صانع القرار");
+
+    const nonManagerNote = roleLineAr("engineer", "شركة");
+    expect(checkCustomerText(nonManagerNote).issues).toHaveLength(0);
+    expect(nonManagerNote).toContain("نستخرج مهندسين في كل شركة");
+    expect(nonManagerNote).toContain("يكتمل العدد");
+    expect(nonManagerNote).not.toContain("صانع القرار");
   });
 
   it("Mandatory Counter-Case 1: «٣ مديرين من كل شركة من ٥ شركات» -> 5 companies, 3 per company, total 15, role مدير", () => {

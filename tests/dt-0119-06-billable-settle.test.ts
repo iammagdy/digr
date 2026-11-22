@@ -41,7 +41,13 @@ const FIVE = answersWith({ email: (s, first) => first && ["orascom-em", "nile-em
 const NONE = answersWith({ email: () => false, phone: () => false });
 const ALL = answersWith({ email: () => true, phone: () => true });
 const run = (answers: unknown[], request = SECTOR_WORLD.electromechanical.request, planning: FakeStep[] = planFlow("electromechanical")) => replay({ request, planning, execution: () => [], answers: answers as any });
-const peopleSheetRows = async (r: ReplayResult): Promise<number> => { const wb = await readWorkbook(r); const sheet = wb.worksheets.find((s) => /موظف|المسؤول|صناع/.test(s.name)) ?? wb.worksheets[1]; return sheet.rowCount - 1; };
+const peopleSheetRows = async (r: ReplayResult): Promise<number> => {
+  const wb = await readWorkbook(r);
+  const peopleStage = r.plannedPlan.stages.find((s) => s.parent_key !== null);
+  const sheet = peopleStage ? wb.worksheets.find((s) => s.name === peopleStage.title_ar || peopleStage.title_ar.startsWith(s.name)) : undefined;
+  if (!sheet) throw new Error(`people sheet not found: ${wb.worksheets.map((s) => s.name).join(" | ")}`);
+  return sheet.rowCount - 1;
+};
 const units = (r: ReplayResult) => (r.mission.unit_price_points as number);
 const chargeFor = (r: ReplayResult, rows: number) => settlementCharge({ deliveredUnits: rows, unitPricePoints: units(r), reservedPoints: r.mission.reserved_points as number }).chargedPoints;
 
