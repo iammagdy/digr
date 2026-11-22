@@ -63,12 +63,13 @@ describe("T1 releaseText (DT-20261117-06 M1)", () => {
   });
 
   // v7 (W-1): the composed text of tregAdapter.ts is returned BEFORE any release, so it must not be kept: it maps to the bare base sentence.
-  const COMPOSED = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`;
+  const COMPOSED = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`;
   it("T1 (W-1) the composed adapter text maps to the bare base sentence, with no release claim", () => {
     const out = adapterStopError(COMPOSED).textAr;
     expect(out).toBe(PROVIDER_INCOMPATIBLE_ANSWER_AR);
     expect(trustedCauseAr(adapterStopError(COMPOSED))).toBe(PROVIDER_INCOMPATIBLE_ANSWER_AR);
     expect(out).not.toContain("حجز مؤقت مُحرَّر");
+    expect(out).not.toContain("رجع لمحفظتك");
     expect(out).not.toContain("تم إيقاف الطلب");
     expect(isDeterministicFailureAr(releaseTextAr(out, 50))).toBe(true);
   });
@@ -220,7 +221,7 @@ describe("T7 source guards (DT-20261117-06)", () => {
   });
 
   it("T7 (V-7, V-4) the adapter's composed sentence is the reviewed one exactly once, and the old settlement sentence is gone from runMission.ts", () => {
-    const composed = "errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`,";
+    const composed = "errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`,";
     expect(adapter.split(composed)).toHaveLength(2);
     expect(mission).not.toContain("راجع المشرف ولم يُخصم رصيد إضافي");
   });

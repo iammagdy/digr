@@ -3,6 +3,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { checkCustomerText } from "../src/lib/agentMission/text";
+import { settlementEventAr } from "../src/lib/releaseWording";
+import { moneyLineAr } from "../src/lib/agentMission/moneyText";
+import { knownItemNoun } from "../src/lib/agentMission/itemNoun";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 import {
   TERMS,
   PRIVACY,
@@ -151,5 +155,37 @@ describe("DT-20261121-audit FX-07 UI Verification", () => {
     expect(authSrc).toContain('dir={isValueEntered ? "ltr" : "rtl"}');
     expect(authSrc).not.toContain("left-2.5");
     expect(authSrc).not.toContain("paddingLeft: 76");
+  });
+
+  it("Megz D-0187: customer hold release wording uses «رجع لمحفظتك» across settlement, mission card, and adapter stop", () => {
+    // 1. settlementEventAr zero charge
+    const zeroSettlement = settlementEventAr({ reservedPoints: 200, chargedPoints: 0 }, toArabicDigits);
+    expect(zeroSettlement).toBe("لم يُخصم شيء، ورجع لمحفظتك ٢٠٠ نقطة.");
+    expect(checkCustomerText(zeroSettlement).issues).toEqual([]);
+
+    // 2. settlementEventAr positive charge
+    const partialSettlement = settlementEventAr({ reservedPoints: 200, chargedPoints: 120 }, toArabicDigits);
+    expect(partialSettlement).toBe("حُجز ٢٠٠ نقطة، وخُصم ثمن ما سُلّم فقط (١٢٠ نقطة)، ورجع لمحفظتك ٨٠ نقطة.");
+    expect(checkCustomerText(partialSettlement).issues).toEqual([]);
+
+    // 3. moneyLineAr zero charge
+    const zeroMoneyLine = moneyLineAr({ reservedPoints: 200, chargedPoints: 0, delivered: 0, noun: knownItemNoun("تغريدة")! });
+    expect(zeroMoneyLine).toBe("لم يُخصم شيء، ورجع لمحفظتك ٢٠٠ نقطة");
+    expect(checkCustomerText(zeroMoneyLine).issues).toEqual([]);
+
+    // 4. releaseText and tregAdapter stop error constant
+    const releaseTextSrc = readFileSync("src/lib/releaseText.ts", "utf8");
+    expect(releaseTextSrc).toContain("ADAPTER_STOPPED_AND_RELEASED_AR = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`;");
+    expect(releaseTextSrc).not.toContain("ADAPTER_STOPPED_AND_RELEASED_AR = `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`;");
+
+    const tregAdapterSrc = readFileSync("src/lib/server/tregAdapter.ts", "utf8");
+    expect(tregAdapterSrc).toContain("errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`,");
+
+    // No forbidden words in customer texts
+    for (const text of [zeroSettlement, partialSettlement, zeroMoneyLine]) {
+      expect(text).not.toContain("حجز مؤقت مُحرَّر");
+      expect(text).not.toContain("استرداد");
+      expect(text).not.toContain("مُحرَّر");
+    }
   });
 });

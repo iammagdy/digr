@@ -55,8 +55,8 @@ describe("audit phase 4: «حجز مؤقت مُحرَّر» is the ONLY customer
     expect(normalizeReleaseWording("تعذر تحرير الرصيد المحجوز للمهمة.")).toBe("تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.");
   });
 
-  it("the settlement line and the e-mails say the noun form", () => {
-    expect(settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, (value) => String(value))).toContain(RELEASED);
+  it("the settlement line says «رجع لمحفظتك» (D-0187) and the e-mails say the noun form", () => {
+    expect(settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, (value) => String(value))).toContain("رجع لمحفظتك");
     const vars = { Name: "أحمد", Points: "٢٠", JobTitle: "بحث", Reason: "سبب", Balance: "٣٠٠" };
     for (const render of [renderEmailTemplate, renderSharedTemplate]) {
       const refund = render("refund", vars);
@@ -72,7 +72,7 @@ describe("audit phase 4: «حجز مؤقت مُحرَّر» is the ONLY customer
   });
 
   it("untouched by this change: the legal text, the admin alert and the admin recover route", () => {
-    expect(src("src/lib/legalText.ts")).toContain("لا يُعاد الرصيد عن سجل تم تسليمه");
+    expect(src("src/lib/legalText.ts")).toContain("لا يُعاد الرصيد المخصوم عن النتائج المطابقة");
     expect(src("src/components/admin/AdminShell.tsx")).toContain("فشل بحث وتحرير حجز");
     expect(src("src/app/api/admin/jobs/recover/route.ts")).toContain("تحرير الحجز المؤقت");
   });

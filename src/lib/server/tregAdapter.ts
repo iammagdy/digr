@@ -1612,7 +1612,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       providerCallCount,
       tregCallId: callResult.tregCallId || "",
       errorCode: "invalid_provider_payload",
-      errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`,
+      errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: رجع لمحفظتك.`,
     };
   }
 
