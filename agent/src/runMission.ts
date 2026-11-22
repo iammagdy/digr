@@ -20,9 +20,7 @@ import { sourceHealth, statsFromCalls } from "../../src/lib/agentMission/sourceR
 import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib/agentMission/capabilities/routingFacts";
 import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
-import { settleMission, type SettleResult } from "../../src/lib/agentMission/lifecycle";
-import { estimatedGroupKeys, stageCountsOf, stageUnitsOf } from "../../src/lib/agentMission/stageUnits";
-import { billedUnits, noBillableReasonAr, peopleWithoutRequestedContact, unbilledLineAr } from "../../src/lib/agentMission/billableRows";
+import { unbilledLineAr } from "../../src/lib/agentMission/billableRows";
 import { planningJudge, topicVariants } from "./researchJudge";
 import { executionSpecFor, readJudged, researchSpecFor, type ResearchSpec } from "./researchSpec";
 import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
@@ -99,7 +97,7 @@ import { runNamesStep } from "./namesAr";
 
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { childShortfallClauseAr, countWorkbookSheets, namedSourceTruthAr, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
+import { childShortfallClauseAr, namedSourceTruthAr, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
 import { namedAuthorVerdict } from "../../src/lib/agentMission/foundation/pool";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
@@ -108,7 +106,7 @@ import { storeFirstVersion } from "./stage4/firstVersion";
 import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
 import { availableContactAnswerNote } from "../../src/lib/agentMission/contactQuestion";
 import { missionFactsOf } from "./methodology";
-import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
+import { advanceMissionDelivery, inspectMissionDelivery, type DeliveryReceipt } from "./missionSettlement";
 import { GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
@@ -452,7 +450,6 @@ const clear = { worker_id: null, lease_until: null } as const;
 /** DT-20261117-06 M5 (D-0031, K-2): the customer texts of the mission paths that ended with no settlement: no failure word, no Latin letter, no referral, and no money claim the code has not confirmed. */
 const MISSION_NOT_STARTED_AR = "تعذّر بدء تنفيذ طلبك لأن خطته المعتمدة أو حجزه غير مكتمل لدينا، ولم يُسلَّم منه شيء.";
 const settlementPendingAr = (rows: number): string => `تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(rows)} المطلوبة ولا قيمة الخصم.`;
-const filesNotSavedAr = (rows: number): string => `المسلَّم ${toArabicDigits(0)} من ${toArabicDigits(rows)} مطلوب. السبب: تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
 
 /**
  * PUTS A MISSION BACK IN THE QUEUE: a mission that holds a reserve goes back to «approved» with everything it saved, planning goes back to «queued», with no worker and no lease so any worker takes it.
@@ -1182,10 +1179,11 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     await store.addEvent(mission.id, { kind: "result", message_ar: MISSION_NOT_STARTED_AR });
     return;
   }
+  if (await resumeExecutionDelivery(deps, mission, plan, reserve)) return;
   const started = await updateRunState(store, mission.id, (r) => ({ ...r, executionStarts: r.executionStarts + 1 }), deps.log);
   if (started.executionStarts > AGENT_PHASE_STARTS_MAX) {
     const stuck = (await store.getMission(mission.id)) ?? mission;
-    await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(stuck.execution_llm_usd ?? 0), executionTregUsd: Number(stuck.execution_treg_usd ?? 0), summary: null, outputError: `execution started ${started.executionStarts} times` });
+    await settleExecution(deps, mission, plan, reserve, { llm: Number(stuck.execution_llm_usd ?? 0), executionTregUsd: Number(stuck.execution_treg_usd ?? 0), summary: null, outputError: `execution started ${started.executionStarts} times` });
     return;
   }
   // UNIFIED CAPABILITY DISCOVERY: the STORED approved plan must still execute exactly the capabilities AND the parameters recorded when it was shown and priced (or last edited by the customer before approval); a stage added, switched to another
@@ -1193,7 +1191,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const scope = verifyApprovedScope(plan, deps.catalog, await capabilityAnchorOf(store, mission.id));
   if (!scope.ok) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: الخطة المخزنة لا تطابق المصادر المعتمدة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1, scope_issues: scope.issues.length } }).catch(() => undefined);
-    await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
+    await settleExecution(deps, mission, plan, reserve, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
     return;
   }
   // PHASE 5.3: a plan approved WITH the customer's exclusion list never runs without exactly that list (whatever the switch says now): a missing or altered copy stops here, nothing is called, and the hold is released
@@ -1203,7 +1201,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     const loaded = await loadApprovedExclusion(store, mission.id, plan.customer_exclusion);
     if (!loaded) {
       await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّر تحميل ملف الاستبعاد المعتمد، فلم يُنفَّذ شيء.", counts: { adm_flag: 1 } }).catch(() => undefined);
-      await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: customer_exclusion_unavailable" });
+      await settleExecution(deps, mission, plan, reserve, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: customer_exclusion_unavailable" });
       return;
     }
     exclusion = loaded;
@@ -1214,7 +1212,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     const loaded = await loadApprovedPriorDelivery(store, mission.id, plan.prior_delivery);
     if (!loaded) {
       await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّر تحميل قائمة ما سُلّم سابقًا المعتمدة مع الخطة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1 } }).catch(() => undefined);
-      await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: prior_delivery_unavailable" });
+      await settleExecution(deps, mission, plan, reserve, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: prior_delivery_unavailable" });
       return;
     }
     priorDelivered = loaded;
@@ -1335,7 +1333,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     } catch (e) { deps.log?.(`names_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a name that cannot be spelled stays as the source gave it */ }
   }
 
-  await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(llm + namesCostUsd), executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
+  await settleExecution(deps, mission, plan, reserve, { llm: Number(llm + namesCostUsd), executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
 }
 
 const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage => ({
@@ -1343,20 +1341,19 @@ const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUs
   cache_read_input_tokens: (a?.cache_read_input_tokens ?? 0) + (b?.cache_read_input_tokens ?? 0), cache_creation_input_tokens: (a?.cache_creation_input_tokens ?? 0) + (b?.cache_creation_input_tokens ?? 0),
 });
 
-/**
- * ENDS AN EXECUTION FROM THE FILE. The settlement is built backwards from what the customer receives: the item store's log is read FRESH from storage (never from a copy in memory), the files are built from it, PUBLISHED, and READ BACK;
- * the number of items in the file the customer will download is the ONE number: it is the delivered count, the charge basis (ceil(file count x unit price), never above the reserve, the rest released, through the existing money
- * functions), the count in the result event, the notice, the e-mail and the summary sheet. If any other number (the writer's memory, the rows built) disagrees with the file, the mission is charged by the file and flagged for the admin;
- * the customer is never shown a number that is not in the file. Used by the normal end of a run and by every recovery that ends a mission (a run that failed too many times, a worker that restarted too many times).
- */
-async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, unit: number, a: { llm: number; executionTregUsd: number; summary: string | null; outputError: string | null; /** The writer's memory of the run: compared with the log, never used to settle. */ memory?: ItemStore }): Promise<void> {
+type ExecutionEnd = {
+  llm: number;
+  executionTregUsd: number;
+  summary: string | null;
+  outputError: string | null;
+  memory?: ItemStore;
+};
+
+async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, a: ExecutionEnd) {
   const { store } = deps;
   const fresh = (await store.getMission(mission.id)) ?? mission;
-  const llm = a.llm;
-  const jobId = mission.job_id;
-  if (!jobId) throw new Error("the mission has no job");
   const spent = Number((fresh.planning_treg_usd ?? 0) + a.executionTregUsd);
-  // the log, read fresh: the listing then every segment (an unreadable segment throws, so the run is put back and retried instead of settling on a gap)
+  // Read the saved log only during the initial preparation. A storage fault leaves the durable finalization journal in control.
   const log = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
   const snap = log.snapshotOfMemory();
   const flags: string[] = [];
@@ -1379,91 +1376,123 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // WHAT WAS LEFT OUT goes to the admin only (a CSV in the mission's own folder, never in the customer's files), with the report of the check
   const checked = await recordChecks(deps, mission.id, plan, store, snap);
   await mirrorLegacyFiles(log, store, plan);
-  const noun = itemNounOfPlan(plan);
-
-  let resultPath: string | null = null;
-  let files: Array<{ name: string; path: string; kind: string }> = [];
-  let fileCount = 0;
-  /** The items of each delivered stage IN THE FILE (by sheet), for the tracker's final numbers. */
-  let fileByStage: Record<string, number> | null = null;
-  // ROUND 59: what the company check of the file found (companyQuality.ts); said to the customer with the delivery when an identity is uncertain or a row may be a copy
+  let workbook: Awaited<ReturnType<typeof buildMissionFiles>> | null = null;
   let qualityLine: string | null = null;
-  /** Rows whose parent-describing value was replaced by their own parent's before the file was written (admin only). */
   let parentFixedRows = 0;
   if (builtCount > 0) {
-    try {
-      // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
-      const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, customerWords: (await executionResearchSpec(deps, store, mission, plan).catch(() => null))?.customerWords ?? null, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
-      qualityLine = qualityResultLineAr(built.companyQuality);
-      // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
-      if (built.contract.violations.length > 0) {
-        const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;
-        const said = built.contract.completed.map((c) => (c.kind === "limit_line" ? `سطر في الحدود: ${c.text}` : c.kind === "precision" ? "خلية دقة التاريخ" : `علامة «${c.header}»`)).slice(0, 6).join(" | ");
-        flags.push("delivery_contract");
-        await store.addEvent(mission.id, { kind: "call", message_ar: `علامة داخلية للمشرف: ملف صُحّح وصفه تلقائيًا؛ ما اكتمل: ${said || "لا شيء (مخالفة للتقرير فقط)"}`.slice(0, 1000), counts: { adm_flag: 1, adm_contract: 1, adm_r1: by("R1"), adm_r2: by("R2"), adm_r3: by("R3"), adm_r4: by("R4"), adm_completed: built.contract.completed.length } });
-      }
-      if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
-      const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
-      resultPath = published.resultPath;
-      // READ BACK what the customer will download, and count it from the file itself
-      const stored = await store.getFileBytes(mission.id, "result/result.xlsx").catch(() => null);
-      let sheets = stored ? await countWorkbookSheets(stored) : null;
-      if (sheets === null) { sheets = await countWorkbookSheets(built.xlsx); flags.push("file_readback_unavailable"); }
-      if (sheets === null) throw new Error("the built file could not be read");
-      fileCount = sheets.reduce((n, x) => n + x, 0);
-      // the sheets are the delivered stages that have items, in plan order: each stage's own count in the file
-      // (the replies are rows of their comments' sheet, so a replies stage has no sheet: its count is the rows it delivered, and its comments' sheet count is the sheet less those)
-      const withSheet = plan.stages.filter((s) => s.deliver && s.replies_of === undefined && rowsByStage[s.key].length > 0);
-      if (withSheet.length === sheets.length) {
-        const repliesOf = (key: string): number => plan.stages.filter((x) => x.replies_of === key && x.deliver).reduce((n, x) => n + rowsByStage[x.key].length, 0);
-        fileByStage = { ...Object.fromEntries(withSheet.map((s, i) => [s.key, Math.max(0, sheets![i] - repliesOf(s.key))])), ...Object.fromEntries(plan.stages.filter((x) => x.replies_of !== undefined && x.deliver).map((x) => [x.key, rowsByStage[x.key].length])) };
-      }
-      // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)
-      // ROUND 27 (item 6): a request with comments and replies is named by its parents: the count of the first delivering stage's rows the file holds
-      const parentStage = plan.stages.find((s) => s.deliver && s.parent_key === null);
-      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date(), parentDelivered: parentStage ? (fileByStage?.[parentStage.key] ?? rowsByStage[parentStage.key]?.length ?? null) : null });
-      files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
-    } catch (e) {
-      await ensureOwned(deps, mission.id);
-      const released = await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
-      // ROUND 56: a release the database refused (already settled, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
-      if (!released.ok) {
-        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), execution_llm_usd: Number(llm.toFixed(6)), summary_ar: settlementPendingAr(plan.price.deliveredRows), ...clear });
-        await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
-        return;
-      }
-      await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, summary_ar: filesNotSavedAr(plan.price.deliveredRows), ...clear });
-      await store.addEvent(mission.id, { kind: "result", message_ar: filesNotSavedAr(plan.price.deliveredRows) });
-      await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
-      return;
+    // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
+    const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
+    const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, customerWords: (await executionResearchSpec(deps, store, mission, plan).catch(() => null))?.customerWords ?? null, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
+    workbook = built;
+    qualityLine = qualityResultLineAr(built.companyQuality);
+    // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
+    if (built.contract.violations.length > 0) {
+      const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;
+      const said = built.contract.completed.map((c) => (c.kind === "limit_line" ? `سطر في الحدود: ${c.text}` : c.kind === "precision" ? "خلية دقة التاريخ" : `علامة «${c.header}»`)).slice(0, 6).join(" | ");
+      flags.push("delivery_contract");
+      await store.addEvent(mission.id, { kind: "call", message_ar: `علامة داخلية للمشرف: ملف صُحّح وصفه تلقائيًا؛ ما اكتمل: ${said || "لا شيء (مخالفة للتقرير فقط)"}`.slice(0, 1000), counts: { adm_flag: 1, adm_contract: 1, adm_r1: by("R1"), adm_r2: by("R2"), adm_r3: by("R3"), adm_r4: by("R4"), adm_completed: built.contract.completed.length } });
     }
-    if (fileCount !== builtCount) flags.push("file_differs_from_store");
+    if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
   }
-  // THE ONE NUMBER: the items in the file
-  const delivered = Math.min(fileCount, plan.price.deliveredRows);
-  if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
-  // A mission whose people stage was priced by an ESTIMATE is settled per stage, from the plan the customer APPROVED (stageUnits.ts); one that has such a stage but no units is never settled by the one-unit function. Everything is computed BEFORE the ownership check, so the check is the line right before the settlement call (the worker's money guard: a worker that lost the lease never settles)
-  const hasEstimate = estimatedGroupKeys(approvedPlan.stages).size > 0;
-  const stageUnits = hasEstimate ? stageUnitsOf(approvedPlan) : null;
-  const stageCountsToday = stageUnits ? stageCountsOf(approvedPlan.stages, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])), stageUnits, delivered) : null;
-  // D-0117 (DT-20261119-06 PART B): a delivered person who carries none of the contact kinds the customer asked for is delivered but NOT charged; the settlement gets the BILLABLE count (the job's delivered_units), the hold and the file are unchanged (billableRows.ts)
-  const unbilled = peopleWithoutRequestedContact(approvedPlan, rowsByStage, fileByStage);
-  const groupKeys = estimatedGroupKeys(approvedPlan.stages);
-  const unbilledInGroup = Object.entries(unbilled.byStage).reduce((n, [k, v]) => n + (groupKeys.has(k) ? v : 0), 0);
-  const billed = billedUnits({ delivered, unbilledTotal: unbilled.total, unbilledInGroup, stageCounts: stageCountsToday });
-  const stageCounts = billed.counts ? { ...billed.counts, deliveredUnits: billed.deliveredUnits } : null;
-  const nothingBillable = delivered > 0 && billed.deliveredUnits === 0;
-  const stageUnavailable: SettleResult | null = hasEstimate && !stageUnits ? { ok: false, code: "stage_units_unavailable", detail: "the approved plan has an estimated people stage but no per-stage units" } : null;
+  return {
+    plan, approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows,
+    preparation: { workbook, notes: { date: new Date().toISOString(), llm: a.llm, executionTregUsd: a.executionTregUsd, summary: a.summary, outputError: a.outputError, costUsd: spent } },
+  };
+}
+
+async function markDeliveryPending(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan): Promise<void> {
   await ensureOwned(deps, mission.id);
-  const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : billed.deliveredUnits, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: nothingBillable ? noBillableReasonAr(unbilled.kinds) : "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا.", ...(stageUnits && stageCounts ? { stage: { units: stageUnits, counts: { base: stageCounts.base, estimated: stageCounts.estimated } } } : {}) });
-  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
-  await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
-  if (!settled.ok) {
-    await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), summary_ar: settlementPendingAr(plan.price.deliveredRows), ...clear });
-    await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
+  const message = settlementPendingAr(plan.price.deliveredRows);
+  await deps.store.updateMission(mission.id, { status: "failed", error: "admin: settlement_retries_exhausted", summary_ar: message, ...clear });
+  await deps.store.addEvent(mission.id, { kind: "result", message_ar: message });
+}
+
+async function acknowledgeDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, receipt: DeliveryReceipt): Promise<void> {
+  const { store } = deps;
+  if (receipt.mission_id !== mission.id || receipt.job_id !== mission.job_id) throw new Error("delivery receipt does not match mission");
+  const physical = receipt.physical_units;
+  const releasedWithoutSnapshot = !receipt.snapshot_sha;
+  const top = topLevelFactsOf(plan, receipt.counts ?? {});
+  const partial = physical > 0 && physical - top.repliesDelivered < requestedRowsOf(plan) - top.repliesPlanned;
+  const partialMessage = "تم تسليم مهمتك بعدد أقل من المطلوب";
+  const message = releasedWithoutSnapshot
+    ? "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."
+    : partial ? `${partialMessage}.` : physical > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء.";
+  await ensureOwned(deps, mission.id);
+  const freeRerun = mission.created_by && mission.created_by !== mission.user_id
+    ? await compensateFreeRerun(deps.client, { missionId: mission.id, chargedPoints: receipt.charged_credits })
+    : null;
+  const free = freeRerun !== null && freeRerun.status !== "not_free" && freeRerun.status !== "failed";
+  await store.updateMission(mission.id, {
+    status: releasedWithoutSnapshot ? "failed" : physical > 0 ? "completed" : "unserved",
+    delivered_units: physical, charged_points: receipt.charged_credits,
+    files: receipt.files?.length ? receipt.files : null, summary_ar: message,
+    ...(receipt.notes ? {
+      execution_llm_usd: Number(receipt.notes.llm.toFixed(6)),
+      execution_treg_usd: Number(receipt.notes.executionTregUsd.toFixed(6)),
+    } : {}),
+    error: releasedWithoutSnapshot ? "admin: delivery_unavailable" : receipt.notes?.outputError ?? null,
+    ...clear,
+  });
+  if (receipt.unbilled?.total) await store.addEvent(mission.id, { kind: "result", message_ar: unbilledLineAr(receipt.unbilled.total, receipt.unbilled.kinds) });
+  await store.addEvent(mission.id, { kind: "result", message_ar: message, counts: {
+    delivered: physical, charged_points: receipt.charged_credits,
+    ...Object.fromEntries(plan.stages.map((stage, i) => [`stage_${i + 1}_rows`, receipt.counts?.[stage.key] ?? 0])),
+  } });
+  const noticeKind = releasedWithoutSnapshot ? "failed" : physical <= 0 ? "unserved" : partial ? "partial" : "completed";
+  await tell(deps, mission, mission.job_id, noticeKind, {
+    delivered: physical, planned: plan.price.deliveredRows, chargedPoints: receipt.charged_credits,
+    releasedPoints: receipt.refunded_credits, reservedPoints: reserve, noun: itemNounOfPlan(plan).singular, hasJob: true,
+    ...(free ? { free: true } : {}), ...(partial ? { shortfallClauseAr: partialMessage } : {}),
+  });
+  if (receipt.csv_path && physical > 0) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
+}
+
+/** Returns false only once the database proves that finalization has never started. */
+async function resumeExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number): Promise<boolean> {
+  const status = await inspectMissionDelivery(deps, mission);
+  if (status.kind === "not_started") return false;
+  if (status.kind === "error") {
+    if (status.error === "unbound_money") await markDeliveryPending(deps, mission, plan);
+    return true;
+  }
+  const result = status.kind === "receipt" ? status : await advanceMissionDelivery(deps, mission);
+  if (result === "exhausted") await markDeliveryPending(deps, mission, plan);
+  else if (result !== "parked") await acknowledgeDelivery(deps, mission, plan, reserve, result.receipt);
+  return true;
+}
+
+async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, a: ExecutionEnd): Promise<void> {
+  const { store } = deps;
+  const built: { context?: Awaited<ReturnType<typeof prepareExecutionDelivery>> } = {};
+  const result = await advanceMissionDelivery(deps, mission, async () => {
+    built.context = await prepareExecutionDelivery(deps, mission, plan, a);
+    return built.context.preparation;
+  });
+  if (result === "parked") return;
+  if (result === "exhausted") {
+    await markDeliveryPending(deps, mission, plan);
     return;
   }
+  const { receipt } = result;
+  if (!built.context || !receipt.snapshot_sha) {
+    await acknowledgeDelivery(deps, mission, plan, reserve, receipt);
+    return;
+  }
+  const { approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows } = built.context;
+  plan = built.context.plan;
+  const jobId = receipt.job_id;
+  const llm = a.llm;
+  const delivered = receipt.physical_units;
+  const fileCount = delivered;
+  const fileByStage = receipt.counts ?? {};
+  const files = receipt.files ?? [];
+  const unbilled = receipt.unbilled ?? { total: 0, kinds: [] };
+  const settled = { chargedPoints: receipt.charged_credits, releasedPoints: receipt.refunded_credits };
+  const noun = itemNounOfPlan(plan);
+  if (fileCount !== builtCount) flags.push("file_differs_from_store");
+  await ensureOwned(deps, mission.id);
+  await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath: receipt.csv_path ?? null, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   // A FREE RE-RUN BY THE DIGER TEAM (src/lib/agentMission/freeRerun.ts): what the settlement charged is given back at once, through the existing admin grant (one request id per mission, so
   // never twice), and the notice says the mission was free. An ordinary mission is «not_free» and nothing happens. Never throws and never changes the settlement; a failed grant is logged and
   // the admin page grants it again (same request id).
@@ -1471,13 +1500,13 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // MULTI-OBJECTIVE RESEARCH (capability_discovery_v1 plans only): every objective of the approved plan gets its own explicit outcome, counted from the file (never claimed complete when one objective fell short)
   if (qualityLine && delivered > 0) await store.addEvent(mission.id, { kind: "result", message_ar: qualityLine });
   // D-0117: what was delivered but not charged, said once, before the final summary (also when nothing is charged and the hold returns whole)
-  if (billed.reduced > 0) {
+  if (unbilled.total > 0) {
     flags.push("people_without_contact_unbilled");
-    await store.addEvent(mission.id, { kind: "result", message_ar: unbilledLineAr(billed.reduced, unbilled.kinds) });
-    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أشخاص بلا إيميل أو تليفون لم يُحتسبوا.", counts: { adm_flag: 1, adm_unbilled: billed.reduced } });
+    await store.addEvent(mission.id, { kind: "result", message_ar: unbilledLineAr(unbilled.total, unbilled.kinds) });
+    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أشخاص بلا إيميل أو تليفون لم يُحتسبوا.", counts: { adm_flag: 1, adm_unbilled: unbilled.total } });
   }
   if (approvedPlan.capability_selection) {
-    const line = objectiveOutcomesLineAr(approvedPlan, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])));
+    const line = objectiveOutcomesLineAr(approvedPlan, fileByStage);
     if (line) await store.addEvent(mission.id, { kind: "result", message_ar: line });
   }
   const freeRerun = mission.created_by && mission.created_by !== mission.user_id ? await compensateFreeRerun(deps.client, { missionId: mission.id, chargedPoints: settled.chargedPoints }) : null;
@@ -1491,7 +1520,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // never disagree with the count) or, when no model carried the mission out, a sentence built here; for a shortfall, the honest reason from the stop reason the run RECORDED (never a number, never «صف» or «سجل»)
   // THE TARGET is what the customer approved and what the charge is settled against; THE REQUEST is what they asked for (the same number unless the model proposed fewer, with a reason the card showed): a delivery below the request is never «complete»
   // THE REPLIES COME IN ADDITION (replies.ts): the customer's number counts the videos and the top-level comments; the replies are an estimate bought on top, so a delivery is complete or partial by the top-level rows alone (fewer replies than estimated is never a shortfall)
-  const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
+  const tl = topLevelFactsOf(plan, fileByStage);
   const deliveredTop = Math.max(0, delivered - tl.repliesDelivered);
   const target = plan.price.deliveredRows - tl.repliesPlanned - openGap;
   const requested = requestedRowsOf(plan) - tl.repliesPlanned;
@@ -1561,17 +1590,17 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const namedLine = namedParent && namedText ? namedSourceTruthAr({ source: namedText, delivered: namedRows.length, notFromSource: namedRows.filter((r) => namedAuthorVerdict(r as Record<string, unknown>, (isSocialPlatform(String(plan.compiled?.platform ?? "")) ? plan.compiled!.platform : null) as Parameters<typeof namedAuthorVerdict>[1], namedText) === false).length }) : null;
   if (namedLine) flags.push("named_source_mismatch");
   const summary = (ourFailure ? reason : [note, reason, repliesLine, namedLine ?? ""].filter(Boolean).join(" ")).slice(0, 1100);
-  const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
   const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}${reviewFailedOurs ? ` pending=${checked.pending} review_failed_calls=${checked.failedCalls} unusable="${unusableWords}"` : ""}` : null;
+  await ensureOwned(deps, mission.id);
   await store.updateMission(mission.id, {
     status: ourFailure ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, ...(hadOpenReplies ? { plan_public: customerPlanView(plan) as any } : {}), charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
-    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: ourFailure ? adminFlag : mismatch ?? a.outputError ?? adminFlag, ...clear,
+    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: ourFailure ? adminFlag : a.outputError ?? adminFlag, ...clear,
   });
   if (internalStage) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أعطى المصدر عناصر ولم يُحفظ أي منها.", counts: { adm_flag: 1, adm_store: 0, adm_file: 0, adm_source_rows: snap.stage(internalStage.key).sourceRows } });
   if (reviewFailedOurs) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّرت مراجعة العناصر آليًا فلم يُسلَّم شيء.", counts: { adm_flag: 1, adm_pending: checked.pending, adm_review_failed_calls: checked.failedCalls } });
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
-  const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
+  const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage[s.key] ?? 0) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
   const noticeStages = plan.stages
@@ -1581,7 +1610,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       const epCap = ep?.capability ?? "";
       const people = isPeopleStage(s) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap);
       const contacts = !people && (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(s.endpoint_id));
-      const deliveredRows = fileByStage ? (fileByStage[s.key] ?? 0) : (rowsByStage[s.key]?.length ?? 0);
+      const deliveredRows = fileByStage[s.key] ?? 0;
       return {
         titleAr: s.title_ar,
         delivered: deliveredRows,
@@ -1595,7 +1624,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     });
   await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
   // STAGE 4, S1 (behind DIGER_STAGE4_VERSIONS): version 1 of the delivered file, AFTER the file is stored and the mission is settled and told. Never throws, never changes the mission, never touches a money value (agent/src/stage4/firstVersion.ts).
-  if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
+  if (receipt.csv_path && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }
 
 /**
@@ -1628,30 +1657,13 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
       await endPlanningUnserved(deps, fresh, message);
       return;
     }
-    if (await requeue(deps, fresh, "approved", { error: message }, "error")) return;
     const plan = fresh.plan;
     const reserve = Number(fresh.reserved_points);
     const unit = Number(fresh.unit_price_points);
-    if (!plan || !fresh.job_id || !(reserve > 0) || !(unit > 0)) { await store.updateMission(mission.id, { status: "failed", error: message, ...clear }); return; }
-    try {
-      await settleExecution(deps, fresh, plan, reserve, unit, { llm: Number(fresh.execution_llm_usd ?? 0), executionTregUsd: Number(fresh.execution_treg_usd ?? 0), summary: null, outputError: message });
-    } catch (e) {
-      // ownership was lost or could not be verified: no release and no write (the lease path recovers it); a release here would give back the hold of a file that may be delivered
-      if (isOwnershipError(e)) { deps.log?.(`ownership_stop ${mission.id} ${shortError(e).slice(0, 160)}`); return; }
-      // last resort: nothing delivered, the whole hold released through the existing function
-      deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
-      await ensureOwned(deps, mission.id);
-      const released = await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
-      // ROUND 56: a release the database refused (the job was already settled and charged, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
-      if (!released.ok) {
-        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), ...clear });
-        await store.addEvent(mission.id, { kind: "result", message_ar: settlementPendingAr(plan.price.deliveredRows) });
-        return;
-      }
-      await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
-      await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
-      await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: itemNounOfPlan(plan).singular, hasJob: true });
-    }
+    if (!plan || !fresh.job_id || !(reserve > 0) || !(unit > 0)) return;
+    if (await resumeExecutionDelivery(deps, fresh, plan, reserve)) return;
+    if (await requeue(deps, fresh, "approved", { error: message }, "error")) return;
+    await settleExecution(deps, fresh, plan, reserve, { llm: Number(fresh.execution_llm_usd ?? 0), executionTregUsd: Number(fresh.execution_treg_usd ?? 0), summary: null, outputError: message });
   } catch (e) {
     deps.log?.(`recovery_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
   }

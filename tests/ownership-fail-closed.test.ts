@@ -31,7 +31,7 @@ beforeEach(() => { vi.stubGlobal("fetch", fetchSpy); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 const MODELS = { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" };
-const MONEY = ["complete_chunk", "settle_job_atomic", "release_job_atomic"];
+const MONEY = ["finalize_agent_delivery_atomic"];
 const ID = "msn_own";
 
 type Fault = "db_error" | "timeout" | "row_missing" | "no_owner" | "not_running" | "other_worker";
@@ -40,6 +40,10 @@ type Fault = "db_error" | "timeout" | "row_missing" | "no_owner" | "not_running"
 async function world() {
   const store = createMemoryStore();
   const money = fakeMoneyClient();
+  money.bindDeliveryMissions({
+    get: (id) => store.missions.get(id),
+    park: (id, due) => Object.assign(store.missions.get(id)!, { status: "approved", worker_id: null, lease_until: due }),
+  });
   const rec = fakeRecorder();
   const notices: string[] = [];
   const logs: string[] = [];
@@ -72,7 +76,7 @@ async function world() {
   await store.putFile(ID, "rows/posts.json", JSON.stringify(rows), "application/json");
   await updateRunState(store, ID, (s) => ({ ...s, executionStarts: AGENT_PHASE_STARTS_MAX }));
   const balanceAfterHold = money.balance();
-  const moneyCalls = () => money.calls.map((c) => c.name).filter((n) => MONEY.includes(n));
+  const moneyCalls = () => money.rpcCalls.map((c) => c.name).filter((n) => MONEY.includes(n));
   const ledgerOf = (prefix: string) => money.ledger.filter((r) => r.id === `${prefix}${ok.jobId}`);
   return { store, money, deps, notices, logs, ok, balanceAfterHold, moneyCalls, ledgerOf, initialBalance: balanceAfterHold + ok.reservePoints };
 }
@@ -183,6 +187,8 @@ describe("the existing lease path recovers it: settled exactly once, by what was
       f.heal();
       // w1 stopped renewing (its run ended); its lease runs out; the claim's expired-lease branch hands the mission to w2
       expect(await w.store.claimMission("w2", 120)).toBeNull(); // not before the lease ends
+      const progress = w.money.attempts.get(w.ok.jobId);
+      if (progress) progress.due = Date.now() - 1;
       w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString();
       const claimed = await w.store.claimMission("w2", 120);
       expect(claimed).toMatchObject({ id: ID, status: "executing", worker_id: "w2" });
@@ -199,21 +205,30 @@ describe("the existing lease path recovers it: settled exactly once, by what was
     });
   }
 
-  it("FAILED delivery (the files cannot be stored) during an outage: nothing is released by the uncertain run; the next owner releases the whole hold, charge 0", async () => {
-    const w = await world();
-    const f = inject(w.store, "db_error");
-    const realPublish = w.store.publishResult;
-    w.store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); }; // arms the fault, then the files fail
-    await runMissionSafely(w.deps(), w.store.missions.get(ID)!);
-    expect(w.moneyCalls()).toEqual([]);
-    expect(f.writesAfter).toEqual([]);
-    f.heal();
-    w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString();
-    const claimed = await w.store.claimMission("w2", 120);
-    await runMissionSafely(w.deps({ ownerId: "w2" }), claimed!);
-    expect(w.store.missions.get(ID)).toMatchObject({ status: "failed", charged_points: 0, delivered_units: 0 });
-    expect(w.ledgerOf("chg_")).toHaveLength(0);
-    expect(w.money.balance()).toBe(w.initialBalance);
+  it("failed publication during an outage gives no refund claim until the bounded retry releases the hold", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const w = await world();
+      const f = inject(w.store, "db_error");
+      const realPublish = w.store.publishResult;
+      w.store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
+      await runMissionSafely(w.deps(), w.store.missions.get(ID)!);
+      expect(w.moneyCalls()).toEqual([]);
+      expect(f.writesAfter).toEqual([]);
+      f.heal();
+      for (let slot = 0; slot < 4; slot += 1) {
+        const mission = w.store.missions.get(ID)!;
+        expect(mission.charged_points).toBeNull();
+        vi.setSystemTime(Date.parse(mission.lease_until!) + 1);
+        const claimed = await w.store.claimMission("w2", 120);
+        expect(claimed?.worker_id).toBe("w2");
+        await runMissionSafely(w.deps({ ownerId: "w2" }), claimed!);
+      }
+      expect(w.store.missions.get(ID)).toMatchObject({ status: "failed", charged_points: 0, delivered_units: 0 });
+      expect(w.ledgerOf("chg_")).toHaveLength(0);
+      expect(w.ledgerOf("rel_")).toHaveLength(1);
+      expect(w.money.balance()).toBe(w.initialBalance);
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -228,7 +243,9 @@ describe("two workers, one mission", () => {
     w.store.publishResult = async (a) => { const out = await realPublish(a); if (stalls) { stalls = false; await stalled; } return out; };
     let revoked = 0;
     const w1 = runMissionSafely(w.deps({ revokeOwnership: () => { revoked += 1; } }), w.store.missions.get(ID)!);
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(stalls).toBe(false));
+    const progress = w.money.attempts.get(w.ok.jobId);
+    if (progress) progress.due = Date.now() - 1;
     w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString();
     const claimed = await w.store.claimMission("w2", 120);
     expect(claimed).toMatchObject({ worker_id: "w2" });
@@ -247,11 +264,13 @@ describe("two workers, one mission", () => {
 
   it("the read-check-write window: w1's lease had lapsed but nobody claimed it; the guard RENEWS it, so a competing claim during the settlement finds nothing", async () => {
     const w = await world();
+    const progress = w.money.attempts.get(w.ok.jobId);
+    if (progress) progress.due = Date.now() - 1;
     w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString(); // w1 was slow, the lease ran out
     const realRpc = w.money.client.rpc.bind(w.money.client);
     let competitor: unknown = "not tried";
     w.money.client.rpc = async (name: string, args: any) => {
-      if (name === "complete_chunk" && competitor === "not tried") competitor = await w.store.claimMission("w2", 120); // another worker polls at the worst moment
+      if (name === "finalize_agent_delivery_atomic" && competitor === "not tried") competitor = await w.store.claimMission("w2", 120); // another worker polls at the worst moment
       return realRpc(name, args);
     };
     await runMissionSafely(w.deps(), w.store.missions.get(ID)!);
@@ -270,6 +289,8 @@ describe("recoverFromError's last resort never releases on an ownership refusal"
     await recoverFromError(w.deps(), w.store.missions.get(ID)!, new Error("the run failed"));
     expect(w.moneyCalls()).toEqual([]); // the round 55 code fell through to «release the whole hold» once the second check passed
     expect(w.store.missions.get(ID)!.status).toBe("executing");
+    const progress = w.money.attempts.get(w.ok.jobId);
+    if (progress) progress.due = Date.now() - 1;
     w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString();
     const claimed = await w.store.claimMission("w2", 120);
     await runMissionSafely(w.deps({ ownerId: "w2" }), claimed!);
@@ -289,6 +310,8 @@ describe("settlement retry after a crash between the charge and the final write"
     expect(crashed).toBe(true);
     expect(w.ledgerOf("chg_")).toHaveLength(1);
     const chargedOnce = w.initialBalance - w.money.balance();
+    const progress = w.money.attempts.get(w.ok.jobId);
+    if (progress) progress.due = Date.now() - 1;
     w.store.missions.get(ID)!.lease_until = new Date(Date.now() - 1000).toISOString();
     const claimed = await w.store.claimMission("w2", 120);
     await runMissionSafely(w.deps({ ownerId: "w2" }), claimed!);
@@ -356,36 +379,32 @@ describe("review of round 56: a stale run can no longer strand an executing miss
     expect(after.status).toBe("executing");
   });
 
-  it("a release the database refuses after the files failed is never told as «nothing was charged»", async () => {
-    const w = await world();
-    await updateRunState(w.store, ID, (s) => ({ ...s, executionStarts: 0, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
-    // the job was already settled and charged by an earlier attempt; the settlement and the release are now refused
-    const realRpc = w.money.client.rpc.bind(w.money.client);
-    w.money.client.rpc = async (name: string, args: any) => (MONEY.includes(name) ? { error: { message: "job already settled" } } : realRpc(name, args));
-    const realPublish = w.store.publishResult.bind(w.store);
-    w.store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
-    await recoverFromError(w.deps(), w.store.missions.get(ID)!, new Error("the run failed"));
-    const m = w.store.missions.get(ID)!;
-    expect(m.status).toBe("failed");
-    expect(m.charged_points).not.toBe(0);
-    expect(m.error).toMatch(/^settlement /);
-    const last = w.store.events[w.store.events.length - 1].message_ar;
-    expect(last).toBe(`تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(m.plan!.price.deliveredRows)} المطلوبة ولا قيمة الخصم.`);
-    expect(w.notices).not.toContain("failed");
-  });
-  it("the same in recoverFromError's LAST RESORT (the item log itself cannot be read): a refused release is never told as «nothing was charged»", async () => {
-    const w = await world();
-    await updateRunState(w.store, ID, (s) => ({ ...s, executionStarts: 0, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
-    const realRpc = w.money.client.rpc.bind(w.money.client);
-    w.money.client.rpc = async (name: string, args: any) => (MONEY.includes(name) ? { error: { message: "job already settled" } } : realRpc(name, args));
-    w.store.listFiles = async () => { throw new Error("storage: list failed"); };
-    const logs: string[] = [];
-    await recoverFromError(w.deps({ log: (l) => logs.push(l) }), w.store.missions.get(ID)!, new Error("the run failed"));
-    expect(logs.some((l) => l.startsWith(`settle_failed ${ID}`))).toBe(true); // the last resort was reached
-    const m = w.store.missions.get(ID)!;
-    expect(m).toMatchObject({ status: "failed", worker_id: null, lease_until: null });
-    expect(m.charged_points).not.toBe(0);
-    expect(w.store.events[w.store.events.length - 1].message_ar).toBe(`تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(m.plan!.price.deliveredRows)} المطلوبة ولا قيمة الخصم.`);
-    expect(w.notices).not.toContain("failed");
+  it.each(["cannot publish", "cannot read the item log"] as const)("%s and release is refused: no claim of a refund", async (fault) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const w = await world();
+      await updateRunState(w.store, ID, (s) => ({ ...s, executionStarts: 0, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
+      for (let i = 0; i < 2; i += 1) w.money.inject("release_job_atomic", "before");
+      if (fault === "cannot publish") {
+        w.store.publishResult = async () => { throw new Error("storage: upload failed"); };
+      } else {
+        w.store.listFiles = async () => { throw new Error("storage: list failed"); };
+      }
+      await recoverFromError(w.deps(), w.store.missions.get(ID)!, new Error("the run failed"));
+      for (let i = 0; i < 5; i += 1) {
+        const row = w.store.missions.get(ID)!;
+        expect(row).toMatchObject({ status: "approved", charged_points: null });
+        vi.setSystemTime(new Date(row.lease_until!).getTime() + 1);
+        const claimed = await w.store.claimMission("w2", 120);
+        await runMissionSafely(w.deps({ ownerId: "w2" }), claimed!);
+      }
+      const final = w.store.missions.get(ID)!;
+      expect(final).toMatchObject({ status: "failed", charged_points: null, worker_id: null, lease_until: null });
+      expect(final.error).toMatch(/settlement_retries_exhausted/);
+      expect(w.store.events.at(-1)?.message_ar).toBe(`تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(final.plan!.price.deliveredRows)} المطلوبة ولا قيمة الخصم.`);
+      expect(w.notices).not.toContain("failed");
+      expect(w.ledgerOf("chg_")).toEqual([]);
+      expect(w.ledgerOf("rel_")).toEqual([]);
+    } finally { vi.useRealTimers(); }
   });
 });

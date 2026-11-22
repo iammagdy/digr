@@ -106,8 +106,10 @@ describe("where the section is", () => {
     // the invoice assistant's parseFiles reads the ADMIN'S OWN uploaded spreadsheets in memory (never a delivered file, never written back); the builders write, never read
     // CHANGED (round 21): the data-collection methodology PDF reads the «المنهجية» section and the sheets' layout of the DELIVERED file (read only, for the customer's PDF; never a settlement, nothing is written back)
     // CHANGED (round 32): the customer's CSV (csvFromExcel.ts) reads the DELIVERED workbook, read only, to write the CSV of each data sheet and `methodology.csv` (the first sheet as text); nothing is written back and no settlement reads it
-    expect(readers).toEqual(["agent/src/finalize.ts", "src/lib/agentMission/methodology/readWorkbook.ts", "src/lib/server/csvFromExcel.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts", "src/lib/server/invoices/chat/parseFiles.ts"]);
+    // CHANGED (D-0181, FX-M1): billing reads the emitted data sheets and skips methodology rows.
+    expect(readers).toEqual(["agent/src/finalize.ts", "agent/src/workbookBilling.ts", "src/lib/agentMission/methodology/readWorkbook.ts", "src/lib/server/csvFromExcel.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts", "src/lib/server/invoices/chat/parseFiles.ts"]);
     expect(readFileSync("agent/src/finalize.ts", "utf8")).toContain("wb.worksheets.slice(1)");
+    expect(readFileSync("agent/src/workbookBilling.ts", "utf8")).toContain("const dataSheets = workbook.worksheets.slice(1);");
   });
 });
 

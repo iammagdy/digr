@@ -106,15 +106,20 @@ describe("D-0117 end to end: the whole file is delivered, only the rows with a r
 
 describe("the settlement call sites (a pin like the repo's own inventory tests)", () => {
   it("the one-unit call passes the BILLABLE count, the release reason of a delivered file with nothing billable is the honest sentence, the ownership check stays the line before the call, and the new numbers are computed above it", () => {
-    const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
-    expect(src).toMatch(/deliveredUnits: stageCounts \? stageCounts\.deliveredUnits : billed\.deliveredUnits/);
-    expect(src).toMatch(/releaseReason: nothingBillable \? noBillableReasonAr\(unbilled\.kinds\)/);
-    expect(src).toMatch(/\.\.\.\(stageUnits && stageCounts \? \{ stage: \{ units: stageUnits, counts: \{ base: stageCounts\.base, estimated: stageCounts\.estimated \} \} \} : \{\}\)/);
-    const lines = src.split("\n");
-    const at = lines.findIndex((l) => l.includes("const settled: SettleResult = stageUnavailable ?? await settleMission(deps.client, {"));
-    expect(lines[at - 1].trim()).toBe("await ensureOwned(deps, mission.id);");
-    expect(lines.findIndex((l) => l.includes("const billed = billedUnits({"))).toBeLessThan(at - 1);
-    // the delivered count of the mission, the notices and the file stays the FILE's: only the settlement gets the billable count
-    expect(src).toMatch(/delivered_units: delivered, /);
+    const run = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
+    const worker = readFileSync(new URL("../agent/src/missionSettlement.ts", import.meta.url), "utf8");
+    const sql = readFileSync(new URL("../supabase/migrations/20261122010000_finalize_agent_delivery_atomic.sql", import.meta.url), "utf8");
+    expect(worker).toMatch(/billable_units: billed.deliveredUnits, stage_units: billed.counts/);
+    expect(worker).toMatch(/physical > 0 && billed.deliveredUnits === 0 \? noBillableReasonAr\(unbilled.kinds\)/);
+    expect(worker).toMatch(/p_delivery: delivery/);
+    expect(worker).toMatch(/await ensureOwned\(deps, mission.id\);\s*const result = await bounded\(\(\) => deps.client.rpc\("finalize_agent_delivery_atomic"/);
+    expect(worker.indexOf("const billed = billedUnits({")).toBeGreaterThan(worker.indexOf("await readDeliveredWorkbook("));
+    expect(sql).toContain("v_billed := (p_delivery ->> 'billable_units')::integer;");
+    expect(sql).toContain("public.complete_chunk(v_job_id,0,'completed',v_billed,");
+    expect(sql).toContain("IF v_billed > 0 THEN\n    v_disposition := 'settled';");
+    // Physical delivery remains visible to the customer even when the SQL records a lower billable count.
+    expect(run).toMatch(/const delivered = receipt.physical_units/);
+    expect(run).toMatch(/delivered_units: delivered, /);
+    expect(run).toMatch(/await tell\(deps, mission, jobId, noticeKind, \{ delivered,/);
   });
 });

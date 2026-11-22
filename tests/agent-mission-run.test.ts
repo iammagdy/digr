@@ -155,7 +155,13 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     const approved = await approveMission(money.client, { id: m.id, user_id: m.user_id, plan: m.plan! });
     if (!approved.ok) throw new Error(approved.messageAr);
     await store.updateMission(m.id, { status: "approved", job_id: approved.jobId, quote_id: approved.quoteId, reserved_points: approved.reservePoints, unit_price_points: approved.unitPricePoints });
-    return { store, money, approved, mission: store.missions.get("msn_e1")! };
+    money.bindDeliveryMissions({
+      get: (id) => store.missions.get(id),
+      park: (id, due) => Object.assign(store.missions.get(id)!, { status: "approved", worker_id: null, lease_until: due }),
+    });
+    const claimed = await store.claimMission("worker-test", 120);
+    if (!claimed) throw new Error("test worker did not claim");
+    return { store, money, approved, mission: claimed };
   }
 
   const execScript = (postCount: number, commentsPerPost: number, extra: FakeStep[] = []): FakeStep[] => [
@@ -188,7 +194,8 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     expect(m.charged_points).toBe(expectedCharge);
     expect(m.charged_points).toBeLessThanOrEqual(approved.reservePoints);
     expect(money.balance()).toBe(100_000 - expectedCharge);
-    expect(money.calls.map((c) => c.name).slice(-2)).toEqual(["complete_chunk", "settle_job_atomic"]);
+    expect(money.rpcCalls.at(-1)?.name).toBe("finalize_agent_delivery_atomic");
+    expect(money.legacyMoneyTrace().map((c) => c.name).slice(-2)).toEqual(["complete_chunk", "settle_job_atomic"]);
     expect(money.jobs.get(approved.jobId)).toMatchObject({ status: "completed", delivered_units: 88 });
     // the execution budget was 40% of the reserve's value; the spend was recorded against the JOB
     expect(m.execution_treg_usd).toBeCloseTo(8 * 0.005 + 8 * 0.00144, 6);
@@ -271,7 +278,7 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     expect(m).toMatchObject({ status: "unserved", delivered_units: 0, charged_points: 0 });
     expect(money.balance()).toBe(100_000);
     expect(money.jobs.get(approved.jobId)!.status).toBe("failed");
-    expect(money.calls.map((c) => c.name)).toContain("release_job_atomic");
+    expect(money.legacyMoneyTrace().map((c) => c.name)).toContain("release_job_atomic");
   });
 
   it("DT-06 T5 #9: a mission with no approved plan ends with the neutral Arabic text, in summary and event", async () => {
@@ -285,41 +292,57 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     expect(m.summary_ar).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي|لم يُخصم/);
   });
 
-  it("DT-06 T5 #10: a settlement or release the database refuses is told with no number of delivered items and no money claim", async () => {
-    for (const site of ["settlement", "release"] as const) {
-      const { store, money, mission } = await planned();
-      const refused = site === "settlement" ? "settle_job_atomic" : "release_job_atomic";
-      const realRpc = money.client.rpc.bind(money.client);
-      money.client.rpc = async (name: string, args: any) => (name === refused ? { error: { message: "job already settled" } } : realRpc(name, args));
-      if (site === "release") {
-        // the files cannot be saved, and the release that follows is refused too
-        const realPublish = store.publishResult.bind(store);
-        store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
-      }
-      const t = setup(execResponses(8, 10), store, money);
-      await runExecution({ ...t.deps(createFakeDriver(execScript(8, 10))), call: t.call as any }, mission);
-      const rows = mission.plan!.price.deliveredRows;
-      const expected = `تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(rows)} المطلوبة ولا قيمة الخصم.`;
-      const m = store.missions.get("msn_e1")!;
-      expect(m.status, site).toBe("failed");
-      expect(m.summary_ar, site).toBe(expected);
-      expect(store.events[store.events.length - 1], site).toMatchObject({ kind: "result", message_ar: expected });
-      expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي|لم يُخصم/);
+  async function retryDelivery(store: ReturnType<typeof createMemoryStore>, deps: RunnerDeps, slots: number) {
+    for (let slot = 0; slot < slots; slot += 1) {
+      const current = store.missions.get("msn_e1")!;
+      expect(current).toMatchObject({ status: "approved", charged_points: null });
+      vi.setSystemTime(new Date(current.lease_until!).getTime() + 1);
+      const mission = await store.claimMission(`worker-${slot}`, 120);
+      if (!mission) throw new Error("delivery retry was not claimable");
+      await runExecution(deps, mission);
     }
+  }
+
+  it("DT-06 T5 #10: a settlement or release the database refuses is told with no number of delivered items and no money claim", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      for (const site of ["settlement", "release"] as const) {
+        const { store, money, mission } = await planned();
+        for (let attempt = 0; attempt < 2; attempt += 1) money.inject("release_job_atomic", "before");
+        if (site === "settlement") {
+          for (let attempt = 0; attempt < 4; attempt += 1) money.inject("settle_job_atomic", "before");
+        } else {
+          store.publishResult = async () => { throw new Error("storage: upload failed"); };
+        }
+        const t = setup(execResponses(8, 10), store, money);
+        const deps = t.deps(createFakeDriver(execScript(8, 10)));
+        await runExecution(deps, mission);
+        await retryDelivery(store, deps, 5);
+        const rows = mission.plan!.price.deliveredRows;
+        const expected = `تعذّر إتمام تسوية طلبك آليًا، لذلك لم يتحدد بعد عدد المسلَّم من ${toArabicDigits(rows)} المطلوبة ولا قيمة الخصم.`;
+        expect(store.missions.get("msn_e1")!, site).toMatchObject({ status: "failed", charged_points: null, summary_ar: expected });
+        expect(store.events.at(-1), site).toMatchObject({ kind: "result", message_ar: expected });
+        expect(money.ledger.map((entry) => entry.type)).toEqual(["topup", "reserve"]);
+        expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي|لم يُخصم/);
+      }
+    } finally { vi.useRealTimers(); }
   });
 
-  it("DT-06 T5 #11: files not saved with the release confirmed read the (J) wording with N, in summary and event", async () => {
-    const { store, money, mission } = await planned();
-    const realPublish = store.publishResult.bind(store);
-    store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
-    const t = setup(execResponses(8, 10), store, money);
-    await runExecution({ ...t.deps(createFakeDriver(execScript(8, 10))), call: t.call as any }, mission);
-    const rows = mission.plan!.price.deliveredRows;
-    const expected = `المسلَّم ${toArabicDigits(0)} من ${toArabicDigits(rows)} مطلوب. السبب: تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
-    const m = store.missions.get("msn_e1")!;
-    expect(m).toMatchObject({ status: "failed", summary_ar: expected, charged_points: 0, delivered_units: 0 });
-    expect(store.events.filter((e) => e.kind === "result").map((e) => e.message_ar)).toContain(expected);
-    expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي/);
+  it("DT-06 T5 #11: files not saved with release confirmed report the full returned hold", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { store, money, mission } = await planned();
+      store.publishResult = async () => { throw new Error("storage: upload failed"); };
+      const t = setup(execResponses(8, 10), store, money);
+      const deps = t.deps(createFakeDriver(execScript(8, 10)));
+      await runExecution(deps, mission);
+      await retryDelivery(store, deps, 4);
+      const expected = "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.";
+      expect(store.missions.get("msn_e1")!).toMatchObject({ status: "failed", summary_ar: expected, charged_points: 0, delivered_units: 0 });
+      expect(store.events.filter((e) => e.kind === "result").map((e) => e.message_ar)).toEqual([expected]);
+      expect(money.ledger.map((entry) => entry.type)).toEqual(["topup", "reserve", "release"]);
+      expect(expected).not.toMatch(/فشل|[A-Za-z]|فريق|يدوي/);
+    } finally { vi.useRealTimers(); }
   });
 
   it("execution calls stop at the execution budget (40% of the reserve's value) and the agent is told", async () => {

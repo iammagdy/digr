@@ -45,9 +45,12 @@ describe("the flag", () => {
     const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
     expect(src).toContain("const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter(");
     expect(src).toContain("addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs,");
-    // the done snapshot: AFTER the settlement, by the safe helper (its own flag check, arguments and try); never before settleMission
-    expect(src).toContain("await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });");
-    expect(src.indexOf("await writeDoneSnapshotSafely(")).toBeGreaterThan(src.indexOf("const settled = await settleMission("));
+    // the done snapshot: AFTER the settlement, by the safe helper (its own flag check, arguments and try); only after the delivery receipt is confirmed
+    expect(src).toContain("await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath: receipt.csv_path ?? null, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });");
+    const confirmed = src.indexOf("const { receipt } = result;");
+    expect(confirmed).toBeGreaterThan(src.indexOf("const result = await advanceMissionDelivery(deps, mission, async () =>"));
+    expect(confirmed).toBeGreaterThan(0);
+    expect(src.indexOf("await writeDoneSnapshotSafely(")).toBeGreaterThan(confirmed);
     expect(src).not.toMatch(/await writeDoneSnapshot\(/);
   });
 });

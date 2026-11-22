@@ -75,12 +75,14 @@ describe("the money guard", () => {
     for (const f of files) {
       const lines = readFileSync(f, "utf8").split("\n");
       lines.forEach((l, i) => {
-        if (!/\bawait (settleMission|settleAddon)\(/.test(l)) return;
+        const legacy = /\bawait (settleMission|settleAddon)\(/.test(l);
+        const finalizer = /\.rpc\(\s*["']finalize_agent_delivery_atomic["']/.test(l);
+        if (!legacy && !finalizer) return;
         calls += 1;
         expect(lines[i - 1], `${path.basename(f)}:${i + 1} settles without assertOwned on the line before`).toMatch(/await ensureOwned\(deps, /);
       });
     }
-    expect(calls).toBe(5);
+    expect(calls).toBe(3);
   });
 });
 

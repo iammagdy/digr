@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { replay, type ReplayResult } from "./helpers/agentReplay";
+import { assertBoundReplay, replay, type ReplayResult } from "./helpers/agentReplay";
 import { dispatcher, planFlow, SECTOR_WORLD } from "./helpers/g1World";
 import { g1 } from "./helpers/g1World";
 
@@ -37,8 +37,8 @@ export function moneyOf(r: ReplayResult): Record<string, number | boolean> {
     ...numbersOf({ delivered: m.delivered_units, charged: m.charged_points, reserved: m.reserved_points, unit: m.unit_price_points }, "mission"),
     ...numbersOf(plan.price, "plan.price"),
     ...numbersOf(plan.stages, "plan.stages"),
-    ...numbersOf(r.money.calls.map((c: unknown) => { const x = c as { name?: string; args?: unknown }; return { name: x.name, args: x.args }; }), "money"),
-    "money.calls": r.money.calls.length,
+    ...numbersOf(r.money.legacyMoneyTrace().map((c: unknown) => { const x = c as { name?: string; args?: unknown }; return { name: x.name, args: x.args }; }), "money"),
+    "money.calls": r.money.legacyMoneyTrace().length,
   };
 }
 export const moved = (before: Record<string, number | boolean>, now: Record<string, number | boolean>): string[] =>
@@ -58,7 +58,9 @@ describe("every amount, point, hold, charge and release of the company worlds is
   const collected: Record<string, Record<string, number | boolean>> = {};
   for (const [name, make] of Object.entries(WORLDS)) {
     it(name, async () => {
-      const now = moneyOf(await make());
+      const result = await make();
+      assertBoundReplay(result);
+      const now = moneyOf(result);
       collected[name] = now;
       if (writing) { writeFileSync(FIXTURE, `${JSON.stringify({ ...(existsSync(FIXTURE) ? JSON.parse(readFileSync(FIXTURE, "utf8")) : {}), [name]: now }, null, 1)}\n`); return; }
       expect(before[name], `no «before» numbers for ${name}`).toBeDefined();

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { g1 } from "./helpers/g1World";
@@ -16,7 +17,17 @@ beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
 afterEach(() => vi.unstubAllEnvs());
 const VERSION_FILES = (s: MemoryStore, id: string): string[] => [...s.files.keys()].filter((k) => k.startsWith(`${id}/versions/`));
 const norm = (v: unknown): string => JSON.stringify(v).replace(/msn_[0-9a-f]+/g, "<mission>").replace(/job_[A-Za-z0-9_-]+/g, "<job>").replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<time>");
-const keep = (m: Record<string, unknown>) => ({ status: m.status, delivered_units: m.delivered_units, charged_points: m.charged_points, summary_ar: m.summary_ar, error: m.error, files: m.files });
+async function stableDelivery(r: Awaited<ReturnType<typeof g1>>) {
+  const m = r.mission;
+  const files = await Promise.all((m.files ?? []).map(async ({ sha256, ...file }) => {
+    const bytes = await r.store.getFileBytes(r.missionId, file.path);
+    expect(bytes, file.path).not.toBeNull();
+    expect(sha256).toBe(createHash("sha256").update(bytes!).digest("hex"));
+    const content = file.kind === "xlsx" ? await cellsOf(bytes!) : bytes!.toString("utf8");
+    return { ...file, content };
+  }));
+  return { status: m.status, delivered_units: m.delivered_units, charged_points: m.charged_points, summary_ar: m.summary_ar, error: m.error, files };
+}
 const settles = (r: Awaited<ReturnType<typeof g1>>) => r.money.calls.filter((c) => c.name === "settle_job_atomic");
 
 describe("flag unset: nothing is evaluated or written", () => {
@@ -61,12 +72,15 @@ describe("flag on: version 1 equals the delivered file", () => {
     const off = await g1();
     vi.stubEnv("DIGER_STAGE4_VERSIONS", "on");
     const on = await g1();
-    expect(norm(keep(on.mission as any))).toBe(norm(keep(off.mission as any)));
+    expect(norm(await stableDelivery(on))).toBe(norm(await stableDelivery(off)));
     expect(norm(on.store.events.map((e) => [e.kind, e.message_ar]))).toBe(norm(off.store.events.map((e) => [e.kind, e.message_ar])));
     expect(settles(on)).toHaveLength(1);
     expect(norm(settles(on))).toBe(norm(settles(off)));
     expect(on.money.balance()).toBe(off.money.balance());
-    const names = (r: typeof on) => [...r.store.files.keys()].map((k) => k.replace(r.missionId, "<mission>")).filter((k) => !k.includes("/versions/")).filter((k) => !/\/(items|state|rows)\//.test(k)).sort();
+    const names = (r: typeof on) => [...r.store.files.keys()].map((k) => k.replace(r.missionId, "<mission>").replace(r.mission.job_id!, "<job>"))
+      .filter((k) => !k.includes("/versions/") && !/\/(items|state|rows)\//.test(k))
+      .map((k) => k.replace(/\/settlement\/candidate-[a-f0-9-]{36}\.xlsx$/, "/settlement/candidate.xlsx")
+        .replace(/\/sealed\/[a-f0-9]{64}\//, "/sealed/<sha>/")).sort();
     expect(names(on)).toEqual(names(off));
   }, 120_000);
 
@@ -96,7 +110,7 @@ describe("flag on, but the version cannot be made or stored: never an error, nev
     expect(VERSION_FILES(on.store, on.missionId)).toEqual([]);
     expect(settles(on)).toHaveLength(1);
     expect(norm(settles(on))).toBe(norm(settles(off)));
-    expect(norm(keep(on.mission as any))).toBe(norm(keep(off.mission as any)));
+    expect(norm(await stableDelivery(on))).toBe(norm(await stableDelivery(off)));
     expect(norm(on.store.events.map((e) => [e.kind, e.message_ar]))).toBe(norm(off.store.events.map((e) => [e.kind, e.message_ar])));
   }, 120_000);
 
@@ -150,17 +164,20 @@ describe("the workbook reader gives the cells the file holds", () => {
   });
 });
 
-describe("where the call sits in the worker", () => {
-  it("after the settlement of the normal path (and after the status update and the notice), once, behind no other condition than a delivered, stored file", async () => {
+describe("where the worker writes version one", () => {
+  it("writes only after a confirmed file receipt, terminal metadata and notice on both fresh and recovered delivery", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
-    const calls = [...src.matchAll(/storeFirstVersion\(/g)].map((m) => m.index!);
-    expect(calls).toHaveLength(1);
-    // (DT-20261119-01: the normal settlement call may carry the per-stage counts of a plan with an estimated people stage; it is still THE settlement call of the normal path; DT-20261119-06 B: its one-unit count is the BILLABLE count, `billed.deliveredUnits`)
-    const settle = src.indexOf("await settleMission(deps.client, { jobId, deliveredUnits: stageCounts ? stageCounts.deliveredUnits : billed.deliveredUnits");
-    expect(settle).toBeGreaterThan(0);
-    expect(calls[0]).toBeGreaterThan(src.indexOf("await tell(deps, mission, jobId, noticeKind"));
-    expect(calls[0]).toBeGreaterThan(settle);
-    expect(src.slice(src.lastIndexOf("\n", calls[0]) + 1, src.indexOf("\n", calls[0]))).toContain("if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion(");
+    const fresh = src.slice(src.indexOf("async function settleExecution("), src.indexOf("export const NO_TOPIC_END_AR"));
+    const recovered = src.slice(src.indexOf("async function acknowledgeDelivery("), src.indexOf("async function resumeExecutionDelivery("));
+    expect([...src.matchAll(/storeFirstVersion\(/g)]).toHaveLength(2);
+    function follows(path: string, prior: string[], guard: string) {
+      const positions = [...prior, guard].map((step) => path.indexOf(step));
+      expect(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1]))).toBe(true);
+    }
+    follows(fresh, ["await advanceMissionDelivery(", "const { receipt } = result;", "await store.updateMission(", "await tell(deps, mission, jobId, noticeKind"],
+      "if (receipt.csv_path && delivered > 0 && !ourFailure) await storeFirstVersion(");
+    follows(recovered, ["if (receipt.mission_id !== mission.id", "await store.updateMission(", "await tell(deps, mission, mission.job_id, noticeKind"],
+      "if (receipt.csv_path && physical > 0) await storeFirstVersion(");
   });
 });
