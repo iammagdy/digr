@@ -92,6 +92,7 @@ export function operationLabelAr(operation: Operation, platform: string | null):
     case "apps.reviews": return "تقييمات التطبيقات ونصوصها من متاجر التطبيقات";
     case "company.enrich": return "المواقع الرسمية للشركات";
     case "social.profile": return p ? `بيانات الحسابات العامة على ${p} (النبذة وعدد المتابعين)` : "بيانات الحسابات العامة (النبذة وعدد المتابعين)";
+    case "catalog.data": return "البيانات المطلوبة من المصادر المتاحة";
   }
 }
 /** A capability that exists but cannot be used now because of its provider (no key, a cap of 0, a cap used up today). */

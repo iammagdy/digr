@@ -32,6 +32,7 @@ export const OPERATIONS = [
   // round 51: mobile apps in the stores, and their reviews (TREG store searches and reviews; Context.dev's store review parsers)
   "apps.discover",
   "apps.reviews",
+  "catalog.data",
 ] as const;
 /**
  * INTERNAL OPERATIONS (Phase 2, docs/intelligence/PHASES-2-4-BASELINE.md): steps code adds INSIDE a chain, never a research objective the chat model may propose (the objective vocabulary stays exactly `OPERATIONS`).
@@ -109,7 +110,7 @@ export interface Capability {
 // TREG: capability string → operation
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const SOCIAL = "(tiktok|x|instagram|facebook|youtube)";
-const TREG_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
+const PIPELINE_OPERATION_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
   { re: new RegExp(`^${SOCIAL}\\.(search\\.(videos|posts|reels|general|shorts)|hashtag\\.(videos|posts)|user\\.(videos|posts|reels)|channel\\.videos|page\\.posts|group\\.posts)$`), operation: "social.parents" },
   { re: new RegExp(`^${SOCIAL}\\.(video|post)\\.comments$`), operation: "social.comments" },
   { re: new RegExp(`^${SOCIAL}\\.comment\\.replies$`), operation: "social.replies" },
@@ -133,7 +134,7 @@ export const PRIVATE_CAPABILITY = /(^|\.)personal(\.|$)|^people\.(profile\.from_
 export const isPrivateCapabilityString = (capability: string | null | undefined): boolean => PRIVATE_CAPABILITY.test(String(capability ?? ""));
 
 /**
- * PHASE 4 FAMILIES (task 4.3), with the router switch only: Reddit public posts, comments and replies (52 catalog endpoints; Diger's own recorded calls returned rows), and public account PROFILES. Kept apart from `TREG_RULES` so the
+ * PHASE 4 FAMILIES (task 4.3), with the router switch only: Reddit public posts, comments and replies (52 catalog endpoints; Diger's own recorded calls returned rows), and public account PROFILES. Kept apart from `PIPELINE_OPERATION_RULES` so the
  * discovery of today (switch off) maps exactly what it mapped.
  */
 const EXTENDED_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
@@ -152,7 +153,7 @@ export function extendedOperationOf(capability: string | null | undefined): Oper
 export function operationOfCapability(capability: string | null | undefined): Operation | null {
   const c = String(capability ?? "");
   if (!c || isPrivateCapabilityString(c)) return null;
-  for (const r of TREG_RULES) if (r.re.test(c)) return r.operation;
+  for (const r of PIPELINE_OPERATION_RULES) if (r.re.test(c)) return r.operation;
   return null;
 }
 
@@ -208,7 +209,7 @@ function takesOf(endpoint: CatalogEndpoint, operation: Operation): InputClass[] 
   if (profile.query) out.add("query");
   for (const input of endpoint.inputs) for (const [cls, re] of INPUT_RULES) if (re.test(input.name)) { out.add(cls); break; }
   // an endpoint with no input of its own (a routed search that takes filters only) is fed from the customer's words
-  if ((operation === "companies.discover" || operation === "people.discover" || operation === "places.discover" || operation === "apps.discover") && out.size === 0) out.add("query");
+  if ((operation === "companies.discover" || operation === "people.discover" || operation === "places.discover" || operation === "apps.discover" || operation === "catalog.data") && out.size === 0) out.add("query");
   return [...out];
 }
 
@@ -349,9 +350,24 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
   const all: Capability[] = [];
   // with the hand cards, an endpoint that has a card whose role is this operation is described by its CARD (verified on stored real pages), not by the catalog's wrapper fields (below)
   const cardOf = new Map<string, ToolCard>(availability.handCards ? TOOL_CARDS.filter((c) => CARD_ROLE_OPERATION[c.role]).map((c) => [c.endpointId, c] as const) : []);
+  const MEDIA_GEN_PLATFORMS = new Set(["image-gen", "video-gen", "voice-gen", "music-gen"]);
+  const isMediaGen = (e: CatalogEndpoint): boolean =>
+    MEDIA_GEN_PLATFORMS.has(e.platform) || /(^|\.)(image|video|voice|music)-gen(\.|$)/.test(String(e.capability ?? ""));
+
+  const pollSet = new Set<string>();
   for (const e of catalog.endpoints) {
-    const operation = operationOfCapability(e.capability) ?? (availability.extendedFamilies ? extendedOperationOf(e.capability) : null);
-    if (!operation) continue;
+    const pollEp = (e.async_config as { poll?: { endpoint?: string } } | null | undefined)?.poll?.endpoint;
+    if (pollEp) pollSet.add(pollEp);
+  }
+  const isPollOnly = (e: CatalogEndpoint): boolean => pollSet.has(e.id) || /-task-get(-|$)/.test(e.id);
+
+  for (const e of catalog.endpoints) {
+    if (isMediaGen(e) || isPollOnly(e)) continue;
+    let operation = operationOfCapability(e.capability) ?? (availability.extendedFamilies ? extendedOperationOf(e.capability) : null);
+    if (!operation) {
+      if (isPrivateCapabilityString(e.capability)) continue;
+      operation = "catalog.data";
+    }
     const card = cardOf.get(e.id);
     if (card && CARD_ROLE_OPERATION[card.role] === operation) continue;
     const platformOf = String(e.capability ?? "").split(".")[0];
@@ -371,7 +387,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
       id: e.id,
       provider: "treg",
       operation,
-      platform: operation.startsWith("social.") ? platformOf : operation.startsWith("places.") ? "google_maps" : operation.startsWith("web.") ? "web" : operation.startsWith("apps.") ? platformOf.replace("-", "_") : null,
+      platform: operation.startsWith("social.") ? platformOf : operation.startsWith("places.") ? "google_maps" : operation.startsWith("web.") ? "web" : operation.startsWith("apps.") ? platformOf.replace("-", "_") : e.platform ?? null,
       takes: takesOf(e, operation),
       outputs: outputsOfFields([...fields, ...nested]),
       outputsKnown: fields.length > 0 && objectFields.length === 0,
@@ -412,8 +428,8 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
     const spec = WEB_CAPABILITIES[s.id];
     if (!spec) continue;
     all.push({
-      id: s.id, provider: s.provider, operation: spec.operation, platform: spec.operation === "people.discover" ? "people" : "web", takes: spec.takes, outputs: spec.outputs, outputsKnown: true, pagination: spec.pagination, maxRowsPerCall: spec.maxRows,
-      filters: { date: false, country: spec.country, language: false }, usdPerRow: s.usdPerCall / Math.max(1, s.rowsPerCall), privacy: "public", unavailable: webUnavailable(s.provider, availability), summary: s.summary.slice(0, 160),
+      id: s.id, provider: s.provider as CapabilityProvider, operation: spec.operation, platform: spec.operation === "people.discover" ? "people" : "web", takes: spec.takes, outputs: spec.outputs, outputsKnown: true, pagination: spec.pagination, maxRowsPerCall: spec.maxRows,
+      filters: { date: false, country: spec.country, language: false }, usdPerRow: s.usdPerCall / Math.max(1, s.rowsPerCall), privacy: "public", unavailable: webUnavailable(s.provider as "firecrawl" | "contextdev", availability), summary: s.summary.slice(0, 160),
       limits: spec.operation === "people.discover" ? "no e-mail and no phone" : spec.operation === "web.read" ? "one public page per call" : null,
       // documented credits × a USD-per-credit figure read on 2026-10-22 that depends on the plan (multiProvider/catalog.ts): an estimate, not a verified price
       access: "direct", pricing: { unit: "call", usd: s.usdPerCall, basis: "estimated", billedOnFailure: null },

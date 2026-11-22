@@ -102,6 +102,7 @@ export interface NeedInput {
 const KIND_OF_ROOT: Record<NeedObjective["operation"], NeedKind> = {
   "social.parents": "social", "social.comments": "social", "social.replies": "social",
   "companies.discover": "companies", "company.contacts": "companies", "places.discover": "places", "places.reviews": "places", "web.search": "web", "web.read": "web", "people.discover": "people", "apps.discover": "apps", "apps.reviews": "apps",
+  "catalog.data": "unknown",
 };
 
 /** The need read from validated objectives (see the header). The count, the conditions, the topic and privacy are still read by the trusted contract from the words (numbers are never the model's). */
@@ -247,8 +248,9 @@ export interface StageNeed {
 
 /** The chain of stages that carries the need out (empty when the need is unknown or blocked). */
 export function stagesOfNeed(need: ResearchNeed): StageNeed[] {
-  if (need.privacy === "blocked" || need.kind === "unknown") return [];
+  if (need.privacy === "blocked") return [];
   if (need.objectives && need.objectives.length > 0) return stagesOfObjectives(need, need.objectives);
+  if (need.kind === "unknown") return [];
   const out: StageNeed[] = [];
   if (need.kind === "social") {
     // PHASE 4 families: each profile asked is its own first stage (a named account's own data), beside the content chain
@@ -309,6 +311,7 @@ function stageShape(op: NeedObjective["operation"], hasChild: boolean, isRoot: b
     case "people.discover": return { requires: ["name"], prefers: ["title", "company", "url"], accepts: isRoot ? ["query"] : ["domain", "url", "query"] };
     case "apps.discover": return { requires: ["name"], prefers: ["app_ref", "url", "rating"], accepts: ["query"] };
     case "apps.reviews": return { requires: ["text", "rating"], prefers: ["date", "author"], accepts: ["app_ref", "url"] };
+    case "catalog.data": return { requires: ["text"], prefers: ["title", "url", "date"], accepts: ["query"] };
   }
 }
 /** The step an objective needs before it when the model wrote it alone (comments are read from posts, reviews from places …): added by code, as the chain requires, never a new goal. */
@@ -318,6 +321,7 @@ const BASE_KEY: Record<NeedObjective["operation"], (o: NeedObjective, rootChild:
   "companies.discover": () => "companies", "company.contacts": () => "company_contacts", "places.discover": () => "places", "places.reviews": () => "place_reviews",
   "web.search": () => "web_results", "web.read": () => "web_pages", "people.discover": (_o, child) => (child ? "company_people" : "people"),
   "apps.discover": () => "apps", "apps.reviews": () => "app_reviews",
+  "catalog.data": () => "catalog_data",
 };
 
 /**
