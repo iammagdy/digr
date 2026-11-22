@@ -47,6 +47,12 @@ export async function POST(req: NextRequest) {
   let currentStep = "parse_request";
   try {
     const body = await req.json().catch(() => ({}));
+    const calculatorPlanOnly = body?.source === "calculator";
+    if (calculatorPlanOnly && !AGENT_SERVES_CHAT) {
+      return NextResponse.json({
+        success: false, requestId, error: "المساعد متوقف مؤقتاً للحماية. يرجى المحاولة لاحقاً.",
+      }, { status: 503 });
+    }
     const { conversationId } = body;
     const structuredAnswers = body.clarificationAnswers === undefined
       ? null
@@ -499,6 +505,7 @@ export async function POST(req: NextRequest) {
     chatHandler.agentChat = { enabled: AGENT_SERVES_CHAT };
     const result = await withDeadline(chatHandler.handleUserMessage({
       userId: verifiedUserId,
+      ...(calculatorPlanOnly ? { calculatorPlanOnly: true as const } : {}),
       conversationId: conversationId || undefined,
       plannerRequestId: typeof body.plannerRequestId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(body.plannerRequestId) ? body.plannerRequestId : undefined,
       message: message.trim(),
