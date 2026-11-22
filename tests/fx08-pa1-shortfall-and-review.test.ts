@@ -298,6 +298,7 @@ describe("FX-08 Point P-A1: Shortfall Short-Circuit & Review Sleep Skip", () => 
       });
       // Attach reviewer with stop: "failed" but counts.pending === 0
       const reviewer = {
+        review: async () => new Map<string, boolean>(),
         state: async () => ({ stop: "failed" as const, budgetReached: false }),
         drain: async () => undefined,
       };
@@ -330,6 +331,7 @@ describe("FX-08 Point P-A1: Shortfall Short-Circuit & Review Sleep Skip", () => 
         perParent: 1,
       });
       const reviewer = {
+        review: async () => new Map<string, boolean>(),
         state: async () => ({ stop: "failed" as const, budgetReached: false }),
         drain: async () => undefined,
       };
@@ -341,19 +343,15 @@ describe("FX-08 Point P-A1: Shortfall Short-Circuit & Review Sleep Skip", () => 
     // Sub-case 5d: pending > 0, reviewer failed, !budgetReached, deadline far -> sleep IS called once with 20_000
     {
       sleepSpy.mockClear();
-      const w = createEngineWorld({
-        [PRIMARY_ENDPOINT]: () => ({
-          rows: [{ id: "p1", name: "Person 1" }],
-          http_status: 200,
-        }),
-      }, { sleepSpy });
+      const w = createEngineWorld({}, { sleepSpy });
       const plan = buildTestPlan({
         parents: [{ id: "c1", name: "Company 1" }],
         perParent: 1,
       });
-      // Give people stage a model relevance so rows enter pending
-      (plan.stages[1] as any).relevance = { judge: "model", words: ["test"] };
+      // Give root companies stage a model relevance so pinned rows enter pending
+      (plan.stages[0] as any).relevance = { judge: "model", terms: ["test"], text_columns: ["name"] };
       const reviewer = {
+        review: async () => new Map<string, boolean>(),
         state: async () => ({ stop: "failed" as const, budgetReached: false }),
         drain: async () => undefined,
       };
