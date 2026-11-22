@@ -467,7 +467,7 @@ export default function RequestsPage() {
           <p data-testid="request-mission-title" className="m-0 min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{r.title || "طلب بدون نص"}</p>
           <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in oklab, ${tint} 13%, transparent)`, color: tint }}>{chip}</span>
         </div>
-        <p className="m-0 text-xs text-mut">{dayLabel(r.createdAt)}{r.tab === "ended" ? ` · ${pointsAr(0)}` : ""}</p>
+        <p suppressHydrationWarning className="m-0 text-xs text-mut">{dayLabel(r.createdAt)}{r.tab === "ended" ? ` · ${pointsAr(0)}` : ""}</p>
         <p className="m-0 text-xs leading-[1.7] text-ink2">{r.noteAr}</p>
         <div className="flex gap-2">
           <button type="button" data-testid="request-details" onClick={() => openDetails({ id: r.id, title: r.title || "طلب بدون نص", stateAr: chip, createdAt: r.createdAt, nounPlural: null, delivered: null, requested: null, pointsAr: r.tab === "ended" ? pointsAr(0) : null })} className="flex min-h-11 cursor-pointer items-center rounded-full border-0 bg-sf2 px-4 text-xs font-medium text-ink">التفاصيل</button>
@@ -530,7 +530,7 @@ export default function RequestsPage() {
                 <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{k === "refunded" ? "رجع لمحفظتك" : st.label}</span>
               </div>
               <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-mut">
-                <span>{dayLabel(j.createdAt)}</span>
+                <span suppressHydrationWarning>{dayLabel(j.createdAt)}</span>
                 <span>{agentNoun ? agentNoun.plural : "العناصر"} <strong className="font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
                 <span>{k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0)}</span>
               </p>
