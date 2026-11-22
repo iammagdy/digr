@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { COMPANY_EVIDENCE_KEY } from "../../../src/lib/agentMission/companyQuality";
 import { AGENT_EXCLUDED_ROWS_KEPT } from "../../../src/lib/agentMission/constants";
 import { RELEVANCE_REASON_LIST, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, type FilterReason } from "../../../src/lib/agentMission/filters";
@@ -347,6 +348,9 @@ export class ItemStore {
 
   /** A best-effort copy of a stage's accepted rows in `rows/<stage>.json` (the admin's and the older tools' habit). Never read by this code to decide anything: it may be stale, and a failure to write it is ignored. */
   async mirror(stageKey: string): Promise<void> {
-    try { await this.store.putFile(this.missionId, `rows/${stageKey}.json`, JSON.stringify(this.acceptedRows(stageKey)), "application/json"); } catch { /* a mirror is a convenience, never a requirement */ }
+    try {
+      const rows = this.acceptedRows(stageKey).map(({ [COMPANY_EVIDENCE_KEY]: _, ...rest }) => rest);
+      await this.store.putFile(this.missionId, `rows/${stageKey}.json`, JSON.stringify(rows), "application/json");
+    } catch { /* a mirror is a convenience, never a requirement */ }
   }
 }

@@ -232,7 +232,7 @@ describe("M6 branch-first company deduplication and child binding", () => {
   it("deduplicates repeated company rows after placeCellsAr localization across restarts", async () => {
     const store = createMemoryStore();
     const stage: PricedStage = {
-      key: "companies", title_ar: "الشركات", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true,
+      key: "companies", title_ar: "الشركات", endpoint_id: "fixture.companies.search", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true,
       filters: [{ kind: "place", field: "city", values: ["EG"] }],
       columns: [
         { key: "name", title_ar: "الاسم" },
