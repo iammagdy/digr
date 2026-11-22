@@ -34,7 +34,7 @@ export const platformEntryBySlug = (slug: string): PlatformEntry | undefined =>
   getPlatformEntryBySlug(slug);
 
 /** The path of a platform's own page. The slug is only part of the address, never shown as text. */
-export const platformHref = (slug: string): string => `/services/${slug}`;
+export { platformHref } from "./servicesCatalogText";
 
 /** The first services of a platform, ordered by the internal proven list (never shown) and then by the catalog's own order. */
 export function featuredServices(platform: CatalogPlatform, count: number): CatalogService[] {

@@ -11,6 +11,9 @@ export const servicesCountAr = (n: number): string => counted(n, "خدمة وا�
 export const platformsCountAr = (n: number): string => counted(n, "منصة واحدة", "منصتان", "منصات", "منصة");
 export const sectorsCountAr = (n: number): string => counted(n, "قطاع واحد", "قطاعان", "قطاعات", "قطاعًا");
 
+/** The path of a platform's own page. The slug is only part of the address, never shown as text. */
+export const platformHref = (slug: string): string => `/services/${slug}`;
+
 /** Arabic text for search: no marks, no tatweel, one spelling of alef, ya and ta marbuta, Arabic-Indic digits to ASCII, lower case. */
 export function normalizeArabicSearch(input: string): string {
   return String(input || "")

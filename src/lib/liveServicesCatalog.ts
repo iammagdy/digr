@@ -183,6 +183,13 @@ function getCatalogPollIds(catalog: TregCatalog): Set<string> {
 }
 
 const MEDIA_GEN_PLATFORMS = new Set(["image-gen", "video-gen", "voice-gen", "music-gen"]);
+const OWN_ACCOUNT_ONLY_PLATFORMS = new Set([
+  "google-analytics",
+  "search-console",
+  "google-tag-manager",
+  "google-ads",
+  "slack",
+]);
 
 export function isLiveCatalogEndpoint(
   e: CatalogEndpoint,
@@ -190,6 +197,7 @@ export function isLiveCatalogEndpoint(
   pollIds?: Set<string>,
 ): boolean {
   if (!e.platform || !e.id) return false;
+  if (OWN_ACCOUNT_ONLY_PLATFORMS.has(e.platform)) return false;
   if (!isSellable(e.id, catalog)) return false;
 
   const block = blockedEndpointReason(e.id, e.scope ?? null);
@@ -227,7 +235,7 @@ export function isLiveCatalogEndpoint(
   if (usd === 0 && e.cost?.type !== "free") return false;
 
   const row = findClassificationRow(e);
-  if (row && (row.cls === "write" || row.cls === "own")) return false;
+  if (row && (row.cls === "write" || row.cls === "own" || row.cls === "private" || row.cls === "helper")) return false;
 
   return true;
 }
@@ -484,7 +492,7 @@ export function getLiveServicesCatalog(catalog: TregCatalog = loadTregCatalog())
   return built;
 }
 
-export function catalogCounts(catalog: CatalogSector[]): CatalogCounts {
+export function catalogCounts(catalog: CatalogSector[] = getLiveServicesCatalog().sectors): CatalogCounts {
   let platforms = 0;
   let services = 0;
   let coreCount = 0;
@@ -499,7 +507,7 @@ export function catalogCounts(catalog: CatalogSector[]): CatalogCounts {
 }
 
 export function coreServices(
-  catalog: CatalogSector[],
+  catalog: CatalogSector[] = getLiveServicesCatalog().sectors,
 ): Array<CatalogService & { platformAr: string; platformSlug: string }> {
   const seen = new Set<string>();
   const result: Array<CatalogService & { platformAr: string; platformSlug: string }> = [];

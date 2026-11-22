@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import type { CatalogPlatform, CatalogSector, CatalogService } from "@/lib/servicesCatalogView";
+import type { CatalogPlatform, CatalogSector, CatalogService } from "@/lib/servicesCatalog";
 import { platformsProvenFirst } from "@/lib/servicesAvailability";
-import { platformHref } from "@/lib/servicesCatalogView";
 import { formatAr } from "@/lib/arabicDigits";
-import { normalizeArabicSearch, platformsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
+import { normalizeArabicSearch, platformsCountAr, servicesCountAr, platformHref } from "@/lib/servicesCatalogText";
 
 /** Every word of the query must be found (as part of a word) in the text: «بريد مهني» finds «البريد المهني». */
 const hasAllWords = (text: string, words: string[]): boolean => words.every((word) => text.includes(word));

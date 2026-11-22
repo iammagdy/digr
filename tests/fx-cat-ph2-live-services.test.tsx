@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { loadTregCatalog, parseCatalog, type CatalogEndpoint } from "../src/lib/treg/catalog";
+import { loadTregCatalog, parseCatalog, type CatalogEndpoint, type CatalogCost } from "../src/lib/treg/catalog";
 import {
   getLiveServicesCatalog,
   buildLiveServicesCatalog,
@@ -14,6 +14,54 @@ import { checkCustomerText } from "../src/lib/agentMission/text";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
 import ServicesCatalogPage from "../src/app/services/page";
 import PlatformServicesPage from "../src/app/services/[platform]/page";
+
+function mockEndpoint(partial: {
+  id: string;
+  provider: string;
+  platform: string;
+  category: string;
+  capability: string;
+  name: string;
+  cost: CatalogCost | null;
+  method?: string;
+  scope?: string;
+  kind?: string;
+}): CatalogEndpoint {
+  return {
+    method: "GET",
+    path: `/${partial.id}`,
+    kind: "direct",
+    tier: null,
+    async: false,
+    async_config: null,
+    inputs: [],
+    pagination: [],
+    observed: null,
+    scope: "public",
+    cost_confidence: null,
+    siblings: [],
+    test_request: null,
+    list_path: null,
+    cursor_path: null,
+    item_fields: null,
+    example_response_trimmed: null,
+    summary: null,
+    ...partial,
+  };
+}
+
+function mockCost(cost: { type: string; usd: number | null; unit: string }): CatalogCost {
+  return {
+    type: cost.type,
+    usd: cost.usd,
+    unit: cost.unit,
+    currency: "USD",
+    value: cost.usd,
+    per: 1,
+    billing_note: null,
+    failed_or_empty_billed: null,
+  };
+}
 
 const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ");
 
@@ -35,44 +83,25 @@ describe("FX-CAT Ph2: Live Services Catalog & Render Guards", () => {
 
   it("2. Paused-provider counter-case: synthetic catalog excludes paused providers", () => {
     const mockEndpoints: CatalogEndpoint[] = [
-      {
+      mockEndpoint({
         id: "apollo.people.lookup",
         provider: "apollo",
         platform: "acme",
         category: "Enrichment",
         capability: "acme.secret.only",
         name: "Acme Secret Only",
-        description: null,
         method: "POST",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.02, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: true,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.02, unit: "record" }),
+      }),
+      mockEndpoint({
         id: "someprov.demo.public.posts",
         provider: "someprov",
         platform: "demo",
         category: "Social",
         capability: "demo.public.posts",
         name: "Demo Public Posts",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.005, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
+        cost: mockCost({ type: "credit", usd: 0.005, unit: "record" }),
+      }),
     ];
 
     const syntheticCatalog = parseCatalog({ source: "test", count: 2, endpoints: mockEndpoints }, []);
@@ -93,101 +122,54 @@ describe("FX-CAT Ph2: Live Services Catalog & Render Guards", () => {
 
   it("3. Blocked / own_account / not_sellable / write_action / policy_blocked counter-case", () => {
     const mockEndpoints: CatalogEndpoint[] = [
-      {
+      mockEndpoint({
         id: "prov.own.account",
         provider: "prov",
         platform: "ownplat",
         category: "Developer",
         capability: "ownplat.user.info",
         name: "User Info",
-        description: null,
-        method: "GET",
         scope: "own_account",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: true,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "record" }),
+      }),
+      mockEndpoint({
         id: "prov.write.action",
         provider: "prov",
         platform: "writeplat",
         category: "Social",
         capability: "writeplat.post.create",
         name: "Create Post",
-        description: null,
         method: "POST",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "call" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: true,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "call" }),
+      }),
+      mockEndpoint({
         id: "prov.media.gen",
         provider: "prov",
         platform: "image-gen",
         category: "AI generation",
         capability: "image-gen.create",
         name: "Image Generation",
-        description: null,
         method: "POST",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.05, unit: "call" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: true,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.05, unit: "call" }),
+      }),
+      mockEndpoint({
         id: "prov.poll.task",
         provider: "prov",
         platform: "asyncplat",
         category: "E-commerce",
         capability: "asyncplat.task.get",
         name: "Poll Task",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "call" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: true,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "call" }),
+      }),
+      mockEndpoint({
         id: "prov.valid.endpoint",
         provider: "prov",
         platform: "validplat",
         category: "E-commerce",
         capability: "validplat.items.search",
         name: "Search Items",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "record" }),
+      }),
     ];
 
     const syntheticCatalog = parseCatalog(
@@ -208,101 +190,51 @@ describe("FX-CAT Ph2: Live Services Catalog & Render Guards", () => {
 
   it("4. Unpriced & v1.1 Free-Endpoint counter-cases", () => {
     const mockEndpoints: CatalogEndpoint[] = [
-      {
+      mockEndpoint({
         id: "prov.null.price",
         provider: "prov",
         platform: "nullplat",
         category: "Developer",
         capability: "nullplat.data",
         name: "Null Price Endpoint",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: null, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: null, unit: "record" }),
+      }),
+      mockEndpoint({
         id: "prov.bad.unit",
         provider: "prov",
         platform: "badunitplat",
         category: "Developer",
         capability: "badunitplat.data",
         name: "Bad Unit Endpoint",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "char" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "char" }),
+      }),
+      mockEndpoint({
         id: "prov.zero.credit",
         provider: "prov",
         platform: "zerocreditplat",
         category: "Developer",
         capability: "zerocreditplat.data",
         name: "Zero Non-Free Credit Endpoint",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0, unit: "call" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "credit", usd: 0, unit: "call" }),
+      }),
+      mockEndpoint({
         id: "prov.free.v11",
         provider: "prov",
         platform: "freeplat",
         category: "Developer",
         capability: "freeplat.data",
         name: "Free v1.1 Endpoint",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "free", usd: 0, unit: "call" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
-      {
+        cost: mockCost({ type: "free", usd: 0, unit: "call" }),
+      }),
+      mockEndpoint({
         id: "prov.paid.priced",
         provider: "prov",
         platform: "paidplat",
         category: "Developer",
         capability: "paidplat.data",
         name: "Paid Priced Endpoint",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.005, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
+        cost: mockCost({ type: "credit", usd: 0.005, unit: "record" }),
+      }),
     ];
 
     const syntheticCatalog = parseCatalog({ source: "test", count: 5, endpoints: mockEndpoints }, []);
@@ -322,25 +254,15 @@ describe("FX-CAT Ph2: Live Services Catalog & Render Guards", () => {
 
   it("5. Newly added sellable endpoint appears with ZERO code changes & zero English", () => {
     const mockEndpoints: CatalogEndpoint[] = [
-      {
+      mockEndpoint({
         id: "prov.newshop.reviews",
         provider: "prov",
         platform: "newshop",
         category: "E-commerce",
         capability: "newshop.products.reviews",
         name: "Fetch product reviews",
-        description: null,
-        method: "GET",
-        scope: "public",
-        kind: "endpoint",
-        siblings: [],
-        cost: { type: "credit", usd: 0.01, unit: "record" },
-        inputs: [],
-        required_inputs: [],
-        item_fields: null,
-        single_object: false,
-        stats: { sample_runs: 1, sample_success: 1, call_success_rate: 1 },
-      },
+        cost: mockCost({ type: "credit", usd: 0.01, unit: "record" }),
+      }),
     ];
 
     const syntheticCatalog = parseCatalog({ source: "test", count: 1, endpoints: mockEndpoints }, []);
