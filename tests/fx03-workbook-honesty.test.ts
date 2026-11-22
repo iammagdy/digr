@@ -4,16 +4,15 @@ import { ItemStore } from "../agent/src/items/itemStore";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
 import { buildMethodology, type MissionFacts, type StageRecord } from "../agent/src/methodology";
-import { buildMissionFiles } from "../agent/src/workbook";
+import { COUNTER_UNAVAILABLE_AR, buildMissionFiles } from "../agent/src/workbook";
 import { readDeliveredWorkbook } from "../agent/src/workbookBilling";
 import { shortfallClauseAr } from "../agent/src/finalize";
 import { perParentShortfallAr } from "../agent/src/perParentLimits";
-import { withCompanyQuality } from "../src/lib/agentMission/companyQuality";
+import { VERIFICATION_NOTE_KEY, withCompanyQuality } from "../src/lib/agentMission/companyQuality";
 import { csvExportFromWorkbook } from "../src/lib/server/csvFromExcel";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import {
   B2B_NOT_SEARCHED_AR,
-  COUNTER_UNAVAILABLE_AR,
   NOT_AVAILABLE_AR,
 } from "../src/lib/agentMission/taskContracts";
 import type { ContactStep, FinderInfo } from "../src/lib/agentMission/contactFinders";
@@ -411,6 +410,7 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
         ],
         {
           compiled: {
+            by: "compiler",
             fields: [{ key: "shares_count", status: "unavailable" }],
           } as never,
         },
@@ -443,7 +443,8 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
       const res = withCompanyQuality(plan, rowsIn);
       expect(res.rowsByStage.companies[0].address).toBe(NOT_AVAILABLE_AR);
       expect(res.limitLines.some((l) => l.includes(NOT_AVAILABLE_AR))).toBe(true);
-      expect(res.reports[0].note?.includes(NOT_AVAILABLE_AR)).toBe(true);
+      const note = String(res.rowsByStage.companies[0][VERIFICATION_NOTE_KEY] ?? "");
+      expect(note.includes(NOT_AVAILABLE_AR)).toBe(true);
     });
   });
 

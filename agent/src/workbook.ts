@@ -16,19 +16,19 @@ import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMi
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
 import { NAMED_MARK_KEY } from "../../src/lib/agentMission/foundation/namedShortfall";
-import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, DATE_PRECISION_APPROX_AR, DATE_PRECISION_EXACT_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, DATE_PRECISION_APPROX_AR, DATE_PRECISION_EXACT_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf, dateUnreadColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { customerPlanView, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 import { buildMethodology, routesOfFacts, type MissionFacts } from "./methodology";
-import { COMMENT_KIND_COMMENT_AR, COMMENT_KIND_KEY, COMMENT_KIND_REPLY_AR, COMMENT_KIND_TITLE_AR, DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NOT_AVAILABLE_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, REPLY_TO_KEY, REPLY_TO_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
+import { B2B_NOT_SEARCHED_AR, COMMENT_KIND_COMMENT_AR, COMMENT_KIND_KEY, COMMENT_KIND_REPLY_AR, COMMENT_KIND_TITLE_AR, DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NOT_AVAILABLE_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, REPLY_TO_KEY, REPLY_TO_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
 import { bilingualActivity, bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
 import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { isCompanyStage } from "../../src/lib/agentMission/entities";
-import { withCompanyQuality, type CompanyQualityReport } from "../../src/lib/agentMission/companyQuality";
+import { VERIFICATION_NOTE_KEY, withCompanyQuality, type CompanyQualityReport } from "../../src/lib/agentMission/companyQuality";
 import { companiesWithoutDecisionMakers } from "./perParentLimits";
 import { ACTIVITY_AR_KEY, NAME_AR_KEY, TITLE_AR_KEY } from "./namesAr";
 import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
@@ -86,10 +86,12 @@ const isAvailabilityKey = (plan: PricedPlan, stage: PricedStage, key: string): b
   plan.compiled?.by === "compiler" && (COUNTER_KEYS.has(key) || (stage.parent_key === null && (plan.compiled.fields ?? []).some((f) => f.key === key && (f.status === "unavailable" || f.status === "partial"))) || (stage.parent_key === null && /tiktok\./.test(stage.endpoint_id) && TIKTOK_FIELD_KEYS.has(key)));
 const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
+export const MISSING_LABELS: ReadonlySet<string> = new Set([COUNTER_UNAVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR]);
+
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
 function numericColumn(values: unknown[], contact: boolean): boolean {
   if (contact) return false;
-  const filled = values.map((v) => text(v).trim()).filter((v) => Boolean(v) && v !== COUNTER_UNAVAILABLE_AR);
+  const filled = values.map((v) => text(v).trim()).filter((v) => Boolean(v) && !MISSING_LABELS.has(v));
   return filled.length > 0 && filled.every((v) => /^-?(0|[1-9]\d{0,14})(\.\d+)?$/.test(v));
 }
 
@@ -115,8 +117,25 @@ function textGetter(stage: PricedStage, key: string): ((row: Row) => unknown) | 
   return (row) => (isBlankText(row[key]) ? marker : row[key]);
 }
 
+const isMetaOrAnnotationColumn = (c: { key: string; computed?: unknown; status_of?: unknown; type_of?: unknown }): boolean =>
+  c.computed !== undefined ||
+  c.status_of !== undefined ||
+  c.type_of !== undefined ||
+  c.key === VERIFICATION_NOTE_KEY ||
+  c.key === COMPANY_MAILBOXES_KEY ||
+  c.key === COMMENT_KIND_KEY ||
+  c.key === REPLY_TO_KEY ||
+  c.key.startsWith("__");
+
+const normalizeRequestedCell = (val: unknown, keepBlank: boolean): unknown => {
+  if (val === B2B_NOT_SEARCHED_AR) return B2B_NOT_SEARCHED_AR;
+  if (isBlankCell(val) || val === COUNTER_UNAVAILABLE_AR) return keepBlank ? "" : NOT_AVAILABLE_AR;
+  return val;
+};
+
 export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): SheetLayout[] {
   const stageByKey = new Map(plan.stages.map((s, i) => [s.key, { s, i }]));
+  const newPipeline = Object.values(rowsByStage).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
   const layouts: SheetLayout[] = [];
   // THE REFERENCE'S SHEETS (taskContracts.ts, audit 2026-11 reference A): for «companies and their decision makers» each sheet starts with «م» (a running number of its rows), the decision-maker marker and the per-company notes are computed from the delivered people's titles, and the title and name cells read «العربية (English)»
   const referenced = contractTypeOf(plan.stages) === "companies_people";
@@ -183,19 +202,35 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         continue;
       }
       const special = specialGet(c);
-      const values = rows.map((r) => (special ? special(r) : r[c.key]));
+      const ownText = textGetter(stage, c.key);
+      const availability = isAvailabilityKey(plan, stage, c.key);
+      const isMeta = isMetaOrAnnotationColumn(c);
+      const baseGet = special
+        ? (r: Row) => special(r)
+        : ownText
+        ? (r: Row) => ownText(r)
+        : availability
+        ? (r: Row) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key])
+        : (r: Row) => r[c.key];
+
+      const columnGet = (r: Row): unknown => {
+        const val = baseGet(r);
+        if (availability || isMeta) return val;
+        const keepBlank = (newPipeline && isLanguageColumn(c.title_ar, c.key)) || dateUnreadColumnsOf(r).includes(c.key);
+        return normalizeRequestedCell(val, keepBlank);
+      };
+
+      const values = rows.map((r) => columnGet(r));
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
       // ROUND 27 (item 4): a counter (or a field the tool may not give) is never merged into another column because their numbers coincide («0» shares and «0» saves on nine of ten videos dropped «الحفظ»)
-      const availability = isAvailabilityKey(plan, stage, c.key);
       // Identical missing-contact markers make no claim that two contact fields are the same.
       const unavailableContact = (c.kind === "work_email" || c.kind === "phone") && values.some((value) => value === NOT_AVAILABLE_AR);
-      if (!onlyContactOfKind && c.key !== COMMENT_KIND_KEY && !rawSheet && !availability && !unavailableContact && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      const hasMissingMarker = values.some((value) => value === NOT_AVAILABLE_AR || value === B2B_NOT_SEARCHED_AR);
+      if (!onlyContactOfKind && c.key !== COMMENT_KIND_KEY && !rawSheet && !availability && !unavailableContact && !hasMissingMarker && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       for (const kind of askedKinds) retainedContacts.add(kind);
-      const ownText = textGetter(stage, c.key);
-      const counterWords = availability;
-      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
+      columns.push({ title: c.title_ar, get: columnGet, kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
       // EVERY APPROXIMATE DATE SAYS SO IN THE FILE (round 14): a date column that holds any date computed from a relative time gets a column beside it, «دقة التاريخ»: «تقريبي» for a computed day, «دقيق» for a real moment, empty when there is no date. The date cell itself stays a date (sortable, filterable);
       // the word «تقريبًا» in its number format stays too, but a reader of values never saw it
       if (rows.some((r) => approxColumnsOf(r).includes(c.key))) {
@@ -474,7 +509,15 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // STAGE 3 S2: the lines a B2B delivery states (each gap, each mark, the exact duplicates removed) join the limits row of the summary; with none, nothing changes
   if (options.extraLimitLines && options.extraLimitLines.length > 0) {
     const limits = methodology.items.find((i) => i.label === "حدود هذا التسليم");
-    if (limits) limits.values = [...limits.values.filter((l) => l !== NO_LIMITS_AR), ...options.extraLimitLines.filter((l) => !limits.values.includes(l))];
+    if (limits) {
+      const extraTitles = new Set(options.extraLimitLines.map((l) => l.split(":")[0].replace(/[«»]/g, "").trim()));
+      const filteredExisting = limits.values.filter((l) => {
+        if (l === NO_LIMITS_AR) return false;
+        const title = l.split(":")[0].replace(/[«»]/g, "").trim();
+        return !extraTitles.has(title);
+      });
+      limits.values = [...filteredExisting, ...options.extraLimitLines.filter((l) => !filteredExisting.includes(l))];
+    }
   }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
@@ -574,7 +617,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         if (typeof v === "number" && Number.isFinite(v)) return v;
         if (typeof v === "boolean") return v ? "نعم" : "لا";
         const t = text(v);
-        if (t === COUNTER_UNAVAILABLE_AR) return textCell(t);
+        if (MISSING_LABELS.has(t)) return textCell(t);
         if (numericAt[k]) return Number(t.trim());
         if (isUrl(t)) return { text: t.trim(), hyperlink: t.trim(), tooltip: t.trim() };
         return textCell(t);
