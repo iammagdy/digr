@@ -199,9 +199,21 @@ export const MISSING_KINDS: ReadonlyArray<string> = ["items", "place", "source",
  * ASKING IS A PERMISSION THE ANSWER MUST EARN (DT-20261119-03). The question of an «ask» is shown only when it names an essential input that has no value anywhere in the customer's words (`missing`), after one cross-check against
  * the model's OWN answer: when the people of the companies were asked, the kind of things (the companies) and the platform are known, so only the place can still be missing. Nothing here reads the question's words.
  */
-export function askIsEarned(u: Pick<Understanding, "decision" | "missing" | "people_of_companies">): boolean {
+export function askIsEarned(
+  u: Pick<Understanding, "decision" | "missing" | "people_of_companies"> & { steps?: ReadonlyArray<UnderstoodStep>; source?: { value?: string } },
+  context?: { hasSourceInUnderstanding?: boolean; hasCustomerAnswer?: boolean }
+): boolean {
   if (u.decision !== "ask") return true;
-  const kinds = u.missing ?? []; // already reduced to the closed set by checkUnderstanding
+  let kinds = u.missing ?? []; // already reduced to the closed set by checkUnderstanding
+  const hasSource = Boolean(
+    context?.hasSourceInUnderstanding ||
+    context?.hasCustomerAnswer ||
+    u.source?.value ||
+    (u.steps && u.steps.some((s) => Boolean(s.source?.value)))
+  );
+  if (kinds.includes("source") && hasSource) {
+    kinds = kinds.filter((k) => k !== "source");
+  }
   const standing = u.people_of_companies?.asked === true ? kinds.filter((k) => k === "place") : kinds;
   return standing.length > 0;
 }
@@ -509,6 +521,7 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
   const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
   const userPrompt = understandPrompt(input, deps.today);
+  const said = customerSaidOf(input);
   let checked: ReturnType<typeof checkUnderstanding> | null = null;
   // an «ask» that names nothing missing is never shown: the second attempt has a schema with no «ask» (DT-20261119-03)
   let refusedAsk: Understanding | null = null;
@@ -517,7 +530,15 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     const retryText = noAsk ? `${userPrompt}\n\n${DECIDE_IT_AR_EN}` : `${userPrompt}\n\nYour previous answer could not be used: ${checked && !checked.ok ? checked.error : "no answer"}. Answer again using only names from the catalog index.`;
     const answer = await ask(system, attempt === 0 ? userPrompt : retryText, noAsk ? { ...tool, schema: UNDERSTAND_SCHEMA_NO_ASK } : tool, 4000);
     checked = answer === null ? { ok: false, error: "no answer" } : checkUnderstanding(answer, deps.catalog, deps.access);
-    if (checked.ok && !askIsEarned(checked.value)) {
+    const hasSourceInModel = Boolean(
+      (answer as any)?.source?.value ||
+      (Array.isArray((answer as any)?.steps) && (answer as any).steps.some((s: any) => Boolean(s?.source?.value)))
+    );
+    const hasCustomerAnswer = Boolean(
+      (input.exchanges ?? []).some((e) => Boolean(e.answer?.trim())) ||
+      Boolean(input.answer?.trim())
+    );
+    if (checked.ok && !askIsEarned(checked.value, { hasSourceInUnderstanding: hasSourceInModel, hasCustomerAnswer })) {
       refusedAsk = checked.value;
       deps.log?.(`llm_planner_ask_refused missing=${(checked.value.missing ?? []).join(",") || "none"}`);
       checked = { ok: false, error: "ask_refused" };
@@ -527,7 +548,6 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
   // the model asked again although it had no «ask» to give: the customer is NOT asked; the earlier path runs with this understanding (and may not ask either)
-  const said = customerSaidOf(input);
   if (checked && !checked.ok && refusedAsk !== null && checked.error === "ask_refused") return { ok: false, error: "ask_refused", understanding: withCheckedCompaniesCount(refusedAsk, said) };
   if (checked && !checked.ok && refusedAsk !== null && cost.refused !== true) return { ok: false, error: "ask_refused", understanding: withCheckedCompaniesCount(refusedAsk, said) };
   if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
@@ -612,7 +632,7 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
-  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
+  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), hasSource: Boolean(step.source && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample, deps.catalog), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   const options = checkOptions(choice, candidates, parentSample !== null);
@@ -924,6 +944,59 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       if (!r.ok) {
         deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
         if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
+        // 400 Bad Request / bad_input from provider: rewrite query with provider error feedback once
+        if (Number((r as any).http_status) === 400 && budget.left > 0 && !option.parent) {
+          try {
+            const providerError = String((r as any).message || (r as any).error || (r as any).detail || "bad_input");
+            const answer = await deps.model({
+              system: "A data collection tool rejected the parameters with an HTTP 400 bad_input error. Inspect the provider's exact error message and rewrite the parameters to satisfy the provider's rules (e.g. remove invalid operators, simplify boolean expressions, or format source filters as required). Do not add unrequested constraints.",
+              user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nRejected parameters: ${JSON.stringify(params)}\nProvider error: ${providerError}`,
+              tool: {
+                name: "rewrite_params",
+                description: "Rewritten parameters satisfying provider requirements",
+                schema: {
+                  type: "object",
+                  properties: {
+                    rewritten_params: { type: "object", description: "Rewritten input parameters" },
+                    why: { type: "string" },
+                  },
+                  required: ["rewritten_params"],
+                },
+              },
+              maxTokens: 1000,
+            });
+            const rew = answer?.input;
+            const rewrittenParams = isObj(rew) && isObj((rew as any).rewritten_params) ? ((rew as any).rewritten_params as Record<string, unknown>) : null;
+            if (rewrittenParams && Object.keys(rewrittenParams).length > 0 && JSON.stringify(rewrittenParams) !== JSON.stringify(params)) {
+              deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} retry_rewritten: ${JSON.stringify(rewrittenParams)}`);
+              budget.left -= 1;
+              const rRewritten = await deps.probe(option.endpoint.id, rewrittenParams);
+              callIds.push(rRewritten.call_id);
+              if (rRewritten.ok && (reviewed || rRewritten.rows_in_page > 0)) {
+                const pageRewritten = await deps.readPage(rRewritten.call_id);
+                if (pageRewritten !== null) {
+                  const readingRewritten = reviewed
+                    ? readShape(pageRewritten, { ...hintsOf(option.endpoint), missionPage: reviewed })
+                    : buildShapeDigest(pageRewritten, option.endpoint).reading;
+                  if (readingRewritten.rows.length > 0) {
+                    deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} rewrite_ok rows=${readingRewritten.rows.length}`);
+                    return {
+                      option: { ...option, params: rewrittenParams, more: [] },
+                      page: pageRewritten,
+                      items: readingRewritten.rows,
+                      listPath: readingRewritten.listPath,
+                      callIds,
+                      hasMore: reviewed ? Boolean(readingRewritten.nextCursor) && readingRewritten.hasMore !== false : Boolean(rRewritten.next_cursor) || rRewritten.has_more === true,
+                      nextCursor: reviewed ? readingRewritten.nextCursor : typeof rRewritten.next_cursor === "string" && rRewritten.next_cursor !== "" ? rRewritten.next_cursor : null,
+                      checkedParams: rewrittenParams,
+                      chargedUsd: effectiveChargeUsd(rRewritten as { charge_usd?: number | null; reserved_usd?: number | null }),
+                    };
+                  }
+                }
+              }
+            }
+          } catch { /* proceed to next */ }
+        }
         // a refusal, or a provider that is not paid or not allowed (401/402/403: live, 16 Nov 2026, one news tool answered 402 to eight calls in a row): its other input sets are not tried, the next tool is
         if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) break;
         continue;
@@ -1153,10 +1226,14 @@ export async function scoutYield(
   if (a.otherHasMore || (a.hasMore && a.firstRows.length >= healthy)) return { found: ids.size, exhausted: false, sets };
   // a refused or failed measurement (the gateway lets planning sample a source twice) ends the measuring: what was gathered before it decides, provided at least one more search was read than the first
   const stopped = (): { found: number; exhausted: boolean; sets: number } => ({ found: ids.size, exhausted: !reviewed && measured >= 1 && ids.size < Math.max(1, Math.ceil(a.requested * SCOUT_SHORT_SHARE)), sets });
-  const read = async (params: Record<string, unknown>, firstParams: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false }> => {
+  const read = async (params: Record<string, unknown>, firstParams: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false; transient?: boolean }> => {
     const r = await deps.probe(a.option.endpoint.id, params);
     sets += 1;
-    if (!r.ok) return { ok: false };
+    if (!r.ok) {
+      const status = Number((r as any).http_status);
+      const isTransient = [429, 500, 502, 503, 504].includes(status) || String((r as any).message || (r as any).error || "").includes("all_providers_failed");
+      return { ok: false, transient: isTransient };
+    }
     const legacyNext = typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null;
     if (!reviewed && r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: null }; }
     const page = await deps.readPage(r.call_id);
@@ -1179,7 +1256,10 @@ export async function scoutYield(
       const inputCursor = reviewed ? pageInputValue(cursor, reviewed) : cursor;
       if (inputCursor === null) return stopped();
       const got = await read({ ...a.option.params, [a.option.cursor]: inputCursor }, a.option.params);
-      if (!got.ok) return stopped();
+      if (!got.ok) {
+        if (got.transient) return { found: ids.size, exhausted: false, sets };
+        return stopped();
+      }
       if (reviewed && got.rows.length === 0 && got.next) {
         return { found: ids.size, exhausted: false, sets };
       }
@@ -1196,7 +1276,10 @@ export async function scoutYield(
   for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
     if (ids.size >= a.requested) break;
     const got = await read(params, params);
-    if (!got.ok) return stopped();
+    if (!got.ok) {
+      if (got.transient) continue;
+      return stopped();
+    }
     for (const row of got.rows) ids.add(rowKeyOf(row));
     if (got.rows.length >= healthy || (reviewed && got.next)) return { found: ids.size, exhausted: false, sets };
   }
@@ -1215,26 +1298,74 @@ export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: Readonl
   const lines = weak.map((f) => (f.found === 0
     ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها ولم نجد نتائج.`
     : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
-  return { question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`, options_ar: ["سلّمني الموجود فقط", "وسّع البحث (اكتب كيف تحب نوسّعه)"] };
+  return {
+    question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`,
+    options_ar: [
+      "سلّمني الموجود فقط",
+      "وسّع البحث إلى منصات ومصادر أخرى في الكتالوج",
+      "وسّع البحث في حسابات رسمية وإخبارية ذات صلة",
+      "وسّع كلمات البحث إلى تعبيرات وصياغات أشمل للموضوع",
+    ],
+  };
 }
 
 /** The question the customer reads when the search found less than they asked for: the model writes it from the facts (code allows only the numbers it was given); code's own sentence when the model's cannot be shown. */
-export async function scoutQuestion(u: Understanding, weak: ReadonlyArray<ScoutFinding>, input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "log">, cost: { usd: number }): Promise<{ question_ar: string; options_ar: string[] }> {
+export async function scoutQuestion(
+  u: Understanding,
+  weak: ReadonlyArray<ScoutFinding>,
+  input: LlmPlannerInput,
+  deps: Pick<LlmPlannerDeps, "model" | "log"> & { catalog?: TregCatalog; access?: AccountAccess | null },
+  cost: { usd: number }
+): Promise<{ question_ar: string; options_ar: string[] }> {
+  const index = deps.catalog ? platformIndex(deps.catalog, deps.access ?? null) : "";
   const facts = {
     customer_words: input.words.slice(-4),
     understanding: u.understanding_ar,
-    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
+    catalog_index: index || undefined,
+    searches: weak.map((f) => ({
+      items: f.step.title_ar,
+      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
+      source: f.step.source,
+      topic: f.step.topic,
+      period: f.step.period,
+      language: f.step.language ?? null,
+      country: f.step.country ?? null,
+      requested: f.requested,
+      found: f.found,
+      different_searches_tried: f.sets,
+    })),
   };
   const fallback = scoutFallbackAr(weak, customerSaidOf(input));
-  const answer = await asker(deps, cost)(SCOUT_SYSTEM, JSON.stringify(facts), { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA }, 900);
+  const systemPrompt = index
+    ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
+    : SCOUT_SYSTEM;
+  const answer = await asker(deps, cost)(
+    systemPrompt,
+    JSON.stringify(facts),
+    { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA },
+    900
+  );
   if (!isObj(answer)) return fallback;
   const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
   if (!message) return fallback;
-  const allowed = new Set<string>([...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]), ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`)]);
+  const allowed = new Set<string>([
+    ...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]),
+    ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`),
+  ]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
-  if (foreign.length > 0) { deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`); return fallback; }
-  const options = (Array.isArray(answer.options_ar) ? answer.options_ar : []).map((o) => customerSafe(str(o), 80, customerSaidOf(input))).filter((o): o is string => o !== null && [...numbersWritten(o)].every((n) => allowed.has(n))).slice(0, 4);
-  return { question_ar: message, options_ar: options.length >= 2 ? options : fallback.options_ar };
+  if (foreign.length > 0) {
+    deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`);
+    return fallback;
+  }
+  const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
+    .map((o) => customerSafe(str(o), 120, customerSaidOf(input)))
+    .filter((o): o is string => Boolean(o && o.trim()));
+
+  // Code only checks shape: 2–4 options, first = deliver what was found
+  const isDeliverFirst = rawOptions.length >= 1 && (rawOptions[0].includes("سلّم") || rawOptions[0].includes("موجود"));
+  const validShape = rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst;
+
+  return { question_ar: message, options_ar: validShape ? rawOptions : fallback.options_ar };
 }
 
 /** Parents a child step is tried on: those that carry the binding's value, the most commented (or replied, or liked) first, at most PARENTS_TRIED. */
