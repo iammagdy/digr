@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { BalanceProvider } from "@/hooks/useBalance";
 import { AppShell } from "@/components/app/AppShell";
+import { InnerFooter } from "@/components/layout/InnerFooter";
 
 /**
  * THE ONE LAYOUT of every customer page that is not under /dashboard (the calculator, the catalog and its platform pages, the prices, the help page, the contact form, the terms and the privacy
@@ -12,7 +13,10 @@ import { AppShell } from "@/components/app/AppShell";
 export default function SiteFrame({ children }: { children: ReactNode }) {
   return (
     <BalanceProvider>
-      <AppShell allowGuest>{children}</AppShell>
+      <AppShell allowGuest>
+        {children}
+        <InnerFooter />
+      </AppShell>
     </BalanceProvider>
   );
 }

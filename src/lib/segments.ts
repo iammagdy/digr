@@ -87,7 +87,7 @@ export interface SegmentExample {
   result: EstimateResult;
 }
 
-const TODAY = new Date(Date.UTC(2026, 9, 20));
+const TODAY = new Date();
 
 export function segmentExample(segment: Segment, dailyCapPoints?: number): SegmentExample {
   const result = estimateMission({ ...segment.estimate, dailyCapPoints });

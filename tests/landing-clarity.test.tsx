@@ -26,8 +26,8 @@ describe("landing clarity (Part 3)", () => {
     expect(hero).not.toMatch(/requestAnimationFrame|RecordField|data-lens(?!-shield)|data-px/);
   });
 
-  it("three steps: اطلب، راجع الخطة والسعر، استلم الملف", () => {
-    expect(OVERVIEW_STEPS_AR.map((step) => step.title)).toEqual(["اطلب", "راجع الخطة والسعر", "استلم الملف"]);
+  it("three steps: اطلب، راجع الخطة والسعر، استلم ملفك", () => {
+    expect(OVERVIEW_STEPS_AR.map((step) => step.title)).toEqual(["اطلب", "راجع الخطة والسعر", "استلم ملفك"]);
     for (const step of OVERVIEW_STEPS_AR) expect(html).toContain(step.title);
     expect(html.match(/<li class="flex flex-col gap-2/g)?.length).toBe(3);
   });

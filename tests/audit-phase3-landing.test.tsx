@@ -63,8 +63,7 @@ describe("audit phase 3: the hero", () => {
     expect(hero).toMatch(/<p [^>]*text-balance[^>]*data-testid="hero-sentence"|<p [^>]*data-testid="hero-sentence"[^>]*text-balance/);
     const rest = text(page.slice(1).join("\n"));
     expect(rest).toContain("إكسل");
-    expect(rest).toContain("بي دي إف");
-    expect(rest).toContain("ملف إكسل أو بي دي إف منظّم"); // the third step
+    expect(rest).toContain("ملف إكسل أو ملف مفصول بفواصل"); // the third step
   });
   it("says that nothing starts or is charged before approval, once, and the rest of the page does not repeat it", () => {
     expect(hero).toContain("لا يبدأ أي جمع ولا يُخصم أي رصيد قبل موافقتك");
@@ -176,7 +175,7 @@ describe("audit phase 3: two merged sections", () => {
   it("«إزاي بيشتغل وإيه اللي بتدفعه» holds the three steps and what is paid", () => {
     const markup = text(page[2]);
     expect(markup).toContain("إزاي بيشتغل وإيه اللي بتدفعه");
-    for (const step of ["اطلب", "راجع الخطة والسعر", "استلم الملف"]) expect(markup).toContain(step);
+    for (const step of ["اطلب", "راجع الخطة والسعر", "استلم ملفك"]) expect(markup).toContain(step);
     expect(markup).toContain("تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط");
     expect(markup).toContain("حجز مؤقت مُحرَّر");
   });
