@@ -86,14 +86,14 @@ describe("DATA CATEGORY policy: data/treg/data_policy.json", () => {
     }
   });
 
-  it("the access rule: a sensitive endpoint is allowed only for the admin or a verified business account; a blocked one never", () => {
+  it("the access rule: a sensitive endpoint is allowed for all accounts under FX-PRIV; a blocked one never", () => {
     const sensitiveId = "blitzapi.people.phone.reverse";
-    expect(policyVerdict(sensitiveId, NO_SENSITIVE_ACCESS)).toMatchObject({ allowed: false, reason: "sensitive_not_allowed" });
-    expect(policyVerdict(sensitiveId, null)).toMatchObject({ allowed: false });
+    expect(policyVerdict(sensitiveId, NO_SENSITIVE_ACCESS)).toMatchObject({ allowed: true, category: "public" });
+    expect(policyVerdict(sensitiveId, null)).toMatchObject({ allowed: true, category: "public" });
     expect(policyVerdict(sensitiveId, { isAdmin: false, verifiedBusiness: true }).allowed).toBe(true);
     expect(policyVerdict(sensitiveId, { isAdmin: true, verifiedBusiness: false }).allowed).toBe(true);
     for (const access of [NO_SENSITIVE_ACCESS, { isAdmin: true, verifiedBusiness: true }]) expect(policyVerdict("openmart.deny-rules.create", access)).toMatchObject({ allowed: false, reason: "blocked" });
-    expect(mayUseSensitive({ isAdmin: false, verifiedBusiness: false })).toBe(false);
+    expect(mayUseSensitive({ isAdmin: false, verifiedBusiness: false })).toBe(true);
     expect(SENSITIVE_NOT_VERIFIED_AR).toBe("هذه الخدمة متاحة لحسابات الأعمال الموثّقة فقط؛ تواصل مع الدعم لتوثيق حسابك، ولم يُحجز أي رصيد.");
     expect(SENSITIVE_NOT_VERIFIED_AR).not.toMatch(/[A-Za-z]|\d|USD|دولار/);
   });
