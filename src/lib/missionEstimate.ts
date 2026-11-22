@@ -1,3 +1,5 @@
+import type { CustomerAffordability } from "./agentMission/customerActions";
+import type { CustomerMissionView } from "./agentMission/customerView";
 import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { countKindOfSlug, countPlainAr } from "./planCounts";
@@ -11,12 +13,37 @@ import { understandMission, understoodLineAr } from "./consultantCopy";
 import { volumeForPointsCap } from "./pointsCap";
 import { decisionMakersPerRequestLineAr, limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "./jobSizing";
 
-/**
- * The public estimate: what a request would cost, from the SAME unit prices and reserve formula the quote writer uses
- * (`computePublicCalculatorQuote` and the decision-maker prices). No model, no provider, no database: pure code, so a public
- * page may call it. Every number is computed here; nothing is typed by hand. An open-ended volume («كل التعليقات») has no price
- * until the customer gives a cap.
- */
+type CardFields = Pick<CustomerMissionView, "phase" | "summaryAr" | "requestPartsAr" | "countLinesAr" |
+  "assumptionsAr" | "unservedAr" | "questionAr" | "questionOptionsAr" | "priceFacts" | "priceNoteAr" | "currentLineAr">;
+
+export type CalculatorCard = CardFields & {
+  stages: Array<Pick<CustomerMissionView["stages"][number], "titleAr" | "rowsAr" | "deliver">>;
+  affordability?: Pick<CustomerAffordability, "mode">;
+  limit?: { over: boolean };
+};
+
+/** Read only the facts the customer already sees on the saved mission card. */
+export function calculatorCardOf(view: CustomerMissionView & { affordability?: CustomerAffordability }): CalculatorCard {
+  const ready = view.phase === "plan";
+  return {
+    phase: view.phase,
+    summaryAr: view.summaryAr,
+    requestPartsAr: view.requestPartsAr,
+    stages: view.stages.map(({ titleAr, rowsAr, deliver }) => ({ titleAr, rowsAr, deliver })),
+    countLinesAr: view.countLinesAr,
+    assumptionsAr: view.assumptionsAr,
+    unservedAr: view.unservedAr,
+    questionAr: view.questionAr,
+    questionOptionsAr: view.questionOptionsAr,
+    priceFacts: ready ? view.priceFacts : [],
+    priceNoteAr: ready ? view.priceNoteAr : null,
+    currentLineAr: view.currentLineAr,
+    ...(ready && view.affordability ? { affordability: { mode: view.affordability.mode } } : {}),
+    ...(ready && view.limit ? { limit: { over: view.limit.over } } : {}),
+  };
+}
+
+/** The legacy unit estimate still used for historical examples and legacy quote compatibility. */
 export type EstimateKind = "comments" | "posts" | "videos" | "companies" | "people";
 
 export interface EstimateInput {
