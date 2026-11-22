@@ -132,8 +132,10 @@ async function retryReviewLater(deps: EngineDeps, stage: Stage): Promise<void> {
   if (!stage.relevance || !deps.reviewer) return;
   const c = deps.items.counts(stage.key);
   if (c.pending === 0 || c.accepted >= stage.planned_rows) return;
-  if ((await deps.reviewer.state()).stop !== "failed") return;
-  if (deps.shouldStop?.() || Date.now() >= deps.deadlineMs) return;
+  const reviewState = await deps.reviewer.state();
+  if (reviewState.budgetReached || reviewState.stop !== "failed") return;
+  const nowMs = (deps.now ?? Date.now)();
+  if (deps.shouldStop?.() || nowMs >= deps.deadlineMs || nowMs + AGENT_REVIEW_RETRY_DELAY_MS >= deps.deadlineMs) return;
   await (deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(AGENT_REVIEW_RETRY_DELAY_MS);
   await drainPending(deps, stage);
 }
@@ -255,7 +257,7 @@ async function collectParentChildren(
       return true;
     });
     if (usable.length === 0) break;
-    let r: { reason: StopReason; aborted: string | null } = { reason: "no_new_items", aborted: null };
+    let r: { reason: StopReason; aborted: string | null; definitiveEmpty?: boolean } = { reason: "no_new_items", aborted: null };
     const baseline = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
     let primary: { params: Record<string, unknown> } | null = null;
     for (const u of usable) {
@@ -276,9 +278,16 @@ async function collectParentChildren(
     const childrenOf = (): number => items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
     const shortOfSupply = (): boolean => (Number.isFinite(parentCap) ? childrenOf() < parentCap : childrenOf() === baseline);
     const isCatalogPaging = spec.catalog_paging === true && missionPageOf(spec.endpoint_id) !== undefined;
+    const MAX_EMPTY_PRIMARY_ALTERNATIVES = 1;
     if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
-      if (primary && childrenOf() === baseline && !isCatalogPaging) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
-      for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
+      const primaryEmpty200 = isPeopleStage(stage) && childrenOf() === baseline && r.definitiveEmpty === true;
+      if (primary && childrenOf() === baseline && !isCatalogPaging && !primaryEmpty200) {
+        r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
+      }
+      const altCap = isPeopleStage(stage) && childrenOf() === baseline
+        ? Math.min(spec.alternatives?.length ?? 0, MAX_EMPTY_PRIMARY_ALTERNATIVES)
+        : (spec.alternatives?.length ?? 0);
+      for (let i = 0; !r.aborted && i < altCap && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
         const alt = spec.alternatives![i];
         if (isCatalogPaging && alt.endpoint_id === spec.endpoint_id) continue;
         if (isFillTotal) break;
@@ -714,7 +723,7 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 }
 
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
-async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null, opts: { singlePage?: boolean; targetRows?: number } = {}): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null, opts: { singlePage?: boolean; targetRows?: number } = {}): Promise<{ reason: StopReason; aborted: string | null; definitiveEmpty?: boolean }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
   // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
@@ -724,13 +733,15 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
   let stallStreak = 0;
   let dryStreak = 0;
   let failures = 0;
+  let pageCount = 0;
+  let sawDefinitiveEmpty200 = false;
   for (;;) {
     const counts = items.counts(stage.key);
     const targetRows = opts.targetRows ?? stage.planned_rows;
     // (the last parent of a stage read in depth may fill the stage's total with its first page: its later pages are still read for a better title, and swap the page-1 people out; the per-parent check below ends it)
     if (counts.accepted >= targetRows && !(parentId !== null && depthPages > 1)) return { reason: "target_reached", aborted: null };
     const state = items.streamState(stage.key, streamKey);
-    if (state?.ended) return { reason: "source_exhausted", aborted: null };
+    if (state?.ended) return { reason: "source_exhausted", aborted: null, ...(sawDefinitiveEmpty200 ? { definitiveEmpty: true } : {}) };
     if (state && state.barren >= BARREN_PAGES) return { reason: "no_new_items", aborted: null };
     if (parentId !== null && items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length >= perParentCap) {
       // DEPTH (people of a company): the page that filled the count may hold lower titles while a decision maker is on the next page; reading goes on until enough decision makers were SEEN for this company, the pages of the depth were read, or the source ended
@@ -771,6 +782,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
       continue;
     }
     failures = 0;
+    pageCount += 1;
     const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id));
     let page: unknown = null;
     try { page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
@@ -805,6 +817,11 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
         ended = true;
       }
     }
+    if (pageCount === 1 && result.http_status === 200 && rowsInPage === 0 && ended) {
+      sawDefinitiveEmpty200 = true;
+    } else if (rowsInPage > 0) {
+      sawDefinitiveEmpty200 = false;
+    }
     const before = items.counts(stage.key).accepted;
     const deliveredBefore = items.counts(stage.key).excludedByReason.already_delivered ?? 0;
     const newBefore = items.counts(stage.key).new;
@@ -833,6 +850,6 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
       if (after.accepted > before || after.pending > 0) dryStreak = 0; else if (freshNew > 0) dryStreak += 1;
     }
     if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "topic_dry", aborted: null };
-    if (opts.singlePage) return { reason: ended ? "source_exhausted" : "target_reached", aborted: null };
+    if (opts.singlePage) return { reason: ended ? "source_exhausted" : "target_reached", aborted: null, ...(ended && sawDefinitiveEmpty200 ? { definitiveEmpty: true } : {}) };
   }
 }
