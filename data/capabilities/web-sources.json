@@ -1,0 +1,382 @@
+{
+  "parsers": [
+    {
+      "name": "google-maps",
+      "id": "contextdev.parse.google-maps",
+      "provider": "contextdev",
+      "platform": "google_maps",
+      "capability": "places.discover",
+      "listPath": "results",
+      "rowsPerCall": 10,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.google.com/maps/search/<business type> in <place>/  or  https://www.google.com/maps/place/?q=place_id:<ID>",
+      "summary": "Google Maps businesses of a search or one place: name, rating, review count, website, phone, address, category, place id, reviews link.",
+      "note": "US exit; Arabic names may still appear",
+      "urlRules": [
+        { "hosts": ["maps.google.com", "maps.app.goo.gl"] },
+        { "hostPattern": "(^|\\.)google\\.[a-z.]+$", "pathPattern": "^/maps" },
+        { "hosts": ["search.google.com"], "pathPattern": "^/local/reviews" }
+      ]
+    },
+    {
+      "name": "google-maps-reviews",
+      "id": "contextdev.parse.google-maps-reviews",
+      "provider": "contextdev",
+      "platform": "google_maps",
+      "capability": "places.reviews",
+      "listPath": "reviews",
+      "rowsPerCall": 1000,
+      "usdEstimate": 0.00254,
+      "urlHint": "a Maps place URL, a CID URL, a reviews URL (search.google.com/local/reviews?placeid=...) or the google_reviews_url of a google-maps result",
+      "params": ["sort", "limit"],
+      "summary": "Reviews of one Google Maps place (up to 1,000): rating, date, text, likes, reviewer, owner reply, link. Optional sort (newest, oldest, relevant, highest, lowest) and limit (1 to 1000, default 100).",
+      "note": "about 20 to 45 seconds for 1,000 reviews",
+      "urlRules": [
+        { "hosts": ["maps.google.com", "maps.app.goo.gl"] },
+        { "hostPattern": "(^|\\.)google\\.[a-z.]+$", "pathPattern": "^/maps" },
+        { "hosts": ["search.google.com"], "pathPattern": "^/local/reviews" }
+      ]
+    },
+    {
+      "name": "google-play",
+      "id": "contextdev.parse.google-play",
+      "provider": "contextdev",
+      "platform": "google_play",
+      "capability": "apps.discover",
+      "listPath": null,
+      "rowsPerCall": 1,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://play.google.com/store/apps/details?id=<package>[&hl=en&gl=us]",
+      "summary": "One Android app: name, developer, rating, downloads, price, version, permissions.",
+      "note": "US exit",
+      "urlRules": [
+        { "hosts": ["play.google.com"], "pathPattern": "^/store/apps/details" }
+      ]
+    },
+    {
+      "name": "google-play-reviews",
+      "id": "contextdev.parse.google-play-reviews",
+      "provider": "contextdev",
+      "platform": "google_play",
+      "capability": "apps.reviews",
+      "listPath": "reviews",
+      "rowsPerCall": 200,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://play.google.com/store/apps/details?id=<package>[&hl=en&gl=us]",
+      "summary": "Up to 200 newest reviews of one Android app: author, rating, text, date, thumbs up, app version, developer reply.",
+      "note": "US exit; no sort or limit",
+      "urlRules": [
+        { "hosts": ["play.google.com"], "pathPattern": "^/store/apps/details" }
+      ]
+    },
+    {
+      "name": "app-store",
+      "id": "contextdev.parse.app-store",
+      "provider": "contextdev",
+      "platform": "app_store",
+      "capability": "apps.discover",
+      "listPath": null,
+      "rowsPerCall": 1,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://apps.apple.com/<country>/app/<name>/id<ID>",
+      "summary": "One iOS app: name, developer, rating, price, version, languages.",
+      "note": "US exit; the country in the path selects the storefront",
+      "urlRules": [
+        { "hosts": ["apps.apple.com"] }
+      ]
+    },
+    {
+      "name": "app-store-reviews",
+      "id": "contextdev.parse.app-store-reviews",
+      "provider": "contextdev",
+      "platform": "app_store",
+      "capability": "apps.reviews",
+      "listPath": "reviews",
+      "rowsPerCall": 500,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://apps.apple.com/<country>/app/<name>/id<ID>",
+      "summary": "Up to 500 recent reviews of one iOS app in one storefront: author, rating, title, text, date, version, helpful votes.",
+      "note": "US exit",
+      "urlRules": [
+        { "hosts": ["apps.apple.com"] }
+      ]
+    },
+    {
+      "name": "instagram-profile",
+      "id": "contextdev.parse.instagram-profile",
+      "provider": "contextdev",
+      "platform": "instagram",
+      "capability": "social.profile",
+      "listPath": "latest_posts",
+      "rowsPerCall": 12,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.instagram.com/<username>/",
+      "summary": "A public Instagram profile: name, bio, followers, posts count, category, business address and its 12 latest posts.",
+      "note": "public data, no login",
+      "urlRules": [
+        { "hosts": ["instagram.com"], "pathPattern": "^/[A-Za-z0-9._]+/?$", "excludePathPattern": "^/(explore|p|reel|tv|accounts)\\b" }
+      ]
+    },
+    {
+      "name": "instagram-post",
+      "id": "contextdev.parse.instagram-post",
+      "provider": "contextdev",
+      "platform": "instagram",
+      "capability": "social.comments",
+      "listPath": "comments",
+      "rowsPerCall": 14,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.instagram.com/p/<code>/  or  /reel/<code>/  or  /tv/<code>/",
+      "summary": "One public Instagram post or reel with its counts and its top comments (about 14; the rest need a login).",
+      "note": "public data, no login",
+      "urlRules": [
+        { "hosts": ["instagram.com"], "pathPattern": "^/(p|reel|tv)/[A-Za-z0-9_-]+" }
+      ]
+    },
+    {
+      "name": "instagram-feed",
+      "id": "contextdev.parse.instagram-feed",
+      "provider": "contextdev",
+      "platform": "instagram",
+      "capability": "social.parents",
+      "listPath": "posts",
+      "rowsPerCall": 12,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.instagram.com/explore/tags/<hashtag>/  or  /popular/<keyword>/  or  /explore/locations/<id>/<slug>/",
+      "summary": "Top public posts of an Instagram hashtag or keyword (about 12 to 200) or recent posts of a location (15 to 20).",
+      "note": "public data, no login; the first page only",
+      "urlRules": [
+        { "hosts": ["instagram.com"], "pathPattern": "^/(explore/(tags|locations)|popular)/" }
+      ]
+    },
+    {
+      "name": "tiktok-profile",
+      "id": "contextdev.parse.tiktok-profile",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.profile",
+      "listPath": null,
+      "rowsPerCall": 1,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username>",
+      "summary": "A public TikTok profile: name, bio, followers, likes, videos count, verified, category.",
+      "note": "public data, no login",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/?$" }
+      ]
+    },
+    {
+      "name": "tiktok-video",
+      "id": "contextdev.parse.tiktok-video",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.parents",
+      "listPath": null,
+      "rowsPerCall": 1,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username>/video/<id>",
+      "summary": "One TikTok video: caption, hashtags, author, views, likes, comments, shares, saves, music.",
+      "note": "public data; short vm.tiktok.com links are not accepted",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/(video|photo)/\\d+" }
+      ]
+    },
+    {
+      "name": "tiktok-feed",
+      "id": "contextdev.parse.tiktok-feed",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.parents",
+      "listPath": "videos",
+      "rowsPerCall": 12,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username> (latest 15)  or  https://www.tiktok.com/tag/<name> (top 30)  or  https://www.tiktok.com/search?q=<query> (top 12)",
+      "summary": "TikTok videos of a profile, a hashtag or a search, with their counts. The first page only.",
+      "note": "public data, no login",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/?$" },
+        { "hosts": ["tiktok.com"], "pathPattern": "^/tag/" },
+        { "hosts": ["tiktok.com"], "pathPattern": "^/search(/video)?/?$" }
+      ]
+    },
+    {
+      "name": "tiktok-comments",
+      "id": "contextdev.parse.tiktok-comments",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.comments",
+      "listPath": "comments",
+      "rowsPerCall": 20,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username>/video/<id>",
+      "summary": "The first 20 top-level comments of one TikTok video (use the TREG comments sources for more).",
+      "note": "first page only; replies are not included",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/(video|photo)/\\d+" }
+      ]
+    },
+    {
+      "name": "tiktok-followers",
+      "id": "contextdev.parse.tiktok-followers",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.parents",
+      "listPath": "users",
+      "rowsPerCall": 30,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username>",
+      "summary": "Up to 30 followers of a TikTok profile (first page).",
+      "note": "empty when the profile hides the list",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/?$" }
+      ]
+    },
+    {
+      "name": "tiktok-following",
+      "id": "contextdev.parse.tiktok-following",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.parents",
+      "listPath": "users",
+      "rowsPerCall": 30,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/@<username>",
+      "summary": "Up to 30 accounts a TikTok profile follows (first page).",
+      "note": "empty when the profile hides the list",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/@[^/]+/?$" }
+      ]
+    },
+    {
+      "name": "tiktok-user-search",
+      "id": "contextdev.parse.tiktok-user-search",
+      "provider": "contextdev",
+      "platform": "tiktok",
+      "capability": "social.parents",
+      "listPath": "users",
+      "rowsPerCall": 10,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.tiktok.com/search/user?q=<query>",
+      "summary": "The top 10 TikTok accounts for a search query: name, bio, followers, likes, verified.",
+      "note": "public data, no login",
+      "urlRules": [
+        { "hosts": ["tiktok.com"], "pathPattern": "^/search/user/?$", "requireQueryParam": "q" }
+      ]
+    },
+    {
+      "name": "g2-reviews",
+      "id": "contextdev.parse.g2-reviews",
+      "provider": "contextdev",
+      "platform": "g2",
+      "capability": "software.reviews",
+      "listPath": "reviews",
+      "rowsPerCall": 25,
+      "usdEstimate": 0.00254,
+      "urlHint": "https://www.g2.com/products/<slug>/reviews",
+      "summary": "The 25 most recent G2 reviews of a software product, optionally filtered by stars.",
+      "note": "25 at most; no paging",
+      "urlRules": [
+        { "hosts": ["g2.com"], "pathPattern": "^/products/" }
+      ]
+    },
+    {
+      "name": "emails",
+      "id": "contextdev.parse.emails",
+      "provider": "contextdev",
+      "platform": "web",
+      "capability": "company.contacts",
+      "listPath": "emails",
+      "rowsPerCall": 5,
+      "usdEstimate": 0.00254,
+      "urlHint": "any public page (a company's own contact page)",
+      "summary": "The e-mail addresses written on ONE public page (mailto links and visible text; deduplicated, placeholders removed). It does not crawl: open the company's own site, then its contact page.",
+      "note": "one page only",
+      "urlRules": []
+    },
+    {
+      "name": "phone-numbers",
+      "id": "contextdev.parse.phone-numbers",
+      "provider": "contextdev",
+      "platform": "web",
+      "capability": "company.contacts",
+      "listPath": "phone_numbers",
+      "rowsPerCall": 3,
+      "usdEstimate": 0.00254,
+      "urlHint": "any public page (a company's own contact page)",
+      "summary": "The phone numbers on ONE public page (tel links and visible text), normalized to international form. It does not crawl.",
+      "note": "one page only",
+      "urlRules": []
+    },
+    {
+      "name": "links",
+      "id": "contextdev.parse.links",
+      "provider": "contextdev",
+      "platform": "web",
+      "capability": "company.contacts",
+      "listPath": "links",
+      "rowsPerCall": 60,
+      "usdEstimate": 0.00254,
+      "urlHint": "any public page",
+      "summary": "The links of ONE public page (url and visible text): use it to find a company's contact page. It does not crawl.",
+      "note": "one page only",
+      "urlRules": []
+    }
+  ],
+  "webSources": [
+    {
+      "id": "firecrawl.search",
+      "provider": "firecrawl",
+      "kind": "search",
+      "platform": "web",
+      "capability": "web.search",
+      "usdPerCall": 0.01,
+      "rowsPerCall": 10,
+      "summary": "Web search: title, address and description of up to 10 results (2 credits per 10).",
+      "inputs": "query, limit (10 to 100), country"
+    },
+    {
+      "id": "contextdev.search",
+      "provider": "contextdev",
+      "kind": "search",
+      "platform": "web",
+      "capability": "web.search",
+      "usdPerCall": 0.00254,
+      "rowsPerCall": 10,
+      "summary": "Web search: title, address and description of up to 10 results (1 credit per 10).",
+      "inputs": "query, limit (10 to 100), country"
+    },
+    {
+      "id": "firecrawl.scrape",
+      "provider": "firecrawl",
+      "kind": "scrape",
+      "platform": "web",
+      "capability": "web.read",
+      "usdPerCall": 0.005,
+      "rowsPerCall": 1,
+      "summary": "One public page as text with its links (1 credit).",
+      "inputs": "url"
+    },
+    {
+      "id": "contextdev.scrape",
+      "provider": "contextdev",
+      "kind": "scrape",
+      "platform": "web",
+      "capability": "web.read",
+      "usdPerCall": 0.00254,
+      "rowsPerCall": 1,
+      "summary": "One public page as text with its links (1 credit).",
+      "inputs": "url"
+    },
+    {
+      "id": "contextdev.people.search",
+      "provider": "contextdev",
+      "kind": "people_search",
+      "platform": "people",
+      "capability": "people.discover",
+      "usdPerCall": 0.0254,
+      "rowsPerCall": 10,
+      "summary": "Professionals found from a plain-language description (for example VPs of sales at solar companies in California): name, role, company, location, public profile links, 10 per page (10 credits). It returns NO e-mail and NO phone: use it to find people, and a contact source for their e-mails and phones.",
+      "inputs": "query (up to 500 characters), country (two letters, optional), cursor (the next_cursor of the previous page)"
+    }
+  ]
+}
