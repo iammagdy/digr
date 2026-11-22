@@ -47,9 +47,10 @@ export interface AgentChatTurnInput {
   exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null;
 }
 
-export type AgentChatTurnResult =
+export type AgentChatTurnResult = (
   | { ok: true; missionId: string; contentAr: string; conversationTitle?: string; /** MULTI-OBJECTIVE RESEARCH: the cards of the parts of the same request, each on its own STORED assistant message (only cards whose row is stored). */ extraMissions?: Array<{ id: string; messageId: string; contentAr: string }>; /** The assistant message itself is the summary of the parts and draws no card (every card is in `extraMissions`). */ summaryOnly?: true }
-  | { ok: false; contentAr: string; status: number };
+  | { ok: false; contentAr: string; status: number }
+) & { splitSummary?: true };
 
 /** Consent is given with the card's button, never with typed words: a typed «موافق» is answered with where to press and starts nothing. */
 export const AGENT_PRESS_APPROVE_AR = "الاعتماد يتم بزر «اعتمد» في بطاقة المهمة فقط، ولن أبدأ التنفيذ ولا أحجز رصيدًا من الكتابة.";
@@ -708,7 +709,7 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     if (brief.status === "needs_clarification" && decision.reply !== null) {
       ctx.outcome = "group_clarify";
       await writeAnswer(input, decision.reply, keptBriefPlan(ctx, brief));
-      return { ok: false, contentAr: decision.reply, status: 200 };
+      return { ok: false, contentAr: decision.reply, status: 200, splitSummary: true };
     }
     return groupTurn(input, decision, open, { ...brief, status: "ready" }, parts, ctx);
   }
@@ -1114,10 +1115,10 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const summarySaved = await saveSummary(sb, input, summary, group, savedCards.length > 0);
   if (!summarySaved) console.warn("[chat:agent_group_summary_unsaved]");
   if (savedCards.length === 0) {
-    if (!summarySaved && (placed.size > 0 || keptWithoutCard.length > 0)) return { ok: false, contentAr: GROUP_NOT_SAVED_AR, status: 200 };
-    return { ok: false, contentAr: summary, status: 200 };
+    if (!summarySaved && (placed.size > 0 || keptWithoutCard.length > 0)) return { ok: false, contentAr: GROUP_NOT_SAVED_AR, status: 200, splitSummary: true };
+    return { ok: false, contentAr: summary, status: 200, splitSummary: true };
   }
-  return { ok: true, missionId: savedCards[0].id, contentAr: summary, summaryOnly: true, extraMissions: savedCards.map((c) => ({ id: c.id, messageId: c.messageId, contentAr: c.contentAr })) };
+  return { ok: true, missionId: savedCards[0].id, contentAr: summary, summaryOnly: true, splitSummary: true, extraMissions: savedCards.map((c) => ({ id: c.id, messageId: c.messageId, contentAr: c.contentAr })) };
 }
 
 /** The assistant cards of this conversation, by the mission they draw (the latest rows; null when they cannot be read: callers then never write a second card). */
