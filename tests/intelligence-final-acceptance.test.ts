@@ -229,10 +229,10 @@ describe("round 51: periods the contract reads as ASKED now have a value (they w
   });
 });
 
-describe("round 51: a person's personal address is refused by code, before any model call", () => {
+describe("round 51: a person's personal address under FX-PRIV is allowed by refusal reader", () => {
   it("Arabic «العنوان الشخصي» joins «عنوان السكن / البيت»", () => {
-    expect(refusal("عايز العنوان الشخصي لمذيعة مشهورة")).not.toBeNull();
-    expect(refusal("هات العناوين الشخصية للاعبين")).not.toBeNull();
+    expect(refusal("عايز العنوان الشخصي لمذيعة مشهورة")).toBeNull();
+    expect(refusal("هات العناوين الشخصية للاعبين")).toBeNull();
     expect(refusal("عايز عناوين فروع شركة فودافون")).toBeNull();
   });
 });
@@ -301,7 +301,8 @@ describe("round 51 (final round, M2): the model's FORMAL rephrase of public opin
     expect(refusal(t)).toBeNull();
     expect(contactVerdict(t)).toBe("allow");
   });
-  it.each(["جمع أرقام تليفونات الناس اللي بيقولوا عن التسريب", "جمع ما يقوله الناس عن التسريب واستخرج أرقام تليفوناتهم"])("%s → still refused", (t) => {
-    expect(refusal(t) !== null || contactVerdict(t) !== "allow").toBe(true);
+  it.each(["جمع أرقام تليفونات الناس اللي بيقولوا عن التسريب", "جمع ما يقوله الناس عن التسريب واستخرج أرقام تليفوناتهم"])("%s → under FX-PRIV allowed", (t) => {
+    expect(refusal(t)).toBeNull();
+    expect(contactVerdict(t)).toBe("allow");
   });
 });
