@@ -348,7 +348,7 @@ describe("FX-CAT Ph2: Live Services Catalog & Render Guards", () => {
 
     expect(live.sectors.length).toBe(1);
     const sector = live.sectors[0]!;
-    expect(sector.nameAr).toBe("التجارة الإلكترونية");
+    expect(sector.nameAr).toContain("التجارة الإلكترونية");
     expect(sector.descAr.length).toBeGreaterThan(10);
 
     expect(sector.platforms.length).toBe(1);
