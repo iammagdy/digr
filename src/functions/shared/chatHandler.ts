@@ -442,6 +442,7 @@ function shouldAskSocialTimeWindow(text: string): boolean {
 }
 
 export interface ChatHandlerInput {
+  calculatorPlanOnly?: true;
   /** The page's own id for this planning turn (a short safe token): the planning steps the panel shows are keyed by it. Absent: the assistant message id is used. */
   plannerRequestId?: string;
   userId: string;
@@ -488,6 +489,7 @@ export interface ChatHandlerResponse {
   planning?: { sessionId: string };
   /** The request is a mission of the agent: the page draws the mission card from this id (see lib/agentMission/chatTurn.ts). */
   agentMission?: { id: string };
+  calculatorReplyScope?: "single" | "split";
   /** MULTI-OBJECTIVE RESEARCH: the other parts of the same request, each already stored as its own assistant message with its own card (the page appends them after this answer). */
   agentMissionParts?: Array<{ id: string; messageId: string; contentAr: string }>;
   planQuote?: any;
@@ -1547,6 +1549,9 @@ export class ChatHandler {
    * question, file-shaping notice, result follow-up) or ended by an error gets one here, so rows reconcile with messages.
    */
   async handleUserMessage(input: ChatHandlerInput): Promise<ChatHandlerResponse> {
+    if (input.calculatorPlanOnly && (!this.agentChat?.enabled || typeof this.tables?.from !== "function")) {
+      throw new Error(CHAT_PREP_REASON_AR);
+    }
     const turn: TurnUsageLog = { written: false, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 }, model: "" };
     const startedAt = Date.now();
     let response: ChatHandlerResponse;
@@ -1614,13 +1619,16 @@ export class ChatHandler {
   }
 
   /** One chat turn answered by the AGENT (see `agentChat`): a mission is created for the customer; the page draws its card. Never calls a model or a source itself. */
-  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
+  private async answerWithAgent(ctx: { calculatorPlanOnly?: true; sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
     const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle, ...(ctx.exclusionFile ? { exclusionFile: ctx.exclusionFile } : {}) });
     ctx.turn.model = "agent";
     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
-    if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
+    const scope = ctx.calculatorPlanOnly
+      ? { calculatorReplyScope: (r.splitSummary || (r.ok && r.summaryOnly) ? "split" : "single") as "single" | "split" }
+      : {};
+    if (!r.ok) return { ...base, ...scope, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
     // a multi-part request: the answer is the summary of the parts (it draws no card); every part's card is its own stored message
-    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, ...(r.summaryOnly ? {} : { agentMission: { id: r.missionId } }), ...(r.extraMissions && r.extraMissions.length > 0 ? { agentMissionParts: r.extraMissions } : {}), ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
+    return { ...base, ...scope, contentAr: r.contentAr, outputType: "agent_mission" as any, ...(r.summaryOnly ? {} : { agentMission: { id: r.missionId } }), ...(r.extraMissions && r.extraMissions.length > 0 ? { agentMissionParts: r.extraMissions } : {}), ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
   }
 
   /**
@@ -2019,6 +2027,12 @@ export class ChatHandler {
         awaitsCount,
         tExtractMs,
       });
+
+    // Calculator turns share the agent's conversation and never enter any legacy quote path.
+    if (input.calculatorPlanOnly) {
+      currentStep = "agent_mission";
+      return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null, calculatorPlanOnly: true });
+    }
 
     const userComplained = isRepetitionComplaint(message);
     const greetingOrGeneral = isGreetingOrGeneralQuestion(message);
