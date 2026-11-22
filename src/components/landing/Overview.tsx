@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SERVICES_CATALOG, catalogCounts } from "@/lib/servicesCatalog";
+import { getLiveServicesCatalog } from "@/lib/liveServicesCatalog";
 import { platformsCountAr, sectorsCountAr } from "@/lib/servicesCatalogText";
 import { CONTACT_VERIFICATION_LABELS } from "@/lib/contactVerification";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
@@ -65,7 +65,7 @@ export function HowItWorks() {
 
 /** «إيه اللي ممكن تطلبه»: the data sectors (names from the catalog module only) and the decision makers with the verification statuses, one section. */
 export function WhatYouCanAsk() {
-  const counts = catalogCounts();
+  const { counts, sectors } = getLiveServicesCatalog();
   return (
     <section id="what" aria-labelledby="what-title" className="border-t border-ln px-5 py-16 min-[760px]:py-24">
       <div className="mx-auto flex max-w-[1000px] flex-col gap-10">
@@ -73,7 +73,7 @@ export function WhatYouCanAsk() {
           <h2 id="what-title" className="m-0 font-extralight text-ink" style={{ fontSize: "clamp(28px,4.4cqi,48px)" }}>إيه اللي ممكن تطلبه</h2>
           <p className="m-0 text-[14px] font-light leading-[1.9] text-mut">{`${sectorsCountAr(counts.sectors)} من ${platformsCountAr(counts.platforms)}، وكلها مصادر متاحة.`}</p>
           <ul className="m-0 flex list-none flex-wrap justify-center gap-2 p-0" data-testid="landing-sectors">
-            {SERVICES_CATALOG.map((sector) => (
+            {sectors.map((sector) => (
               <li key={sector.id} className="rounded-full border border-ln bg-sf px-4 py-2 text-[13px] text-ink">{sector.nameAr}</li>
             ))}
           </ul>
