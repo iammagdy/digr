@@ -93,6 +93,7 @@ type BranchField = typeof COMPANY_BRANCH_FIELDS[number];
 
 interface CompanyEvidence {
   keys: string[];
+  name: string;
   registration: string | null;
   jurisdiction: string;
   branches: Partial<Record<BranchField, string>>;
@@ -136,6 +137,7 @@ export function companyEvidenceOf(row: Row, stage: QualityStage): CompanyEvidenc
   const conflict = identityConflictOf({ name: displayName ?? organisation.names[0], website: website ?? organisation.domain, description, linkedin });
   return {
     keys: [...keys].sort(),
+    name: nameKey(displayName ?? organisation.names[0]),
     registration: organisation.crNumber,
     jurisdiction,
     branches,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { CONTACT_STATUS_UNVERIFIED_AR, SOURCE_PROFILE_KEY, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../../src/lib/agentMission/foundation/topicChoice";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
@@ -17,6 +18,7 @@ import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
+import { AcceptedCompanies, COMPANY_BRANCH_FIELDS, COMPANY_EVIDENCE_KEY, COMPANY_SOURCE_ID_KEY, COMPANY_UNCERTAIN_KEY, companyEvidenceOf, companyRelationship, storedCompanyEvidence } from "../../../src/lib/agentMission/companyQuality";
 import { isCompanyStage } from "../../../src/lib/agentMission/entities";
 import { PRIOR_DELIVERY_REASON, type PriorDeliveryMatcher } from "../../../src/lib/agentMission/priorDelivery";
 import { CUSTOMER_EXCLUSION_REASON, EXCLUSION_POSSIBLE_MARK, organisationOfRow, type ExclusionMatcher } from "../../../src/lib/agentMission/customerExclusion";
@@ -115,6 +117,19 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
   const contactStage = isContactSource(stage.endpoint_id);
   const peopleStage = isPeopleStage(stage);
+  const companyStage = isCompanyStage(stage);
+  const companyIndex = new AcceptedCompanies();
+  const companyObservations = new Map<string, Row[]>();
+  if (companyStage) {
+    for (const item of items.stage(key).items.values()) {
+      if (!item.row) continue;
+      const sourceId = String(item.row[COMPANY_SOURCE_ID_KEY] ?? item.id);
+      const sameId = companyObservations.get(sourceId) ?? [];
+      sameId.push(item.row);
+      companyObservations.set(sourceId, sameId);
+      if (item.state === "accepted") companyIndex.add(storedCompanyEvidence(item.row, stage));
+    }
+  }
   const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
   const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_not_a_person: 0, rejected_not_at_company: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
   const enabledFilters = (stage.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
@@ -172,8 +187,24 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const raw = withTidyNames(named.item, stage.columns, isChild);
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
     // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
-    const id = options.idField !== undefined ? deriveItemId(raw0, options.idField, parentIds ? String(raw0.parent_id ?? "").trim() || null : null) : String(raw0.id ?? "").trim();
-    if (!id) { tally.rejected_missing_id += 1; continue; }
+    const sourceId = options.idField !== undefined ? deriveItemId(raw0, options.idField, parentIds ? String(raw0.parent_id ?? "").trim() || null : null) : String(raw0.id ?? "").trim();
+    if (!sourceId) { tally.rejected_missing_id += 1; continue; }
+    let id = sourceId;
+    let uncertainCompany = false;
+    const companyEvidence = companyStage ? companyEvidenceOf(raw, stage) : null;
+    if (companyEvidence) {
+      const observations = companyObservations.get(sourceId) ?? [];
+      const encoded = JSON.stringify(companyEvidence);
+      const prior = observations.find((previous) => {
+        const evidence = storedCompanyEvidence(previous, stage);
+        return JSON.stringify(evidence) === encoded || companyRelationship(evidence, companyEvidence) === "same";
+      });
+      if (prior) id = String(prior.id);
+      else if (observations.length > 0) {
+        id = `${sourceId}~${createHash("sha256").update(encoded).digest("hex")}`;
+        uncertainCompany = observations.some((previous) => companyRelationship(storedCompanyEvidence(previous, stage), companyEvidence) === "uncertain");
+      }
+    }
     if (items.has(key, id) || seenNow.has(id)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
     let parentId: string | null = null;
     if (parentIds) {
@@ -197,6 +228,18 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     for (const k of stage.carry_keys ?? []) if (raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(k in row)) row[k] = raw[k];
     // the person's professional page read from the source's raw answer (engine/run.ts, DT-20261118-05 item 4a): kept on the stored row for the finders, never a column of the file
     if (typeof raw[SOURCE_PROFILE_KEY] === "string" && raw[SOURCE_PROFILE_KEY] !== "" && !(SOURCE_PROFILE_KEY in row)) row[SOURCE_PROFILE_KEY] = raw[SOURCE_PROFILE_KEY];
+    if (companyEvidence) {
+      row[COMPANY_EVIDENCE_KEY] = companyEvidence;
+      row[COMPANY_SOURCE_ID_KEY] = sourceId;
+      if (uncertainCompany) row[COMPANY_UNCERTAIN_KEY] = true;
+      for (const field of COMPANY_BRANCH_FIELDS) {
+        if (companyEvidence.branches[field] !== undefined && !(field in row)) row[field] = raw[field];
+      }
+      const sameId = companyObservations.get(sourceId) ?? [];
+      sameId.push(row);
+      companyObservations.set(sourceId, sameId);
+      if (companyEvidence.conflict) { excludedStructural.push({ id, reason: "company_identity_conflict", row }); continue; }
+    }
     if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
@@ -349,6 +392,12 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const o = outcome.get(c.id)!;
     let state: "accepted" | "excluded" | "pending" | "unchecked" = o.state;
     let reason: ItemReason | undefined = o.reason;
+    const evidence = companyStage ? storedCompanyEvidence(c.row, stage) : null;
+    const companyDecision = evidence && state === "accepted" ? companyIndex.inspect(evidence) : null;
+    if (companyDecision === "duplicate_company" || companyDecision === "company_identity_conflict") {
+      state = "excluded";
+      reason = companyDecision;
+    }
     // a match beyond the volume the customer bought was checked and is not needed: it is kept (never delivered, never charged) with that reason
     if (state === "accepted" && (before.accepted + acceptedNow >= stageTarget || (options.acceptCap !== undefined && acceptedNow >= options.acceptCap))) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; }
     // a named source whose share is full: its match is kept, not delivered (the other sources still have room)
@@ -359,14 +408,22 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
         if (have >= quota.perValue) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; } else quotaHave.set(src, have + 1);
       }
     }
-    if (state === "accepted") { acceptedNow += 1; if (o.by === "model") modelAccepted += 1; }
+    const marks = {
+      ...(state === "accepted" && judgedMark ? { [TOPIC_RELATION_KEY]: topicRelationAr(2) } : {}),
+      ...(state === "accepted" && companyDecision === "possible" ? { [COMPANY_UNCERTAIN_KEY]: true } : {}),
+    };
+    if (state === "accepted") {
+      if (evidence) companyIndex.add(evidence);
+      acceptedNow += 1;
+      if (o.by === "model") modelAccepted += 1;
+    }
     if (state === "excluded" && reason && reason !== "target_reached") left[reason] = (left[reason] ?? 0) + 1;
     if (c.carried) {
       // a carried item is already in the log: only a decision moves it
-      if (state === "accepted" || state === "excluded") ops.push({ t: "resolve", stage: key, id: c.id, state, ...(o.by ? { by: o.by } : {}), ...(o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), ...(state === "accepted" && judgedMark ? { marks: { [TOPIC_RELATION_KEY]: topicRelationAr(2) } } : {}) });
+      if (state === "accepted" || state === "excluded") ops.push({ t: "resolve", stage: key, id: c.id, state, ...(o.by ? { by: o.by } : {}), ...(o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), ...(Object.keys(marks).length > 0 ? { marks } : {}) });
     } else {
       // a row the review judged about the request says so in its own topic column (the file's mark is the verdict that let it in, never a guess from words)
-      const row = state === "accepted" && judgedMark ? { ...c.row, [TOPIC_RELATION_KEY]: topicRelationAr(2) } : c.row;
+      const row = Object.keys(marks).length > 0 ? { ...c.row, ...marks } : c.row;
       ops.push({ t: "item", stage: key, id: c.id, state, ...(state === "accepted" && o.by ? { by: o.by } : {}), ...(state === "accepted" && o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), row });
     }
   }
