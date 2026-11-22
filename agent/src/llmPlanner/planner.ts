@@ -950,6 +950,61 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
         checkedParams: params, chargedUsd: r.charge_usd ?? 0,
       };
     }
+    if (budget.left > 0 && !option.parent) {
+      try {
+        const answer = await deps.model({
+          system: "A data search tool answered with 0 records for the given parameters. Propose ONE broader parameter variant of the SAME tool to find matching records (e.g. drop narrow city/local filter while keeping country, broaden industry or search terms, or relax specific constraints). Do not add new constraints.",
+          user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nFailed parameters: ${JSON.stringify(option.params)}`,
+          tool: {
+            name: "propose_broader",
+            description: "Propose broader parameter variant of the same tool",
+            schema: {
+              type: "object",
+              properties: {
+                broader_params: { type: "object", description: "Broadened input parameters object for the same tool" },
+                change_reason: { type: "string", description: "Why these parameters are broader" },
+              },
+              required: ["broader_params"],
+            },
+          },
+          maxTokens: 1000,
+        });
+        const got = answer?.input;
+        const broaderParams = isObj(got) && isObj(got.broader_params) ? (got.broader_params as Record<string, unknown>) : null;
+        if (broaderParams && Object.keys(broaderParams).length > 0 && JSON.stringify(broaderParams) !== JSON.stringify(option.params) && budget.left > 0) {
+          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} trying broader variant: ${JSON.stringify(broaderParams)}`);
+          budget.left -= 1;
+          const r2 = await deps.probe(option.endpoint.id, broaderParams);
+          callIds.push(r2.call_id);
+          if (r2.ok && (reviewed || r2.rows_in_page > 0)) {
+            const page2 = await deps.readPage(r2.call_id);
+            if (page2 !== null) {
+              const reading2 = reviewed
+                ? readShape(page2, { ...hintsOf(option.endpoint), missionPage: reviewed })
+                : buildShapeDigest(page2, option.endpoint).reading;
+              if (reading2.rows.length > 0) {
+                deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_ok rows=${reading2.rows.length}`);
+                return {
+                  option: { ...option, params: broaderParams, more: [] },
+                  page: page2,
+                  items: reading2.rows,
+                  listPath: reading2.listPath,
+                  callIds,
+                  hasMore: reviewed ? Boolean(reading2.nextCursor) && reading2.hasMore !== false : Boolean(r2.next_cursor) || r2.has_more === true,
+                  nextCursor: reviewed ? reading2.nextCursor : typeof r2.next_cursor === "string" && r2.next_cursor !== "" ? r2.next_cursor : null,
+                  checkedParams: broaderParams,
+                  chargedUsd: r2.charge_usd ?? 0,
+                };
+              }
+            }
+          }
+          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_empty`);
+          if (trace) trace.empties += 1;
+        }
+      } catch (err) {
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_error: ${String((err as Error)?.message ?? err)}`);
+      }
+    }
     if (budget.left <= 0) break;
   }
   return null;

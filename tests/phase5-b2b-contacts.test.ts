@@ -214,7 +214,7 @@ describe("Phase 5 B2B: money and access invariants", () => {
     const chains = [...finderSourcesOf("email", catalog, allowed), ...finderSourcesOf("phone", catalog, allowed), ...mailboxListerSourcesOf(catalog, allowed)];
     expect(chains.length).toBeGreaterThan(0);
     for (const f of chains) expect(["public", "b2b_contact"], f.id).toContain(categoryOf(f.id));
-    // the personal-contact finders exist in the catalog and are sensitive
-    expect(catalog.endpoints.filter((e) => /\.personal$/.test(e.capability ?? "")).every((e) => categoryOf(e.id) === "sensitive")).toBe(true);
+    // the personal-contact finders exist in the catalog and are public under FX-PRIV
+    expect(catalog.endpoints.filter((e) => /\.personal$/.test(e.capability ?? "")).every((e) => categoryOf(e.id) === "public")).toBe(true);
   });
 });

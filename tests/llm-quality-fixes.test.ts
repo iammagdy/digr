@@ -126,13 +126,13 @@ describe("finding 2: research ABOUT a sensitive subject is a request, never a re
   for (const t of ["What are people saying about phone number leaks", "الناس بتقول إيه عن تسريب أرقام التليفونات", "آراء الناس عن الاحتيال الإلكتروني"]) {
     it(`the keyword rule reads «${t}» as a data request (the WHEN-UNSURE backstop)`, () => expect(classifyMessage(t)).toBe("data_request"));
   }
-  it("a private ask is still refused by code BEFORE any model call", async () => {
+  it("under FX-PRIV: a private ask reaches the model, not refused by code before model call", async () => {
     scripted([]);
     const db = world();
     const { r } = await turn(db, "هات أرقام تليفونات الناس اللي علقوا");
-    expect(r.ok).toBe(false);
-    expect(modelCalls).toHaveLength(0);
-    expect(missions(db)).toHaveLength(0);
+    expect(modelCalls).toHaveLength(1);
+    expect(r.contentAr).not.toContain("أرقام هواتف أو بيانات شخصية");
+    expect(missions(db)).toHaveLength(1);
   });
   it("the real refusal («ديجر … لا تجمع أرقام هواتف») of the public question is re-typed as a request: no refusal reaches the customer", async () => {
     scripted([{ type: "service_question", reason: "x", reply: "ديجر تجمع بيانات بحث عامة، ولا تجمع أرقام هواتف أو بيانات شخصية لأفراد.", count: null }]);
@@ -143,8 +143,7 @@ describe("finding 2: research ABOUT a sensitive subject is a request, never a re
   });
   it("the prompt states the rule and its example", () => {
     const p = buildSystemPrompt({ balancePoints: null, open: null });
-    expect(p).toContain("البحث عن موضوع حساس مسموح");
-    expect(p).toContain("«الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request");
+    expect(p).not.toContain("البحث عن موضوع حساس مسموح");
   });
 });
 
@@ -355,10 +354,10 @@ describe("round 1: corrections while the plan is being prepared", () => {
 });
 
 describe("round 1: two privacy-rule gaps", () => {
-  it("«الواتساب الشخصي للمعلقين» is refused by code; «comments discussing phone number leaks» (the model's English rephrase) is public research", () => {
-    expect(privacyRefusalAr("عايز الواتساب الشخصي للمعلقين على البوست ده")).not.toBeNull();
+  it("«الواتساب الشخصي للمعلقين» under FX-PRIV is not refused by code", () => {
+    expect(privacyRefusalAr("عايز الواتساب الشخصي للمعلقين على البوست ده")).toBeNull();
     expect(privacyRefusalAr("Public posts and comments discussing phone number leaks")).toBeNull();
-    expect(privacyRefusalAr("comments discussing the phone numbers of the people who commented")).not.toBeNull();
+    expect(privacyRefusalAr("comments discussing the phone numbers of the people who commented")).toBeNull();
     expect(privacyRefusalAr("منشورات عامة عن الواتساب")).toBeNull();
   });
 });

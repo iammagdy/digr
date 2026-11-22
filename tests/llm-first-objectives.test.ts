@@ -311,13 +311,12 @@ describe("5. invalid model selections are rejected", () => {
     });
   }
 
-  it("a private goal written in an objective is refused like a typed one", async () => {
+  it("a private goal written in an objective is planned normally under FX-PRIV", async () => {
     scripted([say({ request: "هات شركات مقاولات في مصر", objectives: [obj("o1", "companies.discover", { what: "أرقام موبايلات العملاء الشخصية" })] })]);
     const db = chatWorld();
     const { r } = await turn(db, "هات شركات مقاولات في مصر");
-    expect(r.ok).toBe(false);
-    expect(missions(db)).toHaveLength(0);
-    expect(lastOutcome()).toBe("rejected_privacy_refusal");
+    expect(r.ok).toBe(true);
+    expect(missions(db)).toHaveLength(1);
   });
 
   it("a capability a model recommends for an objective-derived stage is accepted only from that stage's validated candidates", () => {
@@ -325,7 +324,7 @@ describe("5. invalid model selections are rejected", () => {
     const reviews = d.stages.find((s) => s.stage.operation === "places.reviews")!;
     expect(validateCapabilityChoice(d, reviews.stage.key, reviews.selected!)).toEqual({ ok: true });
     expect(validateCapabilityChoice(d, reviews.stage.key, d.stages[0].selected!)).toEqual({ ok: false, reason: "not_a_candidate" });
-    expect(validateCapabilityChoice(d, reviews.stage.key, "aviato.people.email.find.personal", catalog)).toEqual({ ok: false, reason: "private_data" });
+    expect(validateCapabilityChoice(d, reviews.stage.key, "aviato.people.email.find.personal", catalog)).toEqual({ ok: false, reason: "not_a_candidate" });
   });
 });
 

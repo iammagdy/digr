@@ -1,3 +1,4 @@
+import { isCompanyStage } from "../../src/lib/agentMission/entities";
 import { getBalance } from "../../src/lib/supabase/ledger";
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
 import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
@@ -32,7 +33,7 @@ import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
-import { qualityResultLineAr } from "../../src/lib/agentMission/companyQuality";
+import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCompanyEvidence } from "../../src/lib/agentMission/companyQuality";
 import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
@@ -615,7 +616,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const started = await updateRunState(store, mission.id, (r) => ({ ...r, planningStarts: r.planningStarts + 1 }), deps.log);
   if (started.planningStarts > AGENT_PHASE_STARTS_MAX) { await endPlanningUnserved(deps, mission, `planning started ${started.planningStarts} times`); return; }
   await store.updateMission(mission.id, { planning_model: model, error: null });
-  await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
+  await store.addEvent(mission.id, { kind: "system", message_ar: started.planningStarts > 1 ? "استأنف الوكيل دراسة طلبك من حيث توقّف." : "بدأ الوكيل دراسة طلبك." });
   // PR-1.2: THE SETTINGS, read ONCE for the whole planning run, and the flag `semantic_normalization_v1` taken from them (OFF unless the owner set it; never from the customer). The same boolean reads the request at every place below that builds its contract, and goes to the
   // compiler, so the platform decision, the route and the plan's parameters can never disagree about it. The stored plan is what execution runs, so the worker does not read the request again there.
   const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
@@ -851,7 +852,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   let llmBase = baseLlm;
   const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((llmBase + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
   // THE PLANNING CHECKPOINT (S1 item 1.11, redesigned mode only): what an earlier, stopped run of this planning learned is restored, and after every tool the state is saved again, so a restart or the memory guard no longer throws the run away
-  const checkpointOn = socialRedesignActive(ctx);
+  const checkpointOn = (ctx.redesign !== undefined && anyRedesignFlag(ctx.redesign.flags, ctx.redesign.platformFlags)) || readCapabilityDiscoveryFlag(settings, mission.user_id);
   let resumeNote = "";
   let lastNote: string | null = null;
   if (checkpointOn) {
@@ -1359,6 +1360,34 @@ type ExecutionEnd = {
   markMissingCells?: boolean;
 };
 
+function dedupeCompanyStages(plan: PricedPlan, snap: Pick<ItemSnapshot, "acceptedRows">, rowsByStage: Record<string, Record<string, unknown>[]>) {
+  const droppedByStage = new Map<string, Set<string>>();
+  for (const s of plan.stages) {
+    const parentDrops = s.parent_key ? droppedByStage.get(s.parent_key) : undefined;
+    const companies = isCompanyStage(s) ? new AcceptedCompanies() : null;
+    if (!companies && !parentDrops) continue;
+    const dropped = new Set<string>();
+    const rows = [];
+    for (const row of snap.acceptedRows(s.key)) {
+      if (parentDrops?.has(String(row.parent_id))) {
+        dropped.add(String(row.id));
+        continue;
+      }
+      if (!companies) { rows.push(row); continue; }
+      const evidence = storedCompanyEvidence(row, s);
+      const decision = companies.inspect(evidence);
+      if (decision === "duplicate_company" || decision === "company_identity_conflict") {
+        dropped.add(String(row.id));
+        continue;
+      }
+      companies.add(evidence);
+      rows.push(decision === "possible" ? { ...row, [COMPANY_UNCERTAIN_KEY]: "yes" } : row);
+    }
+    if (dropped.size > 0) droppedByStage.set(s.key, dropped);
+    rowsByStage[s.key] = s.deliver ? rows.slice(0, s.planned_rows) : rows;
+  }
+}
+
 async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, a: ExecutionEnd) {
   const { store } = deps;
   const fresh = (await store.getMission(mission.id)) ?? mission;
@@ -1373,6 +1402,7 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
   const approvedPlan = plan;
   plan = withPromiseCaps(plan);
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
+  if (plan.stages.some((s) => isCompanyStage(s))) dedupeCompanyStages(plan, snap, rowsByStage);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
   const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));

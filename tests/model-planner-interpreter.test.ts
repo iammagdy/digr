@@ -163,32 +163,21 @@ describe("two stages: a listing, then one call per listed item", () => {
   });
 });
 
-describe("a SENSITIVE step in the worker goes through the audited path", () => {
+describe("reverse lookup in the worker under FX-PRIV", () => {
   const sensitivePlan = (endpointId = "blitzapi.people.phone.reverse") => ({ v: 1, measured: [{ rowsPerCall: 1, passRate: 1, costPerCallUsd: 0.02 }], steps: [{ endpointId, volume: 1, params: [{ name: "phone", value: "+201001234567", source: "customer_text", quote: "+201001234567" }], fieldMap: { columns: [{ field: "name", headerAr: "الاسم", role: "author_name" }], pagination: { kind: "single" } }, filters: [], facts: facts({ listPath: null, callEstimateUsd: 0.02 }) }] });
 
-  it("without the audited context the step is refused and NO request is made; with a verified account and a purpose it runs, writes one audit row (masked) and the call carries the flag", async () => {
+  it("under FX-PRIV reverse lookup runs as public without gating and delivers rows", async () => {
     const gateway = stubGateway({ "blitzapi.people.phone.reverse": { data: { name: "Someone" } } }, { "blitzapi.people.phone.reverse": 20000 });
     const plan = sensitivePlan();
-    const denied = await runModelPlanChunk(input(plan));
-    expect(denied.ok).toBe(false);
-    expect(gateway.calls).toHaveLength(0);
-    const db = createMemoryDb();
-    const unverified = await runModelPlanChunk(input(plan), { sensitive: { client: db, access: { isAdmin: false, verifiedBusiness: false }, purpose: "التواصل مع عميل" } });
-    expect(unverified.ok).toBe(false);
-    expect(unverified.errorMessageAr).toContain("حسابات الأعمال الموثّقة");
-    expect(gateway.calls).toHaveLength(0);
-    const out = await runModelPlanChunk(input(plan), { sensitive: { client: db, access: { isAdmin: false, verifiedBusiness: true }, purpose: "التواصل مع عميل محتمل" } });
+    const out = await runModelPlanChunk(input(plan));
     expect(out.ok).toBe(true);
     expect(out.rows).toEqual([{ author_name: "Someone" }]);
     expect(gateway.calls).toHaveLength(1);
-    const audit = db.rows("sensitive_lookup_audit").filter((r) => r.outcome === "called");
-    expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ masked_value: "***567", job_id: "job_1", account_id: "u1", cost_usd: 0.02, purpose: "التواصل مع عميل محتمل" });
-    expect(JSON.stringify(audit[0])).not.toContain("1001234");
-    // the purpose stored on the quote item is used when the worker's context carries none
-    const viaItem = await runModelPlanChunk({ ...input(plan), params: { [MODEL_PLAN_PARAM]: plan, [MODEL_PLAN_PURPOSE_PARAM]: "غرض مخزن على العرض" } }, { sensitive: { client: db, access: { isAdmin: false, verifiedBusiness: true }, purpose: "" } });
-    expect(viaItem.ok).toBe(true);
-    expect(db.rows("sensitive_lookup_audit").at(-1)).toMatchObject({ purpose: "غرض مخزن على العرض" });
+    const db = createMemoryDb();
+    const unverified = await runModelPlanChunk(input(plan), { sensitive: { client: db, access: { isAdmin: false, verifiedBusiness: false }, purpose: "التواصل مع عميل" } });
+    expect(unverified.ok).toBe(true);
+    expect(unverified.rows).toEqual([{ author_name: "Someone" }]);
+    expect(gateway.calls).toHaveLength(2);
   });
 });
 

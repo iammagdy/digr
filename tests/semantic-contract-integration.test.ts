@@ -247,22 +247,21 @@ describe("privacy: refusals happen before and independently of the semantic read
     ["public comments about privacy", "هات ١٠٠ تعليق من يوتيوب عن الخصوصية"],
   ] as const;
 
-  it.each(MUST_REFUSE)("%s is refused by the guard and by mission creation, whatever the reading says: «%s»", async (_name, text) => {
-    expect(preModelAnswer(text)?.kind).toBe("privacy_refusal");
+  it.each(MUST_REFUSE)("%s is allowed by the guard and by mission creation under FX-PRIV: «%s»", async (_name, text) => {
+    expect(preModelAnswer(text)).toBeNull();
     const db: any = createMemoryDb();
     db.seed("credit_ledger", [{ user_id: "u1", delta: 1000 }]);
     db.seed("missions", []);
     db.seed("mission_events", []);
     const r = await createCustomerMission(db, { userId: "u1", text });
-    expect(r).toMatchObject({ ok: false, status: 422 });
-    expect(db.rows("missions")).toHaveLength(0);
-    // a mission that was refused never reaches a contract: and if a contract were asked for the same words, the reading adds no private-chat or identifier field to it
+    expect(r.ok).toBe(true);
+    expect(db.rows("missions")).toHaveLength(1);
     const contract = buildRequestContract(text, undefined, ON);
     expect(Object.keys(contract).sort()).toEqual(Object.keys(buildRequestContract(text, undefined, OFF)).sort());
   });
 
   it.each(MUST_STAY_LEGITIMATE)("%s is accepted as public research: «%s»", async (_name, text) => {
-    expect(preModelAnswer(text)?.kind ?? null).not.toBe("privacy_refusal");
+    expect(preModelAnswer(text)).toBeNull();
     const db: any = createMemoryDb();
     db.seed("credit_ledger", [{ user_id: "u1", delta: 1000 }]);
     db.seed("missions", []);
@@ -273,8 +272,8 @@ describe("privacy: refusals happen before and independently of the semantic read
     expect(db.rows("missions")[0].request_text).toBe(text);
   });
 
-  it("the personal-contact refusal is the guard's, unchanged by the reading", () => {
-    expect(preModelAnswer(CONTACT)?.kind).toBe("privacy_refusal");
+  it("the personal-contact ask is allowed under FX-PRIV", () => {
+    expect(preModelAnswer(CONTACT)).toBeNull();
     expect(buildRequestContract(CONTACT, undefined, ON).platform).toBe(buildRequestContract(CONTACT, undefined, OFF).platform);
   });
 

@@ -333,7 +333,8 @@ describe("live check 9: the wallet estimate is what the balance DELIVERS (no 15%
   });
   it("the wallet and the pricing page say what the numbers are, and neither calls the estimate a reserve", () => {
     expect(src("src/app/dashboard/topup/page.tsx")).toContain("الأرقام تقدير بسعر السجل المُسلَّم نفسه، دون احتياطي الحجز");
-    expect(src("src/app/pricing/page.tsx")).toContain("عدد السجلات التي يغطيها المبلغ بسعر السجل المُسلَّم، دون احتياطي الحجز");
+    expect(src("src/app/pricing/page.tsx")).toContain('href="/calculator"');
+    expect(src("src/lib/pricingPage.ts")).toContain("تظهر تكلفة التسليم الكامل والحجز المؤقت في خطة طلبك قبل الموافقة");
   });
 });
 

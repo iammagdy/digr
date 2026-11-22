@@ -40,7 +40,7 @@ import { counterAr } from "@/lib/agentMission/stage2/counterWording";
 /** ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was bought). */
 interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
 type ApprovalVersion = { updatedAt: string; planHash: string };
-type ApprovalCardView = CustomerMissionView & {
+export type ApprovalCardView = CustomerMissionView & {
   approvalState?: "confirmed" | "pending" | "unapproved";
   approvalVersion?: ApprovalVersion;
   affordability?: CustomerAffordability;
@@ -77,7 +77,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled, stage2 = false, liveSheet = stage2 }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void; /** STAGE 2: the page shows the Stage 2 surfaces (the requests page only, owner decision 1); they still appear only when the server sends them (flags on). */ stage2?: boolean; /** LAUNCH ROUND: the page shows the LIVE SHEET (the requests page through `stage2`, and the conversation, where the customer asked); still only when the server says DIGER_STAGE2_LIVE_SHEET is on for the viewer. Nothing else of Stage 2 comes with it. */ liveSheet?: boolean }) {
+export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled, onViewChange, stage2 = false, liveSheet = stage2 }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void; /** Called whenever a valid live view of the mission is received from the server. */ onViewChange?: (view: ApprovalCardView) => void; /** STAGE 2: the page shows the Stage 2 surfaces (the requests page only, owner decision 1); they still appear only when the server sends them (flags on). */ stage2?: boolean; /** LAUNCH ROUND: the page shows the LIVE SHEET (the requests page through `stage2`, and the conversation, where the customer asked); still only when the server says DIGER_STAGE2_LIVE_SHEET is on for the viewer. Nothing else of Stage 2 comes with it. */ liveSheet?: boolean }) {
   const [askError, setAskError] = useState<string | null>(null);
   // STAGE 2 F-2: the last live data the live sheet reported (null until its first answer). The card reads it to show ONE progress counter on a phone; it is passed on only while the live sheet is shown.
   const [liveData, setLiveData] = useState<LiveData | null>(null);
@@ -97,6 +97,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const acting = useRef(false);
   const approvedCallback = useRef(onApproved);
   approvedCallback.current = onApproved;
+  const onViewChangeRef = useRef(onViewChange);
+  onViewChangeRef.current = onViewChange;
   const announceStarted = useCallback(() => {
     if (!approvalAttempted.current || announcedStart.current) return;
     announcedStart.current = true;
@@ -127,6 +129,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
         lastAppliedRead.current = number;
         setAnswer(json);
         setRefreshPending(false);
+        onViewChangeRef.current?.(json.view);
         if (json.view.approvalState === "confirmed") {
           setAwaitingProof(false);
           announceStarted();
@@ -623,7 +626,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
           <p className={`m-0 font-semibold text-ink ${headlineAr.length > 40 ? "text-[17px] leading-[1.7]" : "font-display text-[27px] leading-[1.3]"}`}>{headlineAr}</p>
         </div>
       ) : null}
-      {finished && !headlineAr && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
+      {(finished || v.phase === "unserved") && !headlineAr && v.resultSummaryAr && v.resultSummaryAr !== v.endLineAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
       {v.phase === "partial" && v.partialReasonAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-partial-reason">{v.partialReasonAr}</p> : null}
       {(v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
         <div className="flex flex-col gap-1" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <MoneyLine key={line} border={false}>{line}</MoneyLine>)}</div>

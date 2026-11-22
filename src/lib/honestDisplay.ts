@@ -77,10 +77,12 @@ export function formatDate(
   try {
     const d = typeof date === "string" || typeof date === "number" ? new Date(date) : date;
     if (Number.isNaN(d.getTime())) return "";
-    const opts: Intl.DateTimeFormatOptions = options ?? {
+    const opts: Intl.DateTimeFormatOptions = {
+      timeZone: "Africa/Cairo",
       day: "numeric",
       month: "long",
       year: "numeric",
+      ...options,
     };
     return new Intl.DateTimeFormat(ARABIC_LOCALE, opts).format(d);
   } catch {
@@ -98,9 +100,11 @@ export function formatTime(
   try {
     const d = typeof date === "string" || typeof date === "number" ? new Date(date) : date;
     if (Number.isNaN(d.getTime())) return "";
-    const opts: Intl.DateTimeFormatOptions = options ?? {
+    const opts: Intl.DateTimeFormatOptions = {
+      timeZone: "Africa/Cairo",
       hour: "2-digit",
       minute: "2-digit",
+      ...options,
     };
     return new Intl.DateTimeFormat(ARABIC_LOCALE, opts).format(d);
   } catch {

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { COMPANY_EVIDENCE_KEY } from "../../../src/lib/agentMission/companyQuality";
 import { AGENT_EXCLUDED_ROWS_KEPT } from "../../../src/lib/agentMission/constants";
 import { RELEVANCE_REASON_LIST, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, type FilterReason } from "../../../src/lib/agentMission/filters";
@@ -26,9 +27,9 @@ import type { AgentStore } from "../types";
 export type Row = Record<string, unknown>;
 export type ItemState = "accepted" | "excluded" | "pending" | "unchecked";
 /** Why a structurally valid item was not saved, besides the relevance reasons. */
-export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person" | "not_at_company" | "customer_exclusion" | "already_delivered";
+export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person" | "not_at_company" | "customer_exclusion" | "already_delivered" | "duplicate_company" | "company_identity_conflict";
 export type ItemReason = RelevanceReason | StructuralReason | FilterReason | "target_reached";
-export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company", "customer_exclusion", "already_delivered"];
+export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company", "customer_exclusion", "already_delivered", "duplicate_company", "company_identity_conflict"];
 
 /** Why a stage's collection stopped: recorded once, by code, and the only source of the shortfall sentence. */
 export type StopReason = "target_reached" | "source_exhausted" | "no_new_items"
@@ -347,6 +348,9 @@ export class ItemStore {
 
   /** A best-effort copy of a stage's accepted rows in `rows/<stage>.json` (the admin's and the older tools' habit). Never read by this code to decide anything: it may be stale, and a failure to write it is ignored. */
   async mirror(stageKey: string): Promise<void> {
-    try { await this.store.putFile(this.missionId, `rows/${stageKey}.json`, JSON.stringify(this.acceptedRows(stageKey)), "application/json"); } catch { /* a mirror is a convenience, never a requirement */ }
+    try {
+      const rows = this.acceptedRows(stageKey).map(({ [COMPANY_EVIDENCE_KEY]: _, ...rest }) => rest);
+      await this.store.putFile(this.missionId, `rows/${stageKey}.json`, JSON.stringify(rows), "application/json");
+    } catch { /* a mirror is a convenience, never a requirement */ }
   }
 }

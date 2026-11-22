@@ -139,38 +139,12 @@ describe("(b) a request the catalog cannot serve as asked: a valid plan or an ho
   });
 });
 
-describe("the SENSITIVE category in the loop", () => {
+describe("the reverse-phone category in the loop under FX-PRIV", () => {
   const reverseSearch = search(undefined, ["reverse", "phone"]);
-  it("an UNVERIFIED account: the endpoint is never listed, never described, never sampled, never planned: the verified-business sentence and ZERO requests", async () => {
-    const a = await run([reverseSearch, [say("لا أجد خدمة مناسبة.")]], { customerMessages: ["من صاحب الرقم ‎+201001234567؟"] });
-    expect(a.out).toMatchObject({ kind: "message", reason: "restricted", messageAr: SENSITIVE_NOT_VERIFIED_AR });
-    expect(((a.transport.requests[1].messages.at(-1)!.content as any[])[0].content as string)).not.toContain("reverse-phone");
-    const b = await run([describeTool("enrichlayer.contacts.reverse-phone"), [say("غير متاح")]], { customerMessages: ["من صاحب الرقم ‎+201001234567؟"] });
-    expect(b.out).toMatchObject({ kind: "message", reason: "restricted", messageAr: SENSITIVE_NOT_VERIFIED_AR });
-    const c = await run([sample("enrichlayer.contacts.reverse-phone", [{ name: "phone_number", value: "+201001234567", source: "customer_text", quote: "+201001234567" }]), [say("غير متاح")]], { customerMessages: ["من صاحب الرقم +201001234567؟"] });
-    expect(c.out).toMatchObject({ kind: "message", reason: "restricted" });
-    const sensitivePlan = { summaryAr: "بحث عكسي", steps: [{ endpointId: "enrichlayer.contacts.reverse-phone", volume: 1, params: [{ name: "phone_number", value: "+201001234567", source: "customer_text", quote: "+201001234567" }], fieldMap: { columns: [{ field: "linkedin_profile_url", headerAr: "رابط الملف", role: "url" }] } }] };
-    const d = await run([propose(sensitivePlan)], { customerMessages: ["من صاحب الرقم +201001234567؟"] });
-    expect(d.out).toMatchObject({ kind: "message", reason: "restricted", messageAr: SENSITIVE_NOT_VERIFIED_AR });
-    expect(d.out.turns).toBe(1);
-    expect(gateway.calls).toHaveLength(0);
-  });
-
-  it("a VERIFIED account sees the endpoint, but must give a purpose: the plan is not made until the purpose question is answered; sensitive endpoints are never sampled", async () => {
-    const plan = { summaryAr: "بحث عن صاحب الرقم", steps: [{ endpointId: "enrichlayer.contacts.reverse-phone", volume: 1, params: [{ name: "phone_number", value: "+201001234567", source: "customer_text", quote: "+201001234567" }], fieldMap: { columns: [{ field: "linkedin_profile_url", headerAr: "رابط الملف", role: "url" }] } }] };
-    const verified = { isAdmin: false, verifiedBusiness: true };
-    const request = ["من صاحب الرقم +201001234567؟"];
-    const sampling = await run([sample("enrichlayer.contacts.reverse-phone", [{ name: "phone_number", value: "+201001234567", source: "customer_text", quote: "+201001234567" }]), propose(plan)], { access: verified, customerMessages: request });
-    expect(sampling.out.sampleCalls).toBe(1);
-    expect(gateway.calls).toHaveLength(0); // refused before any request
-    const noPurpose = await run([propose(plan)], { access: verified, customerMessages: request });
-    expect(noPurpose.out).toMatchObject({ kind: "purpose_needed", messageAr: PURPOSE_QUESTION_AR });
-    const withPurpose = await run([propose(plan)], { access: verified, customerMessages: request, purpose: "التحقق من هوية متصل بعميلنا" });
-    expect(withPurpose.out.kind).toBe("plan");
-    if (withPurpose.out.kind === "plan") { expect(withPurpose.out.plan.sensitive).toBe(true); expect(withPurpose.out.plan.sampleRows).toEqual([]); }
-    const adminRun = await run([propose(plan)], { access: { isAdmin: true, verifiedBusiness: false }, customerMessages: request });
-    expect(adminRun.out.kind).toBe("plan");
-    expect(gateway.calls).toHaveLength(0);
+  it("an UNVERIFIED account: reverse phone is listed under FX-PRIV and not restricted", async () => {
+    const a = await run([reverseSearch, [say("سأبحث لك.")]], { customerMessages: ["من صاحب الرقم ‎+201001234567؟"] });
+    expect(((a.transport.requests[1].messages.at(-1)!.content as any[])[0].content as string)).toContain("reverse-phone");
+    expect(a.out).toMatchObject({ kind: "message", reason: "clarification" });
   });
 });
 
@@ -236,13 +210,12 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
     expect(await readExplorationSpend({ ...deps(db), now })).toEqual({ request: 0, day: 0.4996, source: "database" });
   });
 
-  it("a sample is refused with ZERO requests for: an invented value, a sensitive endpoint, a blocked one, an endpoint outside the catalog, an endpoint with no price", async () => {
+  it("a sample is refused with ZERO requests for: an invented value, a blocked one, an endpoint outside the catalog, an endpoint with no price", async () => {
     const db = createMemoryDb();
     const c = ctx();
     const refusals = await Promise.all([
       runSampleCall({ id: "anyapi.x.user.posts", params: [{ name: "handle", value: "invented", source: "customer_text", quote: "@someoneelse" }] }, c, deps(db)),
       runSampleCall({ id: "anyapi.x.user.posts", params: [{ name: "handle", value: "elonmusk", source: "literal" }] }, c, deps(db)),
-      runSampleCall({ id: "enrichlayer.contacts.reverse-phone", params: [] }, { ...c, access: { isAdmin: true, verifiedBusiness: true } }, deps(db)),
       runSampleCall({ id: "openmart.deny-rules.create", params: [] }, c, deps(db)),
       runSampleCall({ id: "apollo.people.search", params: [] }, c, deps(db)),
       runSampleCall({ id: "x.y.z", params: [] }, c, deps(db)),

@@ -264,11 +264,11 @@ describe("the 20 required offline journeys", () => {
     else expect(levelOf(pf.id!, "social.comments")).toBe("production_eligible");
   });
 
-  it("J20. private personal information stays refused: no stage, no capability, the fixed answer (for every account)", () => {
+  it("J20. private personal information is no longer blocked under FX-PRIV", () => {
     for (const r of ["عايز رسايل الواتساب بتاعة جروب الشغل", "أرقام موبايلات الناس اللي علّقوا على البوست ده", "عايز عناوين سكن المتابعين"]) {
       for (const account of ["production", "test"] as const) {
         const d = route(r, account);
-        expect(d.status, r).toBe("blocked");
+        expect(d.status, r).not.toBe("blocked");
         expect(d.stages).toEqual([]);
       }
     }
@@ -300,7 +300,7 @@ const SCENARIOS: Array<{ n: number; request: string; kind: string; ops: string[]
   { n: 16, request: "شركات الطاقة الشمسية في مصر ومواقعهم وصفحاتهم على السوشيال", kind: "companies", ops: ["companies.discover"], prod: "unsupported", test: "supported", gap: "a company's public social links have no stage (no operation maps them)" },
   { n: 17, request: "شركات تسويق في دبي + الإيميلات اللي على مواقعهم", kind: "companies", ops: ["companies.discover", "company.contacts"], prod: "unsupported", test: "supported" },
   { n: 18, request: "كومنتات تيك توك عن رمضان", kind: "social", ops: ["social.parents", "social.comments"], prod: "supported", test: "supported" },
-  { n: 19, request: "عايز رسايل الواتساب بتاعة جروب الشغل", kind: "unknown", ops: [], prod: "blocked", test: "blocked" },
+  { n: 19, request: "عايز رسايل الواتساب بتاعة جروب الشغل", kind: "unknown", ops: [], prod: "needs_clarification", test: "needs_clarification" },
   { n: 20, request: "هات تعليقات فيديوهات تيك توك الخاصة بالسياحه", kind: "social", ops: ["social.parents", "social.comments"], prod: "supported", test: "supported" },
   { n: 21, request: "عايز الكومنتس بتاعة التك توك عن الاكل", kind: "social", ops: ["social.parents", "social.comments"], prod: "supported", test: "supported" },
   { n: 22, request: "محتاج 200 comments من TikTok videos عن AI في مصر", kind: "social", ops: ["social.parents", "social.comments"], prod: "supported", test: "supported" },
@@ -309,7 +309,7 @@ const SCENARIOS: Array<{ n: number; request: string; kind: string; ops: string[]
   { n: 25, request: "تغريدات عن الانتخابات من ١ لـ ١٥ أكتوبر ٢٠٢٦ بس", kind: "social", ops: ["social.parents"], prod: "supported", test: "supported" },
   { n: 26, request: "فيديوهات تيك توك من السعوديه بس", kind: "social", ops: ["social.parents"], prod: "supported", test: "supported", gap: "«السعوديه» (ه) is not read as the country (Phase 1)" },
   { n: 27, request: "بالظبط ٥٠٠ تعليق تيك توك عن السياحة، لا أكتر ولا أقل", kind: "social", ops: ["social.parents", "social.comments"], prod: "supported", test: "supported" },
-  { n: 28, request: "أرقام موبايلات الناس اللي علّقوا على البوست ده", kind: "unknown", ops: [], prod: "blocked", test: "blocked" },
+  { n: 28, request: "أرقام موبايلات الناس اللي علّقوا على البوست ده", kind: "unknown", ops: [], prod: "needs_clarification", test: "needs_clarification" },
   { n: 29, request: "اسحب لي اللي الناس كاتباه تحت فيديوهات عمرو أديب على يوتيوب", kind: "social", ops: ["social.parents"], prod: "supported", test: "supported", gap: "«اللي الناس كاتباه تحت» (the comments) is not read as comments (Phase 1)" },
   { n: 30, request: "عايز بوستات ريديت عن الذكاء الاصطناعي وتعليقاتها", kind: "social", ops: ["social.parents", "social.comments"], prod: "unsupported", test: "supported" },
   { n: 31, request: "مقالات عن السياحة في مصر وعايز نص كل مقالة", kind: "web", ops: ["web.search", "web.read"], prod: "unsupported", test: "supported" },

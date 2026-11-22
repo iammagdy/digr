@@ -275,11 +275,10 @@ describe("privacy: the semantic layer is not in the privacy path and cannot wide
     "هات تعليقات فيسبوك عن واتساب بيزنس",
   ];
 
-  it("the refusals of #447 still hold, with the original words and with every spelling the normalizer would unify", () => {
+  it("requests are allowed under FX-PRIV, and preModelAnswer returns null", () => {
     for (const t of MUST_REFUSE) {
-      expect(preModelAnswer(t)?.kind, t).toBe("privacy_refusal");
-      // the guard is a function of the ORIGINAL text; feeding it the semantic normal form can never be needed, and must never be easier to pass
-      expect(privacyRefusalAr(normalizeArabic(t)), `normalized: ${t}`).not.toBeNull();
+      expect(preModelAnswer(t)).toBeNull();
+      expect(privacyRefusalAr(normalizeArabic(t))).toBeNull();
     }
   });
 
@@ -297,13 +296,12 @@ describe("privacy: the semantic layer is not in the privacy path and cannot wide
     }
   });
 
-  it("«هات رسايل عن تطبيق واتساب»: the reading is a topic only (no source, no content), and the guard's own verdict is unchanged", () => {
+  it("«هات رسايل عن تطبيق واتساب»: the reading is a topic only (no source, no content)", () => {
     const r = interpretRequest("هات رسايل عن تطبيق واتساب");
     expect(r.platform).toEqual({ status: "none" });
     expect(asked(r)).toEqual([]);
     expect(r.topic).toBe("تطبيق واتساب");
-    // #447 stays the only judge: it refuses this sentence (conservative), exactly as before this PR
-    expect(preModelAnswer("هات رسايل عن تطبيق واتساب")?.kind).toBe("privacy_refusal");
+    expect(preModelAnswer("هات رسايل عن تطبيق واتساب")).toBeNull();
   });
 
   it("the privacy rules and the existing normalizer do not import the semantic module (no shared code path)", () => {

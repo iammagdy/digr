@@ -22,7 +22,7 @@ import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, re
  * ROUND 57 (13 Nov cosmetics conversation): two types that exist only while the customer HAS an open request. `open_request_question`: a question, a check or a condition about the plan on the card, answered from the plan's own facts with
  * nothing changed («البيانات دي جاية منين؟», «لو مش لاقي رقم سيبه فاضي»); `cancel_open_request`: the customer explicitly cancels the whole request (code cancels only when the words themselves say so, `isExplicitCancel`).
  */
-export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "privacy_refusal", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
+export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
 export type ChatType = (typeof CHAT_TYPES)[number];
 
 export type OpenState = "planning" | "needs_input" | "plan_ready";
@@ -97,7 +97,6 @@ export function briefPromptLines(soFar: ResearchBrief | null, withObjectives = f
     "- request: طلب البحث الكامل في جملة أو جملتين بالعربية يجمع كل ما طلبه العميل في هذه المحادثة لهذا الطلب (والملخص السابق إن وُجد)، مع تطبيق تصحيحاته: القيمة الجديدة تحل محل القديمة، وكل ما لم يغيّره يبقى كما هو.",
     "  اكتب المنصة باسمها: تيك توك أو إكس أو إنستجرام أو فيسبوك أو يوتيوب. اكتب صراحة ما يُجمع: فيديوهات، منشورات، تغريدات، تعليقات، ردود. اكتب الموضوع بعد كلمة «عن». اكتب الفترة والبلد واللغة بكلمات العميل نفسها (مثل «آخر شهر»، «في مصر»).",
     "  لا تكتب في request أي رقم لم يكتبه العميل، ولا تضف منصة أو نوع بيانات أو فترة أو عددًا لم يطلبه، ولا تحذف شيئًا طلبه.",
-    "  لا تضع في request أبدًا بيانات خاصة لأفراد عاديين (أرقام هواتفهم أو عناوين سكنهم أو بريدهم الشخصي، الرسائل والمحادثات الخاصة، الأرقام القومية والهويات). إن طلبها العميل مع شيء عام فاكتب في request الجزء العام فقط، واشرح في reply أننا لا نجمع الجزء الخاص.",
     "- platforms: من tiktok وx وinstagram وfacebook وyoutube فقط، وما ذكره العميل صراحة (أو وافق عليه بعد سؤالك). لأي مصدر آخر (خرائط جوجل، متجر، متجر تطبيقات، موقع تقييمات، أخبار، ريديت، لينكدإن…) اترك platforms فارغة واكتب اسم المصدر في request كما قاله العميل. content: من هذه القيم فقط ولا غيرها: posts وvideos وcomments وreplies وtweets وaccounts وcompanies وpeople وplaces وreviews وarticles (أخبار ومقالات وصفحات ويب عامة) وcontacts (إيميل أو تليفون العمل الرسمي المنشور للشركات). count: العدد الذي كتبه العميل وإلا null. topic وperiod وcountry وlanguage: كما قالها العميل وإلا نصًا فارغًا.",
     "- source: الحساب أو الصفحة أو القناة التي يجب أن يأتي منها المحتوى، كما كتبها العميل بالضبط (الاسم، أو @اسم_المستخدم أو الرابط إن كتبه)، وإلا نصًا فارغًا. «تغريدات وزارة الصحة السعودية» أو «من الصفحة الرسمية لوزارة الصحة السعودية» أو «على حساب الوزارة» كلها source = «وزارة الصحة السعودية» وليست جزءًا من الموضوع. لا تخترع اسم مستخدم أو رابطًا لم يكتبه العميل أبدًا.",
     "  إن كان هناك source فاكتب في request بعد نوع البيانات مباشرة «من حساب <source>» بنفس كلمات source.",
@@ -166,20 +165,15 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- service_question: سؤال عن ديجر أو خدماتها أو أسعارها أو نقاطها أو رصيده أو طريقة العمل أو ما تقدر عليه، ومنه «يعني إيه ديجر الذكي؟».",
     "- methodology_request: يطلب منهجية (جمع البيانات أو منهجية بحث).",
     "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا عن موضوع آخر يختلف عن الطلب المفتوح (رسالة عن نفس الطلب أو خطته ليست data_request). ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
-    "- privacy_refusal: طلب بيانات شخصية خاصة لأفراد بعينهم (مثل: أرقام حساباتهم البنكية الشخصية أو أرصدتهم، أرقامهم القومية، كلمات المرور، ملفاتهم الطبية أو الخاصة، عناوين سكنهم الخاصة، هواتفهم أو بريدهم الشخصي، أو رسائلهم الخاصة). اكتب في reply رفضًا مهذبًا باللغة العربية يوضّح أن الخدمة لا تجمع البيانات الشخصية الخاصة للأفراد، واقترح بديلًا عامًا متاحًا ومفيدًا للبحث (مثل قائمة فروع البنوك وأرقام خدمة العملاء أو جهات اتصال العمل الرسمية للشركات)، بدون سؤال ولا خطة. أما طلب إيميلات أو هواتف العمل لمديري الشركات، أو قائمة فروع البنوك وأرقام خدمة عملائها العامة، فهو data_request وليس privacy_refusal.",
     "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
     "- open_request_question: سؤال أو استفسار أو تأكيد عن الطلب المفتوح وخطته، أو شرط موجود فيها بالفعل (ولا يصح إلا مع وجود طلب مفتوح). لا يغيّر شيئًا.",
     "- cancel_open_request: يطلب صراحةً إلغاء الطلب المفتوح كله (ولا يصح إلا مع وجود طلب مفتوح). أما حذف جزء منه فهو edit_of_open_request.",
     "- other: أي شيء آخر (سؤال عام، طلب مساعدة خارج الخدمة، نكتة).",
     "عند الشك بين data_request وأي نوع آخر اختر data_request؛ فرفض طلب حقيقي أسوأ من تجهيز خطة لتحية.",
-    "البحث عن موضوع حساس مسموح، والممنوع فقط جمع البيانات الخاصة لأفراد عاديين:",
-    "- آراء الناس العامة أو منشوراتهم أو الأخبار والمقالات عن أي موضوع عام، حتى لو كان حساسًا (تسريب البيانات أو أرقام التليفونات، الاحتيال، الخصوصية، الاختراق، الأمراض، الجرائم، السياسة، الدين)، هي data_request عادي: اجمع ما يقوله الناس عن الموضوع، ولا ترفضه ولا تعتذر عنه ولا تقل إن ديجر لا تجمع أرقامًا.",
-    "- الممنوع: أن يطلب العميل البيانات الخاصة نفسها لأفراد بعينهم (أرقام هواتفهم، عناوين سكنهم، بريدهم الشخصي، هوياتهم وأرقامهم القومية، رسائلهم الخاصة). النظام يرفض هذه بنفسه قبل أن تصلك.",
-    "- مثال: «الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request (آراء عامة عن موضوع). «هات أرقام تليفونات الناس اللي علقوا» = بيانات خاصة.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
     "count_text: مع count فقط: الكلمات نفسها من رسالة العميل التي كتب بها العدد (مثل «شركتين» أو «اتنين» أو «عشر»)، كما هي في رسالته حرفيًا؛ وإلا null.",
-    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وprivacy_refusal وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
+    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
     "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
     "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
     "",
@@ -411,7 +405,7 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   // ROUND 57: while the customer HAS an open request, only a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) is overruled: the keyword reading of a follow-up
   // («أنا عايز أعرف البيانات دي جاية منين») made it a new mission of that sentence alone, which cancelled the plan the customer was asking about (13 Nov).
   const standalone = !ctx.open || (type !== "open_request_question" && type !== "cancel_open_request" && namesCollectibleData(ctx.message) && !refersToOpenRequest(ctx.message) && planQuestionKind(ctx.message) === null);
-  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && type !== "privacy_refusal" && classifyMessage(ctx.message) === "data_request";
+  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
   if (overruled) type = "data_request";
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
   const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null), ...(ctx.open?.state === "needs_input" ? numbersIn(String(ctx.open.questionAr ?? "")) : [])], facts: ctx.open?.facts ?? null };

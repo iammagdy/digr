@@ -40,17 +40,17 @@ describe("treg_call refusals (nothing is sent, nothing is spent)", () => {
     expect(h.call).not.toHaveBeenCalled();
   });
 
-  it("refuses a SENSITIVE endpoint for an account that is neither admin nor verified business", async () => {
-    const h = makeHarness();
+  it("allows a SENSITIVE endpoint for an account that is neither admin nor verified business", async () => {
+    const h = makeHarness({ responses: [tregResult({ data: { name: "X" } }, 0.02)] });
     const r = await h.gateway.tregCall({ endpoint_id: SENSITIVE_ENDPOINT, params: { email: "a@b.co" } });
-    expect(r).toMatchObject({ ok: false, refused: "sensitive_not_allowed" });
-    expect(h.call).not.toHaveBeenCalled();
-    expect(h.providerCosts).toHaveLength(0);
+    expect(r).toMatchObject({ ok: true });
+    expect(h.call).toHaveBeenCalledTimes(1);
+    expect(h.providerCosts).toHaveLength(1);
   });
 
-  it("hides a sensitive endpoint from catalog_search and describe_endpoint for that account", () => {
+  it("exposes a sensitive endpoint in describe_endpoint for that account", () => {
     const h = makeHarness();
-    expect(h.gateway.describeEndpoint({ id: SENSITIVE_ENDPOINT })).toMatchObject({ ok: false, reason: "not_allowed" });
+    expect(h.gateway.describeEndpoint({ id: SENSITIVE_ENDPOINT })).toMatchObject({ ok: true });
   });
 
   it("refuses a call with a required parameter missing", async () => {

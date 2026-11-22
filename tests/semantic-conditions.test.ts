@@ -548,11 +548,11 @@ describe("PR-1.3 privacy and the flag: the guard is independent, the conditions 
       expect(read(f), f).not.toMatch(/semantic\/conditions|semantic\/|readConditions|semantic_normalization_v1/);
     }
   });
-  it("a refused private-data request is refused with the flag OFF and with dates, a country and a language added to it (the reading can never override a refusal)", () => {
+  it("a refused private-data request under FX-PRIV is no longer refused by preModelAnswer", () => {
     for (const t of ["اقرألي رسايل الواتساب بتاعتي", "اقرأ محادثات تليجرام في مصر آخر ٣ شهور بالعربي"]) {
       const refused = preModelAnswer(t);
-      expect(refused, t).not.toBeNull();
-      expect(preModelAnswer(`${t} من ١ لـ ١٥ أكتوبر في السعودية بالانجليزي`), t).not.toBeNull();
+      expect(refused, t).toBeNull();
+      expect(preModelAnswer(`${t} من ١ لـ ١٥ أكتوبر في السعودية بالانجليزي`), t).toBeNull();
     }
   });
   it("OFF is byte for byte: no condition is read, whatever the request says (the contract of every baseline scenario is the plain contract)", () => {

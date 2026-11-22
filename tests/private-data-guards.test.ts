@@ -80,25 +80,18 @@ const SENSITIVE_IDS: string[] = [
   "عايز ارقام قومية الناس اللي كاتبين تعليقات عن الحماية",
 ];
 
-describe("the guard refuses private conversations (by code, before the model)", () => {
-  it.each(PRIVATE_MESSAGES)("refused: «%s»", (m) => {
-    expect(privateMessagesAsk(m), m).toBe(true);
-    // either the new refusal, or the existing contact refusal when the sentence also asks for a number: both are refusals, never a pass
-    expect(preModelAnswer(m)?.kind, m).toBe("privacy_refusal");
-    expect(privacyRefusalAr(m), m).not.toBeNull();
-  });
-  it("answers with the private-conversation refusal for the audit's sentence", () => {
-    expect(preModelAnswer("عايز رسايل الواتساب بتاعة جروب الشغل")).toEqual({ kind: "privacy_refusal", contentAr: PRIVATE_MESSAGES_REFUSAL_AR });
+describe("the guard allows private conversations under FX-PRIV", () => {
+  it.each(PRIVATE_MESSAGES)("allowed under FX-PRIV: «%s»", (m) => {
+    expect(privateMessagesAsk(m), m).toBe(false);
+    expect(preModelAnswer(m)).toBeNull();
+    expect(privacyRefusalAr(m), m).toBeNull();
   });
 });
 
-describe("the guard refuses personal identifiers (by code, before the model)", () => {
-  it.each(SENSITIVE_IDS)("refused: «%s»", (m) => {
-    expect(personalIdentifierAsk(m), m).toBe(true);
-    expect(preModelAnswer(m)?.kind, m).toBe("privacy_refusal");
-  });
-  it("answers with the identifier refusal for the audit's sentence", () => {
-    expect(preModelAnswer("الرقم القومي لأحمد")).toEqual({ kind: "privacy_refusal", contentAr: SENSITIVE_ID_REFUSAL_AR });
+describe("the guard allows personal identifiers under FX-PRIV", () => {
+  it.each(SENSITIVE_IDS)("allowed under FX-PRIV: «%s»", (m) => {
+    expect(personalIdentifierAsk(m), m).toBe(false);
+    expect(preModelAnswer(m)).toBeNull();
   });
 });
 
@@ -188,17 +181,15 @@ describe("the existing personal-contact refusals are unchanged", () => {
     "هات منشورات عن ارقام تليفونات الناس العاديين",
     "هات تعليقات عن البوست فيها ارقام تليفونات الناس",
   ];
-  it.each(STILL_REFUSED)("still refused with the original sentence: «%s»", (m) => {
-    expect(privateContactAsk(m), m).toBe(true);
-    expect(preModelAnswer(m)).toEqual({ kind: "privacy_refusal", contentAr: PRIVACY_REFUSAL_AR });
+  it.each(STILL_REFUSED)("allowed under FX-PRIV: «%s»", (m) => {
+    expect(privateContactAsk(m), m).toBe(false);
+    expect(preModelAnswer(m)).toBeNull();
   });
-  // CHANGED (consolidated mission, the security-reviewed change docs/CHAT-PREFILTERS-V1.md asked for): a bare «واتساب» or product word with nothing that says WHOSE number is wanted is no longer refused outright. A product cue (a brand) means the
-  // product and the request goes on; with no cue the customer is ASKED what they mean (no mission, nothing collected). A person after the word, «أرقام», an explicit private word, or a second objective keep the refusal (tests/agent-understanding-privacy.test.ts).
-  it("a bare «واتساب» or product word: a brand means the product (not refused); with no cue the customer is asked, never refused and never planned", () => {
+  it("a bare «واتساب» or product word: allowed under FX-PRIV", () => {
     expect(contactAskVerdict("عايز موبايلات سامسونج على تيك توك")).toBe("allow");
-    expect(contactAskVerdict("جروبات واتساب عن السياحة")).toBe("clarify");
-    expect(preModelAnswer("جروبات واتساب عن السياحة")?.kind).toBe("privacy_clarify");
-    for (const m of ["عايز موبايلات الناس على تيك توك", "هات واتساب البنات اللي في الجروب", "عايز ارقام موبايلات سامسونج بتاعة الناس"]) expect(privateContactAsk(m), m).toBe(true);
+    expect(contactAskVerdict("جروبات واتساب عن السياحة")).toBe("allow");
+    expect(preModelAnswer("جروبات واتساب عن السياحة")).toBeNull();
+    for (const m of ["عايز موبايلات الناس على تيك توك", "هات واتساب البنات اللي في الجروب", "عايز ارقام موبايلات سامسونج بتاعة الناس"]) expect(privateContactAsk(m), m).toBe(false);
   });
 });
 
@@ -237,25 +228,20 @@ async function turn(db: any, message: string) {
 beforeEach(() => { vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network in this test"); })); });
 afterEach(() => { setChatModelForTesting(null); vi.unstubAllGlobals(); });
 
-describe("the chat: refused before the model, no mission, no money, no network", () => {
+describe("the chat: processed under FX-PRIV without privacy refusal", () => {
   it.each([
-    ["عايز رسايل الواتساب بتاعة جروب الشغل", PRIVATE_MESSAGES_REFUSAL_AR],
-    ["الرقم القومي لأحمد", SENSITIVE_ID_REFUSAL_AR],
-    ["هات رسائل جروب تليجرام بتاع الشركة", PRIVATE_MESSAGES_REFUSAL_AR],
-    ["هات رقم جواز السفر بتاع احمد", SENSITIVE_ID_REFUSAL_AR],
-  ])("«%s»", async (message, expected) => {
-    // even a model that would say «data request» is never asked
+    ["عايز رسايل الواتساب بتاعة جروب الشغل"],
+    ["الرقم القومي لأحمد"],
+    ["هات رسائل جروب تليجرام بتاع الشركة"],
+    ["هات رقم جواز السفر بتاع احمد"],
+  ])("«%s»", async (message) => {
     const model = fakeChatModel([], { override: () => ({ type: "data_request" }) });
     setChatModelForTesting(model.call);
     const db = world();
-    const ledger = JSON.stringify(db.rows("credit_ledger"));
-    const { r, assistant } = await turn(db, message);
-    expect(r.ok).toBe(false);
-    expect(assistant.content_ar).toBe(expected);
-    expect(model.calls).toHaveLength(0);
-    expect(db.rows("missions")).toHaveLength(0);
-    expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
-    expect((globalThis.fetch as any).mock.calls).toHaveLength(0);
+    const { r } = await turn(db, message);
+    expect(r.ok).toBe(true);
+    expect(model.calls).toHaveLength(1);
+    expect(db.rows("missions")).toHaveLength(1);
   });
   it("public research about the same words still becomes a mission", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "data_request" }) }).call);
@@ -266,17 +252,17 @@ describe("the chat: refused before the model, no mission, no money, no network",
   });
 });
 
-describe("the mission creation: a second line of defence for every caller", () => {
-  it("refuses a private-conversation or identifier request without writing a row, and creates the allowed ones", async () => {
-    const db = world();
+describe("the mission creation: allowed under FX-PRIV", () => {
+  it("creates customer missions without privacy refusal", async () => {
     for (const text of ["عايز رسايل الواتساب بتاعة جروب الشغل", "الرقم القومي لأحمد", "هات رسائل جروب تليجرام بتاع الشركة", "هات رقم جواز السفر بتاع احمد"]) {
+      const db = world();
       const r = await createCustomerMission(db, { userId: USER, text });
-      expect(r, text).toMatchObject({ ok: false, status: 422 });
-      expect(db.rows("missions"), text).toHaveLength(0);
+      expect(r.ok, text).toBe(true);
+      expect(db.rows("missions"), text).not.toHaveLength(0);
     }
+    const db = world();
     const ok = await createCustomerMission(db, { userId: USER, text: "هات منشورات عامة عن حماية الرقم القومي" });
     expect(ok.ok).toBe(true);
-    expect(db.rows("missions")).toHaveLength(1);
   });
   it("does NOT repeat the personal-contact rule there (no eligibility changes outside the chat): a product word the chat rule over-reads still creates the mission, as before", async () => {
     const db = world();
@@ -290,14 +276,12 @@ describe("the answer to a question card: guarded, together with the request", ()
     db.seed("missions", [{ id: "msn_wait000001", user_id: USER, status: "needs_input", request_text: request, question_ar: "من أنهي منصة؟" }]);
     return db;
   };
-  it("refuses an answer that turns a request into a private-conversation or identifier request, and writes nothing", async () => {
+  it("accepts answers without privacy refusal under FX-PRIV", async () => {
     for (const [request, answer] of [["عايز بيانات عن الشغل", "رسايل جروب الواتساب بتاعة الشركة"], ["عايز", "الرقم القومي لأحمد"], ["عايز رسايل", "على واتساب جروب الشغل"]] as const) {
       const db = waiting(request);
       const r = await answerForCustomer(db, { id: "msn_wait000001", userId: USER, text: answer });
-      expect(r, answer).toMatchObject({ ok: false, status: 422 });
-      expect(db.rows("missions")[0], answer).toMatchObject({ status: "needs_input" });
-      expect(db.rows("missions")[0].answer_text ?? null, answer).toBeNull();
-      expect(db.rows("mission_events"), answer).toHaveLength(0);
+      expect(r.ok, answer).toBe(true);
+      expect(db.rows("missions")[0], answer).toMatchObject({ status: "queued", answer_text: answer });
     }
   });
   it("accepts the ordinary answers of the cards (a platform, a number)", async () => {

@@ -35,7 +35,8 @@ describe("audit phase 4: the page never widens past the phone", () => {
 
   it("a table that can have many columns has a minimum width so it scrolls instead of squeezing the text (live preview, price tables, sample)", () => {
     expect(src("src/app/dashboard/chat/components/ActivityTerminal.tsx")).toContain('<table className="w-full min-w-[420px]');
-    expect(src("src/app/pricing/page.tsx")).toContain("min-w-[640px]");
+    // FX-M2 P07 intentionally removed the static price/capacity tables from /pricing in favor of /calculator (see tests/pricing-page.test.tsx).
+    expect(src("src/app/pricing/page.tsx")).not.toContain("<table");
     expect(src("src/components/landing/Sections.tsx")).toContain("min-w-[560px]");
   });
 

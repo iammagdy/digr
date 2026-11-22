@@ -4,7 +4,7 @@ import { firstSentenceAr, validateAndPricePlan, type PricedPlan, type SavedEndpo
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { namesRoleAr, neutralPeopleTitleAr, roleDefOf, roleOfNoun, titleRoleVerdict, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
-import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type FieldClass, type SourceField } from "../../src/lib/agentMission/fields";
 import { requestNamesSector } from "../../src/lib/agentMission/entities";
 import { CONTRACT_ONLY_CLASSES } from "../../src/lib/agentMission/taskContracts";
@@ -680,7 +680,7 @@ export async function recordQuestionOnce(opts: {
 }
 
 function isStageAllowed(endpointId: string, catalog: TregCatalog, access: AccountAccess): boolean {
-  return isSellable(endpointId, catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, access).allowed && !isPrivateCapabilityString(catalog.byId.get(endpointId)?.capability);
+  return isSellable(endpointId, catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, access).allowed;
 }
 
 export async function recoverCompanyPeopleFromSavedEvidence(params: {
@@ -813,6 +813,10 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       Number(isObject(rootCandidateFromStages) ? rootCandidateFromStages.expected_rows : 0) ||
       Math.max(2, coCandidate.rows ?? 2),
     );
+    const existingTextCols = ["name", "industry", "title", "description", "category", "about"].filter((k) =>
+      coColumns.some((c) => c.key === k) && mappedCo.some((r) => isObject(r) && typeof (r as Record<string, unknown>)[k] === "string" && String((r as Record<string, unknown>)[k]).trim() !== "")
+    );
+    const coTextCols = existingTextCols.length > 0 ? existingTextCols.slice(0, 3) : ["name"];
     const rootStage: Record<string, unknown> = {
       key: rootStageKey,
       title_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة",
@@ -823,7 +827,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
       columns: coColumns,
       measured_by: [coCandidate.callId],
       yield_from: coOutId,
-      ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: ["name", "industry"], min_own_words: 0, review: true } } : {}),
+      ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: coTextCols, min_own_words: 0, review: true, entity: true } } : {}),
     };
     const evMap = await loadEvidenceMap([rootStage]);
     const unservedReason = isCompaniesOnlyChoice(mission.answer_text)
@@ -1164,6 +1168,10 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
         const coQuery = ["query", "q", "keyword", "search", "search_query"].map((k) => coParams[k]).find((v) => typeof v === "string" && v.trim() !== "") as string | undefined;
         const needsRelFallback = Boolean(coQuery) && !requestNamesSector(`${requestText} ${mission.answer_text ?? ""}`);
         const relTerms = (understoodCompanies?.search_terms?.length ? understoodCompanies.search_terms : [understoodCompanies?.topic, coQuery].filter((v): v is string => typeof v === "string" && v.trim() !== "")).slice(0, 8);
+        const existingTextCols = ["name", "industry", "title", "description", "category", "about"].filter((k) =>
+          coColumns.some((c) => c.key === k) && mappedCo.some((r) => isObject(r) && typeof (r as Record<string, unknown>)[k] === "string" && String((r as Record<string, unknown>)[k]).trim() !== "")
+        );
+        const coTextCols = existingTextCols.length > 0 ? existingTextCols.slice(0, 3) : ["name"];
         rootOptions.push({
           key: rootStageKey,
           title_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة",
@@ -1174,7 +1182,7 @@ export async function recoverCompanyPeopleFromSavedEvidence(params: {
           columns: coColumns,
           measured_by: [coCandidate.callId],
           yield_from: coOutId,
-          ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: ["name", "industry"], min_own_words: 0, review: true } } : {}),
+          ...(needsRelFallback && relTerms.length > 0 ? { relevance: { subject_ar: understoodCompanies?.title_ar?.trim() || "الشركات المطلوبة", terms: relTerms, text_columns: coTextCols, min_own_words: 0, review: true, entity: true } } : {}),
         });
       }
     }

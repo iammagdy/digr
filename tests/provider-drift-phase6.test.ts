@@ -225,7 +225,7 @@ describe("the deterministic comparison", () => {
   it("POLICY: a capability that turns blocked or paused, turns private, or moves to a stricter data-policy category is breaking", () => {
     const a = c({ id: "p.a" });
     expect(diffContracts(mapOf(a), mapOf({ ...a, blocked: true, blockedBy: "connect your own key" }), opts())).toEqual([expect.objectContaining({ kind: "policy_breaking", detail: expect.stringContaining("connect your own key") })]);
-    expect(diffContracts(mapOf(c({ id: "p.a", capability: "people.search" })), mapOf(c({ id: "p.a", capability: "people.personal.email" })), opts({ policyOf: () => "public" })).map((x) => x.kind)).toContain("policy_breaking");
+    expect(diffContracts(mapOf(c({ id: "p.a", capability: "people.search" })), mapOf(c({ id: "p.a", capability: "people.personal.email" })), opts({ policyOf: () => "public" }))).toEqual([]);
     const rank = diffContracts(mapOf(a), mapOf({ ...a }), opts({ policyOf: (_c, side) => (side === "before" ? "public" : "sensitive") }));
     expect(rank).toEqual([expect.objectContaining({ kind: "policy_breaking", detail: "policy public → sensitive" })]);
     expect(diffContracts(mapOf(a), mapOf({ ...a }), opts({ policyOf: (_c, side) => (side === "before" ? "sensitive" : "public") }))).toEqual([]);

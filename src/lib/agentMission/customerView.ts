@@ -576,6 +576,13 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     if (denom !== null && Number.isFinite(denom) && (phase !== "partial" || (realDelivered !== null && nums.includes(realDelivered)))) {
       allowed.add(Math.round(denom));
     }
+    if (phase === "unserved") {
+      const claimsDelivered = /(?:تم تسليم|سُلّمت?|تسليم)\s+([0-9٠-٩]+)/u.exec(normalizeDigits(text));
+      if (claimsDelivered && Number(claimsDelivered[1]) > 0 && (realDelivered === 0 || realDelivered === null)) return false;
+      const claimsCharged = /(?:خصم|بخصم|تم خصم|خصمنا)\s+([0-9٠-٩]+)/u.exec(normalizeDigits(text));
+      if (claimsCharged && Number(claimsCharged[1]) > 0 && (realCharged === 0 || realCharged === null)) return false;
+      return true;
+    }
     return nums.every((n) => Number.isFinite(n) && allowed.has(n));
   };
   const storedSummary = rawSummary && summaryCheck
