@@ -243,7 +243,11 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
             };
           }
           // 3rd hits HTTP 500 failure
-          return { ok: false, call_id, failed: true, http_status: 503, message: "server error" };
+          if (callCount === 3) {
+            return { ok: false, call_id, failed: true, http_status: 503, message: "server error" };
+          }
+          // 4th hits daily_cap / budget
+          return { ok: false, call_id, refused: "daily_cap", message: "daily cap reached" };
         },
       };
 
@@ -261,7 +265,7 @@ describe("FX-03 Workbook Honesty (N5, N6, N7)", () => {
       });
 
       expect(out.filled.email).toBe(2);
-      expect(out.stopped).toBe("failed");
+      expect(out.stopped).toBe("daily_cap");
 
       const rows = items.acceptedRows("people");
       expect(rows[0].email).toBe("person1@example.com");

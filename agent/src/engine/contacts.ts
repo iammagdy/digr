@@ -147,7 +147,20 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
   const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
   // A PEOPLE STEP THE RUN NEVER REACHED still writes its attempts file, with the reason (QA #575 FAIL 3: a stop in the company stage left no file)
   const notReached = async (keys: ReadonlyArray<string>, stop: ContactStop): Promise<void> => {
-    for (const step of steps.filter((x) => keys.includes(x.stage_key))) await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+    for (const step of steps.filter((x) => keys.includes(x.stage_key))) {
+      await writeAttempts(deps, step, { outcomes: new Map(), people: items.acceptedRows(step.stage_key).length, reached: 0, stopped: stop });
+      const stageRows = items.acceptedRows(step.stage_key);
+      const markOps: Array<{ t: "cells"; stage: string; id: string; cells: Record<string, string> }> = [];
+      for (const r of stageRows) {
+        if (String(r[step.column_key] ?? "").trim() === "") {
+          markOps.push({ t: "cells", stage: step.stage_key, id: String(r.id), cells: { [step.column_key]: B2B_NOT_SEARCHED_AR } });
+        }
+      }
+      if (markOps.length > 0) {
+        await items.commit(markOps);
+        await items.mirror(step.stage_key);
+      }
+    }
   };
   for (const stageKey of [...new Set(companySteps.map((x) => x.stage_key))]) {
     const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out);
@@ -175,7 +188,24 @@ async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutc
       for (const runner of runners) await runner.finish(stopped);
       out.spentUsd += deps.budget.spentUsd() - groupStart;
     }
-    if (stopped) { out.stopped = stopped; await notReached(stageKeys.slice(i + 1), stopped); break; }
+    if (stopped) {
+      out.stopped = stopped;
+      const stageRows = items.acceptedRows(stageKey);
+      const markOps: Array<{ t: "cells"; stage: string; id: string; cells: Record<string, string> }> = [];
+      for (const step of steps.filter((x) => x.stage_key === stageKey)) {
+        for (const r of stageRows) {
+          if (String(r[step.column_key] ?? "").trim() === "") {
+            markOps.push({ t: "cells", stage: stageKey, id: String(r.id), cells: { [step.column_key]: B2B_NOT_SEARCHED_AR } });
+          }
+        }
+      }
+      if (markOps.length > 0) {
+        await items.commit(markOps);
+        await items.mirror(stageKey);
+      }
+      await notReached(stageKeys.slice(i + 1), stopped);
+      break;
+    }
   }
   return out;
 }
@@ -309,7 +339,13 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             // STAGE 3 PART B: «غير متوفر» only when every lister of the chain answered with nothing, else «لم يكتمل البحث»
             cells[emailStep.column_key] = deps.attempts.cellFor(stageKey, id, emailStep.column_key, emailStep.finders.map((f) => f.id));
             if (cells[emailStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1;
-          } else if (asked || !domain || emailStep.finders.length === 0) { cells[emailStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+          } else if (asked || !domain || emailStep.finders.length === 0) {
+            const unavailable = !stopped && (asked || !domain || emailStep.finders.length === 0);
+            cells[emailStep.column_key] = unavailable ? NOT_AVAILABLE_AR : B2B_NOT_SEARCHED_AR;
+            if (unavailable) out.companies.notAvailable += 1;
+          } else {
+            cells[emailStep.column_key] = B2B_NOT_SEARCHED_AR;
+          }
         }
       }
       if (phoneStep && !stopped) {
@@ -351,7 +387,9 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
           else if (deps.attempts) {
             // STAGE 3 PART B: the same rule over the map searches; a step stopped here leaves the cell to the pass after the steps
             if (!stopped) { cells[phoneStep.column_key] = deps.attempts.cellFor(stageKey, id, phoneStep.column_key, helpers.map((h) => h.id)); if (cells[phoneStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1; }
+            else { cells[phoneStep.column_key] = B2B_NOT_SEARCHED_AR; }
           } else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+          else { cells[phoneStep.column_key] = B2B_NOT_SEARCHED_AR; }
         }
       }
       if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: stageKey, id, cells });
@@ -359,6 +397,18 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
       if (stopped) break;
     }
   } finally {
+    if (stopped) {
+      const companyRows = items.acceptedRows(stageKey);
+      const markOps: Array<{ t: "cells"; stage: string; id: string; cells: Record<string, string> }> = [];
+      for (const step of steps) {
+        for (const r of companyRows) {
+          if (String(r[step.column_key] ?? "").trim() === "") {
+            markOps.push({ t: "cells", stage: stageKey, id: String(r.id), cells: { [step.column_key]: B2B_NOT_SEARCHED_AR } });
+          }
+        }
+      }
+      if (markOps.length > 0) await items.commit(markOps);
+    }
     await flush();
     await items.mirror(stageKey);
     out.spentUsd += budget.spentUsd() - groupStart;
@@ -682,13 +732,14 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
         } else {
           const stageKey = step.stage_key;
           const id = String(row.id);
-          const unavailable = answeredEmpty && !unfinished && !stopRun && (step.company_phone ?? []).length === 0 &&
-            (!deps.attempts || deps.attempts.cellFor(stageKey, id, step.column_key, resolutionIds) === NOT_AVAILABLE_AR);
-          if (unavailable) {
-            if (hadMarker && String(row[step.column_key]).trim() !== NOT_AVAILABLE_AR) pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
-            pending.push({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: NOT_AVAILABLE_AR } });
-          } else if (hadMarker) {
-            pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+          if (step.finders.length === 0 && legacyCompanyLookup && !stopRun) {
+            if (hadMarker) pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+          } else {
+            const unavailable = answeredEmpty && !unfinished && !stopRun && (step.company_phone ?? []).length === 0 &&
+              (!deps.attempts || deps.attempts.cellFor(stageKey, id, step.column_key, resolutionIds) === NOT_AVAILABLE_AR);
+            const marker = unavailable ? NOT_AVAILABLE_AR : B2B_NOT_SEARCHED_AR;
+            if (hadMarker && String(row[step.column_key]).trim() !== marker) pending.push({ t: "clear", stage: stageKey, id, keys: [step.column_key] });
+            if (String(row[step.column_key] ?? "").trim() !== marker) pending.push({ t: "cells", stage: stageKey, id, cells: { [step.column_key]: marker } });
           }
         }
         if (stopRun) stoppedBy = stopRun;
