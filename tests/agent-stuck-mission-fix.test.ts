@@ -287,6 +287,92 @@ describe("the real peak memory of every run is recorded (an internal event); the
     expect(recycle).toHaveBeenCalledTimes(1);
     expect(store.missions.get("msn_w")).toMatchObject({ status: "queued", worker_id: null }); // still queued: nothing was lost
   });
+
+  it("FX-08 part 2 (Fix 1.1): an idle worker over admit limit recycles after recycleAfterMs (<= 3 min) once it has completed >=1 mission, ignoring recycleMinUptimeMs; approved mission is then claimed", async () => {
+    let clock = Date.parse("2026-10-28T10:00:00Z");
+    const m1 = newMission({ id: "msn_1", user_id: U, status: "queued" });
+    const m2 = newMission({ id: "msn_2", user_id: U, status: "approved" });
+    const store = createMemoryStore([m1]);
+    const recycle = vi.fn();
+    let currentMem = 200; // starts normal
+    const worker = createWorker({
+      store,
+      workerId: "w1",
+      version: "t",
+      modelLabel: () => "m",
+      readMemory: () => reading(currentMem),
+      onRecycle: recycle,
+      now: () => new Date(clock),
+      runMission: async (m) => {
+        // mission finishes and leaves heap high
+        currentMem = AGENT_MEMORY_ADMIT_LIMIT_MB + 30; // 330 MB >= 300 MB
+      },
+    });
+    // Worker runs and completes mission 1
+    expect(await worker.tick()).toBe(1);
+    await worker.idle();
+    expect(worker.activeCount()).toBe(0);
+
+    // Now memory is high (330 MB), customer approves mission 2
+    store.missions.set("msn_2", m2);
+    // Worker ticks: mission 2 is blocked by high memory
+    expect(await worker.tick()).toBe(0);
+    expect(recycle).not.toHaveBeenCalled();
+
+    // Advance clock by recycleAfterMs + 5s (2 min 5s << 15 min uptime)
+    clock += AGENT_MEMORY_RECYCLE_AFTER_MS + 5_000;
+    await worker.tick();
+    // Because it completed >= 1 mission, it recycles without waiting 15 min!
+    expect(recycle).toHaveBeenCalledTimes(1);
+
+    // Fresh worker restarts with clean heap and immediately claims approved mission 2
+    const freshWorker = createWorker({
+      store,
+      workerId: "w2",
+      version: "t",
+      modelLabel: () => "m",
+      readMemory: () => reading(180),
+      now: () => new Date(clock + 1_000),
+      runMission: async () => undefined,
+    });
+    expect(await freshWorker.tick()).toBe(1);
+    expect(store.missions.get("msn_2")!.worker_id).toBe("w2");
+  });
+
+  it("FX-08 part 2 counter-case: no recycle while a mission is still active, even if memory is high and uptime/recycleAfterMs elapsed", async () => {
+    let clock = Date.parse("2026-10-28T10:00:00Z");
+    const m1 = newMission({ id: "msn_active", user_id: U, status: "queued" });
+    const store = createMemoryStore([m1]);
+    const recycle = vi.fn();
+    let finishMission: () => void;
+    const runningPromise = new Promise<void>((resolve) => { finishMission = resolve; });
+    let currentMem = 200; // starts normal so mission is admitted
+    const worker = createWorker({
+      store,
+      workerId: "w1",
+      version: "t",
+      modelLabel: () => "m",
+      readMemory: () => reading(currentMem),
+      onRecycle: recycle,
+      now: () => new Date(clock),
+      runMission: async () => {
+        currentMem = AGENT_MEMORY_ADMIT_LIMIT_MB + 50; // rises while active
+        return runningPromise;
+      },
+    });
+    // Starts mission
+    expect(await worker.tick()).toBe(1);
+    expect(worker.activeCount()).toBe(1);
+
+    // Advance clock past recycleAfterMs and recycleMinUptimeMs
+    clock += AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS + AGENT_MEMORY_RECYCLE_AFTER_MS + 10_000;
+    await worker.tick();
+    // Must NOT recycle while active
+    expect(recycle).not.toHaveBeenCalled();
+
+    finishMission!();
+    await worker.idle();
+  });
 });
 
 describe("a failed sample does not end exploration", () => {
