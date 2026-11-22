@@ -6,7 +6,7 @@ import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, cancelForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
 import { isExplicitCancel, openPlanFactsOf, planFollowUpAnswerAr, planQuestionKind, refersToOpenRequest } from "./openPlanFacts";
-import { preModelAnswer } from "./guardRules";
+import { preModelAnswer, PRIVACY_REFUSAL_AR } from "./guardRules";
 import { checkCustomerText } from "./text";
 import { LLM_PLANNER_SETTING_KEY, llmPlannerOnValue } from "./llmPlannerFlag";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
