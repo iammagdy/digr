@@ -3,10 +3,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Overview, OVERVIEW_PAYMENT_AR, OVERVIEW_STEPS_AR } from "../src/components/landing/Overview";
-import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
+import { getLiveServicesCatalog } from "../src/lib/liveServicesCatalog";
 import { platformsCountAr, sectorsCountAr } from "../src/lib/servicesCatalogText";
 import { CONTACT_VERIFICATION_LABELS } from "../src/lib/contactVerification";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
+
+const catalog = getLiveServicesCatalog();
+const SERVICES_CATALOG = catalog.sectors;
+const catalogCounts = () => catalog.counts;
 
 const html = renderToStaticMarkup(createElement(Overview));
 const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");

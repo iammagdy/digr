@@ -1,4 +1,4 @@
-import type { CatalogPlatform } from "./servicesCatalog";
+import type { CatalogPlatform } from "./liveServicesCatalog";
 
 /**
  * INTERNAL knowledge about which catalog services are proven live. It is NEVER shown to customers: no status, chip, line or call to action per

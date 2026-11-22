@@ -5,12 +5,16 @@ import { describe, expect, it } from "vitest";
 import ServicesCatalogPage from "../src/app/services/page";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
-import { SERVICES_CATALOG, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
+import { getLiveServicesCatalog, catalogCounts, coreServices } from "../src/lib/liveServicesCatalog";
+import { SERVICES_CATALOG as STATIC_CATALOG } from "../src/lib/servicesCatalog";
 import { FEATURED_CORE_NAMES } from "../src/lib/servicesCatalogView";
 import { formatAr } from "../src/lib/arabicDigits";
 import {
   PROVEN_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, SERVICES_PRIMARY_CTA_AR, DECISION_MAKERS_LINE_AR, isProven, platformProvenCount, platformsProvenFirst,
 } from "../src/lib/servicesAvailability";
+
+const catalog = getLiveServicesCatalog();
+const SERVICES_CATALOG = catalog.sectors;
 
 const OWNER_LIST = ["icypeas-companies-search", "social-x-posts", "social-facebook-keyword-comments", "social-facebook-posts", "social-facebook-comments", "social-tiktok-comments"];
 const allServices = SERVICES_CATALOG.flatMap((sector) => sector.platforms.flatMap((platform) => platform.services.map((service) => ({ platform: platform.slug, ...service }))));
@@ -57,7 +61,7 @@ describe("the internal proven list: it only orders the platforms, it is never sh
       expect(rest.map((platform) => platform.slug)).toEqual(sector.platforms.filter((platform) => platformProvenCount(platform) === 0).map((platform) => platform.slug));
     }
     // the rendered browser shows them in that order, and shows no sign of why
-    const html = renderToStaticMarkup(createElement(CatalogBrowser));
+    const html = renderToStaticMarkup(createElement(CatalogBrowser, { sectors: SERVICES_CATALOG }));
     const social = SERVICES_CATALOG.find((sector) => sector.platforms.some((platform) => platform.slug === "tiktok"))!;
     const first = platformsProvenFirst(social.platforms)[0];
     expect(platformProvenCount(first)).toBeGreaterThan(0);
@@ -70,7 +74,7 @@ describe("the public page shows no status, no per-service call to action", () =>
   const text = textOf(html);
 
   it("no status text of any kind is rendered (page, browser, or the source of either), and no status marker attribute exists", () => {
-    const browser = renderToStaticMarkup(createElement(CatalogBrowser));
+    const browser = renderToStaticMarkup(createElement(CatalogBrowser, { sectors: SERVICES_CATALOG }));
     for (const word of STATUS_TEXT) {
       expect(text, word).not.toContain(word);
       expect(browser, word).not.toContain(word);
@@ -126,7 +130,7 @@ describe("the public page shows no status, no per-service call to action", () =>
       const source = readFileSync(file, "utf8");
       expect(source, file).not.toMatch(/calculatorPricing|pointsFormat|decisionMakerPricing|computePublicCalculatorQuote|unitPriceLabelAr|buildPlatformGuideServices/);
     }
-    const pages = [html, renderToStaticMarkup(createElement(CatalogBrowser))];
+    const pages = [html, renderToStaticMarkup(createElement(CatalogBrowser, { sectors: SERVICES_CATALOG }))];
     for (const page of pages) {
       expect(page).not.toContain("السعر:");
       expect(textOf(page)).not.toMatch(/نقطة|نقاط|ج\.م|جنيه|دولار|\$/);
@@ -161,8 +165,9 @@ describe("the honest line above the decision-makers block", () => {
 
 describe("docs/FUTURE_SERVICES.md (internal, generated from the same data)", () => {
   const doc = readFileSync("docs/FUTURE_SERVICES.md", "utf8");
-  const total = allServices.length;
-  const proven = allServices.filter((service) => isProven(service.platform, service.nameAr)).length;
+  const staticServices = STATIC_CATALOG.flatMap((sector) => sector.platforms.flatMap((platform) => platform.services.map((service) => ({ platform: platform.slug, ...service }))));
+  const total = staticServices.length;
+  const proven = staticServices.filter((service) => isProven(service.platform, service.nameAr)).length;
 
   it("says at its top that it is internal and never shown to customers, and its counts equal the data", () => {
     expect(doc.split("\n").slice(0, 4).join("\n")).toContain("INTERNAL, not shown to customers");
@@ -188,7 +193,7 @@ describe("docs/FUTURE_SERVICES.md (internal, generated from the same data)", () 
     const lines = entries.split("\n").filter((line) => line.startsWith("- "));
     expect(lines.length).toBeGreaterThanOrEqual(total - proven);
     for (const line of lines) expect(line).toMatch(/\[(read|core)\]/);
-    for (const sector of SERVICES_CATALOG) expect(entries).toContain(`### ${sector.nameAr}`);
+    for (const sector of STATIC_CATALOG) expect(entries).toContain(`### ${sector.nameAr}`);
     const rows = JSON.parse(readFileSync("scripts/catalog/classification.json", "utf8")) as Array<{ platform: string; nameAr: string; en: string; cls: string }>;
     for (const row of rows.filter((entry) => (entry.cls === "read" || entry.cls === "core") && isProven(entry.platform, entry.nameAr))) {
       const block = entries.split("#### ").find((chunk) => chunk.includes(`(${row.platform}) - `)) ?? "";

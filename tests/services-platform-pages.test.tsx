@@ -6,11 +6,14 @@ import PlatformServicesPage, { dynamicParams, dynamic, generateMetadata, generat
 import ServicesCatalogPage from "../src/app/services/page";
 import sitemap from "../src/app/sitemap";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
-import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
+import { getLiveServicesCatalog } from "../src/lib/liveServicesCatalog";
 import { SERVICES_PRIMARY_CTA_AR, isProven } from "../src/lib/servicesAvailability";
 import { PLATFORM_ENTRIES, featuredServices, platformEntryBySlug, platformHref, remainingServices } from "../src/lib/servicesCatalogView";
 import { servicesCountAr } from "../src/lib/servicesCatalogText";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
+
+const catalog = getLiveServicesCatalog();
+const SERVICES_CATALOG = catalog.sectors;
 
 const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ");
 const renderPlatform = async (slug: string) => renderToStaticMarkup(await PlatformServicesPage({ params: Promise.resolve({ platform: slug }) }));
@@ -21,7 +24,7 @@ describe("one static page per platform", () => {
     expect(dynamic).toBe("force-static");
     expect(dynamicParams).toBe(false);
     const params = generateStaticParams().map((entry) => entry.platform);
-    expect(params).toHaveLength(catalogCounts().platforms);
+    expect(params).toHaveLength(catalog.counts.platforms);
     expect(new Set(params).size).toBe(params.length);
     expect(params.sort()).toEqual(SERVICES_CATALOG.flatMap((sector) => sector.platforms.map((platform) => platform.slug)).sort());
     expect(readFileSync("src/app/services/[platform]/page.tsx", "utf8")).not.toMatch(/cookies\(|headers\(|searchParams|noStore|revalidate/);
@@ -88,11 +91,11 @@ describe("one static page per platform", () => {
 });
 
 describe("the catalog page: platform cards", () => {
-  const browser = renderToStaticMarkup(createElement(CatalogBrowser));
+  const browser = renderToStaticMarkup(createElement(CatalogBrowser, { sectors: catalog.sectors }));
 
   it("one card per platform: name, description, number of services, and a link to its page; no other text", () => {
     const cards = browser.split("<a ").slice(1).filter((chunk) => /href="\/services\/[a-z0-9-]+"/.test(chunk)).map((chunk) => chunk.split("</a>")[0]!);
-    expect(cards).toHaveLength(catalogCounts().platforms);
+    expect(cards).toHaveLength(catalog.counts.platforms);
     for (const { platform } of PLATFORM_ENTRIES) {
       const card = cards.find((chunk) => chunk.includes(`href="${platformHref(platform.slug)}"`));
       expect(card, platform.slug).toBeDefined();
@@ -112,6 +115,6 @@ describe("the catalog page: platform cards", () => {
   it("the catalog page itself links to no service, only platforms; the cards are the way in", () => {
     const html = renderToStaticMarkup(createElement(ServicesCatalogPage));
     const hrefs = (html.match(/href="\/services\/[a-z0-9-]+"/g) ?? []).map((href) => href.slice(6, -1));
-    expect(new Set(hrefs).size).toBe(catalogCounts().platforms);
+    expect(new Set(hrefs).size).toBe(catalog.counts.platforms);
   });
 });
