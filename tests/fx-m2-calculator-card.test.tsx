@@ -7,6 +7,7 @@ import { CAPABILITY_DISCOVERY_FLAG_KEY } from "../src/lib/agentMission/capabilit
 import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { loadCustomerMission } from "../src/lib/agentMission/customerActions";
 import { customerPlanView, type PricedPlan, type PricedStage, stagePriceInputs, validateAndPricePlan } from "../src/lib/agentMission/plan";
+import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { selfReferenceQuestionAr } from "../src/lib/agentMission/selfReference";
 import { pointsAr } from "../src/lib/pointsFormat";
@@ -99,10 +100,13 @@ function storeCard(db: MemoryDb, plan: PricedPlan, id = missionId) {
   else db.rows("missions").push(row);
 }
 
-function noMoney(db: MemoryDb) {
+function noMoney(
+  db: MemoryDb,
+  expectedLedger: Array<Record<string, unknown>> = [{ id: "topup_fixture", user_id: owner, delta: 40_000 }],
+) {
   expect(db.rows("plans_quotes")).toEqual([]);
   expect(db.rows("jobs")).toEqual([]);
-  expect(db.rows("credit_ledger")).toEqual([{ id: "topup_fixture", user_id: owner, delta: 40_000 }]);
+  expect(db.rows("credit_ledger")).toEqual(expectedLedger);
 }
 
 describe("calculator prices come only from the owned sealed card", () => {
@@ -136,6 +140,56 @@ describe("calculator prices come only from the owned sealed card", () => {
     expect(await denied.json()).not.toHaveProperty("cards");
     expect((await request({ text: "هات ٢٠ شركة" })).status).toBe(400);
     noMoney(db);
+  });
+
+  it("reproduces 746 / 858 at markup 12, tracks a saved edit, guest preview, unaffordable wallet, and 429 Retry-After", async () => {
+    const db = world();
+    const base = companyPlan();
+    const repriced: PricedPlan = {
+      ...base,
+      price: priceMissionByCode(stagePriceInputs(base.stages), { settings: { markup: 12, minChargePoints: 200 } }),
+    };
+    storeCard(db, repriced);
+    fixture.guest = true;
+    const guestRes = await request({ missionIds: [missionId] });
+    expect(guestRes.status).toBe(200);
+    const guestJson = await guestRes.json();
+    expect(guestJson.cards[0].card.priceFacts).toEqual(expect.arrayContaining([
+      { labelAr: "السعر حتى", valueAr: pointsAr(746) },
+      { labelAr: "حجز مؤقت", valueAr: pointsAr(858) },
+    ]));
+
+    fixture.guest = false;
+    const edited = applyPlanEdits(repriced, { count: 10 });
+    if (!edited.ok) throw new Error(edited.errorAr);
+    storeCard(db, edited.plan);
+    const editedRes = await request({ missionIds: [missionId] });
+    const editedJson = await editedRes.json();
+    expect(editedJson.cards[0].card.priceFacts).toEqual(expect.arrayContaining([
+      { labelAr: "السعر حتى", valueAr: pointsAr(edited.plan.price.maxChargePoints) },
+      { labelAr: "حجز مؤقت", valueAr: pointsAr(edited.plan.price.reservePoints) },
+    ]));
+
+    db.seed("credit_ledger", [{ id: "topup_small", user_id: owner, delta: 199 - 40_000 }]);
+    const overLimit = await request({ missionIds: [missionId] });
+    const overJson = await overLimit.json();
+    expect(overJson.cards[0].card.affordability).toMatchObject({ mode: "top_up" });
+
+    let limited: Response | null = null;
+    for (let i = 0; i <= 305; i += 1) {
+      const r = await POST(new NextRequest("http://localhost/api/calculator/estimate", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
+        body: JSON.stringify({ missionIds: [missionId] }),
+      }));
+      if (r.status === 429) { limited = r; break; }
+    }
+    expect(limited?.status).toBe(429);
+    expect(Number(limited?.headers.get("retry-after"))).toBeGreaterThan(0);
+    noMoney(db, [
+      { id: "topup_fixture", user_id: owner, delta: 40_000 },
+      { id: "topup_small", user_id: owner, delta: 199 - 40_000 },
+    ]);
   });
 });
 
@@ -180,5 +234,61 @@ it("keeps an agent-only request out of legacy planning when the agent is disable
   } as const)).rejects.toThrow();
   expect(db.rows("messages")).toEqual([]);
   expect(db.rows("missions")).toEqual([]);
+  noMoney(db);
+});
+
+it("keeps a split summary with one unresolved part and retains existing owned cards on follow-up", async () => {
+  const db = world();
+  const handler = new ChatHandler(db as never);
+  handler.agentChat = { enabled: true };
+  scriptBriefs(
+    {
+      status: "ready", platforms: [], count: null, topic: "منافسين شركتي وقطاع التجزئة", period: "", country: "", language: "",
+      content: ["companies", "articles"], request: "منافسين شركتي وأخبار التجزئة في مصر",
+      objectives: [
+        { id: "o1", operation: "companies.discover", platform: null, parent: null, contacts: [], request: "منافسين شركتي", what: "منافسين شركتي" },
+        { id: "o2", operation: "web.search", platform: null, parent: null, contacts: [], request: "أخبار التجزئة في مصر", what: "أخبار التجزئة" },
+      ],
+    },
+    {
+      status: "ready", platforms: [], count: null, topic: "شركات السياحة وأخبار التجزئة", period: "", country: "", language: "",
+      content: ["companies", "articles"], request: "إحنا شركة سياحة في الغردقة",
+      objectives: [
+        { id: "o1", operation: "companies.discover", platform: null, parent: null, contacts: [], request: "شركات السياحة في الغردقة", what: "شركات سياحة" },
+        { id: "o2", operation: "web.search", platform: null, parent: null, contacts: [], request: "أخبار التجزئة في مصر", what: "أخبار التجزئة" },
+      ],
+    },
+  );
+  const base = { userId: owner, conversationId: "conv1", userBalance: 40_000, calculatorPlanOnly: true } as const;
+  const first = await handler.handleUserMessage({ ...base, message: "عايز منافسين شركتي وأخبار التجزئة في مصر" });
+  expect(first).toMatchObject({ conversationId: "conv1", calculatorReplyScope: "split" });
+  expect(first.contentAr).toContain(selfReferenceQuestionAr("company"));
+  const initialMissions = db.rows("missions").map((m) => m.id);
+  expect(initialMissions).toHaveLength(1);
+
+  const followUp = await handler.handleUserMessage({ ...base, message: "إحنا شركة سياحة في الغردقة" });
+  expect(followUp).toMatchObject({ conversationId: "conv1", calculatorReplyScope: "split" });
+  expect(db.rows("missions").map((m) => m.id)).toEqual(expect.arrayContaining(initialMissions));
+  expect(db.rows("missions")).toHaveLength(2);
+  noMoney(db);
+});
+
+it("never enters modelPlanner or pending session for marked calculator turns even when modelPlanner is configured", async () => {
+  const db = world();
+  const handler = new ChatHandler(db as never);
+  handler.agentChat = { enabled: true };
+  const transport = vi.fn(async () => ({ stopReason: "end_turn", text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } }));
+  handler.modelPlanner = {
+    enabledFor: () => true,
+    transport: { model: "fixture", call: transport } as never,
+  };
+  scriptBriefs(brief("عايز ٢٠ شركة مقاولات", "ready"));
+  const res = await handler.handleUserMessage({
+    userId: owner, conversationId: "conv1", userBalance: 40_000,
+    message: "عايز ٢٠ شركة مقاولات", calculatorPlanOnly: true,
+  });
+  expect(res.outputType).toBe("agent_mission");
+  expect(transport).not.toHaveBeenCalled();
+  expect(db.rows("missions")).toHaveLength(1);
   noMoney(db);
 });

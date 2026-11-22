@@ -142,7 +142,7 @@ export function companyEvidenceOf(row: Row, stage: QualityStage): CompanyEvidenc
     jurisdiction,
     branches,
     address,
-    conflict: conflict?.where.length === 2 && overlaps(tokensOf(text(described)), tokensOf(text(linked)),
+    conflict: Boolean(conflict?.where.length === 2 && overlaps(tokensOf(text(described)), tokensOf(text(linked)))),
   };
 }
 

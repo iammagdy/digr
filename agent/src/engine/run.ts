@@ -405,7 +405,6 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   }
 
   // Schedule-gated parent expansion (Facebook case):
-  const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
   while (
     spec.fill_total_across_parents === true &&
     stage.per_parent_rows === undefined &&
