@@ -9,6 +9,7 @@ import {
   BOT_ROLES,
   readTaskStatus,
   getNewestFileMtime,
+  fetchGithubPrs,
   main,
 } from "../scripts/office-feed-updater.mjs";
 
@@ -648,6 +649,147 @@ describe("DT-20261121-office-v2: Feed updater logic & CTO corrections", () => {
       });
 
       expect(feed.bots.elkebir.percent).toBe(68);
+    });
+  });
+
+  describe("DT-20261122-office-history: Merged PR history, open PR list, cache, error resilience", () => {
+    it("fetchGithubPrs fetches state=all in 1 call/minInterval, respects ETag 304, filters base=main & merged_at>=2026-11-20, and keeps last good cache on error", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-hist-"));
+      const cachePath = path.join(tmpDir, "prs-cache.json");
+      let calls = 0;
+      let mode: "ok" | "304" | "error" | "throw" = "ok";
+
+      const samplePrs = [
+        { number: 620, state: "closed", title: "DT-20261121-audit-fx02", merged_at: "2026-11-21T22:00:00Z", base: { ref: "main" }, head: { ref: "team/DT-20261121-audit-fx02" } },
+        { number: 622, state: "closed", title: "DT-20261121-audit-fx-m1", merged_at: "2026-11-22T05:00:00Z", base: { ref: "main" }, head: { ref: "team/DT-20261121-audit-fx-m1" } },
+        { number: 624, state: "open", title: "DT-20261122-office-history", merged_at: null, created_at: "2026-11-22T07:00:00Z", base: { ref: "main" }, head: { ref: "team/DT-20261122-office-history" } },
+        { number: 625, state: "open", title: "Another open PR", merged_at: null, created_at: "2026-11-22T07:10:00Z", base: { ref: "main" }, head: { ref: "team/other" } },
+        { number: 590, state: "closed", title: "Pre-office launch", merged_at: "2026-11-19T23:59:59Z", base: { ref: "main" }, head: { ref: "team/old" } },
+        { number: 621, state: "closed", title: "Closed unmerged", merged_at: null, base: { ref: "main" }, head: { ref: "team/closed" } },
+        { number: 623, state: "closed", title: "Non-main base", merged_at: "2026-11-22T06:00:00Z", base: { ref: "staging" }, head: { ref: "team/staging" } },
+      ];
+
+      const fetchImpl = async (url: string, init?: any) => {
+        calls++;
+        expect(url).toContain("state=all");
+        if (mode === "throw") throw new Error("network failure");
+        if (mode === "error") return { ok: false, status: 403, headers: new Headers(), async json() { return { message: "rate limit" }; } };
+        if (mode === "304") {
+          expect(init?.headers?.["If-None-Match"]).toBe('"etag-v1"');
+          return { ok: false, status: 304, headers: new Headers(), async json() { return null; } };
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ etag: '"etag-v1"' }),
+          async json() { return samplePrs; },
+        };
+      };
+
+      const t0 = Date.parse("2026-11-22T07:20:00Z");
+      const r1 = await (fetchGithubPrs as any)({ repo: "iammagdy/digr", cachePath, nowMs: t0, fetchImpl });
+      expect(calls).toBe(1);
+      expect(r1.openPrs.map((p: any) => p.number)).toEqual([625, 624]);
+      expect(r1.mergedPrs.map((p: any) => p.number)).toEqual([622, 620]);
+
+      // Within minIntervalMs -> 0 extra GitHub calls
+      const r2 = await (fetchGithubPrs as any)({ repo: "iammagdy/digr", cachePath, nowMs: t0 + 60_000, fetchImpl });
+      expect(calls).toBe(1);
+      expect(r2.mergedPrs.map((p: any) => p.number)).toEqual([622, 620]);
+
+      // After minIntervalMs with 304 -> 1 call, keeps cached data
+      mode = "304";
+      const r3 = await (fetchGithubPrs as any)({ repo: "iammagdy/digr", cachePath, nowMs: t0 + 200_000, fetchImpl });
+      expect(calls).toBe(2);
+      expect(r3.mergedPrs.map((p: any) => p.number)).toEqual([622, 620]);
+      expect(r3.openPrs).toHaveLength(2);
+
+      // GitHub HTTP 403 error -> keeps last good list
+      mode = "error";
+      const r4 = await (fetchGithubPrs as any)({ repo: "iammagdy/digr", cachePath, nowMs: t0 + 400_000, fetchImpl });
+      expect(calls).toBe(3);
+      expect(r4.mergedPrs.map((p: any) => p.number)).toEqual([622, 620]);
+      expect(r4.openPrs).toHaveLength(2);
+
+      // Network throw -> keeps last good list
+      mode = "throw";
+      const r5 = await (fetchGithubPrs as any)({ repo: "iammagdy/digr", cachePath, nowMs: t0 + 600_000, fetchImpl });
+      expect(calls).toBe(4);
+      expect(r5.mergedPrs.map((p: any) => p.number)).toEqual([622, 620]);
+    });
+
+    it("buildOfficeFeed resolves Arabic titles and bots from docsDir and statusDir, falls back to PR number only, omits empty bots, and leaks zero DT-IDs/secrets", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-feed-resolve-"));
+      const statusDir = path.join(tmpDir, "status");
+      const docsDir = path.join(tmpDir, "docs");
+      fs.mkdirSync(statusDir, { recursive: true });
+      fs.mkdirSync(docsDir, { recursive: true });
+
+      // Doc 1: has Arabic heading + Arabic implementer/reviewer
+      fs.writeFileSync(
+        path.join(docsDir, "DT-20261121-audit-fx01a.md"),
+        "# DT-20261121-audit-fx01a: رفض بيانات الأفراد الخاصة\n\n- **المنفذ:** سالم\n- **المراجعة:** أشرف\n",
+      );
+      // Doc 2: English-only heading -> must NOT put English title; should fall back to office-status Arabic task_title
+      fs.writeFileSync(
+        path.join(docsDir, "DT-20261121-office-busy.md"),
+        "# DT-20261121-office-busy: Busy Bots Never Wander\n\n- **Implementer:** سالم\n",
+      );
+      // Office status lines
+      fs.writeFileSync(
+        path.join(statusDir, "salem.jsonl"),
+        [
+          JSON.stringify({ bot: "salem", state: "idle", task_id: "DT-20261121-office-busy", task_title: "منع حركة البوتات المشغولة", updated_at: "2026-11-21T20:00:00Z" }),
+          JSON.stringify({ bot: "salem", state: "idle", task_id: "DT-20261122-office-history", task_title: "تاريخ إنجازات المكتب", updated_at: "2026-11-22T07:00:00Z" }),
+        ].join("\n") + "\n",
+      );
+
+      const feed = (buildOfficeFeed as any)({
+        statusDir,
+        tasksDir: path.join(tmpDir, "tasks"),
+        docsDir,
+        workDirs: {},
+        openPrs: [
+          { number: 624, title: "DT-20261122-office-history", headRef: "team/DT-20261122-office-history" },
+        ],
+        mergedPrs: [
+          { number: 619, title: "Privacy refusal", headRef: "team/DT-20261121-audit-fx01a", merged_at: "2026-11-21T23:20:00Z" },
+          { number: 617, title: "Busy bots", headRef: "team/DT-20261121-office-busy", merged_at: "2026-11-21T20:23:00Z" },
+          { number: 616, title: "Unknown PR in English", headRef: "team/unknown-slug", merged_at: "2026-11-21T18:00:00Z" },
+        ],
+        nowMs: Date.parse("2026-11-22T07:30:00Z"),
+      });
+
+      expect(feed.open_prs).toBe(1);
+      expect(feed.open_prs_list).toEqual([
+        { number: 624, title: "تاريخ إنجازات المكتب", bots: ["سالم"] },
+      ]);
+
+      expect(feed.merged_total).toBe(3);
+      expect(feed.merged_prs).toHaveLength(3);
+      // Newest first
+      expect(feed.merged_prs[0]).toEqual({
+        number: 619,
+        title: "رفض بيانات الأفراد الخاصة",
+        merged_at: "2026-11-21T23:20:00Z",
+        bots: ["سالم", "أشرف"],
+      });
+      expect(feed.merged_prs[1]).toEqual({
+        number: 617,
+        title: "منع حركة البوتات المشغولة",
+        merged_at: "2026-11-21T20:23:00Z",
+        bots: ["سالم"],
+      });
+      // Fallback: no invented title, bots omitted when unknown
+      expect(feed.merged_prs[2]).toEqual({
+        number: 616,
+        title: "",
+        merged_at: "2026-11-21T18:00:00Z",
+      });
+      expect("bots" in feed.merged_prs[2]).toBe(false);
+
+      const serialized = JSON.stringify(feed);
+      expect(serialized).not.toMatch(/DT-\d{8}|\/srv\/|refs\/pull|Unknown PR in English|Busy Bots Never Wander/);
     });
   });
 });
