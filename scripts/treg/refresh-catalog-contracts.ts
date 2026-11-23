@@ -17,7 +17,7 @@ export interface RegistryValidationSummary {
 }
 
 export const AdapterPaginationSchema = z.object({
-  style: z.enum(["cursor", "page", "offset"]).nullable(),
+  style: z.enum(["cursor", "page", "offset", "none"]).nullable(),
   page_size_param: z.string().nullable(),
   max_page_size: z.number().nullable(),
   cursor_param: z.string().nullable(),

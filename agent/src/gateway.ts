@@ -72,7 +72,7 @@ export type RefusalCode =
   | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample" | "spend_gate";
 
 export type GatewayCallResult =
-  | { ok: true; call_id: string; charge_usd?: number | null; reserved_usd?: number; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string }
+  | { ok: true; call_id: string; charge_usd?: number | null; reserved_usd?: number; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string; stop_reason?: string }
   | { ok: false; call_id: string; refused: RefusalCode; message: string }
   | { ok: false; call_id: string; failed: true; http_status: number; message: string; /** THIS call's own charge (USD) when it is known, null when it is not; and what was reserved for it (DT-20261119-11 D3) */ charge_usd?: number | null; reserved_usd?: number };
 
@@ -147,9 +147,13 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
   return catalogUsd !== null && catalogUsd > 0 ? catalogUsd : GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD;
 }
 
-let cachedContracts: Map<string, { max_page_size: number | null; page_size_param: string | null }> | null = null;
+let cachedContracts: Map<string, { max_page_size: number | null; page_size_param: string | null; style: string | null }> | null = null;
 
-function loadContractsRegistry(): Map<string, { max_page_size: number | null; page_size_param: string | null }> {
+export function clearCachedContracts(): void {
+  cachedContracts = null;
+}
+
+function loadContractsRegistry(): Map<string, { max_page_size: number | null; page_size_param: string | null; style: string | null }> {
   if (cachedContracts) return cachedContracts;
   cachedContracts = new Map();
   try {
@@ -163,6 +167,7 @@ function loadContractsRegistry(): Map<string, { max_page_size: number | null; pa
             cachedContracts.set(ep.endpoint_id, {
               max_page_size: typeof ep.pagination.max_page_size === "number" ? ep.pagination.max_page_size : null,
               page_size_param: typeof ep.pagination.page_size_param === "string" ? ep.pagination.page_size_param : null,
+              style: typeof ep.pagination.style === "string" ? ep.pagination.style : null,
             });
           }
         }
@@ -178,6 +183,7 @@ function loadContractsRegistry(): Map<string, { max_page_size: number | null; pa
             cachedContracts.set(ep.endpoint_id, {
               max_page_size: typeof ep.pagination.max_page_size === "number" ? ep.pagination.max_page_size : prev?.max_page_size ?? null,
               page_size_param: typeof ep.pagination.page_size_param === "string" ? ep.pagination.page_size_param : prev?.page_size_param ?? null,
+              style: typeof ep.pagination.style === "string" ? ep.pagination.style : prev?.style ?? null,
             });
           }
         }
@@ -191,14 +197,32 @@ function loadContractsRegistry(): Map<string, { max_page_size: number | null; pa
 
 export function getContractPagination(
   endpoint?: CatalogEndpoint | null
-): { max_page_size?: number | null; page_size_param?: string | null } | undefined {
+): { max_page_size?: number | null; page_size_param?: string | null; style?: string | null } | undefined {
   const direct = endpoint?.adapter_contract?.pagination as any;
   const fromRegistry = endpoint?.id ? loadContractsRegistry().get(endpoint.id) : undefined;
   if (!direct && !fromRegistry) return undefined;
   return {
     max_page_size: typeof direct?.max_page_size === "number" ? direct.max_page_size : (fromRegistry?.max_page_size ?? null),
     page_size_param: typeof direct?.page_size_param === "string" ? direct.page_size_param : (fromRegistry?.page_size_param ?? null),
+    style: typeof direct?.style === "string" ? direct.style : (fromRegistry?.style ?? null),
   };
+}
+
+export const CONTRACT_SINGLE_PAGE_STOP_REASON = "المصدر لا يدعم صفحات أكثر";
+
+/**
+ * Phase 5 Part B: Contract-Aware Stop Reason (D-0198 / Commander Design Check).
+ * Single-page stop with the honest Arabic stop reason "المصدر لا يدعم صفحات أكثر" (DIGER-TRUTH §6 compliant)
+ * occurs ONLY when the contract explicitly specifies that the endpoint has no paging (style: "none").
+ * If style is unknown/null or unstated, we do not assume anything either way ("unknown stays null")
+ * and allow normal response-driven cursor/has_more processing.
+ */
+export function contractStopReasonOf(endpoint: CatalogEndpoint | null | undefined): string | null {
+  const pagination = getContractPagination(endpoint);
+  if (pagination?.style === "none") {
+    return CONTRACT_SINGLE_PAGE_STOP_REASON;
+  }
+  return null;
 }
 
 /**
@@ -613,9 +637,15 @@ export function createGateway(deps: GatewayDeps) {
         return withFacts({ ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) } as GatewayCallResult);
       }
       const rowsIn = storagePath && rows > 0 ? rowsExpressionOf(id, digest?.listPath, digest?.listStrategy) : null;
+      const pagination = getContractPagination(endpoint);
+      const isExplicitNoPaging = pagination?.style === "none";
+      const effectiveHasMore = isExplicitNoPaging ? false : (reading?.hasMore ?? null);
+      const effectiveNextCursor = isExplicitNoPaging ? null : (reading?.nextCursor ?? null);
+      const contractStopReason = isExplicitNoPaging ? CONTRACT_SINGLE_PAGE_STOP_REASON : undefined;
       return withFacts({
         ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows,
-        has_more: reading?.hasMore ?? null, next_cursor: reading?.nextCursor ?? null,
+        has_more: effectiveHasMore, next_cursor: effectiveNextCursor,
+        ...(contractStopReason ? { stop_reason: contractStopReason } : {}),
         shape: digest ? { rows_in_page: digest.rowsInSample, list_path: digest.listPath, fields: digest.fields, next_cursor_path: digest.nextCursorPath, cursor_kind: digest.cursorKind } : null,
         first_rows: (reading?.rows ?? []).slice(0, AGENT_FIRST_ROWS).map((r) => digestValue(r)),
         warnings: reading?.warnings ?? [],

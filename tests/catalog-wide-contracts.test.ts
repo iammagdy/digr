@@ -14,6 +14,19 @@ import {
   rankEndpoints,
 } from "../src/lib/agentMission/sourceRanking";
 import type { CatalogEndpoint, TregCatalog } from "../src/lib/treg/catalog";
+import {
+  CONTRACT_SINGLE_PAGE_STOP_REASON,
+  contractStopReasonOf,
+  getContractPagination,
+} from "../agent/src/gateway";
+import { EndpointCircuitBreaker } from "../src/lib/treg/circuitBreaker";
+import {
+  makeHarness,
+  postsPage,
+  tregResult,
+  POSTS_ENDPOINT,
+  SENSITIVE_ENDPOINT,
+} from "./helpers/agentHarness";
 
 export interface RetrievalOptions {
   requestedPages: number;
@@ -425,6 +438,236 @@ describe("Phase 5: Universal Catalog-Wide Contracts & Coverage (Point 5.1 - 5.5)
       expect(ranked[1].id).toBe("ep.partial");
       expect(ranked[0].contractScore).toBe(10);
       expect(ranked[1].contractScore).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // Phase 5 Part B: Contract Stop Reason & Circuit Breaker Interplay (Point 5.4 / D-0198)
+  // -----------------------------------------------------------------------------------------
+  describe("Phase 5 Part B: Contract Stop Reason & Circuit Breaker Interplay", () => {
+    it("contractStopReasonOf returns honest Arabic stop reason ONLY when contract explicitly specifies style: 'none'", () => {
+      const explicitNoneEndpoint: CatalogEndpoint = {
+        id: "test.none.page",
+        inputs: [],
+        adapter_contract: {
+          pagination: {
+            style: "none",
+            page_size_param: null,
+            max_page_size: null,
+          },
+        },
+      } as any;
+
+      const unknownStyleEndpoint: CatalogEndpoint = {
+        id: "test.unknown.style",
+        inputs: [],
+        adapter_contract: {
+          pagination: {
+            style: null,
+            page_size_param: null,
+            max_page_size: null,
+          },
+        },
+      } as any;
+
+      const cursorEndpoint: CatalogEndpoint = {
+        id: "test.cursor.page",
+        inputs: [],
+        adapter_contract: {
+          pagination: {
+            style: "cursor",
+            page_size_param: "limit",
+            max_page_size: 100,
+          },
+        },
+      } as any;
+
+      const unstatedEndpoint: CatalogEndpoint = {
+        id: "test.unstated",
+        inputs: [],
+      } as any;
+
+      // Explicit "none" returns honest stop reason
+      expect(contractStopReasonOf(explicitNoneEndpoint)).toBe(CONTRACT_SINGLE_PAGE_STOP_REASON);
+      expect(contractStopReasonOf(explicitNoneEndpoint)).toBe("المصدر لا يدعم صفحات أكثر");
+
+      // Unknown style (style === null) or unstated stays null (no assumption either way)
+      expect(contractStopReasonOf(unknownStyleEndpoint)).toBeNull();
+      expect(contractStopReasonOf(unstatedEndpoint)).toBeNull();
+      expect(contractStopReasonOf(null)).toBeNull();
+      expect(contractStopReasonOf(undefined)).toBeNull();
+
+      // Known styles return null
+      expect(contractStopReasonOf(cursorEndpoint)).toBeNull();
+    });
+
+    it("getContractPagination extracts style alongside max_page_size and page_size_param", () => {
+      const cursorEp: CatalogEndpoint = {
+        id: "test.ep.cursor",
+        inputs: [],
+        adapter_contract: {
+          pagination: {
+            style: "cursor",
+            page_size_param: "limit",
+            max_page_size: 50,
+          },
+        },
+      } as any;
+
+      const info = getContractPagination(cursorEp);
+      expect(info).toEqual({
+        max_page_size: 50,
+        page_size_param: "limit",
+        style: "cursor",
+      });
+    });
+
+    it("Must-pass (fails on 16bd80f9): unknown style + response with a next cursor allows paging to continue (cursor and has_more preserved, no stop_reason)", async () => {
+      // SENSITIVE_ENDPOINT ("branddev.brand.retrieve-by-email") has style: null in adapter_contracts.json (unknown pagination style)
+      // If the response carries a next cursor, we must NOT cut it off or inject a stop_reason
+      const h = makeHarness({
+        responses: [
+          tregResult({ data: { name: "Acme", domain: "acme.com" }, next_cursor: "cur_brand_002", has_more: true }, 0.02),
+        ],
+      });
+
+      const res = await h.gateway.tregCall({
+        endpoint_id: SENSITIVE_ENDPOINT,
+        params: { email: "test@acme.com" },
+      });
+
+      expect(res.ok).toBe(true);
+      if (!res.ok || !("rows_in_page" in res)) throw new Error("expected success");
+      // Paging continues: cursor and has_more are preserved as returned by the response
+      expect(res.stop_reason).toBeUndefined();
+      expect(res.has_more).toBe(true);
+      expect(res.next_cursor).toBe("cur_brand_002");
+    });
+
+    it("Must-pass: explicit no-paging contract (style: 'none') + response with cursor stops with honest reason", async () => {
+      const h = makeHarness({
+        responses: [
+          tregResult({ data: [{ id: "1" }], next_cursor: "accidental_cursor", has_more: true }, 0.01),
+        ],
+      });
+
+      const baseEp = h.catalog.byId.get(POSTS_ENDPOINT)!;
+      const explicitNoneEp: CatalogEndpoint = {
+        ...baseEp,
+        id: "test.explicit.none.posts",
+        adapter_contract: {
+          endpoint_id: "test.explicit.none.posts",
+          provider: baseEp.provider,
+          platform_family: "x",
+          category: "Social",
+          contract_status: "partial",
+          inputs_schema: null,
+          outputs_schema: null,
+          pagination: {
+            style: "none",
+            page_size_param: null,
+            max_page_size: null,
+            cursor_param: null,
+            cursor_path: null,
+            automated_paging_ready: false,
+          },
+          needs_session: false,
+          schema_fingerprint: "none123",
+          drifted: false,
+        } as any,
+      };
+      (h.catalog.byId as Map<string, CatalogEndpoint>).set(explicitNoneEp.id, explicitNoneEp);
+
+      const res = await h.gateway.tregCall({
+        endpoint_id: explicitNoneEp.id,
+        params: { query: "test", max_results: 5 },
+      });
+
+      expect(res.ok).toBe(true);
+      if (!res.ok || !("rows_in_page" in res)) throw new Error("expected success");
+      expect(res.stop_reason).toBe("المصدر لا يدعم صفحات أكثر");
+      expect(res.has_more).toBe(false);
+      expect(res.next_cursor).toBeNull();
+    });
+
+    it("Must-pass: known cursor style endpoint preserves has_more and cursor without stop_reason", async () => {
+      const h = makeHarness({
+        responses: [
+          tregResult({ ...postsPage(5), has_more: true }, 0.025),
+        ],
+      });
+
+      // POSTS_ENDPOINT is "x.x.search-posts-all", which in adapter_contracts.json has style: "cursor"
+      const res = await h.gateway.tregCall({
+        endpoint_id: POSTS_ENDPOINT,
+        params: { query: "technology", max_results: 5 },
+      });
+
+      expect(res.ok).toBe(true);
+      if (!res.ok || !("rows_in_page" in res)) throw new Error("expected success");
+      expect(res.stop_reason).toBeUndefined();
+      expect(res.has_more).toBe(true);
+      expect(res.next_cursor).toBe("cur1");
+    });
+
+    it("Circuit Breaker Interplay: unknown/partial/drifted contracts start closed and are never blocked by contract status alone", () => {
+      const cb = new EndpointCircuitBreaker();
+
+      // Endpoints with various contract statuses
+      const fullContract = { contract_status: "full" as const, drifted: false };
+      const partialContract = { contract_status: "partial" as const, drifted: false };
+      const unknownContract = { contract_status: "unknown" as const, drifted: false };
+      const driftedContract = { contract_status: "full" as const, drifted: true };
+
+      // All start available (closed state)
+      expect(cb.isAvailable("ep.full")).toBe(true);
+      expect(cb.isAvailableForContract("ep.full", fullContract)).toBe(true);
+
+      expect(cb.isAvailable("ep.partial")).toBe(true);
+      expect(cb.isAvailableForContract("ep.partial", partialContract)).toBe(true);
+
+      expect(cb.isAvailable("ep.unknown")).toBe(true);
+      expect(cb.isAvailableForContract("ep.unknown", unknownContract)).toBe(true);
+
+      expect(cb.isAvailable("ep.drifted")).toBe(true);
+      expect(cb.isAvailableForContract("ep.drifted", driftedContract)).toBe(true);
+
+      // Only real runtime failures (400/5xx) open the circuit
+      cb.recordFailure("ep.drifted", 500);
+      cb.recordFailure("ep.drifted", 502);
+      expect(cb.isAvailable("ep.drifted")).toBe(true); // 2 failures: still closed
+
+      cb.recordFailure("ep.drifted", 503); // 3rd failure: trips to open
+      expect(cb.getState("ep.drifted")).toBe("open");
+      expect(cb.isAvailable("ep.drifted")).toBe(false);
+      expect(cb.isAvailableForContract("ep.drifted", driftedContract)).toBe(false);
+    });
+
+    it("AST / regex scanner verifies Part B code in gateway.ts and circuitBreaker.ts contains 0 hardcoded provider brand names in logic", () => {
+      const files = [
+        path.join(process.cwd(), "agent", "src", "gateway.ts"),
+        path.join(process.cwd(), "src", "lib", "treg", "circuitBreaker.ts"),
+      ];
+
+      const providerNames = [
+        "anyapi",
+        "tikhub",
+        "scrapecreators",
+        "crawl4ai",
+        "fetchinio",
+        "serper",
+      ];
+
+      for (const file of files) {
+        const content = readFileSync(file, "utf-8");
+        // Strip comments
+        const codeOnly = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+
+        for (const name of providerNames) {
+          const regex = new RegExp(`(===|!==|==|!=|case|in)\\s*["'\`]${name}["'\`]|["'\`]${name}["'\`]\\s*(===|!==|==|!=)`, "i");
+          expect(regex.test(codeOnly)).toBe(false);
+        }
+      }
     });
   });
 });
