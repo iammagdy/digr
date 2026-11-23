@@ -20,7 +20,6 @@ How to read the request:
 - Topic: what the items must be ABOUT, in the customer's meaning (alternatives joined by "أو" are alternatives). Write it in "topic". Then write "search_terms": 4 to 10 short search expressions that items about this topic actually CONTAIN, in the language the items are written in (Arabic content: Arabic terms, with common spelling variants such as أ/ا and ة/ه and singular/plural; add other languages only when the items may be in them). Order them from the most precise to the broadest that is still clearly on topic. Each term is 1 to 4 words. Never include a term that would mostly match items about something else. A word with another common meaning is used ONLY inside a phrase that fixes the meaning (Arabic «شائعة» also means "common" and «تداول» also means "trading": write «نفي شائعة», «شائعات كاذبة», «الشائعات المتداولة», «مقطع متداول», never the bare word); multi-word phrases beat single words.
 - Period: concrete calendar dates "YYYY-MM-DD" computed from today's date given below ("آخر 5 سنين" = from the same day 5 years ago to today). No period: omit it.
 - Language / country: only when the customer asked for them.
-- Entity: the specific organization, company, government body, brand, or person named in the request; write it in "entity" as written; omit when none.
 - Order: "newest", "top" (most engaged/popular) or "any", only "newest"/"top" when asked or clearly implied.
 - "من غير تكرار" / "without repeating" what was delivered before: no_repeat true.
 
@@ -85,7 +84,6 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
           period: { type: "object", description: "omit when no period was asked", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] },
           language: { type: "string" },
           country: { type: "string" },
-          entity: { type: "string", description: "the specific organization, company, government body, brand, or person the items relate to, as named in the request; omit when none" },
           order: { type: "string", enum: ["newest", "top", "any"] },
           fields_wanted: { type: "array", items: { type: "string" }, description: "fields the customer explicitly asked for (link, author, date, likes…)" },
         },
