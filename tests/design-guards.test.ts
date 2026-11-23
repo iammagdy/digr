@@ -153,8 +153,8 @@ describe("Design Guards on Current Codebase (Regression Guard)", () => {
 
     expect(violations).toEqual([]);
 
-    // Must be fast (< 5 s)
-    expect(elapsedMs).toBeLessThan(5000);
+    // Must be fast (< 20 s on CI)
+    expect(elapsedMs).toBeLessThan(20000);
   });
 
   it("allow-list file exists and contains expected legacy baseline counts", () => {

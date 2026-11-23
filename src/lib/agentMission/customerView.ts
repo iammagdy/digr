@@ -197,22 +197,14 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
 
 /**
  * Resolves whether the minimum charge rule governs this plan's price.
- * True when minApplied is flagged, or min sets the full charge (max_charge <= min_charge with minimum line),
- * or delivered rows at unit price would cost less than the minimum charge.
+ * Under D-0196: true strictly when min_applied is explicit boolean true.
+ * Inferred fallbacks (such as max_charge <= min_charge or rows * unit < min_charge)
+ * are deleted to avoid false positives (e.g. 20 rows * 10 = 200). Older payloads
+ * without min_applied show nothing.
  */
-export function isMinimumSettingPrice(price: any, total?: number): boolean {
+export function isMinimumSettingPrice(price: any, _total?: number): boolean {
   if (!price) return false;
-  const minCharge = Number(price.min_charge_points ?? price.min_charge ?? price.minChargePoints ?? 0);
-  if (!(minCharge > 0)) return false;
-  if (price.min_applied === true || price.minApplied === true) return true;
-  if (price.min_applied === false || price.minApplied === false) return false;
-  const maxCharge = Number(price.max_charge_points ?? price.max_charge ?? price.maxChargePoints ?? 0);
-  const minLine = price.minimum_line_ar ?? price.minimumLineAr;
-  if (maxCharge > 0 && maxCharge <= minCharge && Boolean(minLine)) return true;
-  const unitPrice = Number(price.unit_price_points ?? price.unitPricePoints ?? 0);
-  const rows = typeof total === "number" && total > 0 ? total : Number(price.delivered_rows ?? price.deliveredRows ?? 0);
-  if (rows > 0 && unitPrice > 0 && rows * unitPrice < minCharge) return true;
-  return false;
+  return price.min_applied === true || price.minApplied === true;
 }
 
 /**
@@ -222,7 +214,10 @@ export function isMinimumSettingPrice(price: any, total?: number): boolean {
 function headlineCountArOf(plan: any, total?: number): string | null {
   const minChargePoints = Number(plan?.price?.min_charge_points ?? plan?.price?.min_charge ?? plan?.price?.minChargePoints ?? 0);
   const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? plan?.price?.deliveredRows ?? 0);
-  if (minChargePoints > 0 && rows > 0 && isMinimumSettingPrice(plan?.price, rows)) {
+  const unitPricePoints = Number(plan?.price?.unit_price_points ?? plan?.price?.unitPricePoints ?? 0);
+  const minApplied = plan?.price?.min_applied ?? plan?.price?.minApplied;
+  const isMin = minApplied === true || (minApplied === undefined && rows > 0 && unitPricePoints > 0 && rows * unitPricePoints < minChargePoints);
+  if (minChargePoints > 0 && rows > 0 && isMin) {
     return `هتستلم ${countAr(rows, itemNounOfPlan(plan))}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
   }
   const entity = entityBreakdownOf(entityStagesOfPublic(plan));

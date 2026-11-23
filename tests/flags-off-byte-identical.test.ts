@@ -40,6 +40,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // DT-20261119-13 CHANGED (D-0133, D-0134, D-0140, C1-C7): only the `notices` digests of the five worlds were re-pinned: bounded <=45 status subjects, real stage nouns, and single-placement money in detail1. All other sections byte-identical.
 // DT-20261120-emails CHANGED: only the `notices` digests of the five worlds were re-pinned (unit noun from catalog capability, one-sentence failure lead, title prefix fix); every other section is byte-identical to main.
 // DT-20261121-audit/FX-02 CHANGED: only `g4_live_world.finalView` and `g4_full_world.finalView` were re-pinned for N4 partial shortage reason & refund line; `planView`, all non-partial sections, and the other three worlds are byte-identical to main.
+// D-0196 / DT-20261123-card-minimum-line CHANGED: only `x_posts_300.planView` and `x_posts_300.finalView` were re-pinned: minimum charge governs price, emitting min_applied and minimumLineAr; all other sections and the four other worlds are byte-identical to main.
 // g1_electromechanical: FX-01B: card names the requested role + fallback clause
 // g2_petroleum: FX-01B: card names the requested role + fallback clause
 // Only mission, providerCalls and workbook are re-pinned for those worlds. The existing ledger, planView, finalView, notices and visible event hashes still apply.
