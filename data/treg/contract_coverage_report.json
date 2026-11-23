@@ -1,0 +1,652 @@
+{
+  "total_endpoints": 3276,
+  "total_platform_families": 106,
+  "contracts": {
+    "full": 114,
+    "partial": 2128,
+    "unknown": 1034
+  },
+  "coverage_percent": {
+    "full": 3.5,
+    "actionable": 68.4
+  },
+  "by_platform_family": {
+    "1688": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "ai-judge": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "ai-search": {
+      "total": 31,
+      "full": 0,
+      "partial": 27,
+      "unknown": 4
+    },
+    "airbnb": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "amazon": {
+      "total": 27,
+      "full": 0,
+      "partial": 19,
+      "unknown": 8
+    },
+    "app-store": {
+      "total": 21,
+      "full": 0,
+      "partial": 15,
+      "unknown": 6
+    },
+    "apple-maps": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "apple-music": {
+      "total": 4,
+      "full": 0,
+      "partial": 0,
+      "unknown": 4
+    },
+    "baidu": {
+      "total": 5,
+      "full": 0,
+      "partial": 3,
+      "unknown": 2
+    },
+    "beike": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "bilibili": {
+      "total": 52,
+      "full": 0,
+      "partial": 43,
+      "unknown": 9
+    },
+    "bing": {
+      "total": 20,
+      "full": 1,
+      "partial": 15,
+      "unknown": 4
+    },
+    "bluesky": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "booking": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "companies": {
+      "total": 239,
+      "full": 18,
+      "partial": 169,
+      "unknown": 52
+    },
+    "creators": {
+      "total": 17,
+      "full": 0,
+      "partial": 14,
+      "unknown": 3
+    },
+    "crunchbase": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "crypto": {
+      "total": 14,
+      "full": 0,
+      "partial": 10,
+      "unknown": 4
+    },
+    "dewu": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "douban": {
+      "total": 6,
+      "full": 0,
+      "partial": 6,
+      "unknown": 0
+    },
+    "douyin-shop": {
+      "total": 5,
+      "full": 0,
+      "partial": 5,
+      "unknown": 0
+    },
+    "douyin-xingtu": {
+      "total": 47,
+      "full": 0,
+      "partial": 44,
+      "unknown": 3
+    },
+    "douyin": {
+      "total": 299,
+      "full": 0,
+      "partial": 167,
+      "unknown": 132
+    },
+    "duckduckgo": {
+      "total": 6,
+      "full": 0,
+      "partial": 6,
+      "unknown": 0
+    },
+    "ebay": {
+      "total": 4,
+      "full": 0,
+      "partial": 3,
+      "unknown": 1
+    },
+    "economics": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "etsy": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "facebook": {
+      "total": 60,
+      "full": 3,
+      "partial": 46,
+      "unknown": 11
+    },
+    "github": {
+      "total": 14,
+      "full": 0,
+      "partial": 4,
+      "unknown": 10
+    },
+    "glassdoor": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "google-ads": {
+      "total": 4,
+      "full": 0,
+      "partial": 3,
+      "unknown": 1
+    },
+    "google-play": {
+      "total": 20,
+      "full": 0,
+      "partial": 14,
+      "unknown": 6
+    },
+    "google": {
+      "total": 191,
+      "full": 11,
+      "partial": 136,
+      "unknown": 44
+    },
+    "hackernews": {
+      "total": 3,
+      "full": 0,
+      "partial": 3,
+      "unknown": 0
+    },
+    "health": {
+      "total": 2,
+      "full": 0,
+      "partial": 0,
+      "unknown": 2
+    },
+    "home-depot": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "image-gen": {
+      "total": 73,
+      "full": 0,
+      "partial": 14,
+      "unknown": 59
+    },
+    "imdb": {
+      "total": 19,
+      "full": 0,
+      "partial": 18,
+      "unknown": 1
+    },
+    "indeed": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "instagram": {
+      "total": 166,
+      "full": 2,
+      "partial": 134,
+      "unknown": 30
+    },
+    "jd": {
+      "total": 9,
+      "full": 0,
+      "partial": 7,
+      "unknown": 2
+    },
+    "kick": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "kuaishou": {
+      "total": 49,
+      "full": 0,
+      "partial": 40,
+      "unknown": 9
+    },
+    "lazada": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "lemon8": {
+      "total": 16,
+      "full": 0,
+      "partial": 12,
+      "unknown": 4
+    },
+    "linkedin": {
+      "total": 120,
+      "full": 17,
+      "partial": 80,
+      "unknown": 23
+    },
+    "linkinbio": {
+      "total": 5,
+      "full": 0,
+      "partial": 0,
+      "unknown": 5
+    },
+    "markets": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "medium": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "meta-ads": {
+      "total": 17,
+      "full": 0,
+      "partial": 7,
+      "unknown": 10
+    },
+    "music-gen": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "naver": {
+      "total": 4,
+      "full": 0,
+      "partial": 3,
+      "unknown": 1
+    },
+    "packages": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "people": {
+      "total": 265,
+      "full": 12,
+      "partial": 200,
+      "unknown": 53
+    },
+    "pinterest": {
+      "total": 5,
+      "full": 0,
+      "partial": 1,
+      "unknown": 4
+    },
+    "pipixia": {
+      "total": 17,
+      "full": 0,
+      "partial": 15,
+      "unknown": 2
+    },
+    "producthunt": {
+      "total": 3,
+      "full": 0,
+      "partial": 3,
+      "unknown": 0
+    },
+    "qq-huxuan": {
+      "total": 6,
+      "full": 0,
+      "partial": 6,
+      "unknown": 0
+    },
+    "reddit": {
+      "total": 52,
+      "full": 3,
+      "partial": 40,
+      "unknown": 9
+    },
+    "remoteok": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "research": {
+      "total": 5,
+      "full": 0,
+      "partial": 1,
+      "unknown": 4
+    },
+    "rumble": {
+      "total": 5,
+      "full": 0,
+      "partial": 0,
+      "unknown": 5
+    },
+    "search-console": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "seznam": {
+      "total": 3,
+      "full": 0,
+      "partial": 1,
+      "unknown": 2
+    },
+    "shopify": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "snapchat": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "soundcloud": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "spotify": {
+      "total": 6,
+      "full": 0,
+      "partial": 0,
+      "unknown": 6
+    },
+    "stackoverflow": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "steam": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "stocks": {
+      "total": 73,
+      "full": 5,
+      "partial": 46,
+      "unknown": 22
+    },
+    "substack": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "taobao": {
+      "total": 12,
+      "full": 0,
+      "partial": 10,
+      "unknown": 2
+    },
+    "telegram": {
+      "total": 9,
+      "full": 0,
+      "partial": 8,
+      "unknown": 1
+    },
+    "threads": {
+      "total": 19,
+      "full": 0,
+      "partial": 12,
+      "unknown": 7
+    },
+    "tiktok-ads": {
+      "total": 16,
+      "full": 0,
+      "partial": 12,
+      "unknown": 4
+    },
+    "tiktok-shop": {
+      "total": 26,
+      "full": 1,
+      "partial": 19,
+      "unknown": 6
+    },
+    "tiktok": {
+      "total": 210,
+      "full": 4,
+      "partial": 151,
+      "unknown": 55
+    },
+    "toutiao": {
+      "total": 11,
+      "full": 0,
+      "partial": 8,
+      "unknown": 3
+    },
+    "tripadvisor": {
+      "total": 10,
+      "full": 0,
+      "partial": 6,
+      "unknown": 4
+    },
+    "trustpilot": {
+      "total": 6,
+      "full": 0,
+      "partial": 3,
+      "unknown": 3
+    },
+    "truthsocial": {
+      "total": 3,
+      "full": 0,
+      "partial": 0,
+      "unknown": 3
+    },
+    "twitch": {
+      "total": 4,
+      "full": 0,
+      "partial": 1,
+      "unknown": 3
+    },
+    "video-gen": {
+      "total": 108,
+      "full": 0,
+      "partial": 11,
+      "unknown": 97
+    },
+    "voice-gen": {
+      "total": 7,
+      "full": 1,
+      "partial": 4,
+      "unknown": 2
+    },
+    "walmart": {
+      "total": 6,
+      "full": 0,
+      "partial": 4,
+      "unknown": 2
+    },
+    "weather": {
+      "total": 1,
+      "full": 0,
+      "partial": 0,
+      "unknown": 1
+    },
+    "web": {
+      "total": 258,
+      "full": 23,
+      "partial": 168,
+      "unknown": 67
+    },
+    "wechat-channels": {
+      "total": 27,
+      "full": 0,
+      "partial": 23,
+      "unknown": 4
+    },
+    "wechat-mp": {
+      "total": 29,
+      "full": 0,
+      "partial": 25,
+      "unknown": 4
+    },
+    "wechat-search": {
+      "total": 4,
+      "full": 0,
+      "partial": 4,
+      "unknown": 0
+    },
+    "weibo": {
+      "total": 71,
+      "full": 0,
+      "partial": 59,
+      "unknown": 12
+    },
+    "weworkremotely": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    },
+    "wikipedia": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "x": {
+      "total": 122,
+      "full": 10,
+      "partial": 33,
+      "unknown": 79
+    },
+    "xianyu": {
+      "total": 2,
+      "full": 0,
+      "partial": 2,
+      "unknown": 0
+    },
+    "xiaohongshu-pugongying": {
+      "total": 26,
+      "full": 0,
+      "partial": 16,
+      "unknown": 10
+    },
+    "xiaohongshu": {
+      "total": 44,
+      "full": 0,
+      "partial": 36,
+      "unknown": 8
+    },
+    "xigua": {
+      "total": 7,
+      "full": 0,
+      "partial": 6,
+      "unknown": 1
+    },
+    "yahoo": {
+      "total": 7,
+      "full": 0,
+      "partial": 5,
+      "unknown": 2
+    },
+    "yandex": {
+      "total": 3,
+      "full": 0,
+      "partial": 3,
+      "unknown": 0
+    },
+    "yelp": {
+      "total": 7,
+      "full": 0,
+      "partial": 4,
+      "unknown": 3
+    },
+    "youku": {
+      "total": 3,
+      "full": 0,
+      "partial": 3,
+      "unknown": 0
+    },
+    "youtube": {
+      "total": 107,
+      "full": 3,
+      "partial": 69,
+      "unknown": 35
+    },
+    "zhihu": {
+      "total": 56,
+      "full": 0,
+      "partial": 18,
+      "unknown": 38
+    },
+    "zillow": {
+      "total": 1,
+      "full": 0,
+      "partial": 1,
+      "unknown": 0
+    }
+  },
+  "generated_at": "2026-11-23T15:40:48.018Z"
+}
