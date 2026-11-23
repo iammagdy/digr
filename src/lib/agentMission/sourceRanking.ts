@@ -139,6 +139,10 @@ const numberOf = (v: unknown): number | null => (typeof v === "number" && Number
 
 /** The rows a call of this endpoint is expected to return when nothing was measured: the input's default or its maximum (at most twenty), else five. */
 export function priorRowsPerCall(endpoint: CatalogEndpoint): number {
+  const contractMax = endpoint.adapter_contract?.pagination?.max_page_size;
+  if (contractMax && Number.isFinite(contractMax) && contractMax > 0) {
+    return Math.max(1, Math.min(100, Math.floor(contractMax)));
+  }
   const input = endpoint.inputs.find((i) => LIMIT_INPUTS.includes(i.name));
   const fromDefault = numberOf(input?.default);
   const fromMax = numberOf(input?.maximum);
