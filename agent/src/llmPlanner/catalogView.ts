@@ -171,7 +171,7 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
   })) as unknown as CatalogEndpoint[];
 }
 
-export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
+export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
   const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
   if (!isSearchKind(capability)) return base;
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
@@ -182,16 +182,43 @@ export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null
   return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra];
 }
 
-function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean } = {}): CatalogEndpoint[] {
+let registryFallbackGroups: Map<string, string> | null = null;
+function fallbackGroupOf(e: CatalogEndpoint): string | null {
+  if (typeof (e as any).fallback_group === "string" && (e as any).fallback_group.trim() !== "") {
+    return (e as any).fallback_group;
+  }
+  if (typeof (e as any).operation === "string" && (e as any).operation.trim() !== "") {
+    return `${(e as any).operation}:${e.platform}`;
+  }
+  if (!registryFallbackGroups) {
+    registryFallbackGroups = new Map();
+    try {
+      const reg = require("../../../data/capabilities/registry.json");
+      if (Array.isArray(reg?.capabilities)) {
+        for (const c of reg.capabilities) {
+          if (c.id && c.fallback_group) {
+            registryFallbackGroups.set(c.id, c.fallback_group);
+          }
+        }
+      }
+    } catch { /* if not available, empty */ }
+  }
+  return registryFallbackGroups.get(e.id) ?? null;
+}
+
+function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean } = {}): CatalogEndpoint[] {
   const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const chosen = [...exact].sort(rank).slice(0, max);
-  if (chosen.length >= 3 && !options.alsoSearch) return chosen;
-  // a step with a named source AND a topic: the platform's search tools are candidates too (a search whose query names the source and the topic may carry both, where the source's listing carries no topic)
-  if (options.alsoSearch) {
-    const search = usable.filter((e) => !chosen.includes(e) && /\.search\.(posts|videos)$/.test(capabilityOf(e))).sort(rank).slice(0, 4);
-    return [...chosen.slice(0, max - search.length), ...search];
+  if (chosen.length >= 3 && !options.alsoSearch && !options.hasSource) return chosen;
+  // when a step has a source or alsoSearch: put all usable endpoints of the step's operation / fallback_group in front of the model
+  if (options.alsoSearch || options.hasSource) {
+    const group = exact.map(fallbackGroupOf).find(Boolean) ?? (exact[0] ? fallbackGroupOf(exact[0]) : null);
+    const related = group
+      ? usable.filter((e) => !chosen.includes(e) && fallbackGroupOf(e) === group).sort(rank)
+      : usable.filter((e) => !chosen.includes(e)).sort(rank);
+    return [...chosen, ...related].sort(rank).slice(0, max);
   }
   // a capability the catalog names differently (or did not name): the same platform's tools whose capability shares the last word (posts, comments, replies …)
   const last = capability.split(".").pop() ?? "";
