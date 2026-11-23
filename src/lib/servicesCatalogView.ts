@@ -106,6 +106,33 @@ const SECTOR_ICON_MAP: Record<string, "building" | "users" | "message" | "map-pi
   s11: "globe", // Research & public data
 };
 
+export function defaultColumnsForSector(sectorId: string): string[] {
+  switch (sectorId) {
+    case "s1":
+      return ["رابط الصفحة", "عنوان الصفحة", "الترتيب", "عدد الزيارات التقديري", "الكلمات المفتاحية"];
+    case "s2":
+      return ["اسم الحساب", "الاسم الظاهر", "رابط الملف", "نص المنشور أو التعليق", "تاريخ النشر", "عدد التفاعلات"];
+    case "s3":
+      return ["اسم الحملة أو المعلن", "المنصة", "نص الإعلان", "الرابط المستهدف", "تاريخ الظهور"];
+    case "s4":
+      return ["اسم المنشأة", "المدينة والمحافظة", "الموقع الرسمي", "اسم المسؤول", "المسمى الوظيفي", "البريد المهني", "هاتف العمل"];
+    case "s5":
+      return ["اسم المنتج", "السعر", "اسم المتجر", "التقييم", "عدد المبيعات", "رابط المنتج"];
+    case "s6":
+      return ["اسم المنشأة", "العنوان والمدينة", "التقييم العام", "عدد المراجعات", "رقم الهاتف", "الإحداثيات"];
+    case "s7":
+      return ["المسمى الوظيفي", "اسم الشركة", "المدينة", "مجال العمل", "رابط الإعلان"];
+    case "s9":
+      return ["اسم المستودع أو الحزمة", "الرابط", "الوصف", "تاريخ آخر تحديث", "الترخيص"];
+    case "s10":
+      return ["الرمز أو الأصل", "السعر الحالي", "نسبة التغير", "حجم التداول", "القيمة السوقية"];
+    case "s11":
+      return ["عنوان البحث أو المصدر", "الجهة المصدرة", "تاريخ النشر", "الملخص", "الرابط المرجعي"];
+    default:
+      return ["البيان", "القيمة", "تاريخ الرصد", "الرابط المرجعي"];
+  }
+}
+
 export function getSellableCatalogView(catalog: LiveServicesCatalog = getLiveServicesCatalog()): SellableCatalogViewData {
   const groups: SellableCapabilityGroup[] = catalog.sectors.map((sector) => {
     const items: SellableCapabilityItem[] = sector.platforms.flatMap((platform) =>
@@ -113,9 +140,9 @@ export function getSellableCatalogView(catalog: LiveServicesCatalog = getLiveSer
         id: service.slug,
         titleAr: service.nameAr,
         summaryAr: service.explainAr,
-        outputColumnsAr: [],
+        outputColumnsAr: defaultColumnsForSector(sector.id),
         sampleQueryAr: `أريد ${service.nameAr}`,
-        badgeAr: undefined,
+        badgeAr: service.core ? "صناع القرار" : undefined,
         pricingUnitLabelAr: service.startingUnitPoints ? `${formatAr(service.startingUnitPoints)} نقطة` : undefined,
       })),
     );
