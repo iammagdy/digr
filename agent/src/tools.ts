@@ -32,7 +32,7 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { alignedModelCall } from "./periodRequest";
 import { tokenOverlayCode, withRepliesStages } from "../../src/lib/agentMission/replies";
-import { ROW_KEY_FIELDS, textDedupeKey } from "../../src/lib/agentMission/contract";
+import { ROW_KEY_FIELDS, textDedupeKey, titleDedupeKey, canonicalUrlKey } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, CallRow, MissionRecord } from "./types";
 import { inspectSavedCompanyAndPeople, recordQuestionOnce, recoverCompanyPeopleFromSavedEvidence, type RecoveryResult, type SavedEvidenceInspection, type UnderstoodCompaniesSummary, type UnderstoodPeopleSummary } from "./companyPeopleRecovery";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -620,18 +620,22 @@ const valueAt = (value: unknown, path: string | null | undefined): unknown => {
 const rowKeyOf = (row: unknown): string => {
   if (row && typeof row === "object") {
     const r = row as Record<string, unknown>;
-    const rawTitle = r.title ?? r.headline;
-    if (typeof rawTitle === "string") {
-      const k = textDedupeKey(rawTitle);
-      if (k) return `title:${k}`;
-    }
+    // (a) the row's canonical platform id field if present (the stage's id column / post id)
     for (const k of ROW_KEY_FIELDS) {
+      if (k === "url") continue;
       const v = r[k];
       if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
       if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
     }
-    const link = String(r.canonical_url ?? r.url ?? r.link ?? "").trim();
+    // (b) canonical link/URL
+    const link = canonicalUrlKey(r.canonical_url ?? r.url ?? r.link);
     if (link) return `link:${link}`;
+    // (c) normalized title ONLY when the row has neither id nor link
+    const rawTitle = r.title ?? r.headline;
+    if (typeof rawTitle === "string") {
+      const k = titleDedupeKey(rawTitle);
+      if (k) return `title:${k}`;
+    }
   }
   return JSON.stringify(row);
 };

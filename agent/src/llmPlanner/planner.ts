@@ -12,7 +12,7 @@ import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../..
 import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { researchRelevanceOf } from "../../../src/lib/agentMission/foundation/compilePlan";
-import { textDedupeKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
+import { textDedupeKey, titleDedupeKey, canonicalUrlKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
@@ -142,9 +142,10 @@ const tableLabelOf = (p: string, _capability?: string): string | null => {
   return PLATFORM_AR[p] ?? null;
 };
 /** The label of a platform, only when the customer wrote it in their own words (`said`); else «المصدر». A platform the table does not know stays «المنصة». */
-export const platformAr = (p: string, capability: string | undefined, said: ReadonlyArray<string>): string => {
+export const platformAr = (p: string, capability: string | undefined, said: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): string => {
   const label = tableLabelOf(p, capability);
   if (label === null) return "المنصة";
+  if (opts?.allowPlatformNames) return label;
   return labelWrittenBy(label, said) ? label : PLATFORM_LABEL_FALLBACK_AR;
 };
 
@@ -711,7 +712,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   const said = customerSaidOf(input);
-  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said, { allowPlatformNames: true })).filter((o): o is string => o !== null), understanding: u, costUsd };
+  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said, { allowPlatformNames: true }) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said, { allowPlatformNames: true })).filter((o): o is string => o !== null), understanding: u, costUsd };
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
   if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
@@ -992,9 +993,12 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // «هتستلم ٢٠ تقييمًا» and the end «١٠ من ٢٠»)
   if (u.accepts_available) {
     for (const f of findings) {
-      if (!f.exhausted || f.found <= 0 || f.found >= f.requested) continue;
-      f.step.count = { ...f.step.count, total: f.found };
-      u.assumptions_ar = [...(u.assumptions_ar ?? []), `طلبتَ ${toArabicDigits(f.requested)}، ووافقت على تسليم الموجود فعلًا من ${f.step.title_ar}: نحو ${toArabicDigits(f.found)}.`];
+      if (!f.exhausted) continue;
+      f.step.count = { ...(f.step.count ?? { total: null, per_parent: null, all: false }), total: f.found };
+      if (f.found > 0) {
+        const requestedPart = (f.step.count?.total ?? null) !== null ? `طلبتَ ${toArabicDigits(f.requested)}، و` : "";
+        u.assumptions_ar = [...(u.assumptions_ar ?? []), `${requestedPart}وافقت على تسليم الموجود فعلًا من ${f.step.title_ar}: نحو ${toArabicDigits(f.found)}.`];
+      }
     }
   }
   // 5. PRICE
@@ -1296,18 +1300,19 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
 export interface ScoutFinding { step: UnderstoodStep; requested: number; found: number; exhausted: boolean; sets: number }
 
 const rowKeyOf = (row: Record<string, unknown>): string => {
-  const rawTitle = row.title ?? row.headline;
-  if (typeof rawTitle === "string") {
-    const textKey = textDedupeKey(rawTitle);
-    if (textKey) return `title:${textKey}`;
-  }
   for (const k of ROW_KEY_FIELDS) {
+    if (k === "url") continue;
     const v = row[k];
     if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
     if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
   }
-  const link = String(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url ?? "").trim();
+  const link = canonicalUrlKey(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url);
   if (link) return `link:${link}`;
+  const rawTitle = row.title ?? row.headline;
+  if (typeof rawTitle === "string") {
+    const textKey = titleDedupeKey(rawTitle) ?? textDedupeKey(rawTitle);
+    if (textKey) return `title:${textKey}`;
+  }
   return String(row.id ?? JSON.stringify(row));
 };
 
@@ -1507,10 +1512,19 @@ export function numbersWritten(text: string): Set<string> {
 }
 
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
-export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
-  const lines = weak.map((f) => (f.found === 0
-    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها ولم نجد نتائج.`
-    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability, said)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
+export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): { question_ar: string; options_ar: string[] } {
+  const lines = weak.map((f) => {
+    const platformName = platformAr(f.step.platform, f.step.capability, said, opts?.allowPlatformNames ? { allowPlatformNames: true } : undefined);
+    if (f.found === 0) {
+      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
+    }
+    const requestedByCustomer = (f.step.count?.total ?? null) !== null;
+    if (!requestedByCustomer) {
+      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+    }
+    return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+  });
+  const firstFound = weak[0]?.found ?? 0;
   return {
     question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`,
     options_ar: [
@@ -1537,18 +1551,18 @@ export async function scoutQuestion(
     catalog_index: index || undefined,
     searches: weak.map((f) => ({
       items: f.step.title_ar,
-      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
+      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input), { allowPlatformNames: true }),
       source: f.step.source,
       topic: f.step.topic,
       period: f.step.period,
       language: f.step.language ?? null,
       country: f.step.country ?? null,
-      requested: f.requested,
+      requested: (f.step.count?.total ?? null) !== null ? f.requested : null,
       found: f.found,
       different_searches_tried: f.sets,
     })),
   };
-  const fallback = scoutFallbackAr(weak, customerSaidOf(input));
+  const fallback = scoutFallbackAr(weak, customerSaidOf(input), { allowPlatformNames: true });
   const systemPrompt = index
     ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
     : SCOUT_SYSTEM;
@@ -1559,6 +1573,20 @@ export async function scoutQuestion(
     900
   );
   if (!isObj(answer)) return fallback;
+  const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
+    .map((o) => customerSafe(str(o), 120, customerSaidOf(input), { allowPlatformNames: true }))
+    .filter((o): o is string => Boolean(o && o.trim()));
+
+  // Code only checks shape: 2–4 options, first = deliver what was found
+  const isDeliverFirst = rawOptions.length >= 1 && (rawOptions[0].includes("سلّم") || rawOptions[0].includes("موجود"));
+  const validShape = rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst;
+  const options_ar = validShape ? rawOptions : fallback.options_ar;
+
+  // When the customer requested no count, the shortfall question text is ALWAYS the code-built factual sentence (D-0197)
+  if (weak.some((f) => (f.step.count?.total ?? null) === null)) {
+    return { question_ar: fallback.question_ar, options_ar };
+  }
+
   const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input), { allowPlatformNames: true });
   if (!message) return fallback;
   const allowed = new Set<string>([
@@ -1570,15 +1598,8 @@ export async function scoutQuestion(
     deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`);
     return fallback;
   }
-  const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
-    .map((o) => customerSafe(str(o), 120, customerSaidOf(input), { allowPlatformNames: true }))
-    .filter((o): o is string => Boolean(o && o.trim()));
 
-  // Code only checks shape: 2–4 options, first = deliver what was found
-  const isDeliverFirst = rawOptions.length >= 1 && (rawOptions[0].includes("سلّم") || rawOptions[0].includes("موجود"));
-  const validShape = rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst;
-
-  return { question_ar: message, options_ar: validShape ? rawOptions : fallback.options_ar };
+  return { question_ar: message, options_ar };
 }
 
 /** Parents a child step is tried on: those that carry the binding's value, the most commented (or replied, or liked) first, at most PARENTS_TRIED. */
@@ -1718,8 +1739,15 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       if (s.count.all) notes.push(`${s.title_ar}: نقرأ كل ما يعرضه المصدر لكل عنصر، بحد أقصى ${toArabicDigits(perParent ?? ALL_CHILDREN_CAP)} لكل عنصر، ولا ندفع إلا مقابل ما يُسلَّم.`);
       else if (!s.count.per_parent && !s.count.total && perParent !== undefined) assumptions.push(`لم تحدد عدد ${s.title_ar} لكل عنصر، فاخترنا ${toArabicDigits(perParent)}؛ يمكنك تعديله قبل الموافقة.`);
     } else {
-      planned = s.count.total ?? DEFAULT_COUNT;
-      if (s.count.total === null) assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ${toArabicDigits(DEFAULT_COUNT)}؛ يمكنك تعديله قبل الموافقة.`);
+      const total = s.count?.total ?? null;
+      if (total !== null) {
+        planned = total;
+      } else {
+        const sampleCount = b.sampleRows.length;
+        const reachable = b.hasMore ? Math.max(1, Math.min(b.rowsPerPage * 2, 20)) : Math.max(1, sampleCount);
+        planned = Math.max(1, Math.min(MAX_STEP_ITEMS, reachable));
+        assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ما يمكن تسليمه فعليًا بحسب العينة المتاحة: نحو ${toArabicDigits(planned)}؛ يمكنك تعديله قبل الموافقة.`);
+      }
     }
     planned = Math.max(1, Math.min(MAX_STEP_ITEMS, Math.floor(planned)));
     plannedOf.set(s.key, planned);

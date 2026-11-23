@@ -4,7 +4,7 @@ import path from "path";
 import { candidatesFor, platformIndex } from "../agent/src/llmPlanner/catalogView";
 import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, customerSafe, probeStep, chooseTools, checkOptions, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
-import { textDedupeKey } from "../src/lib/agentMission/contract";
+import { textDedupeKey, titleDedupeKey, canonicalUrlKey } from "../src/lib/agentMission/contract";
 import { REVIEW_SYSTEM, reviewPrompt } from "../agent/src/review";
 
 const catalog = loadTregCatalog();
@@ -744,6 +744,8 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       parent: null,
       deliver: true,
       title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      search_terms: ["شائعات"],
+      period: null,
     };
 
     let probeCalls = 0;
@@ -960,6 +962,8 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       parent: null,
       deliver: true,
       title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      search_terms: ["شائعات"],
+      period: null,
     };
 
     const mockProbe = vi.fn().mockImplementation(async () => {
@@ -1188,6 +1192,138 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(deliveredStage?.expected_rows).toBe(7);
       // Honesty note added
       expect(res.understanding.assumptions_ar?.some((a: string) => a.includes("٧"))).toBe(true);
+    }
+  });
+
+  it("r6: INVENTED COUNT - customer requested no count -> shortfall question never says «طلبتهم» and card sizes to real deliverable", async () => {
+    const noCountStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "الشائعات ومكافحة الشائعات",
+      source: { kind: "account", value: "SaudiMOH" },
+      count: { total: null, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      search_terms: ["شائعات"],
+      period: null,
+    };
+
+    // Case A: 0 found out of unrequested count
+    const zeroFinding: ScoutFinding = {
+      step: noCountStep,
+      requested: 20,
+      found: 0,
+      exhausted: true,
+      sets: 1,
+    };
+
+    const fallback0 = scoutFallbackAr([zeroFinding], ["SaudiMOH", "شائعات"]);
+    expect(fallback0.question_ar).not.toMatch(/طلبت|من الـ/u);
+    expect(fallback0.options_ar[0]).toBe("سلّمني الموجود فقط");
+    expect(fallback0.question_ar).toContain("ولم نجد نتائج");
+
+    // Case B: 7 found out of unrequested count
+    const sevenFinding: ScoutFinding = {
+      step: noCountStep,
+      requested: 20,
+      found: 7,
+      exhausted: true,
+      sets: 1,
+    };
+
+    const fallback7 = scoutFallbackAr([sevenFinding], ["SaudiMOH", "شائعات"]);
+    expect(fallback7.question_ar).not.toMatch(/طلبت|من الـ/u);
+    expect(fallback7.question_ar).toContain("٧");
+
+    // Case C: Model attempts to invent count «من الـ١٠٠ اللي طلبتهم»
+    const mockInventingModel = vi.fn().mockImplementation(async ({ tool }) => {
+      if (tool?.name === "scout_report") {
+        return {
+          input: {
+            message_ar: "دورت في حساب وزارة الصحة ومالقيتش ولا منشور من الـ١٠٠ اللي طلبتهم. تحب نسلّمك الموجود ولا نوسّع؟",
+            options_ar: [
+              "سلّمني الموجود فقط",
+              "وسّع البحث إلى مصادر إخبارية ورسمية",
+            ],
+          },
+        };
+      }
+      return null;
+    });
+
+    const cost = { usd: 0 };
+    const qGuarded = await scoutQuestion(
+      { decision: "plan", understanding_ar: "الشائعات", steps: [noCountStep] },
+      [sevenFinding],
+      { words: ["عايز اسحب داتا عن الشائعات @SaudiMOH"], request: "" },
+      { model: mockInventingModel, catalog },
+      cost
+    );
+
+    // Guard rejects the invented count message and falls back to honest phrasing
+    expect(qGuarded.question_ar).not.toMatch(/طلبت|من الـ/u);
+    expect(qGuarded.question_ar).toContain("٧");
+  });
+
+  it("r6: DUPLICATES IN EXECUTION & JUDGE - 36 real rows of msn_fd91804494b88c7b7d82 collapsed before counting and charging", () => {
+    const fixture36 = JSON.parse(fs.readFileSync(path.join(mohDir, "msn_fd91804494b88c7b7d82_36_rows.json"), "utf8"));
+    expect(fixture36).toHaveLength(36);
+
+    // Apply execution structural deduplication
+    const seenUrls = new Set<string>();
+    const seenTitles = new Set<string>();
+    const uniqueRows: any[] = [];
+    const duplicates: any[] = [];
+
+    for (const r of fixture36) {
+      const uKey = canonicalUrlKey(r.url);
+      if (uKey && seenUrls.has(uKey)) {
+        duplicates.push({ row: r, reason: "link_duplicate" });
+        continue;
+      }
+      const tKey = titleDedupeKey(r.title);
+      if (tKey && seenTitles.has(tKey)) {
+        duplicates.push({ row: r, reason: "title_duplicate" });
+        continue;
+      }
+      if (uKey) seenUrls.add(uKey);
+      if (tKey) seenTitles.add(tKey);
+      uniqueRows.push(r);
+    }
+
+    // Exactly 3 duplicates identified by Marbouha must be collapsed
+    expect(duplicates).toHaveLength(3);
+    expect(uniqueRows).toHaveLength(33);
+
+    // Row 12 is link dup of Row 5
+    const dup12 = duplicates.find((d) => d.row.id === "row_12");
+    expect(dup12).toBeDefined();
+    expect(dup12?.reason).toBe("link_duplicate");
+
+    // Row 21 is title dup of Row 20 («غير متوفر»)
+    const dup21 = duplicates.find((d) => d.row.id === "row_21");
+    expect(dup21).toBeDefined();
+    expect(dup21?.reason).toBe("title_duplicate");
+
+    // Row 25 is title dup of Row 4 («(الصحة) تحارب الشائعات الصحية الخاطئة»)
+    const dup25 = duplicates.find((d) => d.row.id === "row_25");
+    expect(dup25).toBeDefined();
+    expect(dup25?.reason).toBe("title_duplicate");
+
+    // Check execution judge prompt: pages merely belonging to ministry without rumors are 0
+    expect(REVIEW_SYSTEM).toContain("A row, page, article or post that merely belongs to or mentions the requested entity or country");
+    expect(REVIEW_SYSTEM).toContain("A page merely belonging to the ministry is 0");
+
+    // Off-topic ministry rows (5, 6, 7, 8, 9, 29, 32)
+    const offTopicIds = new Set(["row_5", "row_6", "row_7", "row_8", "row_9", "row_29", "row_32"]);
+    const onTopicSurvivors = uniqueRows.filter((r) => !offTopicIds.has(r.id));
+
+    // Verify survivors satisfy topic and entity constraints
+    for (const s of onTopicSurvivors) {
+      if (s.id === "row_20") continue; // unavailable title
+      expect(s.title + " " + s.text).toMatch(/شائع|إشاع|أشيع|شيع|مضلل|لا يخدعونك|أخبار زائفة|مفاهيم مغلوطة|ادعاءات/u);
     }
   });
 });

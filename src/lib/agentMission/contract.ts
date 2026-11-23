@@ -134,6 +134,44 @@ export function textDedupeKey(text: unknown): string | null {
   return [...t].length >= MIN_DEDUPE_CHARS ? t : null;
 }
 
+/**
+ * The deduplication key for titles/headlines: trailing publisher suffixes come off, normalized text,
+ * minimum 4 characters so short but identical titles like «غير متوفر» are matched and collapsed.
+ */
+export function titleDedupeKey(title: unknown): string | null {
+  let raw = String(title ?? "").replace(INVISIBLE, "").trim();
+  raw = raw.replace(/\s*[-|–—]\s*[^ -|–—]+(?:\s+[^ -|–—]+){0,4}\s*$/u, "").trim();
+  let t = normalizeText(stripLinksAndMentions(raw))
+    .replace(/(^|\s)#[^\s#]*/gu, " ")
+    .replace(PICTOGRAPH, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (let n = 0; n < 4; n += 1) { const next = t.replace(LEADING_MARKERS, ""); if (next === t) break; t = next; }
+  return [...t].length >= 4 ? t : null;
+}
+
+/**
+ * Normalizes a URL for deduplication: lowercase protocol and host, strips tracking query parameters,
+ * and removes trailing slash.
+ */
+export function canonicalUrlKey(url: unknown): string | null {
+  const u = String(url ?? "").trim();
+  if (!u || !/^https?:\/\//i.test(u)) return null;
+  try {
+    const parsed = new URL(u);
+    const toDelete: string[] = [];
+    for (const k of parsed.searchParams.keys()) {
+      if (/^(utm_|ref|fbclid|gclid|source|origin)/i.test(k)) toDelete.push(k);
+    }
+    for (const k of toDelete) parsed.searchParams.delete(k);
+    const path = parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${path}${parsed.search ? parsed.search : ""}`;
+  } catch {
+    return u.toLowerCase().replace(/\/+$/, "");
+  }
+}
+
 /** The scope a text is unique in: a stage's items, and for a child stage (comments) the items of the same parent. */
 export const dedupeScope = (parentId: string | null | undefined): string => (parentId ? `p:${parentId}` : "root");
 
