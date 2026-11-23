@@ -5,6 +5,7 @@ import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, callMoney, type JobCallBudget } from "../../lib/server/callBudget";
 import { classifyTregCharge } from "../../lib/server/tregCharge";
 import type { RawCapture } from "../../lib/server/rawCapture";
+import { getCircuitBreaker, getControlProbeRequest, type EndpointCircuitBreaker } from "../../lib/treg/circuitBreaker";
 export interface TregCallOptions {
   baseUrl?: string;
   /** An explicit key (tests, one-off tools): used as given; the key pool is bypassed. */
@@ -46,6 +47,14 @@ export interface TregCallOptions {
   rawCapture?: RawCapture;
   /** For a routed waterfall endpoint (see NO_WATERFALL_ENDPOINTS): false sends `X-Treg-Route-Waterfall: 0`, so only one provider is tried and billed. */
   routeWaterfall?: boolean;
+  /** Optional sleeper for deterministic testing of backoff / Retry-After delays. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Marked true when executing a minimal documented control request to diagnose a 400. */
+  isControlProbe?: boolean;
+  /** Skip running control probe on 400. */
+  skipControlProbe?: boolean;
+  /** Circuit breaker instance to record to or query. */
+  circuitBreaker?: EndpointCircuitBreaker;
 }
 
 export interface TregCallResult {
@@ -274,6 +283,42 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     const charge = classifyTregCharge(result);
     budget.settle(estimate, charge.known ? charge.usd : null);
   }
+
+  const cb = options.circuitBreaker ?? getCircuitBreaker();
+  if (result.ok) {
+    cb.recordSuccess(options.endpointId);
+  } else {
+    // On 400, execute minimal documented control request to diagnose if provider itself is broken
+    if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe) {
+      const probeReq = getControlProbeRequest(options.endpointId);
+      if (probeReq) {
+        try {
+          const probeResult = await executeTregCallUnguarded({
+            ...options,
+            isControlProbe: true,
+            method: probeReq.method,
+            params: probeReq.params,
+            singleAttempt: true,
+            callBudget: undefined,
+          });
+          if (!probeResult.ok && probeResult.httpStatus === 400) {
+            // Control probe failed with 400: provider itself is broken, trip circuit immediately
+            cb.recordFailure(options.endpointId, 400, true);
+          } else {
+            // Control probe succeeded or returned other status: original query was invalid
+            cb.recordFailure(options.endpointId, 400, false);
+          }
+        } catch {
+          cb.recordFailure(options.endpointId, 400, false);
+        }
+      } else {
+        cb.recordFailure(options.endpointId, 400, false);
+      }
+    } else {
+      cb.recordFailure(options.endpointId, result.httpStatus, options.isControlProbe);
+    }
+  }
+
   return result;
 }
 
@@ -325,6 +370,19 @@ function refusedCall(input: { error: string; httpStatus: number; blocked?: strin
     ...(input.blocked ? { blocked: input.blocked } : {}),
     ...(input.budgetStopped ? { budgetStopped: true } : {}),
   };
+}
+
+export function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  const sec = parseInt(trimmed, 10);
+  if (!Number.isNaN(sec) && sec >= 0) return sec;
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    const diffSec = Math.ceil((dateMs - Date.now()) / 1000);
+    return diffSec >= 0 ? diffSec : 0;
+  }
+  return null;
 }
 
 async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregCallResult> {
@@ -383,6 +441,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     "X-Treg-Token": token,
     "X-Treg-Route-Max-Cost": costCapUsd,
     "Idempotency-Key": idemKey,
+    "X-Treg-Idempotency-Key": idemKey,
   };
 
   if (metaHeader) {
@@ -421,20 +480,60 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   const startTime = Date.now();
-  let response: Response;
+  let response: Response | null = null;
+  let lastNetErr: any = null;
+  const sleepFn = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const maxRetries = options.singleAttempt ? 0 : 2;
+  let attempt = 0;
+  let retried429 = false;
 
-  try {
-    response = await fetch(targetUrl, {
-      method,
-      headers,
-      body: requestBody,
-      signal:
-        options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
-          ? AbortSignal.timeout(options.timeoutMs)
-          : undefined,
-    });
-  } catch (netErr: any) {
-    const errorMsg = sanitizeTregDetail(netErr.message || "Failed to reach data provider", token);
+  while (attempt <= maxRetries) {
+    lastNetErr = null;
+    try {
+      response = await fetch(targetUrl, {
+        method,
+        headers,
+        body: requestBody,
+        signal:
+          options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
+            ? AbortSignal.timeout(options.timeoutMs)
+            : undefined,
+      });
+
+      // HTTP 429 with Retry-After (delay and retry once if <= 10 seconds)
+      if (response.status === 429 && !retried429) {
+        const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+        if (retryAfter !== null && retryAfter <= 10) {
+          retried429 = true;
+          await sleepFn(Math.max(50, retryAfter * 1000));
+          continue;
+        }
+      }
+
+      // Transient 5xx (502, 503, 504): retry with exponential backoff
+      const isTransient5xx = response.status === 502 || response.status === 503 || response.status === 504;
+      if (isTransient5xx && attempt < maxRetries) {
+        attempt++;
+        const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
+        await sleepFn(backoffMs);
+        continue;
+      }
+
+      break;
+    } catch (netErr: any) {
+      lastNetErr = netErr;
+      if (attempt < maxRetries) {
+        attempt++;
+        const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
+        await sleepFn(backoffMs);
+        continue;
+      }
+      break;
+    }
+  }
+
+  if (!response) {
+    const errorMsg = sanitizeTregDetail(lastNetErr?.message || "Failed to reach data provider", token);
     return {
       ok: false,
       httpStatus: 503,
@@ -448,7 +547,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       isRouteMaxCost: false,
       isPlatformBalanceLow: false,
       // AbortSignal.timeout rejects with a TimeoutError (a manual abort with an AbortError): either way we stopped waiting.
-      timedOut: netErr?.name === "TimeoutError" || netErr?.name === "AbortError",
+      timedOut: lastNetErr?.name === "TimeoutError" || lastNetErr?.name === "AbortError",
     };
   }
 
@@ -501,13 +600,31 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     console.warn(JSON.stringify({ tag: "treg_charge_mismatch", endpointId: options.endpointId, headerMicro, chargedMicroInAnswer: bodyMicro, tregCallId }));
   }
 
+  const isBusinessError = Boolean(
+    response.ok &&
+    responseBody &&
+    typeof responseBody === "object" &&
+    !Array.isArray(responseBody) &&
+    (
+      (typeof responseBody.error === "string" && responseBody.error.trim().length > 0) ||
+      (typeof responseBody.code === "number" && responseBody.code >= 400) ||
+      (typeof responseBody.status_code === "number" && responseBody.status_code >= 400)
+    )
+  );
+
+  const effectiveOk = response.ok && !isBusinessError;
+  const effectiveStatus = isBusinessError
+    ? (typeof responseBody.code === "number" ? responseBody.code : typeof responseBody.status_code === "number" ? responseBody.status_code : 400)
+    : response.status;
+  const rawBusinessError = isBusinessError ? (responseBody.error || responseBody.message || "provider_business_error") : undefined;
+
   const bodyError = responseBody?.error;
   // DT-20261119-09 (F2): TREG's price-cap refusal is read wherever its fields sit (top level, inside a `detail` object or a JSON `detail` string): live 2026-11-19 six of them were read as «platform balance low» and traced «endpoint_payment_refused»
   const isRouteMaxCost = response.status === 402 && isRouteMaxCostBody(responseBody);
   const isPlatformBalanceLow = response.status === 402 && !isRouteMaxCost;
 
   let rawDetail = "";
-  if (!response.ok) {
+  if (!effectiveOk) {
     if (responseBody && typeof responseBody === "object") {
       if (typeof responseBody.detail === "string" && responseBody.detail.trim()) {
         rawDetail = responseBody.detail;
@@ -529,13 +646,13 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     }
   }
 
-  const sanitizedDetail = !response.ok ? sanitizeTregDetail(rawDetail, token) : undefined;
+  const sanitizedDetail = !effectiveOk ? sanitizeTregDetail(rawDetail, token) : undefined;
 
-  if (!response.ok && response.status >= 400 && response.status < 500) {
+  if (!effectiveOk && effectiveStatus >= 400 && effectiveStatus < 500) {
     console.warn(JSON.stringify({
       tag: "treg_client_rejected",
       endpointId: options.endpointId,
-      status: response.status,
+      status: effectiveStatus,
       sentParamKeys: Object.keys(cleanParams).sort(),
       allowedParamKeys: options.allowedParamKeys?.slice().sort(),
       detail: sanitizedDetail,
@@ -543,13 +660,13 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   return {
-    ok: response.ok,
-    httpStatus: response.status,
+    ok: effectiveOk,
+    httpStatus: effectiveStatus,
     tregCallId,
     costMicro,
     latencyMs,
     data: responseBody,
-    error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : bodyError || (response.ok ? undefined : `http_${response.status}`),
+    error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : rawBusinessError || bodyError || (effectiveOk ? undefined : `http_${effectiveStatus}`),
     errorDetails: sanitizedDetail,
     detail: sanitizedDetail,
     isRouteMaxCost,
@@ -561,4 +678,21 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     ...(headerMicro === null && bodyMicro === null && !costIsEstimate ? { costUnreported: true } : {}),
     ...(costHeaderInvalid ? { costHeaderInvalid: true as const } : {}),
   };
+}
+
+export async function executeControlProbe(
+  endpointId: string,
+  options?: Partial<TregCallOptions>
+): Promise<TregCallResult> {
+  const probeReq = getControlProbeRequest(endpointId);
+  return executeTregCallUnguarded({
+    endpointId,
+    userId: options?.userId || "system_probe",
+    jobId: options?.jobId || "probe_job",
+    isControlProbe: true,
+    singleAttempt: true,
+    method: probeReq?.method || "GET",
+    params: probeReq?.params || {},
+    ...options,
+  });
 }
