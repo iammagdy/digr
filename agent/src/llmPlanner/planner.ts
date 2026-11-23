@@ -1597,13 +1597,6 @@ export function numbersWritten(text: string): Set<string> {
   return new Set((plain.match(/\d+/g) ?? []).map((n) => String(Number(n))));
 }
 
-export function textMentionsPeriod(text: string): boolean {
-  return /(?:سنة|سنتين|سنين|سنوات|شهر|شهرين|شهور|أشهر|أسبوع|أسبوعين|أسابيع|يوم|يومين|أيام|عام|عامين|أعوام|\b(?:19|20)\d{2}\b)/i.test(text);
-}
-
-export function textMentionsRequestedCount(text: string): boolean {
-  return /(?:طلبتهم|طلبتها|طلبته|اللي طلبت|اللي طلبته|اللي طلبتهم)/.test(text);
-}
 
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
 export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
@@ -1651,7 +1644,6 @@ export async function scoutQuestion(
   const index = deps.catalog ? platformIndex(deps.catalog, deps.access ?? null) : "";
   const customerText = customerSaidOf(input).join(" ");
   const customerNumbers = numbersWritten(customerText);
-  const customerHasPeriod = textMentionsPeriod(customerText);
   const customerHasCount = weak.some((f) => (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)));
 
   const facts = {
@@ -1663,7 +1655,7 @@ export async function scoutQuestion(
       platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
       source: f.step.source,
       topic: f.step.topic,
-      period: customerHasPeriod ? f.step.period : null,
+      period: f.step.period && [...numbersWritten(`${f.step.period.from} ${f.step.period.to}`)].some((n) => customerNumbers.has(n)) ? f.step.period : null,
       language: f.step.language ?? null,
       country: f.step.country ?? null,
       requested: (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)) ? f.requested : null,
@@ -1708,16 +1700,6 @@ export async function scoutQuestion(
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
   if (foreign.length > 0) {
     deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`);
-    return { question_ar: fallback.question_ar, options_ar };
-  }
-
-  // Model-written question may state a requested count or period ONLY if that number/period appears in customer's own messages
-  if (!customerHasCount && textMentionsRequestedCount(message)) {
-    deps.log?.(`llm_planner_scout_invented_count`);
-    return { question_ar: fallback.question_ar, options_ar };
-  }
-  if (!customerHasPeriod && textMentionsPeriod(message)) {
-    deps.log?.(`llm_planner_scout_invented_period`);
     return { question_ar: fallback.question_ar, options_ar };
   }
 
