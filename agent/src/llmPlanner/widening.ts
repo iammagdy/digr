@@ -3,7 +3,8 @@ import { toArabicDigits } from "../../../src/lib/arabicDigits";
 /**
  * TREG Phase 4: Scope-Separated Widening Proposals (docs/diger-team/DT-20261123-treg-p4.md).
  * Generic widening interfaces and proposal builders with strict scope separation.
- * Zero hardcoded platform names, provider names, or query words in code.
+ * Zero hardcoded platform names, provider names, topic words, or source categories in code.
+ * Arabic labels and summary wording derive strictly from the LLM proposal approved by customer (titleAr).
  */
 
 export type ItemScope = "primary_account" | "widened_account" | "broader_topic" | "full_archive";
@@ -24,21 +25,20 @@ export interface WideningOffer {
   additionalCostUsd?: number;
 }
 
-export const SCOPE_LABEL_AR: Readonly<Record<ItemScope, string>> = {
-  primary_account: "الحساب المطلوب",
-  widened_account: "حسابات قريبة / جهات رسمية",
-  broader_topic: "أخبار ومواقع",
-  full_archive: "أرشيف شامل",
-} as const;
-
 export const SCOPE_COLUMN_KEY = "scope_label_ar";
 export const SCOPE_COLUMN_TITLE_AR = "نطاق المصدر";
 
-export function scopeLabelAr(scope: ItemScope | string | undefined): string {
-  if (scope && scope in SCOPE_LABEL_AR) {
-    return SCOPE_LABEL_AR[scope as ItemScope];
+export const PRIMARY_SCOPE_LABEL_AR = "الحساب المطلوب";
+export const DEFAULT_NEUTRAL_WIDENED_LABEL_AR = "نطاق أوسع وافقت عليه";
+
+export function scopeLabelAr(scope?: ItemScope | string, proposalTitleAr?: string): string {
+  if (proposalTitleAr && proposalTitleAr.trim() !== "") {
+    return proposalTitleAr.trim();
   }
-  return SCOPE_LABEL_AR.primary_account;
+  if (!scope || scope === "primary_account") {
+    return PRIMARY_SCOPE_LABEL_AR;
+  }
+  return DEFAULT_NEUTRAL_WIDENED_LABEL_AR;
 }
 
 export interface ScopeCounters {
@@ -72,12 +72,14 @@ export function computeScopeCounters(rows: ReadonlyArray<Record<string, unknown>
 
 export function tagRowWithScope<T extends Record<string, unknown>>(
   row: T,
-  scope: ItemScope
+  scope: ItemScope,
+  scopeLabelArText?: string
 ): T & { scope: ItemScope; scope_label_ar: string } {
+  const label = scopeLabelArText || (row[SCOPE_COLUMN_KEY] as string) || scopeLabelAr(scope);
   return {
     ...row,
     scope,
-    scope_label_ar: scopeLabelAr(scope),
+    [SCOPE_COLUMN_KEY]: label,
   };
 }
 
@@ -131,7 +133,8 @@ export function buildRetrievalUiDeliveryPayload(
   primaryRows: ReadonlyArray<Record<string, unknown>>,
   widenedRows: ReadonlyArray<Record<string, unknown>> = [],
   webRows: ReadonlyArray<Record<string, unknown>> = [],
-  options?: WideningOffer[]
+  options?: WideningOffer[],
+  proposalTitleAr?: string
 ): RetrievalUiDeliveryPayload {
   const allRows = [...primaryRows, ...widenedRows, ...webRows];
   const scope_breakdown = computeScopeCounters(allRows);
@@ -142,11 +145,18 @@ export function buildRetrievalUiDeliveryPayload(
   // Primary count is strictly true_n (Point 4.1 count separation guarantee)
   const true_n = primary_count;
 
+  // The widened label derives from the approved proposal title or row metadata, with a neutral fallback
+  const widenedLabel =
+    proposalTitleAr?.trim() ||
+    options?.find((o) => o.titleAr?.trim())?.titleAr.trim() ||
+    (widenedRows[0]?.[SCOPE_COLUMN_KEY] as string) ||
+    (webRows[0]?.[SCOPE_COLUMN_KEY] as string) ||
+    DEFAULT_NEUTRAL_WIDENED_LABEL_AR;
+
   let summary_ar = "";
-  if (widened_count > 0) {
-    summary_ar = `وجدنا ${toArabicDigits(primary_count)} من الحساب المطلوب، بالإضافة إلى ${toArabicDigits(widened_count)} من حسابات التحقق والجهات الرسمية ذات الصلة.`;
-  } else if (web_count > 0) {
-    summary_ar = `وجدنا ${toArabicDigits(primary_count)} من الحساب المطلوب، بالإضافة إلى ${toArabicDigits(web_count)} من الأخبار ومواقع الويب.`;
+  const additionalCount = widened_count + web_count;
+  if (additionalCount > 0) {
+    summary_ar = `وجدنا ${toArabicDigits(primary_count)} من الحساب المطلوب، بالإضافة إلى ${toArabicDigits(additionalCount)} من ${widenedLabel}.`;
   } else {
     summary_ar = `وجدنا ${toArabicDigits(primary_count)} من الحساب المطلوب.`;
   }
@@ -162,10 +172,16 @@ export function buildRetrievalUiDeliveryPayload(
   };
 }
 
-// Verbatim Arabic Customer Options (DIGER-TRUTH §6 & §7 Compliant)
+// Customer Options (DIGER-TRUTH §6 & §7 Compliant, dynamic shape with numbers filled)
 export function formatDeliverPrimaryOption(primaryCount: number): string {
   return `سلّمني الموجود فقط (عدد ${toArabicDigits(primaryCount)}) من الحساب المطلوب`;
 }
 
-export const WIDEN_TO_RELATED_ACCOUNTS_OPTION_AR = "وسّع البحث ليشمل حسابات التحقق والجهات الصحية الرسمية ذات الصلة";
+export function formatWidenOption(proposalTitleAr?: string): string {
+  if (proposalTitleAr && proposalTitleAr.trim() !== "") {
+    return `وسّع البحث ليشمل ${proposalTitleAr.trim()}`;
+  }
+  return `وسّع البحث ليشمل ${DEFAULT_NEUTRAL_WIDENED_LABEL_AR}`;
+}
+
 export const OFFICIAL_FULL_ARCHIVE_SEARCH_OPTION_AR = "البحث في الأرشيف التاريخي الشامل للمنصة (بتكلفة إضافية)";

@@ -10,13 +10,14 @@ import {
   buildRetrievalUiDeliveryPayload,
   computeScopeCounters,
   formatDeliverPrimaryOption,
+  formatWidenOption,
   filterValidatedCandidates,
   tagRowWithScope,
   validateCandidateAccount,
   SCOPE_COLUMN_KEY,
   SCOPE_COLUMN_TITLE_AR,
-  SCOPE_LABEL_AR,
-  WIDEN_TO_RELATED_ACCOUNTS_OPTION_AR,
+  PRIMARY_SCOPE_LABEL_AR,
+  DEFAULT_NEUTRAL_WIDENED_LABEL_AR,
   OFFICIAL_FULL_ARCHIVE_SEARCH_OPTION_AR,
 } from "../agent/src/llmPlanner/widening";
 import { checkCustomerText } from "../src/lib/agentMission/text";
@@ -25,44 +26,46 @@ import { SUMMARY_SHEET_AR } from "../src/lib/modelPlanner/missionWorkbook";
 import { cellsOf } from "./helpers/round11Worlds";
 
 describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
-  const planTemplate = (plannedRows = 20): PricedPlan => ({
-    summary_ar: "جمع منشورات التوعية بالشائعات الصحية",
-    stages: [
-      {
-        key: "posts",
-        title_ar: "المنشورات",
-        deliver: true,
-        planned_rows: plannedRows,
-        columns: [
-          { key: "text", title_ar: "نص المنشور" },
-          { key: "author", title_ar: "صاحب المنشور" },
-        ],
-      },
-    ],
-  } as unknown as PricedPlan);
+  const planTemplate = (plannedRows = 20): PricedPlan =>
+    ({
+      summary_ar: "جمع منشورات التوعية بالشائعات الصحية",
+      stages: [
+        {
+          key: "posts",
+          title_ar: "المنشورات",
+          deliver: true,
+          planned_rows: plannedRows,
+          columns: [
+            { key: "text", title_ar: "نص المنشور" },
+            { key: "author", title_ar: "صاحب المنشور" },
+          ],
+        },
+      ],
+    } as unknown as PricedPlan);
 
-  const createReplayRows = () => {
-    // 5 primary account rows from @SaudiMOH
+  const createReplayRows = (widenedLabel?: string) => {
+    // 5 primary account rows
     const primaryRows = Array.from({ length: 5 }, (_, i) =>
       tagRowWithScope(
         {
-          id: `moh_post_${i + 1}`,
-          text: `بيان توضيحي من وزارة الصحة رقم ${i + 1}`,
-          author: "SaudiMOH",
+          id: `primary_post_${i + 1}`,
+          text: `بيان توضيحي من الحساب المطلوب رقم ${i + 1}`,
+          author: "PrimaryAccount",
         },
         "primary_account"
       )
     );
 
-    // 11 widened account rows from related fact-checker @No_Rumors
+    // 11 widened account rows
     const widenedRows = Array.from({ length: 11 }, (_, i) =>
       tagRowWithScope(
         {
-          id: `norumors_post_${i + 1}`,
-          text: `هيئة مكافحة الشائعات: حقيقة الشائعة رقم ${i + 1}`,
-          author: "No_Rumors",
+          id: `widened_post_${i + 1}`,
+          text: `منشور من النطاق الموسع رقم ${i + 1}`,
+          author: "WidenedAccount",
         },
-        "widened_account"
+        "widened_account",
+        widenedLabel
       )
     );
 
@@ -70,7 +73,8 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
   };
 
   it("Assertion 1, 2, 3: Replay produces honest primary count, widening finds related rows, and counts are strictly separated", () => {
-    const { primaryRows, widenedRows } = createReplayRows();
+    const rumorsProposalTitle = "حسابات التحقق والجهات الرسمية ذات الصلة";
+    const { primaryRows, widenedRows } = createReplayRows(rumorsProposalTitle);
 
     expect(primaryRows).toHaveLength(5);
     expect(widenedRows).toHaveLength(11);
@@ -82,10 +86,10 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
 
     for (const r of widenedRows) {
       expect(r.scope).toBe("widened_account");
-      expect(r.scope_label_ar).toBe("حسابات قريبة / جهات رسمية");
+      expect(r.scope_label_ar).toBe(rumorsProposalTitle);
     }
 
-    const payload = buildRetrievalUiDeliveryPayload(primaryRows, widenedRows);
+    const payload = buildRetrievalUiDeliveryPayload(primaryRows, widenedRows, [], undefined, rumorsProposalTitle);
 
     // Primary count is strictly true_n (5), never 16 or 17
     expect(payload.true_n).toBe(5);
@@ -97,15 +101,40 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
 
     // Summary explicitly distinguishes primary count from widened count
     expect(payload.summary_ar).toContain("٥ من الحساب المطلوب");
-    expect(payload.summary_ar).toContain("١١ من حسابات التحقق والجهات الرسمية ذات الصلة");
+    expect(payload.summary_ar).toContain(`١١ من ${rumorsProposalTitle}`);
 
     // Guard against merging widened rows into true_n
     expect(payload.true_n).not.toBe(16);
     expect(payload.true_n).not.toBe(17);
   });
 
+  it("Must-Pass Cases (Commander Design Check): Dynamic proposal labels for rumors, non-rumors, and neutral fallback", () => {
+    // Case A: Rumors proposal
+    const rumorsTitle = "حسابات التحقق والجهات الرسمية ذات الصلة";
+    const rumorsRows = createReplayRows(rumorsTitle);
+    const rumorsPayload = buildRetrievalUiDeliveryPayload(rumorsRows.primaryRows, rumorsRows.widenedRows, [], undefined, rumorsTitle);
+    expect(rumorsPayload.summary_ar).toBe("وجدنا ٥ من الحساب المطلوب، بالإضافة إلى ١١ من حسابات التحقق والجهات الرسمية ذات الصلة.");
+    expect(checkCustomerText(rumorsPayload.summary_ar).issues).toEqual([]);
+
+    // Case B: Non-rumors case (company account + partner network / topic)
+    const companyTitle = "الحسابات الإخبارية للشركات التابعة";
+    const companyRows = createReplayRows(companyTitle);
+    const companyPayload = buildRetrievalUiDeliveryPayload(companyRows.primaryRows, companyRows.widenedRows, [], undefined, companyTitle);
+    expect(companyPayload.summary_ar).toBe("وجدنا ٥ من الحساب المطلوب، بالإضافة إلى ١١ من الحسابات الإخبارية للشركات التابعة.");
+    expect(checkCustomerText(companyPayload.summary_ar).issues).toEqual([]);
+
+    // Case C: Neutral fallback (zero proposal title provided)
+    const neutralRows = createReplayRows(); // no custom widened label passed
+    const neutralPayload = buildRetrievalUiDeliveryPayload(neutralRows.primaryRows, neutralRows.widenedRows);
+    expect(neutralPayload.summary_ar).toBe(`وجدنا ٥ من الحساب المطلوب، بالإضافة إلى ١١ من ${DEFAULT_NEUTRAL_WIDENED_LABEL_AR}.`);
+    expect(checkCustomerText(neutralPayload.summary_ar).issues).toEqual([]);
+    expect(neutralPayload.summary_ar).not.toMatch(/[a-zA-Z]/);
+    expect(neutralPayload.summary_ar).not.toMatch(/[0-9]/);
+  });
+
   it("Assertion 4: Live Sheet Equality & Parity with Delivered Workbook", async () => {
-    const { primaryRows, widenedRows } = createReplayRows();
+    const widenedTitle = "حسابات التحقق والجهات الرسمية ذات الصلة";
+    const { primaryRows, widenedRows } = createReplayRows(widenedTitle);
     const allRows = [...primaryRows, ...widenedRows];
 
     const store = createMemoryStore();
@@ -156,7 +185,7 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
     expect(liveSnapshot.counters.widened).toBe(11);
 
     // UI delivery true_n assertion
-    const uiPayload = buildRetrievalUiDeliveryPayload(primaryRows, widenedRows);
+    const uiPayload = buildRetrievalUiDeliveryPayload(primaryRows, widenedRows, [], undefined, widenedTitle);
     expect(uiPayload.true_n).toBe(5);
 
     // Explicit scope column is present in both live headers and workbook headers
@@ -171,8 +200,8 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
     const first5ScopeValues = workbookRows.slice(0, 5).map((r) => r[scopeColIndex]);
     const next11ScopeValues = workbookRows.slice(5, 16).map((r) => r[scopeColIndex]);
 
-    expect(first5ScopeValues.every((val) => val === SCOPE_LABEL_AR.primary_account)).toBe(true);
-    expect(next11ScopeValues.every((val) => val === SCOPE_LABEL_AR.widened_account)).toBe(true);
+    expect(first5ScopeValues.every((val) => val === PRIMARY_SCOPE_LABEL_AR)).toBe(true);
+    expect(next11ScopeValues.every((val) => val === widenedTitle)).toBe(true);
 
     // Done snapshot embeds stop reason and coverage note
     expect(liveSnapshot.stop_reason_ar).toBe("انتهت نتائج المصدر");
@@ -181,25 +210,30 @@ describe("TREG Phase 4: Scope-Separated Widening & Live Sheet Parity", () => {
 
   it("Assertion 5: Customer Options present verbatim Arabic text passing checkCustomerText", () => {
     const opt1 = formatDeliverPrimaryOption(5);
-    const opt2 = WIDEN_TO_RELATED_ACCOUNTS_OPTION_AR;
+    const opt2 = formatWidenOption("حسابات التحقق والجهات الصحية الرسمية ذات الصلة");
+    const opt2Neutral = formatWidenOption();
     const opt3 = OFFICIAL_FULL_ARCHIVE_SEARCH_OPTION_AR;
 
     // Verbatim text match
     expect(opt1).toBe("سلّمني الموجود فقط (عدد ٥) من الحساب المطلوب");
     expect(opt2).toBe("وسّع البحث ليشمل حسابات التحقق والجهات الصحية الرسمية ذات الصلة");
+    expect(opt2Neutral).toBe("وسّع البحث ليشمل نطاق أوسع وافقت عليه");
     expect(opt3).toBe("البحث في الأرشيف التاريخي الشامل للمنصة (بتكلفة إضافية)");
 
     // Customer text guard compliance (zero issues, no English words, no ASCII digits)
     expect(checkCustomerText(opt1).issues).toEqual([]);
     expect(checkCustomerText(opt2).issues).toEqual([]);
+    expect(checkCustomerText(opt2Neutral).issues).toEqual([]);
     expect(checkCustomerText(opt3).issues).toEqual([]);
 
     expect(opt1).not.toMatch(/[0-9]/);
     expect(opt2).not.toMatch(/[0-9]/);
+    expect(opt2Neutral).not.toMatch(/[0-9]/);
     expect(opt3).not.toMatch(/[0-9]/);
 
     expect(opt1).not.toMatch(/[a-zA-Z]/);
     expect(opt2).not.toMatch(/[a-zA-Z]/);
+    expect(opt2Neutral).not.toMatch(/[a-zA-Z]/);
     expect(opt3).not.toMatch(/[a-zA-Z]/);
   });
 
