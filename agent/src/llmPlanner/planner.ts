@@ -499,6 +499,7 @@ interface BuiltStep {
   lookup?: true;
   /** True on-topic accepted count from an account timeline scan (P0 DT-20261123-timeline-acceptance). */
   timelineAcceptedCount?: number;
+  timelineExhausted?: boolean;
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -863,6 +864,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const isTimelineScan = Boolean(!step.parent && (step.source?.kind === "account" || step.source?.value) && step.topic);
     let topicMatchedInSample = true;
     let judgeFailedInSample = false;
+    let judgeAffirmative = false;
 
     if (step.topic && sampleRows.length > 0) {
       const sampleTexts = (isTimelineScan ? sampleRows.slice(0, 20) : sampleRows.slice(0, 10))
@@ -892,6 +894,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       }
       if (matches !== null) {
         if (isTimelineScan) {
+          judgeAffirmative = true;
           const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
           sampleRows.splice(0, sampleRows.length, ...matchedItems);
           if (matchedItems.length === 0) {
@@ -924,7 +927,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (cursorKey && !got.option.cursor) got.option.cursor = cursorKey;
     const target = step.count.total ?? THIN_PAGE_ROWS;
     const thinThreshold = Math.min(THIN_PAGE_ROWS, target);
-    const pagingThreshold = isTimelineScan ? target : thinThreshold;
+    const pagingThreshold = (isTimelineScan && judgeAffirmative) ? target : thinThreshold;
     let cursorPagesProbed = 0;
     let totalExamined = got.items.length;
     let stopReason: StopReason | null = null;
@@ -942,11 +945,13 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     }
 
     const shouldProbeCursor = isTimelineScan
-      ? (got.hasMore && (got.nextCursor || cursorKey) && !step.parent)
+      ? (judgeAffirmative
+          ? (got.hasMore && (got.nextCursor || cursorKey) && !step.parent)
+          : (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold)))
       : (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold));
 
     if (shouldProbeCursor) {
-      if (isTimelineScan && sampleRows.length >= target) {
+      if (isTimelineScan && judgeAffirmative && sampleRows.length >= target) {
         stopReason = "target_reached";
         deps.log?.(`llm_planner_timeline_scan ${step.key} stopped reason=${stopReason} pages=1 examined=${totalExamined} accepted=${sampleRows.length}`);
       } else {
@@ -1083,20 +1088,23 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       }
     }
 
-    if (isTimelineScan) {
+    if (isTimelineScan && judgeAffirmative) {
       const builtStep = built.get(step.key);
       if (builtStep) {
         builtStep.timelineAcceptedCount = Math.min(step.count.total ?? sampleRows.length, sampleRows.length);
-      }
-      if (judgeFailedInSample) {
-        u.assumptions_ar = [
-          ...(u.assumptions_ar ?? []),
-          "تعذّر فحص عينة من نتائج الحساب آلياً أثناء التخطيط، وسيتم التدقيق والتصفية للموضوع أثناء التنفيذ الفعلي.",
-        ];
+        if (stopReason && stopReason !== "target_reached" && (!got.hasMore || stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed")) {
+          builtStep.timelineExhausted = true;
+        }
       }
     }
+    if (isTimelineScan && judgeFailedInSample) {
+      u.assumptions_ar = [
+        ...(u.assumptions_ar ?? []),
+        "تعذّر فحص عينة من نتائج الحساب آلياً أثناء التخطيط، وسيتم التدقيق والتصفية للموضوع أثناء التنفيذ الفعلي.",
+      ];
+    }
 
-    if (!topicMatchedInSample || (isTimelineScan && sampleRows.length === 0 && !judgeFailedInSample)) {
+    if (!topicMatchedInSample || (isTimelineScan && judgeAffirmative && sampleRows.length === 0 && !judgeFailedInSample)) {
       deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
       findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: isTimelineScan ? (1 + cursorPagesProbed) : 1, examinedCount: totalExamined, stopReason: stopReason ?? "terminal_cursor" });
     } else {
@@ -1925,9 +1933,9 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     } else {
       const total = s.count?.total ?? null;
       if (total !== null) {
-        planned = b.timelineAcceptedCount !== undefined ? b.timelineAcceptedCount : total;
+        planned = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : total;
       } else {
-        const sampleCount = b.timelineAcceptedCount !== undefined ? b.timelineAcceptedCount : b.sampleRows.length;
+        const sampleCount = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : b.sampleRows.length;
         const reachable = b.hasMore ? Math.max(1, Math.min(b.rowsPerPage * 2, 20)) : Math.max(1, sampleCount);
         planned = Math.max(1, Math.min(MAX_STEP_ITEMS, reachable));
         assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ما يمكن تسليمه فعليًا بحسب العينة المتاحة: نحو ${toArabicDigits(planned)}؛ يمكنك تعديله قبل الموافقة.`);
