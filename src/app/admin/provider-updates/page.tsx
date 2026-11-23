@@ -63,7 +63,7 @@ export default function AdminProviderUpdatesPage() {
 
       {loading && !payload ? (
         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-2xl bg-sf2 motion-safe:animate-pulse">
-          <span className="text-sm font-semibold text-mut">جاري جلب تحديثات المزودين...</span>
+          <span className="text-sm font-semibold text-mut">جارٍ جلب تحديثات المزودين...</span>
         </div>
       ) : error && !payload ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-bad/30 bg-bad/10 p-8 text-center text-xs text-bad">
