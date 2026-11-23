@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED, assertNoSecrets, buildInspection, noCardReasonOf, paramKeysOf, redactError, redactFailure, redactText } from "../src/lib/server/adminMissionInspector";
+import { REDACTED, assertNoSecrets, buildInspection, noCardReasonOf, paramKeysOf, redactError, redactFailure, redactJudgedText, redactJudgedUrl, redactText } from "../src/lib/server/adminMissionInspector";
 
 /**
  * DT-20261118-06 PR 2: the redaction of the admin mission inspector. Table-driven: what must be masked, what must stay byte for byte (a count of tweets is not a phone number, a date is not a phone number), and the stricter rule for the free text of a failure
@@ -116,5 +116,24 @@ describe("assertNoSecrets: the last guard", () => {
   it("passes a clean response and throws on a string that still looks like a secret or a phone number", () => {
     expect(() => assertNoSecrets({ a: ["٣٠٠ تغريدة", { b: "2026-11-19T10:00:00.000Z" }] })).not.toThrow();
     for (const bad of ["a@b.co", "Bearer abcdef123456", "sk-abcdef123456", "0123456789abcdef0123456789abcdef", "+20 100 123 4567"]) expect(() => assertNoSecrets({ x: { y: [bad] } }), bad).toThrow(/inspector/);
+  });
+});
+
+describe("redactJudgedUrl & redactJudgedText (DT-20261123 judgedRows redaction)", () => {
+  it("redactJudgedUrl redacts numeric post IDs and base64 slugs while preserving domain and path structure", () => {
+    expect(redactJudgedUrl("https://x.com/user/status/1859678493029485721")).toBe("https://x.com/user/status/[محجوب]");
+    expect(redactJudgedUrl("https://news.example.com/articles/aHR0cHM6Ly9leGFtcGxlLmNvbS9zb21lL2xvbmcvc2x1Zy90aGF0L2lzLXZlcnktbG9uZw==")).toBe("https://news.example.com/articles/[محجوب]");
+    expect(redactJudgedUrl("https://x.com/post/123")).toBe("https://x.com/post/123");
+    expect(redactJudgedUrl("https://x.com/user/status/1859678493029485721?s=20")).toBe("https://x.com/user/status/[محجوب]?[محجوب]");
+    expect(redactJudgedUrl(null)).toBeNull();
+  });
+
+  it("redactJudgedText masks phone/hex/b64 patterns but leaves emails unmasked so assertNoSecrets drops the row", () => {
+    expect(redactJudgedText("تغريدة عن الاقتصاد المصري")).toBe("تغريدة عن الاقتصاد المصري");
+    expect(redactJudgedText("تواصل هاتفيا 01001234567")).toBe("تواصل هاتفيا [محجوب]");
+    expect(redactJudgedText("هاش 0123456789abcdef0123456789abcdef")).toBe("هاش [محجوب]");
+    expect(redactJudgedText("معرف b64 QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2")).toBe("معرف b64 [محجوب]");
+    // Emails remain unmasked so they trip assertNoSecrets
+    expect(redactJudgedText("راسلنا عبر info@example.com")).toBe("راسلنا عبر info@example.com");
   });
 });

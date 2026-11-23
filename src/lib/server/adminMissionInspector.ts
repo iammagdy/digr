@@ -37,6 +37,53 @@ export function redactText(text: unknown, max = 600): string {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
+const URL_MATCH = /https?:\/\/[^\s"'«»]+/g;
+
+/**
+ * Redacts a URL from judged diagnostics: normalizes path segments so that numeric IDs (e.g. social post IDs),
+ * hex runs, and long base64 slugs in the URL path are redacted without destroying the URL domain and path structure.
+ */
+export function redactJudgedUrl(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
+  const raw = rawUrl.trim();
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username || parsed.password) { parsed.username = ""; parsed.password = ""; }
+    const segments = parsed.pathname.split("/").map((seg) => {
+      if (!seg) return seg;
+      let s = seg;
+      s = s.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
+      if (digitsOf(s) >= 7) return REDACTED;
+      s = s.replace(HEX_RUN, REDACTED);
+      s = s.replace(B64_RUN, REDACTED);
+      return s;
+    });
+    const query = parsed.search ? `?${REDACTED}` : "";
+    const hash = parsed.hash ? `#${REDACTED}` : "";
+    return `${parsed.origin}${segments.join("/")}${query}${hash}`;
+  } catch {
+    let s = raw;
+    s = s.replace(URL_QUERY, `$1?${REDACTED}`);
+    s = s.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
+    s = s.replace(HEX_RUN, REDACTED).replace(B64_RUN, REDACTED);
+    return s;
+  }
+}
+
+/**
+ * Redacts text in judged rows (title, criterion, reason): applies phone, hex, and base64 redactions
+ * so that normal post IDs and hashes are masked with [محجوب]. Does NOT mask emails or private tokens:
+ * any row containing a secret/email will be caught by assertNoSecrets and dropped.
+ */
+export function redactJudgedText(text: unknown, max = 300): string {
+  let t = typeof text === "string" ? text : text === null || text === undefined ? "" : String(text);
+  t = t.replace(URL_MATCH, (u) => redactJudgedUrl(u) ?? u);
+  t = t.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
+  t = t.replace(HEX_RUN, REDACTED);
+  t = t.replace(B64_RUN, REDACTED);
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
 const QUOTED = /'[^']*'|"[^"]*"|«[^»]*»|`[^`]*`/g;
 const URL_ANY = /https?:\/\/\S+|\bwww\.\S+/gi;
 const HEADER_VALUE = /\b(?:x-)?(?:api[-_ ]?key|authorization|token|secret|password|key)\b\s*[:=]\s*\S+/gi;
@@ -128,6 +175,7 @@ export interface InspectInput {
     verdict: 1 | 0;
     reason: string;
   }>;
+  judgedRowsDropped?: number;
 }
 
 /** The whole response, built by name. Pure. */
@@ -189,6 +237,7 @@ export function buildInspection(input: InspectInput) {
     events,
     files: (Array.isArray(m.files) ? m.files : []).slice(0, 10).map((f: any) => ({ kind: String(f?.kind ?? "").slice(0, 10), name: redactText(String(f?.name ?? ""), 120) })),
     judgedRows: input.judgedRows ?? [],
+    judgedRowsDropped: input.judgedRowsDropped ?? 0,
   };
 }
 const countsOf = (c: unknown): Record<string, number> => {
@@ -224,29 +273,42 @@ export async function loadInspection(client: any, input: { id: string; now?: Dat
   ]);
   if (events.error || calls.error) return { ok: false, status: 500, error: "read_failed" };
   let judgedRows: Array<{ title: string; url: string | null; criterion: string; verdict: 1 | 0; reason: string }> = [];
+  let judgedRowsDropped = 0;
   try {
     const downloaded = await client.storage.from(AGENT_BUCKET).download(`${input.id}/admin/judge_diagnostics.json`);
     if (downloaded?.data) {
       const text = typeof downloaded.data.text === "function" ? await downloaded.data.text() : String(downloaded.data);
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed)) {
-        judgedRows = parsed.map((item: any) => ({
-          title: redactText(item.title, 200),
-          url: typeof item.url === "string" ? redactText(item.url, 300) : null,
-          criterion: typeof item.criterion === "string"
-            ? redactText(item.criterion, 300)
-            : (item.criterion && typeof item.criterion === "object"
-                ? redactText([item.criterion.entity, item.criterion.country, item.criterion.topic].filter(Boolean).join(" — "), 300)
-                : ""),
-          verdict: (item.verdict === 1 ? 1 : 0) as 1 | 0,
-          reason: redactText(item.reason, 300),
-        }));
+        for (let i = 0; i < parsed.length; i++) {
+          const item = parsed[i];
+          try {
+            const row = {
+              title: redactJudgedText(item?.title, 200),
+              url: typeof item?.url === "string" ? redactJudgedUrl(item.url) : null,
+              criterion: typeof item?.criterion === "string"
+                ? redactJudgedText(item.criterion, 300)
+                : (item?.criterion && typeof item.criterion === "object"
+                    ? redactJudgedText([item.criterion.entity, item.criterion.country, item.criterion.topic].filter(Boolean).join(" — "), 300)
+                    : ""),
+              verdict: (item?.verdict === 1 ? 1 : 0) as 1 | 0,
+              reason: redactJudgedText(item?.reason, 300),
+            };
+            assertNoSecrets(row, `judgedRows[${i}]`);
+            judgedRows.push(row);
+          } catch {
+            judgedRowsDropped += 1;
+          }
+        }
       }
     }
   } catch {
     // optional diagnostic file
   }
-  const body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date(), judgedRows });
+  if (judgedRowsDropped > 0) {
+    console.log(`inspector_judged_rows_dropped mission=${input.id} count=${judgedRowsDropped}`);
+  }
+  const body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date(), judgedRows, judgedRowsDropped });
   assertNoSecrets(body);
   return { ok: true, body };
 }
