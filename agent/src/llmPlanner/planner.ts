@@ -1615,7 +1615,7 @@ export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: Readonl
       }
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
-    const requestedByCustomer = (f.step.count?.total ?? null) !== null && (customerNumbers.size === 0 || customerNumbers.has(String(f.step.count?.total)));
+    const requestedByCustomer = (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total));
     if (!requestedByCustomer) {
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }

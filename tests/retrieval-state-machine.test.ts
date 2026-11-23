@@ -721,6 +721,49 @@ describe("Point 3.3 & Point 3.6: Timeline Scan, Budget Guard, Honest Shortfall &
     };
     const fbFallback = scoutFallbackAr([fbFinding], ["SaudiMOH", "منشورات"]);
     expect(fbFallback.question_ar).toContain("جرّبنا البحث في ٣٠ منشورًا من SaudiMOH على فيسبوك بالشروط التي كتبتها ولم نجد نتائج متطابقة");
+
+    // Must-pass A: R6 text (no digits) + step with default total=200 → no «طلبت» and no 200 in fallback sentence
+    const r6Finding: any = {
+      step: {
+        key: "s4",
+        title_ar: "تغريدات وزارة الصحة",
+        platform: "x",
+        capability: "user_posts",
+        source: { kind: "account", value: "@SaudiMOH" },
+        count: { total: 200 }, // default total, NOT from customer
+      },
+      requested: 200,
+      found: 7,
+      exhausted: true,
+      sets: 1,
+      examinedCount: 200,
+      stopReason: "window_crossed",
+    };
+    // Customer said no number at all (R6 text)
+    const r6Fallback = scoutFallbackAr([r6Finding], ["@SaudiMOH", "شائعات"]);
+    expect(r6Fallback.question_ar).not.toContain("200");
+    expect(r6Fallback.question_ar).not.toContain("٢٠٠");
+    expect(r6Fallback.question_ar).not.toContain("طلبت");
+
+    // Must-pass B: customer said «عايز ٥٠» + total=50 → «طلبتها» may appear
+    const count50Finding: any = {
+      step: {
+        key: "s5",
+        title_ar: "تغريدات وزارة الصحة",
+        platform: "x",
+        capability: "user_posts",
+        source: { kind: "account", value: "@SaudiMOH" },
+        count: { total: 50 }, // matches customer-given count
+      },
+      requested: 50,
+      found: 7,
+      exhausted: true,
+      sets: 1,
+      examinedCount: 50,
+      stopReason: "window_crossed",
+    };
+    const count50Fallback = scoutFallbackAr([count50Finding], ["عايز ٥٠ تغريدة من @SaudiMOH"]);
+    expect(count50Fallback.question_ar).toContain("طلبتها");
   });
 
   it("scoutQuestion rejects model-invented requested count and invented period when customer gave none", async () => {
