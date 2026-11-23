@@ -186,6 +186,21 @@ export function scanSourceCode(
   const violations: GuardViolation[] = [];
   const sf = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, false);
 
+  function isModuleSpecifier(node: ts.Node, parent: ts.Node | undefined): boolean {
+    if (!parent) return false;
+    // static: import ... from "..." or export ... from "..."
+    if (ts.isImportDeclaration(parent) && parent.moduleSpecifier === node) return true;
+    if (ts.isExportDeclaration(parent) && parent.moduleSpecifier === node) return true;
+    // dynamic import: import("...") or require("...")
+    if (ts.isCallExpression(parent)) {
+      if (parent.expression.kind === ts.SyntaxKind.ImportKeyword && parent.arguments[0] === node) return true;
+      if (ts.isIdentifier(parent.expression) && parent.expression.text === "require" && parent.arguments[0] === node) return true;
+    }
+    // type import: import("...").Type
+    if ((ts as any).isImportTypeNode && (ts as any).isImportTypeNode(parent) && (parent as any).argument === node) return true;
+    return false;
+  }
+
   function checkAndAdd(node: ts.Node, rule: GuardRule, detail: string, allowKey: string) {
     if (allowIndex && allowIndex.isAllowed(filePath, rule, allowKey)) {
       return;
@@ -200,7 +215,7 @@ export function scanSourceCode(
     });
   }
 
-  function walk(node: ts.Node) {
+  function walk(node: ts.Node, parent?: ts.Node) {
     // 1. Regex literal or RegExp() call with Arabic letters
     if (hasArabic) {
       if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
@@ -223,7 +238,7 @@ export function scanSourceCode(
     }
 
     // 2. Treg tokens (endpoint id / provider id) & 3. srv paths
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && !isModuleSpecifier(node, parent)) {
       const text = node.text;
 
       // Rule 3: /srv/ paths
@@ -294,7 +309,7 @@ export function scanSourceCode(
       }
     }
 
-    ts.forEachChild(node, walk);
+    ts.forEachChild(node, (child) => walk(child, node));
   }
 
   walk(sf);

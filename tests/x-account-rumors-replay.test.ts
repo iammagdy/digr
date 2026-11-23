@@ -1114,12 +1114,21 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     };
 
     // Test scoutFallbackAr
+    // must-pass A: Customer said no number (["SaudiMOH", "شائعات"] has no digit) → requestedByCustomer=false → no «٢٠» or «طلبتها» in sentence
     const fallback = scoutFallbackAr([weakFinding], ["SaudiMOH", "شائعات"]);
     expect(fallback.question_ar).toContain("٧");
-    expect(fallback.question_ar).toContain("٢٠");
+    expect(fallback.question_ar).not.toContain("٢٠"); // default total must not appear as customer-requested
+    expect(fallback.question_ar).not.toContain("طلبتها");
     expect(fallback.options_ar[0]).toBe("سلّمني الموجود فقط");
     // Widening options offered
     expect(fallback.options_ar.some((o) => o.includes("منصات ومصادر أخرى"))).toBe(true);
+
+    // must-pass B: Customer explicitly said «عايز ٥٠ تغريدة» (digit 50 present) + step total=50 → requestedByCustomer=true → sentence includes «طلبتها» and «٥٠»
+    const stepWith50: typeof mockStep = { ...mockStep, count: { total: 50, per_parent: null, all: false } };
+    const finding50: ScoutFinding = { step: stepWith50, requested: 50, found: 12, exhausted: true, sets: 1 };
+    const fallback50 = scoutFallbackAr([finding50], ["عايز", "٥٠", "تغريدة"]);
+    expect(fallback50.question_ar).toContain("٥٠");
+    expect(fallback50.question_ar).toContain("طلبتها");
 
     // Test scoutQuestion with mock model
     const mockModel = vi.fn().mockImplementation(async ({ system, user, tool }) => {

@@ -233,11 +233,20 @@ export function serializeProviderParams(
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
-function getStepAttempts(budget: JobCallBudget): Map<string, number> {
+export function getStepAttempts(budget: JobCallBudget): Map<string, number> {
   let map = (budget as any)._stepAttempts as Map<string, number> | undefined;
   if (!map) {
     map = new Map<string, number>();
     (budget as any)._stepAttempts = map;
+  }
+  return map;
+}
+
+export function getStepProbes(budget: JobCallBudget): Map<string, number> {
+  let map = (budget as any)._stepProbes as Map<string, number> | undefined;
+  if (!map) {
+    map = new Map<string, number>();
+    (budget as any)._stepProbes = map;
   }
   return map;
 }
@@ -322,7 +331,8 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
         let canProbe = true;
         if (stepKey && budget) {
           const attemptsMap = getStepAttempts(budget);
-          if ((attemptsMap.get(stepKey) ?? 0) >= 4) {
+          const probesMap = getStepProbes(budget);
+          if ((attemptsMap.get(stepKey) ?? 0) >= 4 || (probesMap.get(stepKey) ?? 0) >= 1) {
             canProbe = false;
           }
         }
@@ -330,6 +340,12 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
           canProbe = false;
         }
         if (canProbe) {
+          if (stepKey && budget) {
+            const attemptsMap = getStepAttempts(budget);
+            attemptsMap.set(stepKey, (attemptsMap.get(stepKey) ?? 0) + 1);
+            const probesMap = getStepProbes(budget);
+            probesMap.set(stepKey, (probesMap.get(stepKey) ?? 0) + 1);
+          }
           try {
             const probeResult = await executeTregCallUnguarded({
               ...options,
