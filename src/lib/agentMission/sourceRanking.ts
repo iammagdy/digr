@@ -174,6 +174,42 @@ export function expectedCost(endpoint: CatalogEndpoint, catalog: TregCatalog, st
   return { usdPerItem, rowsPerCall, successRate: Math.min(1, Math.max(0.1, successRate)), basis: measuredCalls > 0 ? "measured" : "catalog" };
 }
 
+export type ContractStatus = "full" | "partial" | "unknown";
+
+/**
+ * Derives the contract status of an endpoint strictly from its declared schema metadata (Point 5.1 / 5.2):
+ * - "full": inputs, outputs, paging parameter, and max page size are all declared.
+ * - "partial": inputs/outputs declared, but pagination details or limits are missing.
+ * - "unknown": raw HTTP schema only with unparsed parameter semantics.
+ * Strict Zero-Guess Invariant: no default guessing.
+ */
+export function getContractStatus(endpoint: CatalogEndpoint | null | undefined): ContractStatus {
+  const status = (endpoint?.adapter_contract as Record<string, unknown> | null | undefined)?.contract_status;
+  if (status === "full" || status === "partial" || status === "unknown") {
+    return status;
+  }
+  if (!endpoint?.adapter_contract) return "unknown";
+  const pagination = endpoint.adapter_contract.pagination;
+  if (pagination && pagination.max_page_size !== null && pagination.max_page_size !== undefined) {
+    return "full";
+  }
+  if (pagination || (endpoint.inputs && endpoint.inputs.length > 0)) {
+    return "partial";
+  }
+  return "unknown";
+}
+
+/**
+ * Score assigned to contract status in data-driven ranking (Point 5.2):
+ * contract_status: "full" (+10) > "partial" (+0) > "unknown" (-10).
+ */
+export function contractScore(endpoint: CatalogEndpoint | null | undefined): number {
+  const status = getContractStatus(endpoint);
+  if (status === "full") return 10;
+  if (status === "partial") return 0;
+  return -10;
+}
+
 export interface RankedSource {
   id: string;
   capability: string | null;
@@ -184,6 +220,8 @@ export interface RankedSource {
   successRate: number;
   basis: "measured" | "catalog";
   health: SourceHealth;
+  contractStatus?: ContractStatus;
+  contractScore?: number;
 }
 
 export interface Ranking { ranked: RankedSource[]; skipped: Array<{ id: string; health: SourceHealth }> }
@@ -202,10 +240,56 @@ export function rankEndpoints(endpoints: ReadonlyArray<CatalogEndpoint>, catalog
     if (cost.usdPerItem === null) continue; // no usable price: not offered
     if (health.state === "skipped") { skipped.push({ id: e.id, health }); continue; }
     const effectiveUsd = (cost.usdPerItem / cost.successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1);
-    ranked.push({ id: e.id, capability: e.capability, usdPerItem: cost.usdPerItem, effectiveUsd, rowsPerCall: cost.rowsPerCall, successRate: cost.successRate, basis: cost.basis, health });
+    const cStatus = getContractStatus(e);
+    const cScore = contractScore(e);
+    ranked.push({
+      id: e.id,
+      capability: e.capability,
+      usdPerItem: cost.usdPerItem,
+      effectiveUsd,
+      rowsPerCall: cost.rowsPerCall,
+      successRate: cost.successRate,
+      basis: cost.basis,
+      health,
+      contractStatus: cStatus,
+      contractScore: cScore,
+    });
   }
-  ranked.sort((a, b) => a.effectiveUsd - b.effectiveUsd || a.id.localeCompare(b.id));
+  ranked.sort((a, b) => {
+    const costDiff = a.effectiveUsd - b.effectiveUsd;
+    if (Math.abs(costDiff) > 1e-9) return costDiff;
+    const scoreDiff = (b.contractScore ?? 0) - (a.contractScore ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return a.id.localeCompare(b.id);
+  });
   return { ranked, skipped };
+}
+
+/**
+ * Data-driven candidate ranking with explicit contract preference (Point 5.2):
+ * contract_status: "full" (+10) > "partial" (+0) > "unknown" (-10).
+ * Multi-candidate tie-breaking relies solely on declared contract status, reliability, and unit cost.
+ * Zero hardcoded names.
+ */
+export function rankCandidatesWithContractPreference<T extends { id: string }>(
+  candidates: ReadonlyArray<T>,
+  catalog: TregCatalog
+): T[] {
+  return [...candidates].sort((a, b) => {
+    const epA = catalog.byId.get(a.id);
+    const epB = catalog.byId.get(b.id);
+    const scoreA = contractScore(epA);
+    const scoreB = contractScore(epB);
+    if (scoreB !== scoreA) {
+      return scoreB - scoreA;
+    }
+    const costA = epA?.cost?.usd ?? 0;
+    const costB = epB?.cost?.usd ?? 0;
+    if (costA !== costB) {
+      return costA - costB;
+    }
+    return a.id.localeCompare(b.id);
+  });
 }
 
 /** The endpoints that do the same job as these: every endpoint of the catalog with the capability of one of them (a post search, a company search, the comments of a video). */
