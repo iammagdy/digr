@@ -22,12 +22,21 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
+import { countAr, itemNounOf, itemNounFromCapability, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
 import { validateInputShape } from "../tools";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import {
+  freezeTimeWindow,
+  isRowDateInWindow,
+  shouldStopChronologicalScan,
+  buildHonestShortfallQuestion,
+  canAskShortfallQuestion,
+  type StopReason,
+} from "./retrievalContract";
 
 /**
  * THE LLM-FIRST PLANNER (owner direction, 15 Nov 2026: «the model must understand the request and call the catalog's tools the way the customer wants; no word rules, no filters»).
@@ -876,20 +885,42 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       }
     }
 
-    // Cursor following: if more pages exist and either 0 matches were found so far (e.g. account timeline window)
+    // Cursor following & chronological timeline scan (Point 3.3):
+    // If more pages exist and either 0 matches were found so far (e.g. account timeline window)
     // or the initial sample is thin (< THIN_PAGE_ROWS),
-    // follow the cursor with the model judge (bounded by maxWindowPages) before sizing the card or declaring a shortfall.
+    // follow the cursor with the model judge (bounded by maxCallsForStep <= 4) before sizing the card or declaring a shortfall.
     // If the sample is already healthy (>= THIN_PAGE_ROWS), execution pages via cursor_param.
     const cursorKey = got.option.cursor ?? (Array.isArray(got.option.endpoint.pagination) ? got.option.endpoint.pagination.find((p) => got.option.endpoint.inputs.some((i) => i.name === p)) : null);
     if (cursorKey && !got.option.cursor) got.option.cursor = cursorKey;
     const thinThreshold = Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS);
     let cursorPagesProbed = 0;
+    let totalExamined = got.items.length;
+    let stopReason: StopReason | null = null;
+
+    // Freeze time window once using customer timezone
+    const timeWindow = freezeTimeWindow(
+      step.period?.from && step.period?.to
+        ? Math.max(1, Math.round((new Date(step.period.to).getTime() - new Date(step.period.from).getTime()) / (30.44 * 86400 * 1000)))
+        : 12,
+      "Africa/Cairo",
+      step.period?.to ? new Date(step.period.to) : undefined
+    );
+    if (step.period?.from) {
+      timeWindow.startUtc = new Date(step.period.from).toISOString();
+    }
+
     if (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold)) {
       let currentCursor = got.nextCursor;
       const visited = new Set<string>();
       if (currentCursor) visited.add(currentCursor);
-      const maxWindowPages = 4;
-      for (let pIdx = 0; pIdx < maxWindowPages && currentCursor && cursorKey && sampleRows.length < thinThreshold; pIdx += 1) {
+      const maxCallsForStep = 4; // Capped at <= 4 calls per step (JobCallBudget)
+
+      while (currentCursor && cursorKey && sampleRows.length < thinThreshold) {
+        if (got.callIds.length >= maxCallsForStep) {
+          stopReason = "budget_reached";
+          break;
+        }
+
         const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
         const rNext = await deps.probe(got.option.endpoint.id, nextParams);
         if (!rNext.ok) break;
@@ -898,7 +929,19 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         const nextPage = await deps.readPage(rNext.call_id);
         if (!nextPage) break;
         const nextRows = runMap(mapCode, nextPage);
-        if (nextRows.length === 0) break;
+        if (nextRows.length === 0) {
+          stopReason = "terminal_cursor";
+          break;
+        }
+
+        totalExamined += nextRows.length;
+
+        // Check chronological cutoff (Point 3.1 & 3.3)
+        const rowDates: (Date | string | number)[] = nextRows
+          .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
+          .filter(Boolean);
+        const isPastWindow = rowDates.length > 0 && shouldStopChronologicalScan(rowDates, timeWindow);
+
         let nextOnTopic: Array<Record<string, unknown>> = nextRows;
         if (step.topic) {
           const nextTexts = nextRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
@@ -917,7 +960,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           if (nextMatches !== null) {
             nextOnTopic = nextMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
           } else {
-            deps.log?.(`llm_planner_judge_sample ${step.key} page_${pIdx + 2} absent_or_failed`);
+            deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed`);
           }
         }
         if (nextOnTopic.length > 0) {
@@ -929,16 +972,43 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           }
           deps.log?.(`llm_planner_judge_sample ${step.key} paging_found on_topic=${nextOnTopic.length} total=${sampleRows.length}`);
         }
+
+        if (sampleRows.length >= thinThreshold) {
+          stopReason = "target_reached";
+          break;
+        }
+
+        if (isPastWindow) {
+          stopReason = "window_crossed";
+          break;
+        }
+
         const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
-        if (!nextCursorVal || visited.has(nextCursorVal)) {
+        if (!nextCursorVal) {
           got.hasMore = false;
           got.nextCursor = null;
+          stopReason = "terminal_cursor";
+          break;
+        }
+        if (visited.has(nextCursorVal)) {
+          got.hasMore = false;
+          got.nextCursor = null;
+          stopReason = "repeated_cursor";
           break;
         }
         visited.add(nextCursorVal);
         currentCursor = nextCursorVal;
         got.nextCursor = currentCursor;
       }
+
+      if (!stopReason) {
+        if (sampleRows.length >= thinThreshold) stopReason = "target_reached";
+        else if (got.callIds.length >= maxCallsForStep) stopReason = "budget_reached";
+        else if (!got.hasMore) stopReason = "terminal_cursor";
+      }
+
+      deps.log?.(`llm_planner_timeline_scan ${step.key} stopped reason=${stopReason} pages=${cursorPagesProbed + 1} examined=${totalExamined} accepted=${sampleRows.length}`);
+
       const builtStep = built.get(step.key);
       if (builtStep) {
         builtStep.hasMore = got.hasMore;
@@ -948,12 +1018,12 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
     if (!topicMatchedInSample) {
       deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
-      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: 1 });
+      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: 1, examinedCount: totalExamined, stopReason: stopReason ?? "terminal_cursor" });
     } else {
       if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
         const found = new Set(sampleRows.map(rowKeyOf)).size;
         deps.log?.(`llm_planner_scout ${step.key} found=${found} requested=${step.count.total} exhausted=${found < step.count.total} sets=1 (one found item)`);
-        findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
+        findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1, examinedCount: totalExamined, stopReason: stopReason ?? "target_reached" });
       }
       if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
         const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total, initialMeasured: cursorPagesProbed,
@@ -969,7 +1039,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           },
         }, deps);
         deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
-        findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
+        findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets, examinedCount: totalExamined, stopReason: stopReason ?? "target_reached" });
       }
     }
   }
@@ -977,9 +1047,21 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // and never after the customer accepted what exists. Nothing is dropped and nothing is hidden: the customer decides with the facts in front of them.
   const weak = findings.filter((f) => f.exhausted && f.found < Math.max(1, Math.ceil(f.requested * SCOUT_SHORT_SHARE)));
   if (weak.length > 0 && input.scoutAllowed !== false && !u.accepts_available) {
-    await say("جرّبنا عينة حقيقية ووجدنا أقل مما طلبت، فنعرض عليك الموقف لتختار كيف نكمل.");
-    const q = await scoutQuestion(u, weak, input, deps, cost);
-    return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true };
+    const canAsk = weak.every((f) => {
+      const b = built.get(f.step.key);
+      const pagesRead = (b?.callIds.length ?? 1);
+      return canAskShortfallQuestion({
+        pagesRead,
+        maxBudgetedPages: 4,
+        hasMore: b?.hasMore ?? false,
+        onTopicMatches: f.found,
+      });
+    });
+    if (canAsk) {
+      await say("جرّبنا عينة حقيقية ووجدنا أقل مما طلبت، فنعرض عليك الموقف لتختار كيف نكمل.");
+      const q = await scoutQuestion(u, weak, input, deps, cost);
+      return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true };
+    }
   }
   costUsd = cost.usd;
   // a plan delivers something: when only an intermediate step was read (live, 16 Nov 2026: the Amazon product was found, its reviews tool timed out three times), the customer is told honestly, never priced at zero rows nor sent to another path
@@ -1293,7 +1375,15 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 /** What one top-level step's real searches showed: how many different items the source gave (up to the customer's number), and whether every search ended (no further page). */
-export interface ScoutFinding { step: UnderstoodStep; requested: number; found: number; exhausted: boolean; sets: number }
+export interface ScoutFinding {
+  step: UnderstoodStep;
+  requested: number;
+  found: number;
+  exhausted: boolean;
+  sets: number;
+  examinedCount?: number;
+  stopReason?: StopReason | null;
+}
 
 const rowKeyOf = (row: Record<string, unknown>): string => {
   for (const k of ROW_KEY_FIELDS) {
@@ -1507,14 +1597,32 @@ export function numbersWritten(text: string): Set<string> {
   return new Set((plain.match(/\d+/g) ?? []).map((n) => String(Number(n))));
 }
 
+export function textMentionsPeriod(text: string): boolean {
+  return /(?:سنة|سنتين|سنين|سنوات|شهر|شهرين|شهور|أشهر|أسبوع|أسبوعين|أسابيع|يوم|يومين|أيام|عام|عامين|أعوام|\b(?:19|20)\d{2}\b)/i.test(text);
+}
+
+export function textMentionsRequestedCount(text: string): boolean {
+  return /(?:طلبتهم|طلبتها|طلبته|اللي طلبت|اللي طلبته|اللي طلبتهم)/.test(text);
+}
+
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
 export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
+  const customerText = said.join(" ");
+  const customerNumbers = numbersWritten(customerText);
   const lines = weak.map((f) => {
     const platformName = platformAr(f.step.platform, f.step.capability, said);
     if (f.found === 0) {
+      if (f.step.source?.value && (f.examinedCount ?? 0) > 0) {
+        const byTitle = itemNounOf(f.step.title_ar);
+        const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
+          ? byTitle
+          : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
+        const countText = countAr(f.examinedCount!, noun);
+        return `جرّبنا البحث في ${countText} من ${f.step.source.value} على ${platformName} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
+      }
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
-    const requestedByCustomer = (f.step.count?.total ?? null) !== null;
+    const requestedByCustomer = (f.step.count?.total ?? null) !== null && (customerNumbers.size === 0 || customerNumbers.has(String(f.step.count?.total)));
     if (!requestedByCustomer) {
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }
@@ -1541,6 +1649,11 @@ export async function scoutQuestion(
   cost: { usd: number }
 ): Promise<{ question_ar: string; options_ar: string[] }> {
   const index = deps.catalog ? platformIndex(deps.catalog, deps.access ?? null) : "";
+  const customerText = customerSaidOf(input).join(" ");
+  const customerNumbers = numbersWritten(customerText);
+  const customerHasPeriod = textMentionsPeriod(customerText);
+  const customerHasCount = weak.some((f) => (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)));
+
   const facts = {
     customer_words: input.words.slice(-4),
     understanding: u.understanding_ar,
@@ -1550,11 +1663,13 @@ export async function scoutQuestion(
       platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
       source: f.step.source,
       topic: f.step.topic,
-      period: f.step.period,
+      period: customerHasPeriod ? f.step.period : null,
       language: f.step.language ?? null,
       country: f.step.country ?? null,
-      requested: (f.step.count?.total ?? null) !== null ? f.requested : null,
+      requested: (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)) ? f.requested : null,
       found: f.found,
+      examined: f.examinedCount ?? null,
+      stop_reason: f.stopReason ?? null,
       different_searches_tried: f.sets,
     })),
   };
@@ -1578,21 +1693,32 @@ export async function scoutQuestion(
   const validShape = rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst;
   const options_ar = validShape ? rawOptions : fallback.options_ar;
 
-  // When the customer requested no count, the shortfall question text is ALWAYS the code-built factual sentence (D-0197)
-  if (weak.some((f) => (f.step.count?.total ?? null) === null)) {
-    return { question_ar: fallback.question_ar, options_ar };
-  }
-
   const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
   if (!message) return fallback;
+
+  // Only numbers appearing in customer messages or actual search results (found, examined, sets) are allowed
   const allowed = new Set<string>([
-    ...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]),
-    ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`),
+    ...customerNumbers,
+    ...weak.flatMap((f) => [
+      String(f.found),
+      String(f.sets),
+      ...(f.examinedCount ? [String(f.examinedCount)] : []),
+    ]),
   ]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
   if (foreign.length > 0) {
     deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`);
-    return fallback;
+    return { question_ar: fallback.question_ar, options_ar };
+  }
+
+  // Model-written question may state a requested count or period ONLY if that number/period appears in customer's own messages
+  if (!customerHasCount && textMentionsRequestedCount(message)) {
+    deps.log?.(`llm_planner_scout_invented_count`);
+    return { question_ar: fallback.question_ar, options_ar };
+  }
+  if (!customerHasPeriod && textMentionsPeriod(message)) {
+    deps.log?.(`llm_planner_scout_invented_period`);
+    return { question_ar: fallback.question_ar, options_ar };
   }
 
   return { question_ar: message, options_ar };

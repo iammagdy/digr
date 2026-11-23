@@ -22,6 +22,7 @@ import { AcceptedCompanies, COMPANY_BRANCH_FIELDS, COMPANY_EVIDENCE_KEY, COMPANY
 import { isCompanyStage } from "../../../src/lib/agentMission/entities";
 import { PRIOR_DELIVERY_REASON, type PriorDeliveryMatcher } from "../../../src/lib/agentMission/priorDelivery";
 import { CUSTOMER_EXCLUSION_REASON, EXCLUSION_POSSIBLE_MARK, organisationOfRow, type ExclusionMatcher } from "../../../src/lib/agentMission/customerExclusion";
+import { loadTregCatalog } from "../../../src/lib/treg/catalog";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -143,6 +144,19 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const dedupeKey = textKeyOf(stage);
     if (dedupeKey) for (const it of items.stage(key).items.values()) { const k = it.row ? textDedupeKey(it.row[dedupeKey]) : null; if (k) seenTexts.add(`${dedupeScope(it.row?.parent_id === undefined ? null : String(it.row.parent_id))}|${k}`); }
   }
+  // Point 3.5: Canonical platform ID deduplication
+  const seenPlatformIds = new Set<string>();
+  const ep = stage.endpoint_id ? loadTregCatalog().byId.get(stage.endpoint_id) : undefined;
+  const contractDedupeKey = ep?.adapter_contract?.dedupe_key;
+  for (const it of items.stage(key).items.values()) {
+    if (!it.row) continue;
+    const p = it.row.parent_id === undefined ? null : String(it.row.parent_id);
+    const pid = contractDedupeKey && it.row[contractDedupeKey] !== undefined && it.row[contractDedupeKey] !== null
+      ? String(it.row[contractDedupeKey]).trim()
+      : (it.row.id !== undefined && it.row.id !== null && String(it.row.id).trim() !== "" ? String(it.row.id).trim() : null);
+    if (pid) seenPlatformIds.add(`${dedupeScope(p)}|${pid}`);
+  }
+
   // Structural link and title deduplication: canonical link and normalized title without publisher suffix
   const seenUrls = new Set<string>();
   const seenTitles = new Set<string>();
@@ -226,6 +240,20 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       // an item of a parent that is not saved (yet) is NOT remembered: it may come again once its parent is saved
       if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
     }
+    // Point 3.5: Canonical platform ID deduplication (checked before URL or title fuzzy checks)
+    const platformId = contractDedupeKey && raw[contractDedupeKey] !== undefined && raw[contractDedupeKey] !== null
+      ? String(raw[contractDedupeKey]).trim()
+      : (raw.id !== undefined && raw.id !== null && String(raw.id).trim() !== "" ? String(raw.id).trim() : null);
+    if (platformId) {
+      const scopedPlatformId = `${dedupeScope(parentId)}|${platformId}`;
+      if (seenPlatformIds.has(scopedPlatformId)) {
+        duplicates += 1;
+        tally.duplicates_ignored += 1;
+        continue;
+      }
+      seenPlatformIds.add(scopedPlatformId);
+    }
+
     // Structural link deduplication (canonical URL)
     const rawLink = raw.canonical_url ?? raw.url ?? raw.link;
     const uKey = canonicalUrlKey(rawLink);
