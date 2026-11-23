@@ -864,9 +864,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       if (matches !== null && matches.length === 0) {
         topicMatchedInSample = false;
       } else if (matches === null) {
-        const terms = [step.topic, ...(step.search_terms ?? [])].filter(Boolean);
-        const hasMatch = sampleRows.some((r) => terms.some((t) => String(r.text ?? "").includes(t)));
-        if (!hasMatch) topicMatchedInSample = false;
+        deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed`);
       }
     }
 

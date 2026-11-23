@@ -5,6 +5,7 @@ import { createSourceGateway, stageScopeOf } from "../agent/src/engine/sourceGat
 import { ItemStore } from "../agent/src/items/itemStore";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { directWebEndpoints } from "../agent/src/llmPlanner/catalogView";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { RAW_PATH } from "../agent/src/gateway";
 
@@ -109,6 +110,7 @@ describe("planner and engine end-to-end with Firecrawl after a mid-run cap", () 
     const sources = createSourceGateway({ gateway: gateway as any, web: web as any, scope: stageScopeOf(plan), budget });
 
     const outcome = await runEngine({
+      reviewer: approvingResearchReviewer(),
       items,
       store,
       plan,
