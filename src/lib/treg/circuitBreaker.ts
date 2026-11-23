@@ -25,9 +25,11 @@ export interface CircuitBreakerAlert {
   type: "credit_exhaustion";
   endpointId: string;
   provider: string;
+  capability?: string;
   status: 402;
   timestamp: number;
   message: string;
+  logLine?: string;
 }
 
 export const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -199,7 +201,7 @@ export class EndpointCircuitBreaker {
     rec.cooldownMs = DEFAULT_COOLDOWN_MS;
   }
 
-  recordFailure(endpointId: string, status: number, isControlProbe?: boolean): void {
+  recordFailure(endpointId: string, status: number, isControlProbe?: boolean, capability?: string): void {
     // Phase 2 / Phase 6 Amendment 2 (Megz / الكبير):
     // HTTP 429 is a rate limit with Retry-After, NOT a circuit failure and does NOT trip the circuit.
     if (status === 429) {
@@ -220,6 +222,7 @@ export class EndpointCircuitBreaker {
       rec.consecutiveFailures += 1;
 
       const provider = endpointId.includes(".") ? endpointId.split(".")[0] : endpointId;
+      const capabilityId = capability ?? (endpointId.includes(".") ? endpointId.split(".").slice(1).join(".") : endpointId);
       this.provider402Trips.set(provider, { openedAt: now, cooldownMs: EXTENDED_COOLDOWN_MS });
 
       for (const [id, r] of this.records.entries()) {
@@ -231,16 +234,20 @@ export class EndpointCircuitBreaker {
         }
       }
 
+      const logLine = `[agent] provider_credit_exhausted provider=${provider} capability=${capabilityId}`;
       const alertMsg = `[CIRCUIT_BREAKER_ALERT: COMMANDER] Provider account credit exhausted (HTTP 402) for endpoint ${endpointId} (provider: ${provider}). Circuit tripped open. Megz top-up required.`;
       this.alertLogs.push({
         type: "credit_exhaustion",
         endpointId,
         provider,
+        capability: capabilityId,
         status: 402,
         timestamp: now,
         message: alertMsg,
+        logLine,
       });
       console.warn(alertMsg);
+      console.error(logLine);
       return;
     }
 

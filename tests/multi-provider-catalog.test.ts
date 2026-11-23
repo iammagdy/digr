@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -270,16 +270,43 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
       expect(cb.getState(cdSearch)).toBe("closed");
       expect(cb.isAvailable(cdSearch)).toBe(true);
 
-      // 4. Emits operational alert log for الكبير (COMMANDER)
+      // 4. Emits operational alert log for الكبير (COMMANDER) and records stable log line
       const alerts = cb.getAlertLogs();
       expect(alerts.length).toBeGreaterThanOrEqual(1);
       const alert = alerts[0];
       expect(alert.type).toBe("credit_exhaustion");
       expect(alert.status).toBe(402);
       expect(alert.provider).toBe("firecrawl");
-      expect(alert.endpointId).toBe(fcSearch);
+      expect(alert.capability).toBe("search");
+      expect(alert.logLine).toBe("[agent] provider_credit_exhausted provider=firecrawl capability=search");
       expect(alert.message).toContain("[CIRCUIT_BREAKER_ALERT: COMMANDER]");
       expect(alert.message).toContain("Megz top-up required");
+    });
+
+    it("emits stable tag log line '[agent] provider_credit_exhausted provider=<id> capability=<id>' to console.error on 402 trip", () => {
+      const cb = new EndpointCircuitBreaker();
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        cb.recordFailure("firecrawl.search", 402);
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          "[agent] provider_credit_exhausted provider=firecrawl capability=search"
+        );
+
+        const alerts = cb.getAlertLogs();
+        expect(alerts[0].logLine).toBe(
+          "[agent] provider_credit_exhausted provider=firecrawl capability=search"
+        );
+        expect(alerts[0].capability).toBe("search");
+
+        // Test with explicit capability argument
+        cb.recordFailure("contextdev.custom", 402, false, "custom_cap");
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          "[agent] provider_credit_exhausted provider=contextdev capability=custom_cap"
+        );
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
     });
 
     it("resetProvider manually clears the 402 provider trip back to closed", () => {
