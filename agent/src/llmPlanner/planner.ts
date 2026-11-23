@@ -914,9 +914,13 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       const visited = new Set<string>();
       if (currentCursor) visited.add(currentCursor);
       const maxCallsForStep = 4; // Capped at <= 4 calls per step (JobCallBudget)
+      // Use a separate counter for the probe budget so got.callIds (which feeds
+      // measured_cost_per_row_usd / hold pricing) is not affected by the cap check offset.
+      // got.callIds still receives probe call IDs (same as origin/main) for accurate pricing.
+      let probeCallCount = 0;
 
       while (currentCursor && cursorKey && sampleRows.length < thinThreshold) {
-        if (got.callIds.length >= maxCallsForStep) {
+        if (probeCallCount >= maxCallsForStep) {
           stopReason = "budget_reached";
           break;
         }
@@ -925,7 +929,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         const rNext = await deps.probe(got.option.endpoint.id, nextParams);
         if (!rNext.ok) break;
         cursorPagesProbed += 1;
-        if (rNext.call_id) got.callIds.push(rNext.call_id);
+        if (rNext.call_id) { got.callIds.push(rNext.call_id); probeCallCount += 1; }
         const nextPage = await deps.readPage(rNext.call_id);
         if (!nextPage) break;
         const nextRows = runMap(mapCode, nextPage);

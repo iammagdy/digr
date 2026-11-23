@@ -144,17 +144,24 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const dedupeKey = textKeyOf(stage);
     if (dedupeKey) for (const it of items.stage(key).items.values()) { const k = it.row ? textDedupeKey(it.row[dedupeKey]) : null; if (k) seenTexts.add(`${dedupeScope(it.row?.parent_id === undefined ? null : String(it.row.parent_id))}|${k}`); }
   }
-  // Point 3.5: Canonical platform ID deduplication
+  // Point 3.5: Canonical platform ID deduplication.
+  // Scope: parent_id (for child stages) + branch_id (for branch-scoped root stages).
+  // Same platform id under a different parent OR a different branch = a different row.
   const seenPlatformIds = new Set<string>();
   const ep = stage.endpoint_id ? loadTregCatalog().byId.get(stage.endpoint_id) : undefined;
   const contractDedupeKey = ep?.adapter_contract?.dedupe_key;
+  const platformIdScope = (row: Record<string, unknown>, parentId: string | null): string => {
+    const branchId = row.branch_id !== undefined && row.branch_id !== null && String(row.branch_id).trim() !== ""
+      ? String(row.branch_id).trim() : null;
+    return `${dedupeScope(parentId)}${branchId ? `|b:${branchId}` : ""}`;
+  };
   for (const it of items.stage(key).items.values()) {
     if (!it.row) continue;
     const p = it.row.parent_id === undefined ? null : String(it.row.parent_id);
     const pid = contractDedupeKey && it.row[contractDedupeKey] !== undefined && it.row[contractDedupeKey] !== null
       ? String(it.row[contractDedupeKey]).trim()
       : (it.row.id !== undefined && it.row.id !== null && String(it.row.id).trim() !== "" ? String(it.row.id).trim() : null);
-    if (pid) seenPlatformIds.add(`${dedupeScope(p)}|${pid}`);
+    if (pid) seenPlatformIds.add(`${platformIdScope(it.row, p)}|${pid}`);
   }
 
   // Structural link and title deduplication: canonical link and normalized title without publisher suffix
@@ -245,7 +252,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       ? String(raw[contractDedupeKey]).trim()
       : (raw.id !== undefined && raw.id !== null && String(raw.id).trim() !== "" ? String(raw.id).trim() : null);
     if (platformId) {
-      const scopedPlatformId = `${dedupeScope(parentId)}|${platformId}`;
+      const scopedPlatformId = `${platformIdScope(raw, parentId ?? null)}|${platformId}`;
       if (seenPlatformIds.has(scopedPlatformId)) {
         duplicates += 1;
         tally.duplicates_ignored += 1;
