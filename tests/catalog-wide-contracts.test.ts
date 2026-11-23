@@ -109,7 +109,37 @@ describe("Phase 5: Universal Catalog-Wide Contracts & Coverage (Point 5.1 - 5.5)
   it("Scenario 5: All 3,276 generated contracts parse successfully against the Zod AdapterContractSchema without throwing errors", () => {
     expect(existsSync(contractsPath)).toBe(true);
     const contracts = loadAdapterContracts(contractsPath);
-    expect(contracts.length).toBe(3276);
+
+    // Filter by provider/source of each record from the data itself
+    const tregContracts = contracts.filter(
+      (c) => !c.capability_tags || c.capability_tags.length === 0
+    );
+    const multiProviderContracts = contracts.filter(
+      (c) => c.capability_tags && c.capability_tags.length > 0
+    );
+
+    // 1. TREG contracts equal the TREG sellable count (3,276)
+    expect(tregContracts.length).toBe(3276);
+
+    // 2. Separately assert every Firecrawl/Context.dev operation supported by adapters has exactly one contract (9 today)
+    expect(multiProviderContracts.length).toBe(9);
+    const expectedMultiOperations = [
+      "firecrawl.search",
+      "firecrawl.map",
+      "firecrawl.scrape",
+      "firecrawl.scrape_json",
+      "contextdev.search",
+      "contextdev.map",
+      "contextdev.scrape",
+      "contextdev.scrape_json",
+      "contextdev.people_search",
+    ];
+    const multiEndpointIds = multiProviderContracts.map((c) => c.endpoint_id);
+    expect(multiEndpointIds.sort()).toEqual(expectedMultiOperations.sort());
+    expect(new Set(multiEndpointIds).size).toBe(9);
+
+    // Total contracts in memory: 3,276 + 9 = 3,285
+    expect(contracts.length).toBe(3285);
 
     for (const contract of contracts) {
       const parsed = AdapterContractSchema.safeParse(contract);
