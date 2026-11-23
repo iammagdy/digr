@@ -421,4 +421,112 @@ describe("P0 Hotfix: Deep Account Timeline Acceptance & Shortfall Guard", () => 
     expect(scanLog).toContain("examined=80");
     expect(scanLog).toContain("accepted=0");
   });
+
+  it("Judge failure / absent: retries once within budget, keeps page unjudged, never counts as 0 on-topic or triggers shortfall question, states in assumptions", async () => {
+    let judgeCallCount = 0;
+    const page1Tweets = Array.from({ length: 20 }, (_, i) => ({
+      id: `p1_t${i + 1}`,
+      text: `تغريدة عن الشائعات الصحية رقم ${i + 1}`,
+      published_at: new Date(Date.now() - i * 3600 * 1000).toISOString(),
+    }));
+
+    const mockProbe = vi.fn(async () => ({
+      ok: true,
+      rows_in_page: 20,
+      call_id: "call_page_1",
+      items: page1Tweets,
+      has_more: false,
+      next_cursor: null,
+      charge_usd: 0.001,
+    }));
+
+    const mockReadPage = vi.fn(async () => ({
+      output: { data: { tweets: page1Tweets } },
+    }));
+
+    const mockModel: any = vi.fn(async ({ tool }: any) => {
+      if (tool?.name === "request_plan") {
+        return {
+          input: {
+            decision: "plan",
+            understanding_ar: "جمع تغريدات حساب وزارة الصحة عن الشائعات",
+            steps: [
+              {
+                key: "moh_rumor_tweets",
+                platform: "x",
+                capability: timelineEp.capability,
+                source: { kind: "account", value: "@SaudiMOH" },
+                topic: "شائعات",
+                count: { total: 20 },
+                deliver: true,
+                title_ar: "تغريدات نفي الشائعات",
+              },
+            ],
+          },
+          costUsd: 0.001,
+        };
+      }
+      if (tool?.name === "tool_choice") {
+        return {
+          input: {
+            options: [
+              {
+                endpoint_id: timelineEp.id,
+                params_json: JSON.stringify({ handle: "SaudiMOH", limit: 20 }),
+                cursor_input: "cursor",
+                more_params_json: [],
+              },
+            ],
+          },
+          costUsd: 0.001,
+        };
+      }
+      if (tool?.name === "field_map") {
+        return {
+          input: {
+            fields: { id: ["id"], text: ["text"] },
+            extra: [],
+          },
+          costUsd: 0.001,
+        };
+      }
+      if (tool?.name === "judge_sample") {
+        judgeCallCount++;
+        // Simulate judge failure / invalid return (no matching_indices)
+        return { input: {}, costUsd: 0.001 };
+      }
+      return { input: {}, costUsd: 0.001 };
+    });
+
+    const logs: string[] = [];
+    const res = await planWithLlm(
+      {
+        words: ["تغريدات حساب @SaudiMOH عن الشائعات"],
+        request: "",
+        scoutAllowed: true,
+      },
+      {
+        model: mockModel,
+        probe: mockProbe as any,
+        readPage: mockReadPage as any,
+        catalog: cat,
+        access: null,
+        today: "2026-11-23",
+        log: (msg) => logs.push(msg),
+      }
+    );
+
+    // Verified: judge was called and retried once
+    expect(judgeCallCount).toBe(2);
+
+    // Crucial invariant: never tell customer «found nothing» on judge failure!
+    // Must NOT be a shortfall question («قرأنا N ومالقيناش»)
+    expect(res.kind).toBe("plan");
+    if (res.kind === "plan") {
+      // Delivered unjudged sample, but transparently stated in assumptions
+      expect(res.plan.assumptions_ar?.length).toBeGreaterThan(0);
+      const unjudgedAssumption = res.plan.assumptions_ar?.find((a) => a.includes("تعذّر فحص عينة"));
+      expect(unjudgedAssumption).toBeDefined();
+    }
+  });
 });
