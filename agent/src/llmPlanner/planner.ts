@@ -497,6 +497,9 @@ interface BuiltStep {
   webFallbacks?: Array<{ option: ToolOption; mapCode: string }>;
   /** A lookup step resolved to the one named thing: its children are bound to that thing's own value, and it is not a stage of the plan. */
   lookup?: true;
+  /** True on-topic accepted count from an account timeline scan (P0 DT-20261123-timeline-acceptance). */
+  timelineAcceptedCount?: number;
+  timelineExhausted?: boolean;
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -858,29 +861,59 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     // THE ITEMS OF ONE FOUND THING (the reviews of the one product the lookup found) are a top-level request in all but name: a source that answered them all on one page, with no next page, is what exists
     // (live, 16 Nov 2026: 10 Amazon reviews with no next page were planned silently as 20, and 10 were delivered)
+    const isTimelineScan = Boolean(!step.parent && (step.source?.kind === "account" || step.source?.value) && step.topic);
     let topicMatchedInSample = true;
+    let judgeFailedInSample = false;
+    let judgeAffirmative = false;
+
     if (step.topic && sampleRows.length > 0) {
-      const sampleTexts = sampleRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
+      const sampleTexts = (isTimelineScan ? sampleRows.slice(0, 20) : sampleRows.slice(0, 10))
+        .map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`)
+        .join("\n");
       const constraintCriterion = [
         step.source?.value ? `Source/Account: ${step.source.value}` : null,
         step.country ? `Country: ${step.country}` : null,
         `Topic: «${step.topic}»`,
       ].filter(Boolean).join(", ");
-      const judgeRes = await ask(
+      let judgeRes = await ask(
         "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
         `Criteria:\n${constraintCriterion}\n\nItems:\n${sampleTexts}`,
         { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
         200,
       );
-      const matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
+      let matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
+      if (matches === null && isTimelineScan) {
+        deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed retry=1`);
+        judgeRes = await ask(
+          "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
+          `Criteria:\n${constraintCriterion}\n\nItems:\n${sampleTexts}`,
+          { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+          200,
+        );
+        matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
+      }
       if (matches !== null) {
-        if (matches.length === 0) {
-          topicMatchedInSample = false;
-        } else {
+        if (isTimelineScan) {
+          judgeAffirmative = true;
           const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
-          if (matchedItems.length > 0) sampleRows.splice(0, sampleRows.length, ...matchedItems);
+          sampleRows.splice(0, sampleRows.length, ...matchedItems);
+          if (matchedItems.length === 0) {
+            topicMatchedInSample = false;
+          } else {
+            topicMatchedInSample = true;
+          }
+        } else {
+          if (matches.length === 0) {
+            topicMatchedInSample = false;
+          } else {
+            const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+            if (matchedItems.length > 0) sampleRows.splice(0, sampleRows.length, ...matchedItems);
+          }
         }
       } else {
+        if (isTimelineScan) {
+          judgeFailedInSample = true;
+        }
         deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed`);
       }
     }
@@ -892,7 +925,9 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     // If the sample is already healthy (>= THIN_PAGE_ROWS), execution pages via cursor_param.
     const cursorKey = got.option.cursor ?? (Array.isArray(got.option.endpoint.pagination) ? got.option.endpoint.pagination.find((p) => got.option.endpoint.inputs.some((i) => i.name === p)) : null);
     if (cursorKey && !got.option.cursor) got.option.cursor = cursorKey;
-    const thinThreshold = Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS);
+    const target = step.count.total ?? THIN_PAGE_ROWS;
+    const thinThreshold = Math.min(THIN_PAGE_ROWS, target);
+    const pagingThreshold = (isTimelineScan && judgeAffirmative) ? target : thinThreshold;
     let cursorPagesProbed = 0;
     let totalExamined = got.items.length;
     let stopReason: StopReason | null = null;
@@ -909,120 +944,169 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       timeWindow.startUtc = new Date(step.period.from).toISOString();
     }
 
-    if (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold)) {
-      let currentCursor = got.nextCursor;
-      const visited = new Set<string>();
-      if (currentCursor) visited.add(currentCursor);
-      const maxCallsForStep = 4; // Capped at <= 4 calls per step (JobCallBudget)
-      // Use a separate counter for the probe budget so got.callIds (which feeds
-      // measured_cost_per_row_usd / hold pricing) is not affected by the cap check offset.
-      // got.callIds still receives probe call IDs (same as origin/main) for accurate pricing.
-      let probeCallCount = 0;
+    const shouldProbeCursor = isTimelineScan
+      ? (judgeAffirmative
+          ? (got.hasMore && (got.nextCursor || cursorKey) && !step.parent)
+          : (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold)))
+      : (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold));
 
-      while (currentCursor && cursorKey && sampleRows.length < thinThreshold) {
-        if (probeCallCount >= maxCallsForStep) {
-          stopReason = "budget_reached";
-          break;
-        }
+    if (shouldProbeCursor) {
+      if (isTimelineScan && judgeAffirmative && sampleRows.length >= target) {
+        stopReason = "target_reached";
+        deps.log?.(`llm_planner_timeline_scan ${step.key} stopped reason=${stopReason} pages=1 examined=${totalExamined} accepted=${sampleRows.length}`);
+      } else {
+        let currentCursor = got.nextCursor;
+        const visited = new Set<string>();
+        if (currentCursor) visited.add(currentCursor);
+        const maxCallsForStep = 4; // Capped at <= 4 calls per step (JobCallBudget)
+        // Use a separate counter for the probe budget so got.callIds (which feeds
+        // measured_cost_per_row_usd / hold pricing) is not affected by the cap check offset.
+        // got.callIds still receives probe call IDs (same as origin/main) for accurate pricing.
+        let probeCallCount = 0;
 
-        const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
-        const rNext = await deps.probe(got.option.endpoint.id, nextParams);
-        if (!rNext.ok) break;
-        cursorPagesProbed += 1;
-        if (rNext.call_id) { got.callIds.push(rNext.call_id); probeCallCount += 1; }
-        const nextPage = await deps.readPage(rNext.call_id);
-        if (!nextPage) break;
-        const nextRows = runMap(mapCode, nextPage);
-        if (nextRows.length === 0) {
-          stopReason = "terminal_cursor";
-          break;
-        }
-
-        totalExamined += nextRows.length;
-
-        // Check chronological cutoff (Point 3.1 & 3.3)
-        const rowDates: (Date | string | number)[] = nextRows
-          .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
-          .filter(Boolean);
-        const isPastWindow = rowDates.length > 0 && shouldStopChronologicalScan(rowDates, timeWindow);
-
-        let nextOnTopic: Array<Record<string, unknown>> = nextRows;
-        if (step.topic) {
-          const nextTexts = nextRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
-          const constraintCriterion = [
-            step.source?.value ? `Source/Account: ${step.source.value}` : null,
-            step.country ? `Country: ${step.country}` : null,
-            `Topic: «${step.topic}»`,
-          ].filter(Boolean).join(", ");
-          const nextJudgeRes = await ask(
-            "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
-            `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
-            { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-            200,
-          );
-          const nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
-          if (nextMatches !== null) {
-            nextOnTopic = nextMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
-          } else {
-            deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed`);
+        while (currentCursor && cursorKey && sampleRows.length < pagingThreshold) {
+          const reachedCap = isTimelineScan
+            ? (got.callIds.length >= maxCallsForStep || (cursorPagesProbed + 1) >= maxCallsForStep)
+            : (probeCallCount >= maxCallsForStep);
+          if (reachedCap) {
+            stopReason = "budget_reached";
+            break;
           }
-        }
-        if (nextOnTopic.length > 0) {
-          if (!topicMatchedInSample) {
-            topicMatchedInSample = true;
-            sampleRows.splice(0, sampleRows.length, ...nextOnTopic);
-          } else {
-            sampleRows.push(...nextOnTopic);
+
+          const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
+          const rNext = await deps.probe(got.option.endpoint.id, nextParams);
+          if (!rNext.ok) break;
+          cursorPagesProbed += 1;
+          if (rNext.call_id) { got.callIds.push(rNext.call_id); probeCallCount += 1; }
+          const nextPage = await deps.readPage(rNext.call_id);
+          if (!nextPage) break;
+          const nextRows = runMap(mapCode, nextPage);
+          if (nextRows.length === 0) {
+            stopReason = "terminal_cursor";
+            break;
           }
-          deps.log?.(`llm_planner_judge_sample ${step.key} paging_found on_topic=${nextOnTopic.length} total=${sampleRows.length}`);
+
+          totalExamined += nextRows.length;
+
+          // Check chronological cutoff (Point 3.1 & 3.3)
+          const rowDates: (Date | string | number)[] = nextRows
+            .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
+            .filter(Boolean);
+          const isPastWindow = rowDates.length > 0 && shouldStopChronologicalScan(rowDates, timeWindow);
+
+          let nextOnTopic: Array<Record<string, unknown>> = nextRows;
+          if (step.topic) {
+            const nextTexts = (isTimelineScan ? nextRows.slice(0, 20) : nextRows.slice(0, 10))
+              .map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`)
+              .join("\n");
+            const constraintCriterion = [
+              step.source?.value ? `Source/Account: ${step.source.value}` : null,
+              step.country ? `Country: ${step.country}` : null,
+              `Topic: «${step.topic}»`,
+            ].filter(Boolean).join(", ");
+            let nextJudgeRes = await ask(
+              "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
+              `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
+              { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+              200,
+            );
+            let nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
+            if (nextMatches === null && isTimelineScan) {
+              deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed retry=1`);
+              nextJudgeRes = await ask(
+                "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
+                `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
+                { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+                200,
+              );
+              nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
+            }
+            if (nextMatches !== null) {
+              nextOnTopic = nextMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+            } else {
+              deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed`);
+              if (isTimelineScan) {
+                judgeFailedInSample = true;
+                nextOnTopic = nextRows;
+              } else {
+                nextOnTopic = [];
+              }
+            }
+          }
+          if (nextOnTopic.length > 0) {
+            if (!topicMatchedInSample && !isTimelineScan) {
+              topicMatchedInSample = true;
+              sampleRows.splice(0, sampleRows.length, ...nextOnTopic);
+            } else {
+              topicMatchedInSample = true;
+              sampleRows.push(...nextOnTopic);
+            }
+            deps.log?.(`llm_planner_judge_sample ${step.key} paging_found on_topic=${nextOnTopic.length} total=${sampleRows.length}`);
+          }
+
+          if (sampleRows.length >= pagingThreshold) {
+            stopReason = "target_reached";
+            break;
+          }
+
+          if (isPastWindow) {
+            stopReason = "window_crossed";
+            break;
+          }
+
+          const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
+          if (!nextCursorVal) {
+            got.hasMore = false;
+            got.nextCursor = null;
+            stopReason = "terminal_cursor";
+            break;
+          }
+          if (visited.has(nextCursorVal)) {
+            got.hasMore = false;
+            got.nextCursor = null;
+            stopReason = "repeated_cursor";
+            break;
+          }
+          visited.add(nextCursorVal);
+          currentCursor = nextCursorVal;
+          got.nextCursor = currentCursor;
         }
 
-        if (sampleRows.length >= thinThreshold) {
-          stopReason = "target_reached";
-          break;
+        if (!stopReason) {
+          if (sampleRows.length >= pagingThreshold) stopReason = "target_reached";
+          else if (got.callIds.length >= maxCallsForStep || (cursorPagesProbed + 1) >= maxCallsForStep) stopReason = "budget_reached";
+          else if (!got.hasMore) stopReason = "terminal_cursor";
         }
 
-        if (isPastWindow) {
-          stopReason = "window_crossed";
-          break;
+        deps.log?.(`llm_planner_timeline_scan ${step.key} stopped reason=${stopReason} pages=${cursorPagesProbed + 1} examined=${totalExamined} accepted=${sampleRows.length}`);
+
+        const builtStep = built.get(step.key);
+        if (builtStep) {
+          builtStep.hasMore = got.hasMore;
+          builtStep.nextCursor = got.nextCursor;
         }
-
-        const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
-        if (!nextCursorVal) {
-          got.hasMore = false;
-          got.nextCursor = null;
-          stopReason = "terminal_cursor";
-          break;
-        }
-        if (visited.has(nextCursorVal)) {
-          got.hasMore = false;
-          got.nextCursor = null;
-          stopReason = "repeated_cursor";
-          break;
-        }
-        visited.add(nextCursorVal);
-        currentCursor = nextCursorVal;
-        got.nextCursor = currentCursor;
-      }
-
-      if (!stopReason) {
-        if (sampleRows.length >= thinThreshold) stopReason = "target_reached";
-        else if (got.callIds.length >= maxCallsForStep) stopReason = "budget_reached";
-        else if (!got.hasMore) stopReason = "terminal_cursor";
-      }
-
-      deps.log?.(`llm_planner_timeline_scan ${step.key} stopped reason=${stopReason} pages=${cursorPagesProbed + 1} examined=${totalExamined} accepted=${sampleRows.length}`);
-
-      const builtStep = built.get(step.key);
-      if (builtStep) {
-        builtStep.hasMore = got.hasMore;
-        builtStep.nextCursor = got.nextCursor;
       }
     }
 
-    if (!topicMatchedInSample) {
+    if (isTimelineScan && judgeAffirmative) {
+      const builtStep = built.get(step.key);
+      if (builtStep) {
+        builtStep.timelineAcceptedCount = Math.min(step.count.total ?? sampleRows.length, sampleRows.length);
+        if (stopReason && stopReason !== "target_reached" && (!got.hasMore || stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed")) {
+          builtStep.timelineExhausted = true;
+        }
+      }
+    }
+    if (isTimelineScan && judgeFailedInSample) {
+      u.assumptions_ar = [
+        ...(u.assumptions_ar ?? []),
+        "تعذّر فحص عينة من نتائج الحساب آلياً أثناء التخطيط، وسيتم التدقيق والتصفية للموضوع أثناء التنفيذ الفعلي.",
+      ];
+    }
+
+    if (!topicMatchedInSample || (isTimelineScan && judgeAffirmative && sampleRows.length === 0 && !judgeFailedInSample)) {
       deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
-      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: 1, examinedCount: totalExamined, stopReason: stopReason ?? "terminal_cursor" });
+      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: isTimelineScan ? (1 + cursorPagesProbed) : 1, examinedCount: totalExamined, stopReason: stopReason ?? "terminal_cursor" });
     } else {
       if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
         const found = new Set(sampleRows.map(rowKeyOf)).size;
@@ -1030,7 +1114,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1, examinedCount: totalExamined, stopReason: stopReason ?? "target_reached" });
       }
       if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-        const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total, initialMeasured: cursorPagesProbed,
+        const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: isTimelineScan && stopReason ? false : got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total, initialMeasured: cursorPagesProbed,
           onSample: (params, rows, chargedUsd) => {
             const observed = pageSample(rows, params, chargedUsd);
             if (!observed.rowsPerPage) return;
@@ -1849,9 +1933,9 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     } else {
       const total = s.count?.total ?? null;
       if (total !== null) {
-        planned = total;
+        planned = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : total;
       } else {
-        const sampleCount = b.sampleRows.length;
+        const sampleCount = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : b.sampleRows.length;
         const reachable = b.hasMore ? Math.max(1, Math.min(b.rowsPerPage * 2, 20)) : Math.max(1, sampleCount);
         planned = Math.max(1, Math.min(MAX_STEP_ITEMS, reachable));
         assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ما يمكن تسليمه فعليًا بحسب العينة المتاحة: نحو ${toArabicDigits(planned)}؛ يمكنك تعديله قبل الموافقة.`);
