@@ -5,6 +5,7 @@ import type { ProviderUpdatesFeedPayload } from "@/components/admin/providerUpda
 import {
   buildProviderUpdatesFeed,
   uploadFeed,
+  parseArgs,
 } from "../scripts/provider-updates-feed-updater.mjs";
 import {
   handleOfficeFeedRequest,
@@ -42,12 +43,10 @@ describe("Provider Updates Feed Pipeline (D-0200)", () => {
     expect(feed.updates.length).toBe(7);
 
     // Verify reports were bundled for items
-    expect(Object.keys(feed.reports).length).toBeGreaterThan(0);
+    expect(Object.keys(feed.reports).length).toBe(7);
     for (const update of feed.updates) {
-      if (update.report_path && fs.existsSync(update.report_path)) {
-        expect(feed.reports[update.id]).toBeDefined();
-        expect(feed.reports[update.id].length).toBeGreaterThan(50);
-      }
+      expect(feed.reports[update.id]).toBeDefined();
+      expect(feed.reports[update.id].length).toBeGreaterThan(50);
     }
 
     // Verify newest first sorting
@@ -191,5 +190,52 @@ describe("Provider Updates Feed Pipeline (D-0200)", () => {
     expect(bodyStr).not.toContain("report_path");
     expect(bodyStr).not.toContain("price_ar");
     expect(bodyStr).not.toContain("brief_ar");
+  });
+
+  it("CLI args and env vars parsing for feed updater", () => {
+    // CLI args with space
+    const parsed1 = parseArgs(["--updates", "/custom/updates.jsonl", "--reports", "/custom/reports", "--dry-run"]);
+    expect(parsed1.updatesPath).toBe("/custom/updates.jsonl");
+    expect(parsed1.reportsDir).toBe("/custom/reports");
+    expect(parsed1.isDryRun).toBe(true);
+
+    // CLI args with =
+    const parsed2 = parseArgs(["--updates=/eq/updates.jsonl", "--reports=/eq/reports"]);
+    expect(parsed2.updatesPath).toBe("/eq/updates.jsonl");
+    expect(parsed2.reportsDir).toBe("/eq/reports");
+    expect(parsed2.isDryRun).toBe(false);
+
+    // Env vars fallback
+    const origUpdates = process.env.PROVIDER_UPDATES_FILE;
+    const origReports = process.env.PROVIDER_REPORTS_DIR;
+    try {
+      process.env.PROVIDER_UPDATES_FILE = "/env/updates.jsonl";
+      process.env.PROVIDER_REPORTS_DIR = "/env/reports";
+      const parsedEnv = parseArgs([]);
+      expect(parsedEnv.updatesPath).toBe("/env/updates.jsonl");
+      expect(parsedEnv.reportsDir).toBe("/env/reports");
+    } finally {
+      process.env.PROVIDER_UPDATES_FILE = origUpdates;
+      process.env.PROVIDER_REPORTS_DIR = origReports;
+    }
+  });
+
+  it("fails with a clear error message when updates file or reports dir is missing", () => {
+    const origUpdates = process.env.PROVIDER_UPDATES_FILE;
+    const origReports = process.env.PROVIDER_REPORTS_DIR;
+    try {
+      delete process.env.PROVIDER_UPDATES_FILE;
+      delete process.env.PROVIDER_REPORTS_DIR;
+
+      expect(() => buildProviderUpdatesFeed({ updatesPath: "", reportsDir: "/some/dir" })).toThrow(
+        /Missing updates file path/
+      );
+      expect(() => buildProviderUpdatesFeed({ updatesPath: "/some/file", reportsDir: "" })).toThrow(
+        /Missing reports directory/
+      );
+    } finally {
+      process.env.PROVIDER_UPDATES_FILE = origUpdates;
+      process.env.PROVIDER_REPORTS_DIR = origReports;
+    }
   });
 });

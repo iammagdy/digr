@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Non-AI server updater for provider updates feed (D-0200).
- * Reads updates.jsonl from shared feed directory,
- * bundles markdown reports from reports directory,
+ * Reads updates.jsonl from specified feed file or PROVIDER_UPDATES_FILE env,
+ * bundles markdown reports from specified reports dir or PROVIDER_REPORTS_DIR env,
  * builds canonical payload { version: 1, generated_at, total, updates, reports },
  * and uploads to private Supabase Storage via Edge Function (?target=provider-updates).
  * Zero AI calls, zero customer data, zero hardcoded secrets.
@@ -11,16 +11,50 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const DEFAULT_UPDATES_FILE = "/srv/diger-team/shared/provider-updates/updates.jsonl";
-export const DEFAULT_REPORTS_DIR = "/srv/diger-team/shared/provider-updates/reports";
+/**
+ * Parses CLI arguments and falls back to environment variables.
+ */
+export function parseArgs(argv = process.argv.slice(2)) {
+  let updatesPath = process.env.PROVIDER_UPDATES_FILE || "";
+  let reportsDir = process.env.PROVIDER_REPORTS_DIR || "";
+  let isDryRun = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--dry-run") {
+      isDryRun = true;
+    } else if (arg.startsWith("--updates=")) {
+      updatesPath = arg.slice("--updates=".length);
+    } else if (arg === "--updates" && i + 1 < argv.length) {
+      updatesPath = argv[++i];
+    } else if (arg.startsWith("--reports=")) {
+      reportsDir = arg.slice("--reports=".length);
+    } else if (arg === "--reports" && i + 1 < argv.length) {
+      reportsDir = argv[++i];
+    }
+  }
+
+  return { updatesPath, reportsDir, isDryRun };
+}
 
 /**
  * Builds the canonical provider updates feed payload from JSONL lines and report files.
  */
 export function buildProviderUpdatesFeed({
-  updatesPath = DEFAULT_UPDATES_FILE,
-  reportsDir = DEFAULT_REPORTS_DIR,
+  updatesPath = process.env.PROVIDER_UPDATES_FILE || "",
+  reportsDir = process.env.PROVIDER_REPORTS_DIR || "",
 } = {}) {
+  if (!updatesPath) {
+    throw new Error(
+      "Missing updates file path. Provide via --updates <path> or PROVIDER_UPDATES_FILE environment variable."
+    );
+  }
+  if (!reportsDir) {
+    throw new Error(
+      "Missing reports directory. Provide via --reports <dir> or PROVIDER_REPORTS_DIR environment variable."
+    );
+  }
+
   const updates = [];
   const reports = {};
 
@@ -36,7 +70,7 @@ export function buildProviderUpdatesFeed({
         if (parsed && typeof parsed === "object" && typeof parsed.id === "string") {
           updates.push(parsed);
 
-          // Resolve and read markdown report if report_path is specified
+          // Resolve and read markdown report if report_path is specified and exists, or fallback to reportsDir
           let reportText = null;
           if (parsed.report_path && fs.existsSync(parsed.report_path)) {
             try {
@@ -121,9 +155,7 @@ export async function uploadFeed({
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const isDryRun = argv.includes("--dry-run");
-  const updatesPath = process.env.PROVIDER_UPDATES_FILE || DEFAULT_UPDATES_FILE;
-  const reportsDir = process.env.PROVIDER_REPORTS_DIR || DEFAULT_REPORTS_DIR;
+  const { updatesPath, reportsDir, isDryRun } = parseArgs(argv);
   const uploadUrl = process.env.OFFICE_UPLOAD_URL || "";
   const uploadKey = process.env.OFFICE_UPLOAD_KEY || "";
 
