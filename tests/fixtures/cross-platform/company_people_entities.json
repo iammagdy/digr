@@ -1,0 +1,16 @@
+{
+  "archetype": "company_people_entities",
+  "endpoint": "branddev.brand.retrieve-by-name",
+  "response": {
+    "status": "success",
+    "data": {
+      "id": "ent_corp_001",
+      "name": "Standard Organization Corp",
+      "domain": "example-corp.com",
+      "overview": "Placeholder enterprise organization profile.",
+      "headquarters": "Metropolis",
+      "founded_year": 2018,
+      "employee_band": "51-200"
+    }
+  }
+}

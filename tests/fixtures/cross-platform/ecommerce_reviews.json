@@ -1,0 +1,20 @@
+{
+  "archetype": "ecommerce_reviews",
+  "endpoint": "crawl4ai.amazon.product.reviews",
+  "response": {
+    "version": 1,
+    "rows": [
+      {
+        "review_id": "REV_METRIC_001",
+        "asin": "B000000001",
+        "rating": 5,
+        "title": "Placeholder customer feedback title.",
+        "text": "Placeholder product evaluation details and neutral review commentary.",
+        "date": "2025-07-20",
+        "verified": true,
+        "helpful_votes": 6
+      }
+    ],
+    "total_reviews": 1
+  }
+}

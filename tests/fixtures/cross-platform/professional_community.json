@@ -1,0 +1,22 @@
+{
+  "archetype": "professional_community",
+  "endpoint": "scrapecreators.reddit.subreddit.posts",
+  "response": {
+    "success": true,
+    "posts": [
+      {
+        "id": "comm_post_001",
+        "name": "t3_comm_post_001",
+        "author": "contributor_01",
+        "author_fullname": "t2_contributor_01",
+        "title": "Placeholder discussion thread title.",
+        "selftext": "Placeholder community discussion details and discussion point.",
+        "created_utc": 1785202000,
+        "num_comments": 40,
+        "score": 210,
+        "url": "https://example.org/r/community/comments/comm_post_001"
+      }
+    ],
+    "after": "t3_comm_post_002"
+  }
+}
