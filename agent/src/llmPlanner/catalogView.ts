@@ -10,6 +10,7 @@ import productionEligible from "../../../data/capabilities/production-eligible.j
 import { WEB_SOURCES } from "../../../src/lib/agentMission/sources";
 import type { WebAvailability } from "../../../src/lib/agentMission/webAvailability";
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
+import { getCircuitBreaker, type EndpointCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
 const PROVEN: ReadonlySet<string> = new Set(((productionEligible as { ids?: unknown }).ids as string[] | undefined) ?? []);
@@ -172,12 +173,13 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
   })) as unknown as CatalogEndpoint[];
 }
 
-export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
+export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint>; circuitBreaker?: EndpointCircuitBreaker } = {}): CatalogEndpoint[] {
+  const cb = options.circuitBreaker ?? getCircuitBreaker();
   const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
   if (!isSearchKind(capability)) return base;
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const kind = kindOf(capability);
-  const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
+  const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
   const web = [...(options.web ?? [])];
   const extra = [...others, ...web];
   return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra];
@@ -207,8 +209,9 @@ function fallbackGroupOf(e: CatalogEndpoint): string | null {
   return registryFallbackGroups.get(e.id) ?? null;
 }
 
-function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean } = {}): CatalogEndpoint[] {
-  const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access));
+function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; circuitBreaker?: EndpointCircuitBreaker } = {}): CatalogEndpoint[] {
+  const cb = options.circuitBreaker ?? getCircuitBreaker();
+  const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const chosen = [...exact].sort(rank).slice(0, max);

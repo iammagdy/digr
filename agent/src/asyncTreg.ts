@@ -4,6 +4,7 @@ import { RAW_PATH, rowsExpressionOf, type GatewayCallResult } from "./gateway";
 import { getPath, hintsOf, readShape } from "../../src/lib/treg/shapeReader";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import { AGENT_FIRST_ROWS } from "../../src/lib/agentMission/constants";
+import { getCircuitBreaker, type EndpointCircuitBreaker } from "../../src/lib/treg/circuitBreaker";
 
 export interface AsyncConfig {
   id_from: string;
@@ -21,6 +22,7 @@ export interface AsyncTregDeps {
   missionId: string;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  circuitBreaker?: EndpointCircuitBreaker;
 }
 
 export function effectiveChargeUsd(r: { charge_usd?: number | null; reserved_usd?: number | null } | GatewayCallResult): number {
@@ -56,7 +58,28 @@ export async function callTregWithAsync(
   endpointId: string,
   params: Record<string, unknown>
 ): Promise<GatewayCallResult> {
+  const cb = deps.circuitBreaker ?? getCircuitBreaker();
+  if (!cb.isAvailable(endpointId)) {
+    return {
+      ok: false,
+      call_id: `blocked_${Date.now()}`,
+      refused: "source_unavailable",
+      failed: false,
+      http_status: 503,
+      blocked: "circuit_open",
+      error: "Endpoint circuit is open due to recent repeated failures",
+      message: "Endpoint circuit is open due to recent repeated failures",
+    } as unknown as GatewayCallResult;
+  }
   const res = await callFn(endpointId, params);
+  if (res.ok) {
+    cb.recordSuccess(endpointId);
+  } else {
+    const status = (res as any).http_status;
+    if (typeof status === "number" && (status === 400 || (status >= 500 && status < 600))) {
+      cb.recordFailure(endpointId, status);
+    }
+  }
   const endpoint = deps.catalog.byId.get(endpointId);
   const cfg = endpoint?.async_config as AsyncConfig | undefined | null;
 
@@ -103,6 +126,14 @@ export async function callTregWithAsync(
     attempts++;
     await sleep(intervalMs);
     const pollRes = await callFn(cfg.poll.endpoint, { [cfg.poll.param.name]: taskId });
+    if (pollRes.ok) {
+      cb.recordSuccess(cfg.poll.endpoint);
+    } else {
+      const pStatus = (pollRes as any).http_status;
+      if (typeof pStatus === "number" && (pStatus === 400 || (pStatus >= 500 && pStatus < 600))) {
+        cb.recordFailure(cfg.poll.endpoint, pStatus);
+      }
+    }
     callIds.push(pollRes.call_id);
     totalChargeUsd += effectiveChargeUsd(pollRes);
     totalReservedUsd += Number("reserved_usd" in pollRes ? pollRes.reserved_usd ?? 0 : 0) || 0;

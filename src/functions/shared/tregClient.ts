@@ -5,6 +5,7 @@ import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, callMoney, type JobCallBudget } from "../../lib/server/callBudget";
 import { classifyTregCharge } from "../../lib/server/tregCharge";
 import type { RawCapture } from "../../lib/server/rawCapture";
+import { getCircuitBreaker, getControlProbeRequest, type EndpointCircuitBreaker } from "../../lib/treg/circuitBreaker";
 export interface TregCallOptions {
   baseUrl?: string;
   /** An explicit key (tests, one-off tools): used as given; the key pool is bypassed. */
@@ -46,6 +47,14 @@ export interface TregCallOptions {
   rawCapture?: RawCapture;
   /** For a routed waterfall endpoint (see NO_WATERFALL_ENDPOINTS): false sends `X-Treg-Route-Waterfall: 0`, so only one provider is tried and billed. */
   routeWaterfall?: boolean;
+  /** Optional sleeper for deterministic testing of backoff / Retry-After delays. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Marked true when executing a minimal documented control request to diagnose a 400. */
+  isControlProbe?: boolean;
+  /** Skip running control probe on 400. */
+  skipControlProbe?: boolean;
+  /** Circuit breaker instance to record to or query. */
+  circuitBreaker?: EndpointCircuitBreaker;
 }
 
 export interface TregCallResult {
@@ -224,6 +233,19 @@ export function serializeProviderParams(
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
+function getStepAttempts(budget: JobCallBudget): Map<string, number> {
+  let map = (budget as any)._stepAttempts as Map<string, number> | undefined;
+  if (!map) {
+    map = new Map<string, number>();
+    (budget as any)._stepAttempts = map;
+  }
+  return map;
+}
+
+export function resetStepAttempts(): void {
+  // Retained for test utility compatibility
+}
+
 /**
  * One gateway call, behind two hard gates that run in code before any request leaves:
  *  1. the block list (`blockedEndpointReason`): a write action, an own-account endpoint or an endpoint outside the sellable catalog is never called;
@@ -241,7 +263,21 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: "sensitive_not_allowed" }));
     return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked: "sensitive_not_allowed" });
   }
+
   const budget = options.callBudget;
+  // Per Rule 1 (الكبير): attempt cap strictly applies ONLY when options.callBudget is present.
+  // When no budget is passed, today's behavior holds (no cap refusal).
+  // Per Rule 2: attempt count lives with the job's own budget object (never process-wide).
+  const stepKey = (budget && options.jobId && options.stepId) ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+  if (stepKey && budget) {
+    const attemptsMap = getStepAttempts(budget);
+    const current = attemptsMap.get(stepKey) ?? 0;
+    if (current >= 4) {
+      console.warn(JSON.stringify({ tag: "treg_call_step_limit", endpointId: options.endpointId, stepKey, attempts: current }));
+      return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
+    }
+  }
+
   const cap = Number(options.routeMaxCostUsd);
   let estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
   // DT-20261119-11 D1/D2: the header IS the money the budget has left (whole micro-dollars, rounded down), held in ONE step before the request and kept for a call whose charge is unknown; no positive amount that covers the estimate, no request
@@ -274,6 +310,61 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     const charge = classifyTregCharge(result);
     budget.settle(estimate, charge.known ? charge.usd : null);
   }
+
+  const cb = options.circuitBreaker ?? getCircuitBreaker();
+  if (result.ok) {
+    cb.recordSuccess(options.endpointId);
+  } else if (result.httpStatus !== 409) {
+    // 409 is «still running» (in-flight polling), not a failure and not a circuit failure
+    if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe && (budget || options.circuitBreaker)) {
+      const probeReq = getControlProbeRequest(options.endpointId);
+      if (probeReq) {
+        let canProbe = true;
+        if (stepKey && budget) {
+          const attemptsMap = getStepAttempts(budget);
+          if ((attemptsMap.get(stepKey) ?? 0) >= 4) {
+            canProbe = false;
+          }
+        }
+        if (budget && !budget.reserve(estimate)) {
+          canProbe = false;
+        }
+        if (canProbe) {
+          try {
+            const probeResult = await executeTregCallUnguarded({
+              ...options,
+              isControlProbe: true,
+              method: probeReq.method,
+              params: probeReq.params,
+              singleAttempt: true,
+              callBudget: undefined,
+            });
+            if (budget) {
+              const probeCharge = classifyTregCharge(probeResult);
+              budget.settle(estimate, probeCharge.known ? probeCharge.usd : null);
+            }
+            if (!probeResult.ok && probeResult.httpStatus === 400) {
+              // Control probe failed with 400: provider itself is broken, trip circuit immediately
+              cb.recordFailure(options.endpointId, 400, true);
+            } else {
+              // Control probe succeeded or returned other status: original query was invalid
+              cb.recordFailure(options.endpointId, 400, false);
+            }
+          } catch {
+            if (budget) budget.settle(estimate, null);
+            cb.recordFailure(options.endpointId, 400, false);
+          }
+        } else {
+          cb.recordFailure(options.endpointId, 400, false);
+        }
+      } else {
+        cb.recordFailure(options.endpointId, 400, false);
+      }
+    } else {
+      cb.recordFailure(options.endpointId, result.httpStatus, options.isControlProbe);
+    }
+  }
+
   return result;
 }
 
@@ -325,6 +416,19 @@ function refusedCall(input: { error: string; httpStatus: number; blocked?: strin
     ...(input.blocked ? { blocked: input.blocked } : {}),
     ...(input.budgetStopped ? { budgetStopped: true } : {}),
   };
+}
+
+export function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  const sec = parseInt(trimmed, 10);
+  if (!Number.isNaN(sec) && sec >= 0) return sec;
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    const diffSec = Math.ceil((dateMs - Date.now()) / 1000);
+    return diffSec >= 0 ? diffSec : 0;
+  }
+  return null;
 }
 
 async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregCallResult> {
@@ -383,6 +487,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     "X-Treg-Token": token,
     "X-Treg-Route-Max-Cost": costCapUsd,
     "Idempotency-Key": idemKey,
+    "X-Treg-Idempotency-Key": idemKey,
   };
 
   if (metaHeader) {
@@ -421,20 +526,90 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   const startTime = Date.now();
-  let response: Response;
+  let response: Response | null = null;
+  let lastNetErr: any = null;
+  const sleepFn = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let retried429 = false;
 
-  try {
-    response = await fetch(targetUrl, {
-      method,
-      headers,
-      body: requestBody,
-      signal:
-        options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
-          ? AbortSignal.timeout(options.timeoutMs)
-          : undefined,
-    });
-  } catch (netErr: any) {
-    const errorMsg = sanitizeTregDetail(netErr.message || "Failed to reach data provider", token);
+  const stepKey = (options.callBudget && options.jobId && options.stepId) ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+
+  while (true) {
+    if (stepKey && options.callBudget) {
+      const attemptsMap = getStepAttempts(options.callBudget);
+      const cur = attemptsMap.get(stepKey) ?? 0;
+      if (cur >= 4) {
+        return {
+          ok: false,
+          httpStatus: 0,
+          tregCallId: `err_${Date.now()}`,
+          costMicro: 0,
+          latencyMs: Date.now() - startTime,
+          data: null,
+          error: JOB_BUDGET_ERROR_CODE,
+          budgetStopped: true,
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        };
+      }
+      attemptsMap.set(stepKey, cur + 1);
+    }
+
+    lastNetErr = null;
+    try {
+      response = await fetch(targetUrl, {
+        method,
+        headers,
+        body: requestBody,
+        signal:
+          options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
+            ? AbortSignal.timeout(options.timeoutMs)
+            : undefined,
+      });
+
+      // HTTP 429 with Retry-After (delay and retry once if <= 10 seconds)
+      if (response.status === 429 && !retried429) {
+        const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+        if (retryAfter !== null && retryAfter <= 10) {
+          if (stepKey && options.callBudget) {
+            const attemptsMap = getStepAttempts(options.callBudget);
+            if ((attemptsMap.get(stepKey) ?? 0) >= 4) {
+              break;
+            }
+          }
+          if (options.callBudget) {
+            const est = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) ? Number(options.callEstimateUsd) : 0.05);
+            // Settle first 429 call at 0
+            options.callBudget.settle(est, 0);
+            if (!options.callBudget.reserve(est)) {
+              return {
+                ok: false,
+                httpStatus: 429,
+                tregCallId: `err_${Date.now()}`,
+                costMicro: 0,
+                latencyMs: Date.now() - startTime,
+                data: null,
+                error: JOB_BUDGET_ERROR_CODE,
+                budgetStopped: true,
+                isRouteMaxCost: false,
+                isPlatformBalanceLow: false,
+              };
+            }
+          }
+          retried429 = true;
+          await sleepFn(Math.max(50, retryAfter * 1000));
+          continue;
+        }
+      }
+
+      break;
+    } catch (netErr: any) {
+      lastNetErr = netErr;
+      break;
+    }
+  }
+
+  if (!response) {
+    const errorMsg = sanitizeTregDetail(lastNetErr?.message || "Failed to reach data provider", token);
     return {
       ok: false,
       httpStatus: 503,
@@ -448,7 +623,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       isRouteMaxCost: false,
       isPlatformBalanceLow: false,
       // AbortSignal.timeout rejects with a TimeoutError (a manual abort with an AbortError): either way we stopped waiting.
-      timedOut: netErr?.name === "TimeoutError" || netErr?.name === "AbortError",
+      timedOut: lastNetErr?.name === "TimeoutError" || lastNetErr?.name === "AbortError",
     };
   }
 
@@ -501,13 +676,31 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     console.warn(JSON.stringify({ tag: "treg_charge_mismatch", endpointId: options.endpointId, headerMicro, chargedMicroInAnswer: bodyMicro, tregCallId }));
   }
 
+  const isBusinessError = Boolean(
+    response.ok &&
+    responseBody &&
+    typeof responseBody === "object" &&
+    !Array.isArray(responseBody) &&
+    (
+      (typeof responseBody.error === "string" && responseBody.error.trim().length > 0) ||
+      (typeof responseBody.code === "number" && responseBody.code >= 400) ||
+      (typeof responseBody.status_code === "number" && responseBody.status_code >= 400)
+    )
+  );
+
+  const effectiveOk = response.ok && !isBusinessError;
+  const effectiveStatus = isBusinessError
+    ? (typeof responseBody.code === "number" ? responseBody.code : typeof responseBody.status_code === "number" ? responseBody.status_code : 400)
+    : response.status;
+  const rawBusinessError = isBusinessError ? (responseBody.error || responseBody.message || "provider_business_error") : undefined;
+
   const bodyError = responseBody?.error;
   // DT-20261119-09 (F2): TREG's price-cap refusal is read wherever its fields sit (top level, inside a `detail` object or a JSON `detail` string): live 2026-11-19 six of them were read as «platform balance low» and traced «endpoint_payment_refused»
   const isRouteMaxCost = response.status === 402 && isRouteMaxCostBody(responseBody);
   const isPlatformBalanceLow = response.status === 402 && !isRouteMaxCost;
 
   let rawDetail = "";
-  if (!response.ok) {
+  if (!effectiveOk) {
     if (responseBody && typeof responseBody === "object") {
       if (typeof responseBody.detail === "string" && responseBody.detail.trim()) {
         rawDetail = responseBody.detail;
@@ -529,13 +722,13 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     }
   }
 
-  const sanitizedDetail = !response.ok ? sanitizeTregDetail(rawDetail, token) : undefined;
+  const sanitizedDetail = !effectiveOk ? sanitizeTregDetail(rawDetail, token) : undefined;
 
-  if (!response.ok && response.status >= 400 && response.status < 500) {
+  if (!effectiveOk && effectiveStatus >= 400 && effectiveStatus < 500) {
     console.warn(JSON.stringify({
       tag: "treg_client_rejected",
       endpointId: options.endpointId,
-      status: response.status,
+      status: effectiveStatus,
       sentParamKeys: Object.keys(cleanParams).sort(),
       allowedParamKeys: options.allowedParamKeys?.slice().sort(),
       detail: sanitizedDetail,
@@ -543,13 +736,13 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   return {
-    ok: response.ok,
-    httpStatus: response.status,
+    ok: effectiveOk,
+    httpStatus: effectiveStatus,
     tregCallId,
     costMicro,
     latencyMs,
     data: responseBody,
-    error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : bodyError || (response.ok ? undefined : `http_${response.status}`),
+    error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : rawBusinessError || bodyError || (effectiveOk ? undefined : `http_${effectiveStatus}`),
     errorDetails: sanitizedDetail,
     detail: sanitizedDetail,
     isRouteMaxCost,
@@ -561,4 +754,21 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     ...(headerMicro === null && bodyMicro === null && !costIsEstimate ? { costUnreported: true } : {}),
     ...(costHeaderInvalid ? { costHeaderInvalid: true as const } : {}),
   };
+}
+
+export async function executeControlProbe(
+  endpointId: string,
+  options?: Partial<TregCallOptions>
+): Promise<TregCallResult> {
+  const probeReq = getControlProbeRequest(endpointId);
+  return executeTregCallUnguarded({
+    endpointId,
+    userId: options?.userId || "system_probe",
+    jobId: options?.jobId || "probe_job",
+    isControlProbe: true,
+    singleAttempt: true,
+    method: probeReq?.method || "GET",
+    params: probeReq?.params || {},
+    ...options,
+  });
 }
