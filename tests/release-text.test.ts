@@ -198,10 +198,12 @@ describe("T7 source guards (DT-20261117-06)", () => {
   it("T7 probeStep has no private counter; the L1 loop shares one primary budget; each downstream call has its own fresh 6", () => {
     expect(planner).not.toMatch(/let calls\b/);
     expect(planner).toContain("probeStep(step, options, parent, deps, { left: MAX_PROBES_PER_STEP }, trace)");
-    expect(planner).toContain("probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP })");
+    expect(planner).toContain("probeStep(step, [next], null, deps, { left: Math.min(altBudgetLeft, 2) })");
+    expect(planner).toContain("probeStep(step, [next], parent, deps, { left: Math.min(altBudgetLeft, 2) })");
+    expect(planner).toContain("let altBudgetLeft = configuredChild ? MAX_PROBES_PER_STEP - got.callIds.length : MAX_PROBES_PER_STEP;");
     expect(planner).toContain("probeStep(step, [webOption], null, deps, { left: MAX_PROBES_PER_STEP })");
     expect(planner).toContain("probeStep(step, [fcOption], null, deps, { left: MAX_PROBES_PER_STEP })");
-    expect(planner.match(/\{ left: MAX_PROBES_PER_STEP \}/g)).toHaveLength(4); // the primary budget and the three fresh budgets
+    expect(planner.match(/\{ left: MAX_PROBES_PER_STEP \}/g)).toHaveLength(3); // the primary budget and the two fresh web budgets
   });
 
   it("T7 money pins: chainRunner.ts keeps its budget line exactly once", () => {

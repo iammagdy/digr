@@ -7,7 +7,7 @@ import { llmPlannerOnValue } from "../src/lib/agentMission/llmPlannerFlag";
 import type { ReviewCall } from "../agent/src/review";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
 import { tregResult } from "./helpers/agentHarness";
-import { replay, readWorkbook, assertReplayInvariants } from "./helpers/agentReplay";
+import { replay, readWorkbook, assertReplayInvariants, approvingReview } from "./helpers/agentReplay";
 
 /**
  * THE LLM-FIRST PLANNER (owner direction, 15 Nov 2026). The model is scripted here (deterministic fixtures, NOT a measure of the real model's accuracy): these tests prove what CODE does with
@@ -123,7 +123,7 @@ describe("one real page per step, priced by code from what it gave", () => {
     expect(probes).toEqual([{ id: "anyapi.x.search.posts", params: { query: CHOICE_X.options[0].params.query, limit: 50, queryType: "Latest" } }]);
     const st = r.plan.stages[0];
     expect(st).toMatchObject({ key: "tweets", planned_rows: 50, endpoint_id: "anyapi.x.search.posts", deliver: true });
-    expect(st.relevance).toBeUndefined();
+    expect(st.relevance).toMatchObject({ judge: "model" });
     expect(st.filters).toBeUndefined();
     expect(st.engine).toMatchObject({ built_by: "code", cursor_param: "cursor", params: { query: CHOICE_X.options[0].params.query } });
     expect(st.engine!.alternatives).toHaveLength(1);
@@ -168,7 +168,7 @@ describe("END TO END: chat → the model plans → approval → the engine reads
         page(xPage(0, 20, "c2")), page(xPage(20, 20, null)), // execution: the first query, two pages, then its end
         page(xPage(30, 20, null)), // the next input set: 10 already held, 10 new... and 10 more
       ],
-      deps: (base) => ({ ...base, plannerModel: m.model }),
+      deps: (base) => ({ ...base, plannerModel: m.model, reviewCall: approvingReview as never }),
     });
     expect(r.mission.status).toBe("completed");
     expect(r.mission.delivered_units).toBe(50);
@@ -201,14 +201,14 @@ describe("END TO END on a platform the word rules never served: Reddit posts wit
   const MAP_COMMENTS = { fields: { id: ["id"], text: ["text"], author: ["author"], posted_at: ["created"], likes: ["score"] }, extra: [] };
 
   it("the model plans both steps from the catalog; the comments of each post are read by its link; 3 + 6 delivered", async () => {
-    const m = scriptedModel({ request_plan: [UNDERSTOOD], tool_choice: [CHOICE_POSTS, CHOICE_COMMENTS], field_map: [MAP_POSTS, MAP_COMMENTS] });
+    const m = scriptedModel({ request_plan: [UNDERSTOOD], tool_choice: [CHOICE_POSTS, CHOICE_COMMENTS], field_map: [MAP_POSTS, MAP_COMMENTS], judge_sample: [{ matching_indices: [0, 1, 2] }] });
     const urlsAsked: string[] = [];
     const comments = (o: TregCallOptions) => { const u = String((o.params as Record<string, unknown>).url); urlsAsked.push(u); const p = Number(/\/p(\d+)\//.exec(u)?.[1] ?? 0); return tregResult(commentsPage(p, 4), 0.0009); };
     const r = await replay({
       request: "هات ٣ منشورات من ريديت عن الذكاء الاصطناعي مع تعليقين على كل منشور",
       planning: [], execution: () => [],
       answers: [tregResult(postsPage(0, 10, "t3_next"), 0.00188), comments, tregResult(postsPage(0, 10, "t3_next"), 0.00188), comments, comments, comments],
-      deps: (base) => ({ ...base, plannerModel: m.model }),
+      deps: (base) => ({ ...base, plannerModel: m.model, reviewCall: approvingReview as never }),
     });
     expect(r.mission.status).toBe("completed");
     const plan = r.mission.plan!;

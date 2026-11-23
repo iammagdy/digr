@@ -678,7 +678,8 @@ describe("DT-20261120-social listed rates and funding", () => {
       url: `https://www.youtube.com/watch?v=video${String(i).padStart(6, "0")}`,
     })));
     const answer = tregResult(page, 0.002);
-    const result = await replay({ request, planning: [], execution: () => [], answers: [answer, answer], beforeChat: seedFullWallet, deps: (base) => ({ ...base, plannerModel }) });
+    const approvingReview = async ({ rows }: { rows: number }) => ({ text: JSON.stringify(Array.from({ length: rows }, () => 1)), usage: { input_tokens: 10, output_tokens: 10 } });
+    const result = await replay({ request, planning: [], execution: () => [], answers: [answer, answer], beforeChat: seedFullWallet, deps: (base) => ({ ...base, plannerModel, reviewCall: approvingReview as never }) });
     const publicRate = buildPriceRows().find((row) => row.id === "youtube-videos")!.unitPricePoints;
     expect(result.plannedPlan.price).toMatchObject({
       ruleUnitPoints: publicRate, unitPricePoints: 10, reservePoints: 200, maxChargePoints: 200,

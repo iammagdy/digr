@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
-import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, type ScoutFinding } from "../agent/src/llmPlanner/planner";
+import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 
 const catalog = loadTregCatalog();
@@ -318,5 +318,222 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(row.authorUsername).toBe("SaudiMOH");
       expect((row.text as string).includes("شائع") || (row.text as string).includes("توعية") || (row.text as string).includes("توضيح")).toBe(true);
     }
+  });
+
+  it("r2 Replay msn_d388e99e9d4238678b16: assemblePlan attaches relevance judge=model when topic is present", () => {
+    const mockStep = {
+      key: "step_1",
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      platform: "x",
+      capability: "x.search.posts",
+      deliver: true,
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      source: { value: "SaudiMOH" },
+      topic: "شائعات",
+      period: null,
+      search_terms: ["شائعات", "نفي"],
+    };
+    const mockEndpoint = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const mockBuilt: any = {
+      step: mockStep,
+      option: { endpoint: mockEndpoint, params: { query: "from:SaudiMOH شائعات" }, cursor: "cursor", parent: null, more: [{ query: "from:SaudiMOH نفي" }], notCarried: [] },
+      mapCode: "return (p) => [{ id: '1', text: 'tweet' }]",
+      columns: [{ key: "id", title_ar: "المعرف" }, { key: "text", title_ar: "النص" }],
+      carryKeys: [],
+      sampleRows: [{ id: "1", text: "نفي شائعة حول اللقاح" }],
+      rowsPerPage: 20,
+      callIds: ["call_1"],
+      hasMore: true,
+    };
+    const mockUnderstanding: any = {
+      decision: "plan",
+      understanding_ar: "جمع تغريدات وزارة الصحة عن الشائعات",
+      steps: [mockStep],
+    };
+
+    const plan = assemblePlan(mockUnderstanding, [mockBuilt], [], undefined, ["وزارة الصحة"], undefined, catalog);
+    const stage = plan.stages[0];
+
+    // Stage MUST have relevance with judge: 'model'
+    expect(stage.relevance).toBeDefined();
+    expect(stage.relevance?.judge).toBe("model");
+    expect(stage.relevance?.terms).toContain("شائعات");
+    expect(stage.relevance?.text_columns).toContain("text");
+  });
+
+  it("r2 Content Quality & Reviewer: off-topic general timeline tweets are rejected (review_no), only rumors delivered", () => {
+    // 20 raw timeline tweets from @SaudiMOH (as in live r1 failure)
+    const rawTimelineTweets = [
+      { id: "t1", text: "نفت وزارة الصحة ما يُشاع حول وجود نقص في الأدوية بالمراكز الصحية" }, // ON-TOPIC RUMOR
+      { id: "t2", text: "توضح الصحة: لا صحة للشائعات المتداولة عن انتشار مرض مجهول" }, // ON-TOPIC RUMOR
+      ...Array.from({ length: 18 }, (_, i) => ({
+        id: `general_${i + 3}`,
+        text: `أوقات العمل في المراكز الصحية خلال الإجازة الرسمية رقم ${i + 1}`, // OFF-TOPIC GENERAL NEWS
+      })),
+    ];
+
+    // Simulate reviewer judgment with relevance spec
+    const topicTerms = ["شائعات", "شائعة", "يُشاع", "لا صحة"];
+    const reviewRow = (tweet: { id: string; text: string }) => {
+      const isRumor = topicTerms.some((term) => tweet.text.includes(term));
+      return isRumor ? { verdict: "delivered" as const } : { verdict: "review_no" as const, reason: "off_topic" };
+    };
+
+    const reviewedResults = rawTimelineTweets.map((t) => ({ ...t, review: reviewRow(t) }));
+    const delivered = reviewedResults.filter((r) => r.review.verdict === "delivered");
+    const rejected = reviewedResults.filter((r) => r.review.verdict === "review_no");
+
+    // Only 2 rumors delivered, 18 general announcements rejected
+    expect(delivered).toHaveLength(2);
+    expect(rejected).toHaveLength(18);
+
+    // Charge is strictly for delivered rows (2 rows, NEVER 20 rows)
+    const chargedCount = delivered.length;
+    expect(chargedCount).toBe(2);
+    expect(chargedCount).not.toBe(rawTimelineTweets.length);
+  });
+
+  it("r2 Zero-topic request: stage.relevance is undefined and review overhead is skipped", () => {
+    const mockStepNoTopic = {
+      key: "step_1",
+      title_ar: "تغريدات حساب وزارة الصحة",
+      platform: "x",
+      capability: "x.user.posts.timeline",
+      deliver: true,
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      source: { value: "SaudiMOH" },
+      topic: null, // NO TOPIC
+      period: null,
+      search_terms: [],
+    };
+    const mockBuilt: any = {
+      step: mockStepNoTopic,
+      option: { endpoint: catalog.endpoints.find((e) => e.id === "anyapi.x.user.posts")!, params: { username: "SaudiMOH" }, cursor: "cursor", parent: null, more: [], notCarried: [] },
+      mapCode: "return (p) => [{ id: '1', text: 'tweet' }]",
+      columns: [{ key: "id", title_ar: "المعرف" }, { key: "text", title_ar: "النص" }],
+      carryKeys: [],
+      sampleRows: [{ id: "1", text: "تغريدة عادية" }],
+      rowsPerPage: 20,
+      callIds: ["call_1"],
+      hasMore: true,
+    };
+    const mockUnderstanding: any = {
+      decision: "plan",
+      understanding_ar: "جمع كل تغريدات حساب وزارة الصحة",
+      steps: [mockStepNoTopic],
+    };
+
+    const plan = assemblePlan(mockUnderstanding, [mockBuilt], [], undefined, ["وزارة الصحة"], undefined, catalog);
+    const stage = plan.stages[0];
+
+    // When there is no topic, relevance is undefined -> no reviewer overhead
+    expect(stage.relevance).toBeUndefined();
+  });
+
+  it("r2 Alternatives across sub-providers: includes search phrasings, TikHub search, and timeline fallback", () => {
+    const mockStep = {
+      key: "step_1",
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      platform: "x",
+      capability: "x.search.posts",
+      deliver: true,
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      source: { value: "SaudiMOH" },
+      topic: "شائعات",
+      period: null,
+      search_terms: ["شائعات"],
+    };
+    const searchEp1 = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const searchEp2 = catalog.endpoints.find((e) => e.id === "tikhub.x.twitter-web-fetch-search-timeline")!;
+    const timelineEp = catalog.endpoints.find((e) => e.id === "anyapi.x.user.posts")!;
+
+    const mockBuilt: any = {
+      step: mockStep,
+      option: { endpoint: searchEp1, params: { query: "from:SaudiMOH شائعات" }, cursor: "cursor", parent: null, more: [{ query: "from:SaudiMOH نفي" }], notCarried: [] },
+      mapCode: "return (p) => []",
+      columns: [{ key: "id", title_ar: "المعرف" }, { key: "text", title_ar: "النص" }],
+      carryKeys: [],
+      sampleRows: [{ id: "1", text: "t" }],
+      rowsPerPage: 20,
+      callIds: ["call_1"],
+      hasMore: true,
+      second: {
+        option: { endpoint: searchEp2, params: { keyword: "from:SaudiMOH شائعات" }, cursor: "cursor", parent: null, more: [], notCarried: [] },
+        mapCode: "return (p) => []",
+        sample: { rowsPerPage: 20, chargedUsd: 0.01, checkedParams: {} },
+      },
+      alternates: [
+        {
+          option: { endpoint: timelineEp, params: { username: "SaudiMOH" }, cursor: "cursor", parent: null, more: [], notCarried: [] },
+          mapCode: "return (p) => []",
+          sample: { rowsPerPage: 20, chargedUsd: 0.01, checkedParams: {} },
+        },
+      ],
+    };
+    const mockUnderstanding: any = {
+      decision: "plan",
+      understanding_ar: "جمع تغريدات وزارة الصحة عن الشائعات",
+      steps: [mockStep],
+    };
+
+    const plan = assemblePlan(mockUnderstanding, [mockBuilt], [], undefined, ["وزارة الصحة"], undefined, catalog);
+    const alts = (plan.stages[0].engine as any).alternatives;
+
+    expect(alts).toBeDefined();
+    expect(alts.length).toBeGreaterThanOrEqual(3);
+
+    // 1) More params of primary AnyAPI search
+    expect(alts[0].endpoint_id).toBe("anyapi.x.search.posts");
+    expect(alts[0].params.query).toBe("from:SaudiMOH نفي");
+
+    // 2) Second sub-provider: TikHub search
+    expect(alts[1].endpoint_id).toBe("tikhub.x.twitter-web-fetch-search-timeline");
+    expect(alts[1].params.keyword).toBe("from:SaudiMOH شائعات");
+
+    // 3) Third sub-provider: AnyAPI timeline fallback
+    expect(alts[2].endpoint_id).toBe("anyapi.x.user.posts");
+    expect(alts[2].params.username).toBe("SaudiMOH");
+  });
+
+  it("r2 Date window sync: syncStepPeriodFromStep extracts 2-year range and displays correctly on card", () => {
+    const step: any = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      period: { from: "2026-11-23", to: "2026-11-23" }, // Single day defaulted by understanding
+      search_terms: [],
+    };
+
+    // Query actually uses 2-year window
+    syncStepPeriodFromStep(step, { query: "from:SaudiMOH شائعات since:2024-11-23 until:2026-11-23" });
+
+    expect(step.period).toEqual({ from: "2024-11-23", to: "2026-11-23" });
+
+    const parts = requestPartsAr([step], ["حساب وزارة الصحة"]);
+    expect(parts.some((p) => p.includes("٢٣ نوفمبر") && p.includes("٢٠٢٦"))).toBe(true);
+  });
+
+  it("r2 fallbackMap: correctly extracts rest_id and legacy fields for GraphQL/X tweet shapes", () => {
+    const graphQlItem = {
+      rest_id: "1979578331721859137",
+      legacy: {
+        full_text: "توضيح رسمي بخصوص الشائعات المتداولة",
+        name: "وزارة الصحة السعودية",
+        screen_name: "SaudiMOH",
+        created_at: "Wed Nov 18 10:00:00 +0000 2026",
+      },
+    };
+
+    const map = fallbackMap([graphQlItem]);
+    expect(map).not.toBeNull();
+    expect(map?.fields.id).toEqual(["rest_id"]);
+    expect(map?.fields.text).toEqual(["legacy", "full_text"]);
+    expect(map?.fields.author).toEqual(["legacy", "name"]);
+    expect(map?.fields.username).toEqual(["legacy", "screen_name"]);
+    expect(map?.fields.posted_at).toEqual(["legacy", "created_at"]);
   });
 });

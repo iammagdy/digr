@@ -69,6 +69,7 @@ describe("the planner proves our own web search as the last fallback of a news s
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
         { fields: { id: ["url"], title: ["title"], link: ["url"], text: ["description"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const modelCalls: Record<string, number> = {};
     const probes: string[] = [];
@@ -121,6 +122,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const modelCalls: Record<string, number> = {};
     const probes: string[] = [];
@@ -166,6 +168,7 @@ describe("the planner proves our own web search as the last fallback of a news s
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
         { fields: { id: ["url"], title: ["title"], link: ["url"], text: ["description"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const modelCalls: Record<string, number> = {};
     const probes: string[] = [];
@@ -210,6 +213,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const modelCalls: Record<string, number> = {};
     const probes: string[] = [];
@@ -253,6 +257,7 @@ describe("the planner proves our own web search as the last fallback of a news s
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
         { fields: { id: ["url"], title: ["title"], link: ["url"], text: ["description"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const probesBoth: string[] = [];
     const rBoth = await planWithLlm({ words: ["هات آخر ٢٠ خبر"], request: "", scoutAllowed: false }, {
@@ -290,6 +295,7 @@ describe("the planner proves our own web search as the last fallback of a news s
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
         { fields: { id: ["url"], title: ["title"], link: ["url"], text: ["description"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const modelCalls: Record<string, number> = {};
     const probes: string[] = [];
@@ -338,6 +344,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const rCounter = await planWithLlm({ words: ["هات آخر ٢٠ خبر"], request: "", scoutAllowed: true }, {
       model: async ({ tool }) => {
@@ -378,6 +385,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
 
     // Case 1: firecrawl probe returns ok: false, http_status: 500
@@ -610,6 +618,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const probes2: string[] = [];
     const pages2 = new Map<string, unknown>();
@@ -658,6 +667,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const probes1: string[] = [];
     const pages1 = new Map<string, unknown>();
@@ -699,6 +709,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const probes2: string[] = [];
     const pages2 = new Map<string, unknown>();
@@ -847,6 +858,7 @@ describe("the planner proves our own web search as the last fallback of a news s
       field_map: [
         { fields: { id: ["url"], title: ["title"], link: ["url"] }, extra: [] },
       ],
+      judge_sample: [{ matching_indices: [0, 1, 2, 3, 4] }],
     };
     const pages = new Map<string, unknown>();
     let n = 0;
@@ -955,7 +967,7 @@ describe("DT-20261117-06 T4 (i)-(iii): an unreadable map stops at the first opti
 });
 
 describe("DT-20261117-06 T4(iv) CASE 1: the primary spends exactly 6, then both downstream blocks run inside their own 6", () => {
-  it("T4(iv) CASE 1: primary 503 x5 then a readable sixth call; second-tool block 3 calls; web block 1 call; total 10 <= 18", async () => {
+  it("T4(iv) CASE 1: primary 503 x5 then a readable sixth call; second-tool block 4 calls; web block 1 call; total 11 <= 18", async () => {
     const [A, B, C] = t4Offered();
     expect(A).toBeTruthy(); expect(B).toBeTruthy(); expect(C).toBeTruthy();
     expect(T4_WEB).toHaveLength(1); // w = 1: the merged second web probe (otherWeb) is not eligible
@@ -965,16 +977,18 @@ describe("DT-20261117-06 T4(iv) CASE 1: the primary spends exactly 6, then both 
     expect(result.kind).toBe("plan");
     if (result.kind !== "plan") return;
     expect(result.plan.stages[0]!.endpoint_id).toBe(B!.id);
-    // second-tool block: next = A (the first option other than B): calls 7-9 are A's three sets, all failing, inside its own 6
-    expect(recorded.slice(6, 9).map((c) => c.id)).toEqual([A!.id, A!.id, A!.id]);
-    // web block: call 10 is the web tool on the topic phrase
-    expect(recorded[9]!.id).toBe(T4_WEB[0]!.id);
-    expect((recorded[9]!.params as { query?: unknown }).query).toBe(T4_PHRASES[0]);
-    // no 11th call: no second web probe, no scouting call (scoutAllowed false); total 10 <= 6 + 6 + 6 * 1
-    expect(recorded).toHaveLength(10);
+    // second-tool block: nextCandidates loop spreads across sub-providers of the same fallback_group, ordered by reliability (A then C)
+    const secondCalls = recorded.slice(6, 10).map((c) => c.id);
+    expect(secondCalls).toEqual([A!.id, A!.id, C!.id, C!.id]);
+    expect(new Set(secondCalls).size).toBeGreaterThan(1);
+    // web block: call 11 is the web tool on the topic phrase
+    expect(recorded[10]!.id).toBe(T4_WEB[0]!.id);
+    expect((recorded[10]!.params as { query?: unknown }).query).toBe(T4_PHRASES[0]);
+    // no 12th call: no second web probe, no scouting call (scoutAllowed false); total 11 <= 6 + 6 + 6 * 1
+    expect(recorded).toHaveLength(11);
     expect(recorded.filter((c) => c.id === T4_WEB[0]!.id)).toHaveLength(1);
-    expect(recorded.filter((c) => c.id === C!.id)).toHaveLength(0);
-    // one field-map ask for B (primary) and one for the web tool; A's second-tool probe never answered
+    expect(recorded.filter((c) => c.id === C!.id)).toHaveLength(2);
+    // one field-map ask for B (primary) and one for the web tool; A's and C's second-tool probes never answered
     expect(modelCalls.field_map).toBe(2);
   });
 });
