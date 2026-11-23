@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { getMultiProviderContracts } from "../../src/lib/multiProvider/catalog";
 
 export interface EndpointContractValidationResult {
   endpoint_id: string;
@@ -41,6 +42,18 @@ export const AdapterContractSchema = z.object({
   needs_session: z.boolean(),
   schema_fingerprint: z.string(),
   drifted: z.boolean(),
+  capability: z.string().nullable().optional(),
+  capability_tags: z.array(z.string()).optional(),
+  cost: z.object({
+    unit: z.string(),
+    usd: z.number().nullable(),
+    credits: z.number().nullable().optional(),
+    currency: z.string(),
+  }).nullable().optional(),
+  observed: z.object({
+    ok_rate: z.number(),
+    samples: z.number(),
+  }).nullable().optional(),
 }).passthrough();
 
 export type AdapterContract = z.infer<typeof AdapterContractSchema>;
@@ -252,6 +265,23 @@ export function synthesizeAdapterContract(endpoint: any, curated?: any): Adapter
     outputs: outputs_schema,
   });
 
+  const capability = endpoint.capability ? String(endpoint.capability) : (curated?.capability ? String(curated.capability) : null);
+  const capability_tags = Array.isArray(endpoint.capability_tags)
+    ? endpoint.capability_tags
+    : (capability ? [capability] : []);
+
+  const cost = endpoint.cost ? {
+    unit: endpoint.cost.unit ?? "call",
+    usd: typeof endpoint.cost.usd === "number" ? endpoint.cost.usd : null,
+    credits: typeof endpoint.cost.credits === "number" ? endpoint.cost.credits : null,
+    currency: endpoint.cost.currency ?? "USD",
+  } : null;
+
+  const observed = endpoint.observed && typeof endpoint.observed.ok_rate === "number" ? {
+    ok_rate: endpoint.observed.ok_rate,
+    samples: typeof endpoint.observed.samples === "number" ? endpoint.observed.samples : 0,
+  } : null;
+
   // Strict Zero-Guess Invariant (Point 5.1):
   let contract_status: "full" | "partial" | "unknown" = "unknown";
   if (inputs_schema !== null && outputs_schema !== null && page_size_param !== null && max_page_size !== null) {
@@ -267,6 +297,8 @@ export function synthesizeAdapterContract(endpoint: any, curated?: any): Adapter
     provider,
     platform_family,
     category,
+    capability,
+    capability_tags,
     contract_status,
     inputs_schema,
     outputs_schema,
@@ -282,6 +314,8 @@ export function synthesizeAdapterContract(endpoint: any, curated?: any): Adapter
     needs_session,
     schema_fingerprint,
     drifted: false,
+    cost,
+    observed,
     ...(curated ? {
       best_for: curated.best_for ?? null,
       not_for: curated.not_for ?? null,
@@ -377,6 +411,14 @@ export function generateCatalogContracts(options: {
     contracts.push(contract);
   }
 
+  // Phase 6 Multi-Provider Unification: include Firecrawl & Context.dev contracts
+  const multiProviderContracts = getMultiProviderContracts();
+  for (const mpc of multiProviderContracts) {
+    if (!contracts.some((c) => c.endpoint_id === mpc.endpoint_id)) {
+      contracts.push(mpc as AdapterContract);
+    }
+  }
+
   const report = generateCoverageReport(contracts);
 
   mkdirSync(path.dirname(outPath), { recursive: true });
@@ -402,10 +444,22 @@ export function loadAdapterContracts(filePath?: string): AdapterContract[] {
     throw new Error(`Adapter contracts file not found at ${resolvedPath}`);
   }
   const raw = JSON.parse(readFileSync(resolvedPath, "utf-8"));
-  if (Array.isArray(raw)) return raw;
-  if (raw && Array.isArray(raw.endpoints)) return raw.endpoints;
-  return [];
+  let contracts: AdapterContract[] = [];
+  if (Array.isArray(raw)) contracts = raw;
+  else if (raw && Array.isArray(raw.endpoints)) contracts = raw.endpoints;
+
+  // Unify with synthesized multi-provider contracts (Phase 6)
+  const mpContracts = getMultiProviderContracts() as unknown as AdapterContract[];
+  for (const mpc of mpContracts) {
+    if (!contracts.some((c) => c.endpoint_id === mpc.endpoint_id)) {
+      contracts.push(mpc);
+    }
+  }
+
+  return contracts;
 }
+
+export { getMultiProviderContracts as synthesizeMultiProviderContracts };
 
 
 /**

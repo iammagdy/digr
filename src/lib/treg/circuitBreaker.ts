@@ -21,6 +21,15 @@ export interface ControlProbeRequest {
   headers?: Record<string, string>;
 }
 
+export interface CircuitBreakerAlert {
+  type: "credit_exhaustion";
+  endpointId: string;
+  provider: string;
+  status: 402;
+  timestamp: number;
+  message: string;
+}
+
 export const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 export const EXTENDED_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 export const CONSECUTIVE_FAILURES_THRESHOLD = 3;
@@ -76,6 +85,8 @@ export function getControlProbeRequest(endpointId: string): ControlProbeRequest 
 
 export class EndpointCircuitBreaker {
   private records: Map<string, EndpointCircuitRecord> = new Map();
+  private provider402Trips: Map<string, { openedAt: number; cooldownMs: number }> = new Map();
+  private alertLogs: CircuitBreakerAlert[] = [];
   private nowFn: () => number;
 
   constructor(
@@ -134,6 +145,16 @@ export class EndpointCircuitBreaker {
   }
 
   getState(endpointId: string): CircuitState {
+    const provider = endpointId.includes(".") ? endpointId.split(".")[0] : endpointId;
+    const providerTrip = this.provider402Trips.get(provider);
+    if (providerTrip) {
+      const elapsed = this.nowFn() - providerTrip.openedAt;
+      if (elapsed < providerTrip.cooldownMs) {
+        return "open";
+      } else {
+        this.provider402Trips.delete(provider);
+      }
+    }
     const rec = this.getOrCreateRecord(endpointId);
     if (rec.state === "open") {
       const elapsed = this.nowFn() - (rec.openedAt ?? 0);
@@ -167,6 +188,8 @@ export class EndpointCircuitBreaker {
   }
 
   recordSuccess(endpointId: string): void {
+    const provider = endpointId.includes(".") ? endpointId.split(".")[0] : endpointId;
+    this.provider402Trips.delete(provider);
     const rec = this.getOrCreateRecord(endpointId);
     rec.state = "closed";
     rec.failures = 0;
@@ -177,10 +200,49 @@ export class EndpointCircuitBreaker {
   }
 
   recordFailure(endpointId: string, status: number, isControlProbe?: boolean): void {
+    // Phase 2 / Phase 6 Amendment 2 (Megz / الكبير):
+    // HTTP 429 is a rate limit with Retry-After, NOT a circuit failure and does NOT trip the circuit.
+    if (status === 429) {
+      return;
+    }
+
     const rec = this.getOrCreateRecord(endpointId);
     const now = this.nowFn();
     rec.failures += 1;
     rec.lastFailureTime = now;
+
+    // Phase 6 Amendment 2 (Megz / الكبير):
+    // Only HTTP 402 / credit exhaustion trips the circuit breaker to open for that provider account.
+    if (status === 402) {
+      rec.state = "open";
+      rec.openedAt = now;
+      rec.cooldownMs = EXTENDED_COOLDOWN_MS;
+      rec.consecutiveFailures += 1;
+
+      const provider = endpointId.includes(".") ? endpointId.split(".")[0] : endpointId;
+      this.provider402Trips.set(provider, { openedAt: now, cooldownMs: EXTENDED_COOLDOWN_MS });
+
+      for (const [id, r] of this.records.entries()) {
+        const p = id.includes(".") ? id.split(".")[0] : id;
+        if (p === provider) {
+          r.state = "open";
+          r.openedAt = now;
+          r.cooldownMs = EXTENDED_COOLDOWN_MS;
+        }
+      }
+
+      const alertMsg = `[CIRCUIT_BREAKER_ALERT: COMMANDER] Provider account credit exhausted (HTTP 402) for endpoint ${endpointId} (provider: ${provider}). Circuit tripped open. Megz top-up required.`;
+      this.alertLogs.push({
+        type: "credit_exhaustion",
+        endpointId,
+        provider,
+        status: 402,
+        timestamp: now,
+        message: alertMsg,
+      });
+      console.warn(alertMsg);
+      return;
+    }
 
     if (isControlProbe) {
       // If a control probe fails with 400 or error, trip immediately to open with 30-min cooldown
@@ -218,6 +280,8 @@ export class EndpointCircuitBreaker {
   }
 
   reset(endpointId: string): void {
+    const provider = endpointId.includes(".") ? endpointId.split(".")[0] : endpointId;
+    this.provider402Trips.delete(provider);
     const rec = this.getOrCreateRecord(endpointId);
     rec.state = "closed";
     rec.failures = 0;
@@ -226,6 +290,30 @@ export class EndpointCircuitBreaker {
     rec.lastFailureTime = null;
     rec.openedAt = null;
     rec.cooldownMs = DEFAULT_COOLDOWN_MS;
+  }
+
+  resetProvider(provider: string): void {
+    this.provider402Trips.delete(provider);
+    for (const [id, rec] of this.records.entries()) {
+      const p = id.includes(".") ? id.split(".")[0] : id;
+      if (p === provider) {
+        rec.state = "closed";
+        rec.failures = 0;
+        rec.consecutive400 = 0;
+        rec.consecutiveFailures = 0;
+        rec.lastFailureTime = null;
+        rec.openedAt = null;
+        rec.cooldownMs = DEFAULT_COOLDOWN_MS;
+      }
+    }
+  }
+
+  getAlertLogs(): CircuitBreakerAlert[] {
+    return [...this.alertLogs];
+  }
+
+  clearAlertLogs(): void {
+    this.alertLogs = [];
   }
 
   getRecord(endpointId: string): EndpointCircuitRecord {

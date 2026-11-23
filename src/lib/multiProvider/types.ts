@@ -45,6 +45,8 @@ export interface CapabilityDef {
   labelAr: string;
   /** Why the capability is never sold even though it exists (an unverified price, a data policy rule, an unbounded cost). */
   blockedReason?: "unverified_price" | "data_policy" | "unbounded_cost";
+  /** Declarative capability tags for data-driven planner selection (e.g. 'site.map', 'discover.web_search'). */
+  capabilityTags?: string[];
 }
 
 export type RequiredField = "work_email" | "office_phone" | "profile_link" | "decision_maker";
