@@ -12,7 +12,7 @@ import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../..
 import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { researchRelevanceOf } from "../../../src/lib/agentMission/foundation/compilePlan";
-import { textDedupeKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
+import { textDedupeKey, titleDedupeKey, canonicalUrlKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
@@ -994,9 +994,9 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (u.accepts_available) {
     for (const f of findings) {
       if (!f.exhausted) continue;
-      f.step.count = { ...f.step.count, total: f.found };
+      f.step.count = { ...(f.step.count ?? { total: null, per_parent: null, all: false }), total: f.found };
       if (f.found > 0) {
-        const requestedPart = f.step.count.total !== null ? `طلبتَ ${toArabicDigits(f.requested)}، و` : "";
+        const requestedPart = (f.step.count?.total ?? null) !== null ? `طلبتَ ${toArabicDigits(f.requested)}، و` : "";
         u.assumptions_ar = [...(u.assumptions_ar ?? []), `${requestedPart}وافقت على تسليم الموجود فعلًا من ${f.step.title_ar}: نحو ${toArabicDigits(f.found)}.`];
       }
     }
@@ -1300,18 +1300,19 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
 export interface ScoutFinding { step: UnderstoodStep; requested: number; found: number; exhausted: boolean; sets: number }
 
 const rowKeyOf = (row: Record<string, unknown>): string => {
-  const rawTitle = row.title ?? row.headline;
-  if (typeof rawTitle === "string") {
-    const textKey = textDedupeKey(rawTitle);
-    if (textKey) return `title:${textKey}`;
-  }
   for (const k of ROW_KEY_FIELDS) {
+    if (k === "url") continue;
     const v = row[k];
     if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
     if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
   }
-  const link = String(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url ?? "").trim();
+  const link = canonicalUrlKey(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url);
   if (link) return `link:${link}`;
+  const rawTitle = row.title ?? row.headline;
+  if (typeof rawTitle === "string") {
+    const textKey = titleDedupeKey(rawTitle) ?? textDedupeKey(rawTitle);
+    if (textKey) return `title:${textKey}`;
+  }
   return String(row.id ?? JSON.stringify(row));
 };
 
@@ -1511,13 +1512,13 @@ export function numbersWritten(text: string): Set<string> {
 }
 
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
-export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
+export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): { question_ar: string; options_ar: string[] } {
   const lines = weak.map((f) => {
-    const platformName = platformAr(f.step.platform, f.step.capability, said, { allowPlatformNames: true });
+    const platformName = platformAr(f.step.platform, f.step.capability, said, opts?.allowPlatformNames ? { allowPlatformNames: true } : undefined);
     if (f.found === 0) {
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
-    const requestedByCustomer = f.step.count.total !== null;
+    const requestedByCustomer = (f.step.count?.total ?? null) !== null;
     if (!requestedByCustomer) {
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }
@@ -1556,12 +1557,12 @@ export async function scoutQuestion(
       period: f.step.period,
       language: f.step.language ?? null,
       country: f.step.country ?? null,
-      requested: f.step.count.total !== null ? f.requested : null,
+      requested: (f.step.count?.total ?? null) !== null ? f.requested : null,
       found: f.found,
       different_searches_tried: f.sets,
     })),
   };
-  const fallback = scoutFallbackAr(weak, customerSaidOf(input));
+  const fallback = scoutFallbackAr(weak, customerSaidOf(input), { allowPlatformNames: true });
   const systemPrompt = index
     ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
     : SCOUT_SYSTEM;
@@ -1582,7 +1583,7 @@ export async function scoutQuestion(
   const options_ar = validShape ? rawOptions : fallback.options_ar;
 
   // When the customer requested no count, the shortfall question text is ALWAYS the code-built factual sentence (D-0197)
-  if (weak.some((f) => f.step.count.total === null)) {
+  if (weak.some((f) => (f.step.count?.total ?? null) === null)) {
     return { question_ar: fallback.question_ar, options_ar };
   }
 
@@ -1738,8 +1739,9 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       if (s.count.all) notes.push(`${s.title_ar}: نقرأ كل ما يعرضه المصدر لكل عنصر، بحد أقصى ${toArabicDigits(perParent ?? ALL_CHILDREN_CAP)} لكل عنصر، ولا ندفع إلا مقابل ما يُسلَّم.`);
       else if (!s.count.per_parent && !s.count.total && perParent !== undefined) assumptions.push(`لم تحدد عدد ${s.title_ar} لكل عنصر، فاخترنا ${toArabicDigits(perParent)}؛ يمكنك تعديله قبل الموافقة.`);
     } else {
-      if (s.count.total !== null) {
-        planned = s.count.total;
+      const total = s.count?.total ?? null;
+      if (total !== null) {
+        planned = total;
       } else {
         const sampleCount = b.sampleRows.length;
         const reachable = b.hasMore ? Math.max(1, Math.min(b.rowsPerPage * 2, 20)) : Math.max(1, sampleCount);

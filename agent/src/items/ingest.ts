@@ -6,7 +6,7 @@ import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src
 import { contactShape, phoneShape } from "../../../src/lib/agentMission/contactShape";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { canonicalUrlKey, dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf, titleDedupeKey } from "../../../src/lib/agentMission/contract";
+import { canonicalUrlKey, dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf, titleDedupeKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
 import { nameKeysOf, withCleanName, withRealName, withTidyNames } from "../../../src/lib/agentMission/companyNames";
 import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
@@ -151,8 +151,11 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const p = it.row.parent_id === undefined ? null : String(it.row.parent_id);
     const u = canonicalUrlKey(it.row.canonical_url ?? it.row.url ?? it.row.link);
     if (u) seenUrls.add(`${dedupeScope(p)}|${u}`);
-    const t = titleDedupeKey(it.row.title ?? it.row.headline);
-    if (t) seenTitles.add(`${dedupeScope(p)}|${t}`);
+    const hasRowId = ROW_KEY_FIELDS.some((k) => k !== "url" && typeof it.row![k] === "string" && (it.row![k] as string).trim() !== "");
+    if (!hasRowId && !u) {
+      const t = titleDedupeKey(it.row.title ?? it.row.headline);
+      if (t) seenTitles.add(`${dedupeScope(p)}|${t}`);
+    }
   }
   // the share of every named source applies to everything that is accepted for the stage, a page read by the engine or a waiting item decided later (a stage with a recipe per source: no source takes more than its share)
   const account = (stage.filters ?? []).find((f) => f.kind === "account" && isEnabled(f) && (f.values ?? []).length > 0);
@@ -231,13 +234,16 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       if (seenUrls.has(scopedUrl)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
       seenUrls.add(scopedUrl);
     }
-    // Structural title deduplication (normalized title with publisher suffix stripped)
-    const rawTitle = raw.title ?? raw.headline;
-    const tKey = titleDedupeKey(rawTitle);
-    if (tKey) {
-      const scopedTitle = `${dedupeScope(parentId)}|${tKey}`;
-      if (seenTitles.has(scopedTitle)) { duplicates += 1; tally.duplicates_ignored += 1; tally.duplicate_texts += 1; continue; }
-      seenTitles.add(scopedTitle);
+    // Structural title deduplication (normalized title ONLY when the row has neither id nor link)
+    const hasPlatformId = ROW_KEY_FIELDS.some((k) => k !== "url" && typeof raw[k] === "string" && (raw[k] as string).trim() !== "") || (options.idField !== undefined && options.idField !== null && options.idField !== "_content_id" && typeof raw[options.idField] === "string" && (raw[options.idField] as string).trim() !== "");
+    if (!hasPlatformId && !uKey) {
+      const rawTitle = raw.title ?? raw.headline;
+      const tKey = titleDedupeKey(rawTitle);
+      if (tKey) {
+        const scopedTitle = `${dedupeScope(parentId)}|${tKey}`;
+        if (seenTitles.has(scopedTitle)) { duplicates += 1; tally.duplicates_ignored += 1; tally.duplicate_texts += 1; continue; }
+        seenTitles.add(scopedTitle);
+      }
     }
     if (dedupeText) {
       const textField = textKeyOf(stage, Object.keys(raw));

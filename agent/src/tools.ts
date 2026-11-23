@@ -620,17 +620,21 @@ const valueAt = (value: unknown, path: string | null | undefined): unknown => {
 const rowKeyOf = (row: unknown): string => {
   if (row && typeof row === "object") {
     const r = row as Record<string, unknown>;
+    // (a) the row's canonical platform id field if present (the stage's id column / post id)
+    for (const k of ROW_KEY_FIELDS) {
+      if (k === "url") continue;
+      const v = r[k];
+      if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
+      if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
+    }
+    // (b) canonical link/URL
     const link = canonicalUrlKey(r.canonical_url ?? r.url ?? r.link);
     if (link) return `link:${link}`;
+    // (c) normalized title ONLY when the row has neither id nor link
     const rawTitle = r.title ?? r.headline;
     if (typeof rawTitle === "string") {
       const k = titleDedupeKey(rawTitle);
       if (k) return `title:${k}`;
-    }
-    for (const k of ROW_KEY_FIELDS) {
-      const v = r[k];
-      if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
-      if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
     }
   }
   return JSON.stringify(row);
