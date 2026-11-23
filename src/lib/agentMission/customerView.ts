@@ -97,6 +97,8 @@ export interface CustomerMissionView {
   countLinesAr: string[];
   /** ROUND 58: the «هتستلم» cell of a plan of companies with their details («٢٠ شركة»); null: the cell shows `totalRowsAr` as before. */
   headlineCountAr: string | null;
+  /** When min charge sets the price: the honest policy line «الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء.». Null when normal rate sets price. */
+  minimumLineAr?: string | null;
   questionAr: string | null;
   /** Why the request waits (round 14: never a time), or null. */
   queueLineAr: string | null;
@@ -194,14 +196,33 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
 }
 
 /**
+ * Resolves whether the minimum charge rule governs this plan's price.
+ * True when minApplied is flagged, or min sets the full charge (max_charge <= min_charge with minimum line),
+ * or delivered rows at unit price would cost less than the minimum charge.
+ */
+export function isMinimumSettingPrice(price: any, total?: number): boolean {
+  if (!price) return false;
+  const minCharge = Number(price.min_charge_points ?? price.min_charge ?? price.minChargePoints ?? 0);
+  if (!(minCharge > 0)) return false;
+  if (price.min_applied === true || price.minApplied === true) return true;
+  if (price.min_applied === false || price.minApplied === false) return false;
+  const maxCharge = Number(price.max_charge_points ?? price.max_charge ?? price.maxChargePoints ?? 0);
+  const minLine = price.minimum_line_ar ?? price.minimumLineAr;
+  if (maxCharge > 0 && maxCharge <= minCharge && Boolean(minLine)) return true;
+  const unitPrice = Number(price.unit_price_points ?? price.unitPricePoints ?? 0);
+  const rows = typeof total === "number" && total > 0 ? total : Number(price.delivered_rows ?? price.deliveredRows ?? 0);
+  if (rows > 0 && unitPrice > 0 && rows * unitPrice < minCharge) return true;
+  return false;
+}
+
+/**
  * ROUND 58: the card's «هتستلم» cell for a plan of companies with their details.
  * DT-20261123-x-account-rumors r7 (Megz D-0196): When min_charge_points applies, plain Arabic notice of count and minimum.
  */
 function headlineCountArOf(plan: any, total?: number): string | null {
-  const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
-  const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
-  const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? 0);
-  if (minChargePoints > 0 && rows > 0 && rows * unitPricePoints < minChargePoints) {
+  const minChargePoints = Number(plan?.price?.min_charge_points ?? plan?.price?.min_charge ?? plan?.price?.minChargePoints ?? 0);
+  const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? plan?.price?.deliveredRows ?? 0);
+  if (minChargePoints > 0 && rows > 0 && isMinimumSettingPrice(plan?.price, rows)) {
     return `هتستلم ${countAr(rows, itemNounOfPlan(plan))}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
   }
   const entity = entityBreakdownOf(entityStagesOfPublic(plan));
@@ -646,9 +667,11 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
   }
 
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary, expired);
-  const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
-  const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
-  const minApplies = minChargePoints > 0 && total > 0 && total * unitPricePoints < minChargePoints;
+  const minChargePoints = Number(plan?.price?.min_charge_points ?? plan?.price?.min_charge ?? plan?.price?.minChargePoints ?? 0);
+  const minApplies = isMinimumSettingPrice(plan?.price, total);
+  const minimumLineAr = minApplies
+    ? (plan?.price?.minimum_line_ar ?? plan?.price?.minimumLineAr ?? (minChargePoints > 0 ? `الحد الأدنى للمهمة ${formatAr(minChargePoints)} نقطة، ولا خصم إن لم يُسلَّم شيء.` : null))
+    : null;
   const rawQuestionOptions = phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [];
   const questionOptionsAr = minApplies
     ? [...rawQuestionOptions].sort((a, b) => (b.includes("وسّع") ? 1 : 0) - (a.includes("وسّع") ? 1 : 0))
@@ -671,6 +694,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     collectLineAr: collectLineOf(mission.status, Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)),
     lastEventAt: Number.isFinite(lastAt) ? lastAt : null,
     savedSoFar,
+    ...(minimumLineAr ? { minimumLineAr } : {}),
     ...(expired ? { expired: true, expiredNoteAr: EXPIRED_PLAN_NOTE_AR } : {}),
     ...(partialReasonAr ? { partialReasonAr } : {}),
     ...(partialRefundAr ? { partialRefundAr } : {}),
@@ -731,6 +755,7 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     ...(v.partialReasonAr ? { partialReasonAr: nm(v.partialReasonAr) } : {}),
     ...(v.partialRefundAr ? { partialRefundAr: nm(v.partialRefundAr) } : {}),
     ...(v.limit ? { limit: { ...v.limit, sentenceAr: nm(v.limit.sentenceAr), rowsAr: nm(v.limit.rowsAr) } } : {}),
+    ...(v.minimumLineAr ? { minimumLineAr: nm(v.minimumLineAr) } : {}),
     // the plan editor: titles, labels and the filter lines all go through m (a filter line is built from what the customer gave, so a word they wrote stays; any other Latin word or source label does not)
     edit: v.edit ? { ...v.edit, stages: v.edit.stages.map((s) => ({
       ...s, title_ar: m(s.title_ar) || "مرحلة", ...(s.per_parent_label_ar !== undefined ? { per_parent_label_ar: m(s.per_parent_label_ar) } : {}), ...(s.pages_label_ar !== undefined ? { pages_label_ar: m(s.pages_label_ar) } : {}),
