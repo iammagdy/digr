@@ -1,0 +1,20 @@
+{
+  "archetype": "visual_media",
+  "endpoint": "anyapi.instagram.user.posts",
+  "response": {
+    "data": {
+      "items": [
+        {
+          "id": "visual_item_001",
+          "caption": "Placeholder media caption text for visual entity.",
+          "created_time": 1757050000,
+          "media_type": "carousel",
+          "comments_count": 8,
+          "likes_count": 120
+        }
+      ],
+      "next_cursor": "cur_visual_02",
+      "has_next": true
+    }
+  }
+}

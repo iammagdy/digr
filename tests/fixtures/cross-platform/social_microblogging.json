@@ -1,0 +1,39 @@
+{
+  "archetype": "social_microblogging",
+  "endpoint": "anyapi.x.post.comments",
+  "response": {
+    "output": {
+      "found": true,
+      "data": {
+        "items": [
+          {
+            "id": "1800000000000000001",
+            "authorHandle": "handle_01",
+            "authorName": "Entity One",
+            "text": "Placeholder primary commentary content.",
+            "createdUtc": 1785200000,
+            "likeCount": 10,
+            "quoteCount": 0,
+            "replyCount": 2,
+            "repostCount": 1,
+            "url": "https://example.com/post/1800000000000000001"
+          },
+          {
+            "id": "1800000000000000002",
+            "authorHandle": "handle_02",
+            "authorName": "Entity Two",
+            "text": "Placeholder threaded reply commentary content.",
+            "createdUtc": 1785200100,
+            "likeCount": 3,
+            "quoteCount": 0,
+            "replyCount": 0,
+            "repostCount": 0,
+            "url": "https://example.com/post/1800000000000000002"
+          }
+        ]
+      }
+    },
+    "costUsd": 0.0005,
+    "items": 2
+  }
+}

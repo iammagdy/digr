@@ -1,0 +1,19 @@
+{
+  "archetype": "web_news_search",
+  "endpoint": "serper.news.search",
+  "response": {
+    "news": [
+      {
+        "title": "Placeholder publication headline information.",
+        "link": "https://example.org/news/headline-001",
+        "snippet": "Placeholder news article brief descriptive summary.",
+        "date": "2026-05-15T08:00:00Z",
+        "source": "News Bureau Alpha"
+      }
+    ],
+    "searchParameters": {
+      "type": "news",
+      "page": 1
+    }
+  }
+}

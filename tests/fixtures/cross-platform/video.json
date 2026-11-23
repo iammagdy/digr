@@ -1,0 +1,29 @@
+{
+  "archetype": "video",
+  "endpoint": "tikhub.tiktok.search.videos",
+  "response": {
+    "code": 200,
+    "data": {
+      "cursor": 5,
+      "has_more": 1,
+      "search_item_list": [
+        {
+          "aweme_info": {
+            "id": "7500000000000000001",
+            "desc": "Placeholder video presentation summary and metadata.",
+            "create_time": 1757050000,
+            "author": {
+              "uid": "creator_01",
+              "nickname": "Channel Alpha"
+            },
+            "statistics": {
+              "comment_count": 25,
+              "digg_count": 340,
+              "play_count": 5200
+            }
+          }
+        }
+      ]
+    }
+  }
+}
