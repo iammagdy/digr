@@ -1,4 +1,4 @@
-import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../treg/catalog";
+import { isSellable, type CatalogEndpoint, type EndpointAdapterContract, type EndpointQuerySyntax, type TregCatalog } from "../../treg/catalog";
 import { expectedCost, priorRowsPerCall } from "../sourceRanking";
 import { canExpress, toolProfile } from "../toolProfile";
 import { CONTEXTDEV_PARSE_USD_ESTIMATE, PARSERS, WEB_SOURCES, type ParserName } from "../sources";
@@ -104,6 +104,10 @@ export interface Capability {
   summary: string;
   /** Documented limits («first 20 only», «one page», …). */
   limits: string | null;
+  adapter_contract?: EndpointAdapterContract | null;
+  query_syntax?: EndpointQuerySyntax | null;
+  dedupe_key?: string | null;
+  limitations?: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -320,6 +324,15 @@ const CARD_ROLE_OPERATION: Partial<Record<CardRole, Operation>> = {
   "comment.replies": "social.replies",
 };
 
+function deriveLimitations(contract: EndpointAdapterContract | null | undefined): string | null {
+  if (!contract) return null;
+  const parts: string[] = [];
+  if (contract.query_syntax?.notes) parts.push(contract.query_syntax.notes);
+  if (contract.not_for) parts.push(`Not for: ${contract.not_for}`);
+  if (contract.needs_session) parts.push("Requires session");
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
 function cardCapability(card: ToolCard, e: CatalogEndpoint, operation: Operation, unavailable: Capability["unavailable"]): Capability {
   // a card that lists ONE named source (an account's posts, a page's posts) and takes no topic is fed by that source's name, never by a topic: it serves a request that names the account (`account_ref`), not a topic search
   const takes: InputClass[] = card.inputs.parent ? [operation === "social.replies" ? "comment_ref" : "post_ref"] : card.inputs.source && !card.inputs.query ? ["account_ref"] : ["query"];
@@ -336,6 +349,7 @@ function cardCapability(card: ToolCard, e: CatalogEndpoint, operation: Operation
     usdPerRow: Number.isFinite(card.costUsdPerPage) ? card.costUsdPerPage / rows : null, privacy: "public", unavailable,
     summary: `hand tool card (${card.role})`, limits: card.cannot && card.cannot.length > 0 ? `cannot carry: ${card.cannot.join(", ")}` : null,
     access: e.kind === "routed" ? "treg_routed" : "treg_direct", pricing: tregPricingOf(e),
+    adapter_contract: e.adapter_contract ?? null, query_syntax: e.adapter_contract?.query_syntax ?? null, dedupe_key: e.adapter_contract?.dedupe_key ?? null, limitations: deriveLimitations(e.adapter_contract),
   };
 }
 
@@ -368,6 +382,10 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
     if (card && CARD_ROLE_OPERATION[card.role]) continue;
     const platformOf = String(e.capability ?? "").split(".")[0];
     const profile = toolProfile(e);
+    const contract = e.adapter_contract ?? null;
+    const automatedPagingReady = contract?.pagination?.automated_paging_ready;
+    const pagination = profile.cursor !== null && automatedPagingReady !== false;
+    const limitations = deriveLimitations(contract);
     // a sub-list schema documents nothing of the record (see `subListSchema`): no field is read from it
     const fields = e.item_fields && !subListSchema(e, operation) ? Object.keys(e.item_fields) : [];
     // a field that is an OBJECT (a wrapper such as `aweme_info` or `basic_info`) hides the row's real fields: the keys its example shows are read too, but the outputs are then UNPROVEN (proven on a sampled page before a plan relies on them)
@@ -387,16 +405,20 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
       takes: takesOf(e, operation),
       outputs: outputsOfFields([...fields, ...nested]),
       outputsKnown: fields.length > 0 && objectFields.length === 0,
-      pagination: profile.cursor !== null,
+      pagination,
       maxRowsPerCall: priorRowsPerCall(e),
       filters: { date: canExpress(profile, "date"), country: canExpress(profile, "country"), language: canExpress(profile, "language") },
       usdPerRow: cost.usdPerItem,
       privacy: "public",
       unavailable: !sellable ? "not_sellable" : !allowed ? "not_permitted" : tregCap,
       summary: String(e.summary ?? e.name ?? "").replace(/\s+/g, " ").slice(0, 160),
-      limits: e.kind === "routed" ? "routed: any sibling may serve the call; misses of earlier siblings are billed up to the route cap" : null,
+      limits: e.kind === "routed" ? "routed: any sibling may serve the call; misses of earlier siblings are billed up to the route cap" : limitations ?? null,
       access: e.kind === "routed" ? "treg_routed" : "treg_direct",
       pricing: tregPricingOf(e),
+      adapter_contract: contract,
+      query_syntax: contract?.query_syntax ?? null,
+      dedupe_key: contract?.dedupe_key ?? null,
+      limitations,
     });
   }
   for (const card of availability.handCards ? TOOL_CARDS : []) {
