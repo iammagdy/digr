@@ -1,0 +1,227 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "ask",
+        "cannot"
+      ]
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "items",
+          "place",
+          "source",
+          "platform"
+        ]
+      },
+      "description": "ONLY for decision ask: the essential inputs that have NO value anywhere in the customer's messages and cannot be defaulted: items (what kind of things to collect), place (where, when the request needs one), source (which account, page or link), platform. Empty for plan and cannot. A decision ask with this list empty is refused by code."
+    },
+    "understanding_ar": {
+      "type": "string"
+    },
+    "question_ar": {
+      "type": "string"
+    },
+    "options_ar": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cannot_ar": {
+      "type": "string"
+    },
+    "assumptions_ar": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "no_repeat": {
+      "type": "boolean"
+    },
+    "accepts_available": {
+      "type": "boolean",
+      "description": "true only when the customer's answer to a question about what the real search found accepts what exists"
+    },
+    "people_of_companies": {
+      "type": "object",
+      "description": "ALWAYS answered: whether the customer wants the PEOPLE who work at the companies (or businesses) of the request",
+      "properties": {
+        "asked": {
+          "type": "boolean"
+        },
+        "title_ar": {
+          "type": "string",
+          "description": "those people as the customer named them, Arabic plural; empty when asked is false"
+        },
+        "per_company": {
+          "type": "integer",
+          "description": "how many PEOPLE the customer asked for EACH company; never the number of companies; 0 when not given"
+        },
+        "per_company_text": {
+          "type": "string",
+          "description": "the customer's own words that gave per_company, exactly as written; empty when per_company is 0"
+        },
+        "companies_text": {
+          "type": "string",
+          "description": "the customer's own words that gave the number of COMPANIES, exactly as written; empty when no number of companies was given"
+        },
+        "contact_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "email",
+              "phone"
+            ]
+          },
+          "description": "the PERSON contacts the customer asked for those people; empty when none"
+        }
+      },
+      "required": [
+        "asked",
+        "title_ar",
+        "per_company",
+        "per_company_text",
+        "companies_text",
+        "contact_kinds"
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "short id: lowercase letters, digits, underscore"
+          },
+          "title_ar": {
+            "type": "string",
+            "description": "the items of this step in Arabic, plural (التغريدات، التعليقات، الردود …)"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "string",
+            "description": "the key of the EARLIER step whose items this step reads from (empty for a top-level step)"
+          },
+          "deliver": {
+            "type": "boolean",
+            "description": "true when the customer wants these items in the file (false only for an intermediate step they did not ask to receive)"
+          },
+          "count": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "omit when the customer gave no total"
+              },
+              "per_parent": {
+                "type": "integer",
+                "description": "omit when not given per parent"
+              },
+              "all": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "all"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "description": "omit when no source was named",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ]
+          },
+          "topic": {
+            "type": "string",
+            "description": "omit when there is no topic"
+          },
+          "search_terms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "period": {
+            "type": "object",
+            "description": "omit when no period was asked",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "newest",
+              "top",
+              "any"
+            ]
+          },
+          "fields_wanted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "fields the customer explicitly asked for (link, author, date, likes…)"
+          }
+        },
+        "required": [
+          "key",
+          "title_ar",
+          "platform",
+          "capability",
+          "deliver",
+          "count",
+          "search_terms"
+        ]
+      }
+    }
+  },
+  "required": [
+    "decision",
+    "missing",
+    "understanding_ar",
+    "steps",
+    "accepts_available",
+    "people_of_companies"
+  ]
+}
