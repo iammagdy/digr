@@ -32,7 +32,7 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { alignedModelCall } from "./periodRequest";
 import { tokenOverlayCode, withRepliesStages } from "../../src/lib/agentMission/replies";
-import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
+import { ROW_KEY_FIELDS, textDedupeKey } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, CallRow, MissionRecord } from "./types";
 import { inspectSavedCompanyAndPeople, recordQuestionOnce, recoverCompanyPeopleFromSavedEvidence, type RecoveryResult, type SavedEvidenceInspection, type UnderstoodCompaniesSummary, type UnderstoodPeopleSummary } from "./companyPeopleRecovery";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -618,7 +618,21 @@ const valueAt = (value: unknown, path: string | null | undefined): unknown => {
   return cur;
 };
 const rowKeyOf = (row: unknown): string => {
-  if (row && typeof row === "object") for (const k of ROW_KEY_FIELDS) { const v = (row as Record<string, unknown>)[k]; if (typeof v === "string" || typeof v === "number") return `${k}:${v}`; }
+  if (row && typeof row === "object") {
+    const r = row as Record<string, unknown>;
+    const rawTitle = r.title ?? r.headline;
+    if (typeof rawTitle === "string") {
+      const k = textDedupeKey(rawTitle);
+      if (k) return `title:${k}`;
+    }
+    for (const k of ROW_KEY_FIELDS) {
+      const v = r[k];
+      if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
+      if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
+    }
+    const link = String(r.canonical_url ?? r.url ?? r.link ?? "").trim();
+    if (link) return `link:${link}`;
+  }
   return JSON.stringify(row);
 };
 

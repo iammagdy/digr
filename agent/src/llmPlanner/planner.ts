@@ -12,6 +12,7 @@ import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../..
 import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { researchRelevanceOf } from "../../../src/lib/agentMission/foundation/compilePlan";
+import { textDedupeKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
@@ -854,60 +855,97 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     let topicMatchedInSample = true;
     if (step.topic && sampleRows.length > 0) {
       const sampleTexts = sampleRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
+      const constraintCriterion = [
+        step.source?.value ? `Source/Account: ${step.source.value}` : null,
+        step.country ? `Country: ${step.country}` : null,
+        `Topic: «${step.topic}»`,
+      ].filter(Boolean).join(", ");
       const judgeRes = await ask(
-        "You check whether items from a source are about the customer's topic. Return the 0-based indices of items that discuss or touch on the topic. If none do, return an empty array.",
-        `Topic: «${step.topic}»\nItems:\n${sampleTexts}`,
-        { name: "judge_sample", description: "Count how many items match the topic.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+        "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
+        `Criteria:\n${constraintCriterion}\n\nItems:\n${sampleTexts}`,
+        { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
         200,
       );
       const matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
-      if (matches !== null && matches.length === 0) {
-        topicMatchedInSample = false;
-        // Window paging: if first page had 0 matches and source has more pages (e.g. account timeline),
-        // page over the window with the model judge until on-topic items are found or window ends.
-        const cursorKey = got.option.cursor ?? (Array.isArray(got.option.endpoint.pagination) ? got.option.endpoint.pagination.find((p) => got.option.endpoint.inputs.some((i) => i.name === p)) : null);
-        if (got.hasMore && (got.nextCursor || cursorKey) && !step.parent) {
-          let currentCursor = got.nextCursor;
-          const matchingRows: Array<Record<string, unknown>> = [];
-          const visited = new Set<string>();
-          if (currentCursor) visited.add(currentCursor);
-          const maxWindowPages = 4;
-          for (let pIdx = 0; pIdx < maxWindowPages && currentCursor && cursorKey; pIdx += 1) {
-            const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
-            const rNext = await deps.probe(got.option.endpoint.id, nextParams);
-            if (!rNext.ok) break;
-            if (rNext.call_id) got.callIds.push(rNext.call_id);
-            const nextPage = await deps.readPage(rNext.call_id);
-            if (!nextPage) break;
-            const nextRows = runMap(mapCode, nextPage);
-            if (nextRows.length === 0) break;
-            const nextTexts = nextRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
-            const nextJudgeRes = await ask(
-              "You check whether items from a source are about the customer's topic. Return the 0-based indices of items that discuss or touch on the topic. If none do, return an empty array.",
-              `Topic: «${step.topic}»\nItems:\n${nextTexts}`,
-              { name: "judge_sample", description: "Count how many items match the topic.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-              200,
-            );
-            const nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
-            if (nextMatches && nextMatches.length > 0) {
-              for (const idx of nextMatches) {
-                if (typeof idx === "number" && nextRows[idx]) matchingRows.push(nextRows[idx]!);
-              }
-            }
-            if (matchingRows.length > 0) {
-              topicMatchedInSample = true;
-              sampleRows.splice(0, sampleRows.length, ...matchingRows, ...sampleRows.slice(matchingRows.length));
-              deps.log?.(`llm_planner_judge_sample ${step.key} window_paging_found on_topic=${matchingRows.length}`);
-              break;
-            }
-            const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
-            if (!nextCursorVal || visited.has(nextCursorVal)) break;
-            visited.add(nextCursorVal);
-            currentCursor = nextCursorVal;
+      if (matches !== null) {
+        if (matches.length === 0) {
+          topicMatchedInSample = false;
+        } else {
+          const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+          if (matchedItems.length > 0) sampleRows.splice(0, sampleRows.length, ...matchedItems);
+        }
+      } else {
+        deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed`);
+      }
+    }
+
+    // Cursor following: if more pages exist and either 0 matches were found so far (e.g. account timeline window)
+    // or the initial sample is thin (< THIN_PAGE_ROWS),
+    // follow the cursor with the model judge (bounded by maxWindowPages) before sizing the card or declaring a shortfall.
+    // If the sample is already healthy (>= THIN_PAGE_ROWS), execution pages via cursor_param.
+    const cursorKey = got.option.cursor ?? (Array.isArray(got.option.endpoint.pagination) ? got.option.endpoint.pagination.find((p) => got.option.endpoint.inputs.some((i) => i.name === p)) : null);
+    if (cursorKey && !got.option.cursor) got.option.cursor = cursorKey;
+    const thinThreshold = Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS);
+    let cursorPagesProbed = 0;
+    if (got.hasMore && (got.nextCursor || cursorKey) && !step.parent && (!topicMatchedInSample || sampleRows.length < thinThreshold)) {
+      let currentCursor = got.nextCursor;
+      const visited = new Set<string>();
+      if (currentCursor) visited.add(currentCursor);
+      const maxWindowPages = 4;
+      for (let pIdx = 0; pIdx < maxWindowPages && currentCursor && cursorKey && sampleRows.length < thinThreshold; pIdx += 1) {
+        const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
+        const rNext = await deps.probe(got.option.endpoint.id, nextParams);
+        if (!rNext.ok) break;
+        cursorPagesProbed += 1;
+        if (rNext.call_id) got.callIds.push(rNext.call_id);
+        const nextPage = await deps.readPage(rNext.call_id);
+        if (!nextPage) break;
+        const nextRows = runMap(mapCode, nextPage);
+        if (nextRows.length === 0) break;
+        let nextOnTopic: Array<Record<string, unknown>> = nextRows;
+        if (step.topic) {
+          const nextTexts = nextRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
+          const constraintCriterion = [
+            step.source?.value ? `Source/Account: ${step.source.value}` : null,
+            step.country ? `Country: ${step.country}` : null,
+            `Topic: «${step.topic}»`,
+          ].filter(Boolean).join(", ");
+          const nextJudgeRes = await ask(
+            "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
+            `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
+            { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+            200,
+          );
+          const nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
+          if (nextMatches !== null) {
+            nextOnTopic = nextMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+          } else {
+            deps.log?.(`llm_planner_judge_sample ${step.key} page_${pIdx + 2} absent_or_failed`);
           }
         }
-      } else if (matches === null) {
-        deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed`);
+        if (nextOnTopic.length > 0) {
+          if (!topicMatchedInSample) {
+            topicMatchedInSample = true;
+            sampleRows.splice(0, sampleRows.length, ...nextOnTopic);
+          } else {
+            sampleRows.push(...nextOnTopic);
+          }
+          deps.log?.(`llm_planner_judge_sample ${step.key} paging_found on_topic=${nextOnTopic.length} total=${sampleRows.length}`);
+        }
+        const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
+        if (!nextCursorVal || visited.has(nextCursorVal)) {
+          got.hasMore = false;
+          got.nextCursor = null;
+          break;
+        }
+        visited.add(nextCursorVal);
+        currentCursor = nextCursorVal;
+        got.nextCursor = currentCursor;
+      }
+      const builtStep = built.get(step.key);
+      if (builtStep) {
+        builtStep.hasMore = got.hasMore;
+        builtStep.nextCursor = got.nextCursor;
       }
     }
 
@@ -921,7 +959,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
       }
       if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-        const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total,
+        const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total, initialMeasured: cursorPagesProbed,
           onSample: (params, rows, chargedUsd) => {
             const observed = pageSample(rows, params, chargedUsd);
             if (!observed.rowsPerPage) return;
@@ -1055,7 +1093,7 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
         try {
           const providerError = String((r as any).message || (r as any).error || (r as any).detail || "bad_input");
           const answer = await deps.model({
-            system: "A data collection tool rejected the parameters with an HTTP 400 bad_input error. Inspect the provider's exact error message and rewrite the parameters to satisfy the provider's rules (e.g. remove invalid operators, simplify boolean expressions, or format source filters as required). Do not add unrequested constraints.",
+            system: "A data collection tool rejected the parameters with an HTTP 400 bad_input error. Inspect the provider's exact error message and rewrite the parameters to the simplest valid accepted form satisfying the provider's stated rules (e.g. remove invalid operators, quotes, parentheses, unsupported boolean OR expressions, or date filters; if the provider states that searches without a session allow only account queries like from:<handle>, rewrite to from:<handle> only so the model judge can filter). Do not add unrequested constraints.",
             user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nRejected parameters: ${JSON.stringify(params)}\nProvider error: ${providerError}`,
             tool: {
               name: "rewrite_params",
@@ -1257,7 +1295,21 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
 /** What one top-level step's real searches showed: how many different items the source gave (up to the customer's number), and whether every search ended (no further page). */
 export interface ScoutFinding { step: UnderstoodStep; requested: number; found: number; exhausted: boolean; sets: number }
 
-const rowKeyOf = (row: Record<string, unknown>): string => String(row.id ?? row.link ?? JSON.stringify(row));
+const rowKeyOf = (row: Record<string, unknown>): string => {
+  const rawTitle = row.title ?? row.headline;
+  if (typeof rawTitle === "string") {
+    const textKey = textDedupeKey(rawTitle);
+    if (textKey) return `title:${textKey}`;
+  }
+  for (const k of ROW_KEY_FIELDS) {
+    const v = row[k];
+    if (typeof v === "string" && v.trim()) return `${k}:${v.trim()}`;
+    if (typeof v === "number" && Number.isFinite(v)) return `${k}:${v}`;
+  }
+  const link = String(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url ?? "").trim();
+  if (link) return `link:${link}`;
+  return String(row.id ?? JSON.stringify(row));
+};
 
 function pageSample(rows: ReadonlyArray<Record<string, unknown>>, checkedParams: Record<string, unknown>, chargedUsd: number): PageSample {
   return {
@@ -1373,15 +1425,15 @@ function smallerFundedTarget(plan: PricedPlan, stage: PricedStage, capPoints?: n
  * (a next cursor) means the source holds more than a page: nothing to report, execution pages through it. A failed call makes the answer uncertain (not exhausted): the customer is never asked on a guess.
  */
 export async function scoutYield(
-  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; nextCursor?: string | null; otherHasMore?: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number;
+  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; nextCursor?: string | null; otherHasMore?: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number; initialMeasured?: number;
        onSample?: (firstParams: Record<string, unknown>, rows: ReadonlyArray<Record<string, unknown>>, chargedUsd: number) => void },
   deps: Pick<LlmPlannerDeps, "probe" | "readPage" | "log">,
 ): Promise<{ found: number; exhausted: boolean; sets: number }> {
   const ids = new Set<string>([...a.firstRows, ...(a.extraRows ?? [])].map(rowKeyOf));
   const reviewed = missionPageOf(a.option.endpoint.id);
   const healthy = Math.min(THIN_PAGE_ROWS, a.requested);
-  let sets = 1;
-  let measured = 0;
+  let sets = 1 + (a.initialMeasured ?? 0);
+  let measured = a.initialMeasured ?? 0;
   // a FULL first page with a next page, or another tool's: the source holds more than a page: nothing to report, execution pages through it
   if (a.otherHasMore || (a.hasMore && a.firstRows.length >= healthy)) return { found: ids.size, exhausted: false, sets };
   // a refused or failed measurement (the gateway lets planning sample a source twice) ends the measuring: what was gathered before it decides, provided at least one more search was read than the first
@@ -1408,14 +1460,15 @@ export async function scoutYield(
     return { ok: true, rows, next };
   };
   // a THIN first page with a next page: follow the cursor for a few pages and count (the provider may page through a filtered, almost empty list)
-  if (a.hasMore && a.nextCursor && a.option.cursor) {
+  const cursorParam = a.option.cursor ?? (Array.isArray(a.option.endpoint.pagination) ? a.option.endpoint.pagination.find((p) => a.option.endpoint.inputs.some((i) => i.name === p)) : null);
+  if (a.hasMore && a.nextCursor && cursorParam) {
     let cursor: string | null = a.nextCursor;
     const visited = new Set<string>();
     if (cursor) visited.add(cursor);
     for (let i = 0; i < MAX_SCOUT_PAGES && cursor && ids.size < a.requested; i += 1) {
       const inputCursor = reviewed ? pageInputValue(cursor, reviewed) : cursor;
       if (inputCursor === null) return stopped();
-      const got = await read({ ...a.option.params, [a.option.cursor]: inputCursor }, a.option.params);
+      const got = await read({ ...a.option.params, [cursorParam]: inputCursor }, a.option.params);
       if (!got.ok) {
         if (got.transient) return { found: ids.size, exhausted: false, sets };
         return stopped();
@@ -1677,7 +1730,13 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     const costPerRow = stageCostPerRawRowUsd(b, catalog);
     const textCols = b.columns.filter((c) => ["text", "title", "content", "body", "full_text"].includes(c.key)).map((c) => c.key);
     const askTopic = s.topic ? { topic: { text: s.topic, relation: "about" as const, alternatives: s.search_terms } } : null;
-    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], u.understanding_ar) ?? undefined) : undefined;
+    const fullCriterion = [
+      u.understanding_ar,
+      s.source?.value ? `الجهة أو الحساب: ${s.source.value}` : null,
+      s.country ? `البلد: ${s.country}` : null,
+      s.topic ? `الموضوع: ${s.topic}` : null,
+    ].filter(Boolean).join(" - ");
+    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], fullCriterion || u.understanding_ar) ?? undefined) : undefined;
     const alternatives = isTotalOnlyChild
       ? []
       : [

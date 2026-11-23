@@ -98,7 +98,7 @@ export function textKeyOf(stage: { relevance?: { text_columns: string[] }; colum
   const t = stage.relevance?.text_columns?.[0];
   if (t) return t;
   const keys = [...stage.columns.map((c) => c.key), ...mappedKeys];
-  return keys.find((k) => /(^|_)(text|content|body|message|comment|caption|description)$/i.test(k)) ?? null;
+  return keys.find((k) => /(^|_)(title|headline|text|content|body|message|comment|caption|description)$/i.test(k)) ?? null;
 }
 
 // ------------------------------------------------------------------------------------------------- the same text twice
@@ -120,7 +120,10 @@ const PICTOGRAPH = /[0-9#*]\ufe0f?\u20e3|[\p{Extended_Pictographic}\p{Emoji_Modi
  * form. Two posts that differ only in such decoration are ONE item. A text shorter than twelve letters (a reaction: «شكرًا», «👍») has no key: short answers that happen to be the same are different people's answers, not a repeated item.
  */
 export function textDedupeKey(text: unknown): string | null {
-  let t = normalizeText(stripLinksAndMentions(String(text ?? "").replace(INVISIBLE, "")))
+  let raw = String(text ?? "").replace(INVISIBLE, "").trim();
+  // Trailing publisher suffixes come off: e.g. " - اليوم السابع", " | صحيفة عكاظ", " - دكتور لايف نيوز"
+  raw = raw.replace(/\s*[-|–—]\s*[^ -|–—]+(?:\s+[^ -|–—]+){0,4}\s*$/u, "").trim();
+  let t = normalizeText(stripLinksAndMentions(raw))
     .replace(/(^|\s)#[^\s#]*/gu, " ")
     .replace(PICTOGRAPH, " ")
     .replace(/[^\p{L}\p{N}\s]/gu, " ")

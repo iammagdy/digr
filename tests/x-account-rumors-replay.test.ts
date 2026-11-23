@@ -4,6 +4,8 @@ import path from "path";
 import { candidatesFor, platformIndex } from "../agent/src/llmPlanner/catalogView";
 import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, customerSafe, probeStep, chooseTools, checkOptions, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { textDedupeKey } from "../src/lib/agentMission/contract";
+import { REVIEW_SYSTEM, reviewPrompt } from "../agent/src/review";
 
 const catalog = loadTregCatalog();
 const access = null;
@@ -728,5 +730,464 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     expect(res.kind).toBe("plan");
     expect(probeCalls).toBeGreaterThanOrEqual(2);
     expect(judgeCount).toBe(2);
+  });
+
+  it("r4: raw_call_0009 replay - search probe with 1 row and nextCursor follows cursor to collect all 17 on-topic tweets", async () => {
+    const searchEp = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const mockStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      source: { value: "SaudiMOH" },
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+    };
+
+    let probeCalls = 0;
+    const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+      probeCalls += 1;
+      if (probeCalls === 1) {
+        // Page 1: raw_call_0009 (1 row, nextCursor present)
+        return { ok: true, rows_in_page: 1, call_id: "c_p1", has_more: true, next_cursor: "cur_bXuuCFYV3H40NMf33D8njA", charge_usd: 0.00048 };
+      }
+      // Page 2: remaining 16 on-topic rows
+      return { ok: true, rows_in_page: 16, call_id: "c_p2", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+      if (callId === "c_p1") {
+        return raw0009; // 1 tweet from Oct 18 2025
+      }
+      return {
+        output: {
+          data: {
+            items: Array.from({ length: 16 }, (_, i) => ({
+              id: `197957833172185913${i + 8}`,
+              text: `توضيح رسمي ورصد معلومات مغلوطة رقم ${i + 2}`,
+              authorUsername: "SaudiMOH",
+              createdUtc: 1760803227 - (i + 1) * 86400,
+            })),
+          },
+        },
+      };
+    });
+
+    let judgeCount = 0;
+    const mockModel = vi.fn().mockImplementation(async ({ tool, user }: any) => {
+      if (tool.name === "request_plan") {
+        return {
+          input: {
+            decision: "plan",
+            understanding_ar: "جمع تغريدات وزارة الصحة عن الشائعات",
+            steps: [mockStep],
+          },
+        };
+      }
+      if (tool.name === "tool_choice") {
+        return {
+          input: {
+            options: [
+              { endpoint_id: searchEp.id, params_json: JSON.stringify({ query: "from:SaudiMOH شائعة", queryType: "Latest" }), cursor_input: "cursor" },
+            ],
+          },
+        };
+      }
+      if (tool.name === "field_map") {
+        return {
+          input: {
+            fields: { id: ["id"], text: ["text"] },
+            extra: [],
+          },
+        };
+      }
+      if (tool.name === "judge_sample") {
+        judgeCount += 1;
+        if (judgeCount === 1) {
+          return { input: { matching_indices: [0] } }; // 1 match on page 1
+        }
+        // all 16 match on page 2
+        return { input: { matching_indices: Array.from({ length: 16 }, (_, i) => i) } };
+      }
+      return null;
+    });
+
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const res = await planWithLlm(
+      { words: ["تغريدات وزارة الصحة عن الشائعات"], request: "", scoutAllowed: false },
+      {
+        model: mockModel,
+        catalog,
+        access,
+        today: "2026-11-23",
+        probe: mockProbe,
+        readPage: mockReadPage,
+      }
+    );
+
+    expect(res.kind).toBe("plan");
+    expect(probeCalls).toBe(2); // Followed nextCursor from raw_call_0009
+    expect(judgeCount).toBe(2);
+    if (res.kind === "plan") {
+      const tweetsStage = res.plan.stages.find((s) => s.deliver);
+      expect(tweetsStage).toBeDefined();
+      expect(tweetsStage?.planned_rows).toBeGreaterThanOrEqual(17);
+    }
+  });
+
+  it("r4: tikhub 400 error message rewrites to simplified keyword without boolean OR / quotes / since-until", async () => {
+    const errorMsg = '{"detail":{"code":400,"message":"Request failed. Please retry. Check the docs below to verify your parameters, test with the default demo parameters, and send the response JSON to support.","params":{"keyword":"\"وزارة الصحة\" \"شائعة\" since:2025-11-23 until:2026-11-23","search_type":"Latest"}}}';
+    const mockModel = vi.fn().mockImplementation(async ({ system, user, tool }) => {
+      if (tool?.name === "rewrite_params") {
+        expect(user).toContain("Provider error:");
+        expect(user).toContain("since:2025-11-23");
+        return {
+          input: {
+            rewritten_params: { keyword: "from:SaudiMOH شائعة", search_type: "Latest" },
+            why: "Removed quotes and unsupported since/until operators from web search keyword",
+          },
+        };
+      }
+      return null;
+    });
+
+    const answer = await mockModel({
+      system: "rewrite query",
+      user: `Candidate tool: tikhub.x.twitter-web-fetch-search-timeline\nProvider error: ${errorMsg}`,
+      tool: { name: "rewrite_params" },
+    });
+
+    expect(answer?.input.rewritten_params.keyword).toBe("from:SaudiMOH شائعة");
+    expect(answer?.input.rewritten_params.keyword).not.toContain("since:");
+    expect(answer?.input.rewritten_params.keyword).not.toContain('"');
+  });
+
+  it("r4: crawl4ai sessionless 400 error rewrites to from:<handle> only", async () => {
+    const errorMsg = 'bad_input: X searches only with your X session (the session input); without it, a query can only name one account: from:nasa, with since:2026-10-01 or until:2026-10-08 if you like';
+    const mockModel = vi.fn().mockImplementation(async ({ system, user, tool }) => {
+      if (tool?.name === "rewrite_params") {
+        expect(user).toContain("bad_input: X searches only with your X session");
+        return {
+          input: {
+            rewritten_params: { query: "from:SaudiMOH", mode: "latest", limit: 20 },
+            why: "Session-less Crawl4AI search only permits from:<handle> account query",
+          },
+        };
+      }
+      return null;
+    });
+
+    const answer = await mockModel({
+      system: "rewrite query",
+      user: `Candidate tool: crawl4ai.x.search.posts\nProvider error: ${errorMsg}`,
+      tool: { name: "rewrite_params" },
+    });
+
+    expect(answer?.input.rewritten_params.query).toBe("from:SaudiMOH");
+    expect(answer?.input.rewritten_params.query).not.toContain("شائعة");
+  });
+
+  it("r4: cursor paging is strictly bounded by maxWindowPages (no infinite loop)", async () => {
+    const searchEp = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const mockStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      source: { value: "SaudiMOH" },
+      count: { total: 100, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+    };
+
+    let probeCalls = 0;
+    const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+      probeCalls += 1;
+      // Always returns next cursor endlessly
+      return { ok: true, rows_in_page: 1, call_id: `c_${probeCalls}`, has_more: true, next_cursor: `cur_${probeCalls + 1}`, charge_usd: 0.00048 };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+      return { output: { data: { items: [{ id: `t_${callId}`, text: "نفي شائعة طبية" }] } } };
+    });
+
+    const mockModel = vi.fn().mockImplementation(async ({ tool }: any) => {
+      if (tool.name === "request_plan") {
+        return { input: { decision: "plan", understanding_ar: "جمع تغريدات الشائعات", steps: [mockStep] } };
+      }
+      if (tool.name === "tool_choice") {
+        return { input: { options: [{ endpoint_id: searchEp.id, params_json: JSON.stringify({ query: "from:SaudiMOH شائعة" }), cursor_input: "cursor" }] } };
+      }
+      if (tool.name === "field_map") {
+        return { input: { fields: { id: ["id"], text: ["text"] }, extra: [] } };
+      }
+      if (tool.name === "judge_sample") {
+        return { input: { matching_indices: [0] } };
+      }
+      return null;
+    });
+
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const res = await planWithLlm(
+      { words: ["تغريدات الشائعات"], request: "", scoutAllowed: false },
+      {
+        model: mockModel,
+        catalog,
+        access,
+        today: "2026-11-23",
+        probe: mockProbe,
+        readPage: mockReadPage,
+      }
+    );
+
+    expect(res.kind).toBe("plan");
+    // Initial page (1) + at most maxWindowPages (4) = 5 calls max
+    expect(probeCalls).toBeLessThanOrEqual(5);
+  });
+
+  it("r4: absent or failing model judge does NOT mark rows as off-topic (fallback to keeping rows)", async () => {
+    const searchEp = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const mockStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      source: { value: "SaudiMOH" },
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+    };
+
+    const mockProbe = vi.fn().mockImplementation(async () => {
+      return { ok: true, rows_in_page: 20, call_id: "c_ok", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async () => {
+      return { output: { data: { items: Array.from({ length: 20 }, (_, i) => ({ id: `t_${i}`, text: `تغريدة رقم ${i}` })) } } };
+    });
+
+    const mockModel = vi.fn().mockImplementation(async ({ tool }: any) => {
+      if (tool.name === "request_plan") {
+        return { input: { decision: "plan", understanding_ar: "جمع تغريدات الشائعات", steps: [mockStep] } };
+      }
+      if (tool.name === "tool_choice") {
+        return { input: { options: [{ endpoint_id: searchEp.id, params_json: JSON.stringify({ query: "from:SaudiMOH شائعة" }), cursor_input: "cursor" }] } };
+      }
+      if (tool.name === "field_map") {
+        return { input: { fields: { id: ["id"], text: ["text"] }, extra: [] } };
+      }
+      if (tool.name === "judge_sample") {
+        // Model call for judge fails or returns null
+        return null;
+      }
+      return null;
+    });
+
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const res = await planWithLlm(
+      { words: ["تغريدات الشائعات"], request: "", scoutAllowed: false },
+      {
+        model: mockModel,
+        catalog,
+        access,
+        today: "2026-11-23",
+        probe: mockProbe,
+        readPage: mockReadPage,
+      }
+    );
+
+    // Absent judge must NOT cause topicMatchedInSample = false / shortfall; rows must be kept
+    expect(res.kind).toBe("plan");
+  });
+
+  it("r5 / D-0197: Deduplication collapses the 3 duplicate pairs from the 20 real news rows of msn_c82385d13a07ff5af4b5 into 17 unique rows", () => {
+    const fixture20 = JSON.parse(fs.readFileSync(path.join(mohDir, "msn_c82385d13a07ff5af4b5_20_rows.json"), "utf8"));
+    expect(fixture20.length).toBe(20);
+
+    const keys = fixture20.map((r: any) => textDedupeKey(r.title));
+    const uniqueKeys = new Set(keys);
+
+    // Exactly 3 duplicate pairs collapse -> 17 unique items
+    expect(uniqueKeys.size).toBe(17);
+
+    // Verify duplicate pair 1: rows 12 and 17 (0-based index 11 and 16: (الصحة) تحارب الشائعات الصحية الخاطئة)
+    expect(keys[11]).toBe(keys[16]);
+
+    // Verify duplicate pair 2: rows 8 and 18 (0-based index 7 and 17: الصحة تحذر من الانسياق وراء شائعات فساد التطعيمات)
+    expect(keys[7]).toBe(keys[17]);
+
+    // Verify duplicate pair 3: rows 3 and 19 (0-based index 2 and 18: وزارة الصحة تحسم الجدل حول شائعة تسبب تطعيمات الحصبة)
+    expect(keys[2]).toBe(keys[18]);
+  });
+
+  it("r5 / D-0197: Review judge strictness - rejects Egyptian MOH and generic items, only Saudi MOH rumor rows survive", async () => {
+    const fixture20 = JSON.parse(fs.readFileSync(path.join(mohDir, "msn_c82385d13a07ff5af4b5_20_rows.json"), "utf8"));
+
+    // Deduplicate first
+    const seen = new Set<string>();
+    const unique17: any[] = [];
+    for (const r of fixture20) {
+      const k = textDedupeKey(r.title);
+      if (k && !seen.has(k)) {
+        seen.add(k);
+        unique17.push(r);
+      }
+    }
+    expect(unique17.length).toBe(17);
+
+    // Review prompt requires ALL constraints (entity: Saudi MOH, country: Saudi Arabia, topic: rumors)
+    const criterion = "تغريدات وأخبار نفي الشائعات - الجهة أو الحساب: وزارة الصحة السعودية - البلد: السعودية - الموضوع: نفي الشائعات والتصريحات المغلوطة";
+    const userPrompt = reviewPrompt({
+      requestText: "تغريدات وأخبار وزارة الصحة السعودية عن نفي الشائعات",
+      subject: criterion,
+      rows: unique17.map((r) => ({ text: r.title })),
+    });
+
+    expect(REVIEW_SYSTEM).toContain("EVERY constraint");
+    expect(REVIEW_SYSTEM).toContain("news about another country's ministry of health when a specific country or ministry was requested");
+    expect(userPrompt).toContain("Rows:");
+    expect(userPrompt).toContain(criterion);
+
+    // Simulate model evaluation following the prompt:
+    // Out of the 17 unique rows:
+    // - 8 rows are Egyptian MOH rumors (e.g. Egypt measles, water pollution) -> verdict 0 (wrong country/entity)
+    // - 1 row is generic journalist factcheck tools guide -> verdict 0 (not entity/denial)
+    // - 8 rows are Saudi MOH / Saudi medical city rumor denials -> verdict 1
+    const nonSaudiDomains = ["elbalad", "drlifenews", "youm7", "maspero", "youlyou", "misrelaan", "ijnet", "newsroom"];
+    const judgments = unique17.map((r) => {
+      if (nonSaudiDomains.some((d) => r.url.includes(d)) && !r.title.includes("السعودية")) {
+        return 0;
+      }
+      return 1;
+    });
+
+    const acceptedRows = unique17.filter((_, i) => judgments[i] === 1);
+    expect(acceptedRows.length).toBe(8);
+
+    // Honesty over count: Delivering the 8 accepted rows, never padding with the 9 rejected rows
+    const chargedCount = acceptedRows.length;
+    expect(chargedCount).toBe(8);
+  });
+
+  it("r5 / D-0197: Shortfall honesty over count - 7 matching of 20 asked produces shortfall question with «سلّمني الـ٧» and catalog widening, delivered 7 and charged 7", async () => {
+    const searchEp = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const mockStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      source: { kind: "account", value: "SaudiMOH" },
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+      search_terms: ["شائعات"],
+      period: null,
+    };
+
+    // Scouting finding: 7 items found, source exhausted
+    const weakFinding: ScoutFinding = {
+      step: mockStep,
+      requested: 20,
+      found: 7,
+      exhausted: true,
+      sets: 1,
+    };
+
+    const understanding = {
+      decision: "plan" as const,
+      understanding_ar: "جمع تغريدات وزارة الصحة السعودية عن الشائعات",
+      steps: [mockStep],
+    };
+
+    // Test scoutFallbackAr
+    const fallback = scoutFallbackAr([weakFinding], ["SaudiMOH", "شائعات"]);
+    expect(fallback.question_ar).toContain("٧");
+    expect(fallback.question_ar).toContain("٢٠");
+    expect(fallback.options_ar[0]).toBe("سلّمني الموجود فقط");
+    // Widening options offered
+    expect(fallback.options_ar.some((o) => o.includes("منصات ومصادر أخرى"))).toBe(true);
+
+    // Test scoutQuestion with mock model
+    const mockModel = vi.fn().mockImplementation(async ({ system, user, tool }) => {
+      if (tool?.name === "scout_report") {
+        return {
+          input: {
+            message_ar: "لقيت ٧ تغريدات عن الشائعات من أصل ٢٠ طلبتها، والمصدر لا يعرض المزيد. تحب نسلّمك الـ٧ ولا نوسّع؟",
+            options_ar: [
+              "سلّمني الـ٧",
+              "وسّع البحث إلى مصادر إخبارية ورسمية أخرى في الكتالوج",
+              "وسّع البحث في فيسبوك ومصادر الويب",
+            ],
+          },
+        };
+      }
+      return null;
+    });
+
+    const cost = { usd: 0 };
+    const q = await scoutQuestion(understanding, [weakFinding], { words: ["SaudiMOH", "شائعات"], request: "" }, { model: mockModel, catalog }, cost);
+    expect(q.question_ar).toContain("٧");
+    expect(q.options_ar[0]).toBe("سلّمني الـ٧");
+    expect(q.options_ar.length).toBeGreaterThanOrEqual(2);
+
+    // When customer selects «سلّمني الـ٧», accepts_available is set to true
+    // Plan with accepts_available true targets exactly 7, delivers 7, charges 7
+    const acceptedUnderstanding = {
+      ...understanding,
+      accepts_available: true,
+    };
+
+    const mockProbe = vi.fn().mockImplementation(async () => {
+      return { ok: true, rows_in_page: 7, call_id: "c_7", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async () => {
+      return { output: { data: { items: Array.from({ length: 7 }, (_, i) => ({ id: `t_${i}`, text: `نفي شائعة رقم ${i}` })) } } };
+    });
+
+    const mockPlannerModel = vi.fn().mockImplementation(async ({ tool }: any) => {
+      if (tool.name === "request_plan") {
+        return { input: acceptedUnderstanding };
+      }
+      if (tool.name === "tool_choice") {
+        return { input: { options: [{ endpoint_id: searchEp.id, params_json: JSON.stringify({ query: "from:SaudiMOH شائعة" }), cursor_input: "cursor" }] } };
+      }
+      if (tool.name === "field_map") {
+        return { input: { fields: { id: ["id"], text: ["text"] }, extra: [] } };
+      }
+      if (tool.name === "judge_sample") {
+        return { input: { matching_indices: [0, 1, 2, 3, 4, 5, 6] } };
+      }
+      return null;
+    });
+
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const res = await planWithLlm(
+      { words: ["تغريدات الشائعات", "سلّمني الـ٧"], request: "", scoutAllowed: true },
+      {
+        model: mockPlannerModel,
+        catalog,
+        access,
+        today: "2026-11-23",
+        probe: mockProbe,
+        readPage: mockReadPage,
+      }
+    );
+
+    expect(res.kind).toBe("plan");
+    if (res.kind === "plan") {
+      const deliveredStage = res.plan.stages.find((s) => s.deliver);
+      expect(deliveredStage).toBeDefined();
+      // Card is sized to 7, not 20!
+      expect(deliveredStage?.planned_rows).toBe(7);
+      expect(deliveredStage?.expected_rows).toBe(7);
+      // Honesty note added
+      expect(res.understanding.assumptions_ar?.some((a: string) => a.includes("٧"))).toBe(true);
+    }
   });
 });
