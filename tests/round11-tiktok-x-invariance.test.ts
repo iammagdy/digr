@@ -15,7 +15,8 @@ const BASE = {
   tiktok: { plan: "64ac1c1f853a75d8", view: "2913468a4b2c2011", cells: "59ba5e3413bfa6d4" },
   // CHANGED (NOV 6 2026 CAMPAIGN, msn_d31f37958788a24ec46d): an X parent is an ORIGINAL post (a tweet that is itself a reply is never chosen, the card counts the ones left out) and, with the replies asked, the tweets are the most engaged
   // («Top»): the M14 page holds 20 tweets of which 9 are originals, so the plan, its view and the file are re-pinned here (before: plan a5d7cb783a72fb6d, view 70e91a16497dd798, cells 1371f3d7a2ac1209)
-  x: { plan: "d693a8da6f2521a4", view: "0acbd23faf4cac1e", cells: "c5f472b49aafe654" },
+  // CHANGED (D-0196, DT-20261123-card-minimum-line): x view re-pinned for min_applied: true (before: view 0acbd23faf4cac1e)
+  x: { plan: "d693a8da6f2521a4", view: "500ad3826cf63cbb", cells: "c5f472b49aafe654" },
 };
 
 // CHANGED (round 14): three more stated diffs, each removed or set apart before the hash is compared. (1) the plan carries `compiled.conditions` (the delivery contract reads which conditions the request set); (2) the FIRST sheet (the summary: its promised number, its limits and its methodology lines) is set apart: round 14 makes

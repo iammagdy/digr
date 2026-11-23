@@ -1313,7 +1313,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       max_charge_points: plan.price.maxChargePoints,
       delivered_rows: plan.price.deliveredRows,
       ...(split ? { counted_rows: split.countedRows, counted_max_points: split.countedMaxPoints, open_rows: split.openRows, open_max_points: split.openMaxPoints } : {}),
-      ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings) } : {}),
+      ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings), ...(plan.price.minApplied ? { min_applied: true } : {}) } : {}),
       ...(plan.price.listedRate ? { listed_rate: { unit_points: plan.price.listedRate.unitPoints, noun_ar: plan.price.listedRate.nounAr } } : {}),
       ...(plan.price.executionFundingApplied ? { execution_funding_applied: true } : {}),
     },

@@ -369,7 +369,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
   const byBalance = !v.limit?.over && hold !== null && hold.kind === "balance";
   const showStarted = v.phase === "running" || (v.phase === "plan" && (approved || v.approvalState === "confirmed"));
   const sampleRows = v.samples?.rows ?? [];
-  const hasDetails = v.assumptionsAr.length > 0 || v.stages.length > 0 || Boolean(v.samples) || Boolean(v.fileContentsAr) || v.notesAr.length > 0;
+  const hasDetails = v.assumptionsAr.length > 0 || v.stages.length > 0 || Boolean(v.samples) || Boolean(v.fileContentsAr) || v.notesAr.length > 0 || Boolean(v.minimumLineAr);
   // THE REDESIGN (handoff of 16 Nov 2026): the facts of the plan are THREE cells (the count, the highest price, the time); the hold is told in the one money sentence, not as a fourth cell
   const factOf = (word: string) => v.priceFacts.find((f) => f.labelAr.includes(word))?.valueAr ?? null;
   const holdAr = factOf("حجز");
@@ -462,8 +462,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
             ))}
           </dl>
           <p className="m-0 flex items-start gap-2 text-[13px] leading-[1.8] text-ink2" data-testid="agent-price-sentence"><Tick /><span className="min-w-0">{holdAr ? `تُحجز ${holdAr} عند الاعتماد، ويُخصم منها مقابل ما يُسلَّم فقط، ويعود الباقي إلى رصيدك.` : v.priceNoteAr ?? "يُخصم مقابل ما يُسلَّم فقط."}</span></p>
+          {v.minimumLineAr ? <p className="m-0 flex items-start gap-2 text-[13px] leading-[1.8] text-ink2" data-testid="agent-minimum-line"><Tick /><span className="min-w-0">{v.minimumLineAr}</span></p> : null}
         </div>
-      ) : planShown && !approving && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
+      ) : planShown && !approving && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}{v.minimumLineAr ? ` · ${v.minimumLineAr}` : ""}</p> : null}
 
       {showAffordability ? (
         <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="status" data-testid="agent-over-limit">
@@ -527,7 +528,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
         <div className="flex flex-col gap-2.5" data-testid="agent-approving-block">
           <p className="m-0 text-[14px] leading-[1.8] text-ink2" data-testid="agent-facts-line">{[v.headlineCountAr || v.totalRowsAr, maxPriceAr ? `حتى ${maxPriceAr}` : null, factOf("الوقت")].filter(Boolean).join(" · ")}</p>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">{approveButton}<p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">لن تحتاج لفعل شيء بعدها.</p></div>
-          <MoneyLine>{holdAr ? `تُحجز ${holdAr} الآن، ويُخصم منها مقابل ما يُسلَّم فقط.` : "يُخصم مقابل ما يُسلَّم فقط."}</MoneyLine>
+          <MoneyLine>{holdAr ? `تُحجز ${holdAr} الآن، ويُخصم منها مقابل ما يُسلَّم فقط.` : "يُخصم مقابل ما يُسلَّم فقط."}{v.minimumLineAr ? ` ${v.minimumLineAr}` : ""}</MoneyLine>
         </div>
       ) : null}
       {planShown && askCard ? <AskCard view={askCard} busy={busy} onEdit={onAskEdit} errorAr={askError} /> : null}
@@ -543,6 +544,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
       {planShown && !approving && hasDetails ? (
         <FoldRow testId="agent-details" label="تفاصيل الخطة: الأعمدة وعينة من النتيجة">
           {(v.countLinesAr ?? []).map((line) => <p key={line} className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-count-explain">{line}</p>)}
+          {v.minimumLineAr ? <p className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-minimum-note">{v.minimumLineAr}</p> : null}
           {v.priceNoteAr ? <p className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
           {(v.priceExplainAr ?? []).map((line) => <p key={line} className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-price-explain">{line}</p>)}
           {v.assumptionsAr.length > 0 ? (
