@@ -16,6 +16,7 @@ import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../
 import { providerCallBound, type ProviderOp } from "../../src/lib/server/spendGate/bounds";
 import { CONTEXTDEV_USD_PER_CREDIT, FIRECRAWL_USD_PER_CREDIT } from "../../src/lib/multiProvider/catalog";
 import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
+import { getCircuitBreaker } from "../../src/lib/treg/circuitBreaker";
 
 /**
  * THE WEB GATEWAY: the agent's way to the page parsers, the web search and page scrape (Firecrawl and Context.dev) and Context.dev's people search. The SAME rules as treg_call, in code, before every call:
@@ -151,6 +152,8 @@ export function createWebGateway(deps: WebGatewayDeps) {
   const fetchFn: FetchFn = deps.fetchFn ?? ((input, init) => fetch(input, init));
 
   const nextId = () => { deps.counter.seq += 1; return callIdOf(deps.counter.seq); };
+  let totalCallsMade = 0;
+  const stepCallCounts = new Map<string, number>();
 
   async function log(row: { id: string; source: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused?: string; http?: number | null; rows?: number; cost?: number; estimate?: number; storage?: string | null; ms?: number; costId?: number | null }) {
     await deps.store.addCall({
@@ -179,19 +182,33 @@ export function createWebGateway(deps: WebGatewayDeps) {
     onOutcome?: (outcome: { ok: true; result: T } | { ok: false; code: string; thrown: boolean }) => Promise<void>;
   }): Promise<WebCallResult> {
     const { id, source, params } = args;
-    if (!deps.budget.reserve(args.estimateUsd)) return refuse(id, source, params, "over_budget", deps.phase);
+    const cb = getCircuitBreaker();
+    if (!cb.isAvailable(source)) {
+      return refuse(id, source, params, "source_unavailable", "provider circuit open (402 credit exhausted)");
+    }
+    if (totalCallsMade >= 24) {
+      return refuse(id, source, params, "over_budget", "job call cap reached (24 calls maximum across all providers)");
+    }
+    const stepKey = typeof params._step === "string" ? params._step : typeof params.stepKey === "string" ? params.stepKey : null;
+    if (stepKey && (stepCallCounts.get(stepKey) ?? 0) >= 4) {
+      return refuse(id, source, params, "over_budget", "step call cap reached (4 calls maximum per step)");
+    }
+
+    const b = providerCallBound(args.bound);
+    const boundUsd = b.ok ? b.usd : args.estimateUsd;
+    const reserveUsd = Math.max(args.estimateUsd, boundUsd);
+    if (!deps.budget.reserve(reserveUsd)) return refuse(id, source, params, "over_budget", deps.phase);
     const key = await deps.providerKey(args.provider).catch(() => null);
-    if (!key) { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "source_unavailable", args.provider); }
+    if (!key) { deps.budget.settle(reserveUsd, 0); return refuse(id, source, params, "source_unavailable", args.provider); }
     // ROUND 62: THE HARD SPEND GATE, before anything is sent (off: skipped entirely, the adapter gets the same fetch as before)
     let gated: GateBefore | null = null;
     let observer: ReturnType<typeof observeProviderFetch> | null = null;
     if (deps.spendGate && deps.spendGate.mode !== "off") {
       const op = source.slice(0, 200);
-      const b = providerCallBound(args.bound);
       gated = await gateBefore(deps.spendGate, b.ok
         ? { key: spendReservationKey(args.provider, deps.missionId, id), kind: "provider", op, boundUsd: b.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
         : { refuse: "no_safe_bound", detail: b.detail, op });
-      if (!gated.proceed) { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "spend_gate", gated.reason); }
+      if (!gated.proceed) { deps.budget.settle(reserveUsd, 0); return refuse(id, source, params, "spend_gate", gated.reason); }
       observer = observeProviderFetch(fetchFn, args.provider);
     }
     let result: T;
@@ -203,17 +220,24 @@ export function createWebGateway(deps: WebGatewayDeps) {
     } catch {
       if (gated) await gateAfter(deps.spendGate, gated, observer!.sent() ? null : 0);
       // the call may have gone out: its estimate stays counted
-      deps.budget.settle(args.estimateUsd, null);
+      deps.budget.settle(reserveUsd, null);
       await log({ id, source, params, status: "failed", estimate: args.estimateUsd, cost: args.estimateUsd, costId });
       if (args.onOutcome) await args.onOutcome({ ok: false, code: "thrown", thrown: true }).catch(() => undefined);
       return { ok: false, call_id: id, failed: true, message: "the call did not complete; it may be tried once more" };
     }
     // settled once, with what the provider reported (a call the daily cap stopped was never sent: 0)
     if (gated) await gateAfter(deps.spendGate, gated, observer!.chargeUsd());
-    if ((result as any).errorCode === "cap_reached") { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "daily_cap", args.provider); }
+    if ((result as any).errorCode === "cap_reached") { deps.budget.settle(reserveUsd, 0); return refuse(id, source, params, "daily_cap", args.provider); }
+    if (result.httpStatus === 402 || (result as any).errorCode === "credit_exhaustion") {
+      cb.recordFailure(source, 402);
+      deps.budget.settle(reserveUsd, 0);
+      return refuse(id, source, params, "source_unavailable", "credit_exhausted");
+    }
     // ROUND 60: a call that got NO answer (a timeout, a dropped connection) may have been billed: the provider said nothing, so the mission's budget keeps its estimate (never assumed free)
     const noAnswer = !result.ok && result.httpStatus === null;
-    deps.budget.settle(args.estimateUsd, noAnswer ? null : result.costUsd);
+    deps.budget.settle(reserveUsd, noAnswer ? null : result.costUsd);
+    totalCallsMade++;
+    if (stepKey) stepCallCounts.set(stepKey, (stepCallCounts.get(stepKey) ?? 0) + 1);
     await deps.store.updateMission(deps.missionId, { [spendFieldOf(deps.phase)]: Number(deps.budget.spentUsd().toFixed(6)) });
     const shaped = args.shape(result);
     let storage: string | null = null;
@@ -501,6 +525,36 @@ export function createWebGateway(deps: WebGatewayDeps) {
           const d = r.data as { rows: unknown[]; nextCursor: string | null; costBasis: "reported" | "estimated" } | null;
           if (!r.ok || !d) return { saved: null, rows: [], costBasis: "estimated" };
           return { saved: { rows: d.rows, next_cursor: d.nextCursor }, rows: d.rows, costBasis: d.costBasis, next_cursor: d.nextCursor, note: "people only: no e-mail and no phone are returned; use a contact source for those" };
+        },
+      });
+    },
+
+    /** Site map exploration (Firecrawl or Context.dev). */
+    async siteMap(input: { provider?: unknown; url?: unknown; domain?: unknown; search?: unknown; limit?: unknown; why?: unknown }): Promise<WebCallResult> {
+      const id = nextId();
+      const provider = input.provider === "contextdev" ? "contextdev" : "firecrawl";
+      const source = `${provider}.map`;
+      const targetUrl = String(input.url ?? input.domain ?? "").trim();
+      const params: Record<string, unknown> = {
+        url: clip(targetUrl, 300),
+        ...(input.search ? { search: clip(input.search, 100) } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.why ? { _why: clip(input.why, 300) } : {}),
+      };
+      const verdict = checkPublicReadUrl(targetUrl);
+      if (!verdict.ok) return refuse(id, source, params, "bad_url", verdict.reason ?? "");
+      const adapter = provider === "contextdev" ? contextDevAdapter : firecrawlAdapter;
+      const estimateUsd = provider === "contextdev" ? CONTEXTDEV_USD_PER_CREDIT : FIRECRAWL_USD_PER_CREDIT;
+      return execute({
+        id, source, provider, params, estimateUsd,
+        bound: provider === "contextdev" ? { provider: "contextdev", op: "map" } : { provider: "firecrawl", op: "map" },
+        run: (ctx) => adapter.run("site.map", { url: targetUrl, search: typeof input.search === "string" ? input.search : undefined, limit: typeof input.limit === "number" ? Math.min(input.limit, 50) : 50 } as any, ctx),
+        shape: (r) => {
+          const d = r.data as { urls?: string[]; links?: Array<{ url: string }> } | null;
+          if (!r.ok || !d) return { saved: null, rows: [], costBasis: "reported" };
+          const rawUrls: string[] = Array.isArray(d.urls) ? d.urls : Array.isArray(d.links) ? d.links.map((l) => l.url) : [];
+          const rows = rawUrls.filter(Boolean).map((u) => ({ url: u }));
+          return { saved: { rows, urls: rawUrls }, rows, costBasis: "reported", note: "site map URLs discovered" };
         },
       });
     },

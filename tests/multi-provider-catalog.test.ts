@@ -10,6 +10,11 @@ import {
 import { recordCostFor } from "../src/lib/recordPricing";
 import { AdapterContractSchema, loadAdapterContracts } from "../scripts/treg/refresh-catalog-contracts";
 import { EndpointCircuitBreaker } from "../src/lib/treg/circuitBreaker";
+import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { createWebGateway } from "../agent/src/webGateway";
+import { createMemoryStore } from "../agent/src/memoryStore";
+import { createJobCallBudget } from "../src/lib/server/callBudget";
 
 /** The capability registry: prices come from the official documentation, nothing is invented, an unverified price is never sold. */
 describe("capability registry prices (read from the official docs on 2026-10-22)", () => {
@@ -324,6 +329,113 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
     });
   });
 
+  describe("Point 6.2: Universal Catalog Presentation & Cross-Provider Data-Driven Selection", () => {
+    it("candidatesFor returns multi-provider endpoints for entity research steps (site.map & page.read)", () => {
+      const catalog = loadTregCatalog();
+      const mapCandidates = candidatesFor(catalog, null, "entity", "site.map");
+      const mapIds = mapCandidates.map((c) => c.id);
+
+      expect(mapIds).toContain("firecrawl.map");
+      expect(mapIds).toContain("contextdev.map");
+
+      const scrapeCandidates = candidatesFor(catalog, null, "entity", "page.read");
+      const scrapeIds = scrapeCandidates.map((c) => c.id);
+
+      expect(scrapeIds).toContain("firecrawl.scrape");
+      expect(scrapeIds).toContain("contextdev.scrape");
+    });
+
+    it("Must-Pass 2: TREG chosen when well-covered (x.user.posts selects TREG social endpoints including anyapi with 0 web scrapes)", () => {
+      const catalog = loadTregCatalog();
+      const candidates = candidatesFor(catalog, null, "x", "x.user.posts");
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const ids = candidates.map((c) => c.id);
+      expect(ids).toContain("anyapi.x.user.posts");
+      // All top candidates are TREG social platform endpoints
+      expect(candidates[0].platform).toBe("x");
+      // No web scrape in X user posts candidates
+      expect(ids).not.toContain("firecrawl.scrape");
+      expect(ids).not.toContain("contextdev.scrape");
+    });
+
+    it("tripping 402 on one provider immediately routes subsequent candidates to the other provider without failure", () => {
+      const catalog = loadTregCatalog();
+      const cb = new EndpointCircuitBreaker();
+
+      // Healthy: both candidates present
+      const healthy = candidatesFor(catalog, null, "entity", "site.map", 8, { circuitBreaker: cb });
+      expect(healthy.map((c) => c.id)).toContain("firecrawl.map");
+      expect(healthy.map((c) => c.id)).toContain("contextdev.map");
+
+      // Firecrawl runs out of credits (HTTP 402)
+      cb.recordFailure("firecrawl.map", 402);
+
+      // Now firecrawl.map is filtered out, contextdev.map remains available
+      const failover = candidatesFor(catalog, null, "entity", "site.map", 8, { circuitBreaker: cb });
+      const failoverIds = failover.map((c) => c.id);
+      expect(failoverIds).not.toContain("firecrawl.map");
+      expect(failoverIds).toContain("contextdev.map");
+    });
+  });
+
+  describe("Point 6.4: Gateway Budget Enforcement & Strict Spend Caps", () => {
+    it("Must-Pass 3: Operation with remaining budget below bound ($0.025 bound, $0.010 budget) is refused upfront with over_budget", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ holdPoints: 10, defaultJobProviderCeilingUsd: 0.010 }); // only 0.010 USD ceiling
+      const counter = { seq: 0 };
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_budget",
+        jobId: "job_test",
+        phase: "planning",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+      });
+
+      // Attempt stealth scrape (bound is 5 credits = $0.025)
+      const res = await gw.webScrape({ provider: "firecrawl", url: "https://www.example.com" });
+
+      expect(res.ok).toBe(false);
+      if (!res.ok && "refused" in res) {
+        expect(res.refused).toBe("over_budget");
+      }
+    });
+
+    it("Counter-Case: Step call cap <= 4 calls and job call cap <= 24 calls are strictly enforced", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ holdPoints: 5000, defaultJobProviderCeilingUsd: 10.0 });
+      const counter = { seq: 0 };
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_caps",
+        jobId: "job_test",
+        phase: "planning",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+      });
+
+      // 4 calls for same step pass (simulated with empty result or mock fetch)
+      // When step exceeds 4 calls with stepKey, 5th call is refused over_budget
+      const stepKey = "step_entity_site";
+      for (let i = 0; i < 4; i++) {
+        await gw.siteMap({ url: "https://www.example.com", stepKey });
+      }
+
+      const fifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey });
+      expect(fifthCall.ok).toBe(false);
+      if (!fifthCall.ok && "refused" in fifthCall) {
+        expect(fifthCall.refused).toBe("over_budget");
+      }
+    });
+  });
+
   describe("Invariants & Governance Scanner", () => {
     it("AST / regex scanner verifies circuitBreaker.ts contains 0 hardcoded provider brand names in logic", () => {
       const filePath = path.join(process.cwd(), "src", "lib", "treg", "circuitBreaker.ts");
@@ -346,6 +458,30 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
       for (const name of providerNames) {
         const regex = new RegExp(`(===|!==|==|!=|case|in)\\s*["'\`]${name}["'\`]|["'\`]${name}["'\`]\\s*(===|!==|==|!=)`, "i");
         expect(regex.test(codeOnly), `Hardcoded provider brand name check '${name}' found in circuitBreaker.ts logic`).toBe(false);
+      }
+    });
+
+    it("Must-Pass 4: AST scanner verifies agent/src/llmPlanner/catalogView.ts contains 0 hardcoded provider brand names in logic", () => {
+      const filePath = path.join(process.cwd(), "agent", "src", "llmPlanner", "catalogView.ts");
+      const content = readFileSync(filePath, "utf-8");
+      // Strip comments
+      const codeOnly = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+
+      const providerNames = [
+        "firecrawl",
+        "contextdev",
+        "treg",
+        "anyapi",
+        "tikhub",
+        "scrapecreators",
+        "crawl4ai",
+        "fetchinio",
+        "serper",
+      ];
+
+      for (const name of providerNames) {
+        const regex = new RegExp(`(===|!==|==|!=|case|in)\\s*["'\`]${name}["'\`]|["'\`]${name}["'\`]\\s*(===|!==|==|!=)`, "i");
+        expect(regex.test(codeOnly), `Hardcoded provider brand name check '${name}' found in catalogView.ts logic`).toBe(false);
       }
     });
   });

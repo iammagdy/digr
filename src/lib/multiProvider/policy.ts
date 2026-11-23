@@ -46,7 +46,14 @@ function hostOf(url: string): string | null {
 }
 
 function isIpOrLocal(host: string): boolean {
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":") || host === "localhost" || !host.includes(".") || /\.(?:local|internal|localhost|test|invalid)$/.test(host);
+  return (
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+    host.includes(":") ||
+    host === "localhost" ||
+    !host.includes(".") ||
+    /\.(?:local|internal|localhost|test|invalid)$/.test(host) ||
+    /(?:^|\.)(?:intranet|internal|private)(?:\.|$)/i.test(host)
+  );
 }
 
 /** The registrable-looking domain used to compare a company's website with its emails (no public-suffix list: the last two labels, three for a two-part country suffix). */
