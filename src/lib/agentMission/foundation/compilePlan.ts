@@ -535,12 +535,51 @@ export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGat
 export const researchTopicOf = (ask: Pick<Ask, "topic">): boolean => Boolean(ask.topic?.text) && ask.topic.relation !== "made_with";
 
 /** The execution's relevance rule of a research topic: every row with text is judged by the review against the customer's request; the words are only what was searched. */
-export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>, /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */ criterion?: string | null): RelevanceSpec | null {
+export function researchRelevanceOf(
+  ask: Pick<Ask, "topic"> & Partial<Pick<Ask, "source" | "country">> & { brief?: string; entity?: string },
+  textColumns: ReadonlyArray<string>,
+  /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */
+  criterion?: string | { entity?: string; country?: string; topic?: string; brief?: string } | null
+): (RelevanceSpec & { criterion: { entity: string; country: string; topic: string; brief?: string } }) | null {
   if (!researchTopicOf(ask) || textColumns.length === 0) return null;
   const alternatives = (ask.topic.alternatives ?? []).filter((a) => a.trim() !== "");
   const terms = (alternatives.length > 0 ? alternatives : [ask.topic.text!]).map((t) => t.trim()).slice(0, 12);
   const own = typeof criterion === "string" ? criterion.replace(/\s+/g, " ").trim().replace(/[.،؛:\s]+$/u, "") : "";
-  return { subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
+
+  // DT-20261123-x-account-rumors r7: Derive structured criterion (entity, country, topic, brief) generically from LLM output / ask without hardcoded word lists or defaults
+  let entity = "";
+  let country = "";
+  let topic = "";
+  let brief = (ask as any).brief ?? (typeof criterion === "string" ? criterion : "") ?? "";
+
+  if (criterion && typeof criterion === "object") {
+    entity = String(criterion.entity ?? "").trim();
+    country = String(criterion.country ?? "").trim();
+    topic = String(criterion.topic ?? "").trim();
+    if (criterion.brief) brief = String(criterion.brief).trim();
+  }
+
+  if (!entity && (ask as any).entity) entity = String((ask as any).entity).trim();
+  if (!entity && ask.source?.text && !ask.source.text.startsWith("http")) entity = String(ask.source.text).trim();
+  if (!country && ask.country) country = String(ask.country).trim();
+  if (!topic && ask.topic?.text) topic = String(ask.topic.text).trim();
+
+  const critObj: { entity: string; country: string; topic: string; brief?: string } = {
+    entity,
+    country,
+    topic,
+    ...(brief ? { brief } : {}),
+  };
+
+  return {
+    subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`,
+    terms,
+    text_columns: [...textColumns],
+    min_own_words: 0,
+    review: true,
+    judge: "model",
+    criterion: critObj,
+  };
 }
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */

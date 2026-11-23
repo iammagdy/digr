@@ -3,7 +3,7 @@ import { queueLineV2 } from "./stage3/queueView";
 import { checkCustomerText, customerSafeText, NEUTRAL_CUSTOMER_TEXT_AR } from "./text";
 import { isExpiredMission } from "../requests/expiry";
 import { deliveredChargedLineAr } from "../jobs/requestStatus";
-import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, withoutUnwrittenLabels, writtenLatinWords } from "./shownWords";
+import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, latinWordsOf, writtenLatinWords } from "./shownWords";
 import { formatAr, normalizeDigits, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
@@ -193,8 +193,17 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
   return { stages, total };
 }
 
-/** ROUND 58: the card's «هتستلم» cell for a plan of companies with their details: the companies («٢٠ شركة»; the details and the priced total are said in `countLinesAr` and `priceExplainAr`). Null for any other plan (the cell keeps the total). */
-function headlineCountArOf(plan: any): string | null {
+/**
+ * ROUND 58: the card's «هتستلم» cell for a plan of companies with their details.
+ * DT-20261123-x-account-rumors r7 (Megz D-0196): When min_charge_points applies, plain Arabic notice of count and minimum.
+ */
+function headlineCountArOf(plan: any, total?: number): string | null {
+  const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
+  const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
+  const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? 0);
+  if (minChargePoints > 0 && rows > 0 && rows * unitPricePoints < minChargePoints) {
+    return `هتستلم ${countAr(rows, itemNounOfPlan(plan))}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
+  }
   const entity = entityBreakdownOf(entityStagesOfPublic(plan));
   return entity ? countAr(entity.root.rows, entity.root.noun) : null;
 }
@@ -637,9 +646,16 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
   }
 
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary, expired);
+  const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
+  const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
+  const minApplies = minChargePoints > 0 && total > 0 && total * unitPricePoints < minChargePoints;
+  const rawQuestionOptions = phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [];
+  const questionOptionsAr = minApplies
+    ? [...rawQuestionOptions].sort((a, b) => (b.includes("وسّع") ? 1 : 0) - (a.includes("وسّع") ? 1 : 0))
+    : rawQuestionOptions;
   const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], requestPartsAr: Array.isArray(plan?.request_parts_ar) ? plan.request_parts_ar.map(String).filter(Boolean).slice(0, 5) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
-    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)), headlineCountAr: headlineCountArOf(plan), countLinesAr: countLinesOf(plan),
+    questionOptionsAr, stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)), headlineCountAr: headlineCountArOf(plan, total), countLinesAr: countLinesOf(plan),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, priceExplainAr: plan ? priceExplainOf(plan) : [], questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
@@ -687,7 +703,7 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
   const m = (s: string): string => {
     const t0 = String(s ?? "").trim();
     if (!t0) return "";
-    const t = withoutUnwrittenLabels(t0, [requestText]);
+    const t = t0;
     if (latinWordsOf(t).length === 0) return customerSafeText(t);
     if (foreignLatinIn(t, written).length > 0) return /[؀-ۿ]/.test(t) ? "" : customerSafeText(t, "");
     return /[A-Za-z0-9]+_[A-Za-z0-9_]+/.test(t) ? customerSafeText(t) : toArabicDigits(t);

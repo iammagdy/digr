@@ -524,6 +524,20 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
     deps.log?.(`tokens_not_recorded ${missionId} ${shortMessage(e)}`);
   }
 }
+export interface JudgedRowDiagnostic {
+  id: string;
+  title: string;
+  url: string | null;
+  criterion: {
+    entity: string;
+    country: string;
+    topic: string;
+    brief?: string;
+  };
+  verdict: 1 | 0;
+  reason: string;
+}
+
 /**
  * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (found, new, duplicates, looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, never looked at, the review's
  * extension) and the excluded items as an admin-only CSV. Every number is read from the item store's snapshot. The customer's files never hold an excluded item. Never throws.
@@ -555,6 +569,42 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
     }
     const csv = buildExcludedAdminCsv(plan, excludedByStage);
     if (csv) await store.putFile(missionId, "admin/excluded.csv", csv, "text/csv");
+
+    // DT-20261123-x-account-rumors r7 (Point B.2): Record per-row judge diagnostics for model-judged stages
+    const diagnostics: JudgedRowDiagnostic[] = [];
+    for (const s of plan.stages) {
+      if (s.relevance?.judge !== "model") continue;
+      const rawCrit = s.relevance.criterion;
+      const criterion = (rawCrit && typeof rawCrit === "object")
+        ? {
+            entity: String((rawCrit as any).entity ?? ""),
+            country: String((rawCrit as any).country ?? ""),
+            topic: String((rawCrit as any).topic ?? ""),
+            ...((rawCrit as any).brief ? { brief: String((rawCrit as any).brief) } : {}),
+          }
+        : {
+            entity: "",
+            country: "",
+            topic: s.relevance?.terms?.[0] ?? "",
+            ...(typeof rawCrit === "string" ? { brief: rawCrit } : {}),
+          };
+      const stageItems = [...snap.stage(s.key).items.values()];
+      for (const it of stageItems) {
+        if (it.by === "model" || it.reason === "review_no" || it.reason === "review_failed") {
+          diagnostics.push({
+            id: it.id,
+            title: String(it.row?.title ?? it.row?.name ?? it.row?.text ?? ""),
+            url: typeof it.row?.url === "string" ? it.row.url : (typeof it.row?.link === "string" ? it.row.link : null),
+            criterion,
+            verdict: it.by === "model" ? 1 : 0,
+            reason: it.by === "model" ? "match" : (it.reason ?? "review_no"),
+          });
+        }
+      }
+    }
+    if (diagnostics.length > 0) {
+      await store.putFile(missionId, "admin/judge_diagnostics.json", JSON.stringify(diagnostics), "application/json");
+    }
   } catch (e) {
     deps.log?.(`checks_not_recorded ${missionId} ${shortMessage(e)}`);
   }

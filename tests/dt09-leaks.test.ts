@@ -55,38 +55,38 @@ describe("S1 through the real caller: the customer's stored request is what deci
 describe("S1 at the source: the topic of the request line is a word the customer wrote or an Arabic one", () => {
   const step = (topic: string | null) => ({ key: "t", title_ar: "التغريدات", platform: "x", capability: "x.search.posts", parent: null, deliver: true, count: { total: 30, per_parent: null, all: false }, source: null, topic, search_terms: [], period: null }) as never;
   it("a Latin topic the customer did not write is dropped; one the customer wrote, and an Arabic one, stay", () => {
-    expect(requestPartsAr([step("ceo")], ["٣٠ تغريدة عن الإدارة"])).toEqual([PLATFORM_LABEL_FALLBACK_AR]);
+    expect(requestPartsAr([step("ceo")], ["٣٠ تغريدة عن الإدارة"])).toEqual(["إكس"]);
     expect(requestPartsAr([step("ceo")], ["٣٠ تغريدة عن ceo"])).toContain("ceo");
     expect(requestPartsAr([step("الإدارة")], ["٣٠ تغريدة عن الإدارة"])).toContain("الإدارة");
   });
 });
 
-describe("S2: a platform label of the code's own table is shown only when the customer wrote it", () => {
-  it("platformAr: written → the label; not written → the neutral «المصدر»; a platform the table does not know keeps «المنصة»", () => {
-    expect(platformAr("google", "google.maps.places", ["عايز شركتين مقاولات في الرياض"])).toBe(PLATFORM_LABEL_FALLBACK_AR);
+describe("S2: a platform label of the code's own table is product information always shown to the customer", () => {
+  it("platformAr: always returns the platform Arabic name; a platform the table does not know keeps «المنصة»", () => {
+    expect(platformAr("google", "google.maps.places", ["عايز شركتين مقاولات في الرياض"])).toBe("خرائط جوجل");
     expect(platformAr("google", "google.maps.places", ["عايز شركات مقاولات من جوجل ماب"])).toBe("خرائط جوجل");
-    expect(platformAr("linkedin", undefined, ["مديرين الشركات"])).toBe(PLATFORM_LABEL_FALLBACK_AR);
+    expect(platformAr("linkedin", undefined, ["مديرين الشركات"])).toBe("لينكدإن");
     expect(platformAr("x", "x.search.posts", ["تغريدات على إكس عن اللقاح"])).toBe("إكس");
-    expect(platformAr("x", "x.search.posts", ["تغريدات تويتر عن اللقاح"])).toBe(PLATFORM_LABEL_FALLBACK_AR);
+    expect(platformAr("x", "x.search.posts", ["تغريدات تويتر عن اللقاح"])).toBe("إكس");
     expect(platformAr("nope", undefined, ["نص"])).toBe("المنصة");
     expect(PLATFORM_LABEL_FALLBACK_AR).toBe("المصدر");
   });
-  it("a sentence the model wrote that names a label of the table the customer did not write keeps its words and says «المصدر» for the label; one the customer's words allow is kept as written", () => {
+  it("a sentence the model wrote that names a label of the table the customer did not write keeps its platform display names", () => {
     const text = "شركتان تسويق في القاهرة من خرائط جوجل ومعهما مديرهما.";
     expect(customerSafe(text, 400)).toBe(text);
-    expect(customerSafe(text, 400, ["عايز شركتين تسويق في القاهرة"])).toBe("شركتان تسويق في القاهرة من المصدر ومعهما مديرهما.");
+    expect(customerSafe(text, 400, ["عايز شركتين تسويق في القاهرة"])).toBe(text);
     expect(customerSafe(text, 400, ["عايز شركتين تسويق من جوجل"])).toBe(text);
-    expect(customerSafe("نجمع تغريدات على إكس وبإكس وللإكس.", 400, ["تغريدات عن اللقاح"])).toBe("نجمع تغريدات على المصدر وبالمصدر وللمصدر.");
+    expect(customerSafe("نجمع تغريدات على إكس وبإكس وللإكس.", 400, ["تغريدات عن اللقاح"])).toBe("نجمع تغريدات على إكس وبإكس وللإكس.");
     expect(customerSafe("شركتان تسويق في القاهرة ومعهما مديرهما.", 400, ["عايز شركتين تسويق في القاهرة"])).toBe("شركتان تسويق في القاهرة ومعهما مديرهما.");
   });
   it("scoutFallbackAr and requestPartsAr read the same rule", () => {
     const weak = [{ step: { title_ar: "الأماكن", platform: "google", capability: "google.maps.places", source: null, topic: null, period: null }, requested: 50, found: 12, sets: 3 }] as never;
     const said = ["عايز أماكن في القاهرة"];
-    expect(scoutFallbackAr(weak, said).question_ar).toContain(`في ${PLATFORM_LABEL_FALLBACK_AR} `);
-    expect(scoutFallbackAr(weak, said).question_ar).not.toContain("جوجل");
+    expect(scoutFallbackAr(weak, said).question_ar).toContain("خرائط جوجل");
+    expect(scoutFallbackAr(weak, said).question_ar).toContain("جوجل");
     expect(scoutFallbackAr(weak, ["عايز أماكن من جوجل"]).question_ar).toContain("جوجل");
     const st = { key: "t", title_ar: "الأماكن", platform: "google", capability: "google.maps.places", parent: null, deliver: true, count: { total: 5, per_parent: null, all: false }, source: null, topic: null, search_terms: [], period: null } as never;
-    expect(requestPartsAr([st], said)).toEqual([PLATFORM_LABEL_FALLBACK_AR]);
+    expect(requestPartsAr([st], said)).toEqual(["خرائط جوجل"]);
   });
 });
 
@@ -116,13 +116,13 @@ describe("S2 end to end: the planner path says nothing about a source the custom
     expect(progress.join(" ")).toContain("من إكس");
     expect((r.plan.compiled as unknown as { llm: { request_parts_ar: string[] } }).llm.request_parts_ar[0]).toBe("إكس");
   });
-  it("the customer did not write it: the summary, the assumptions, the progress lines and the request line say «المصدر», never «إكس»", async () => {
+  it("the customer did not write it: the summary, the assumptions, the progress lines and the request line say «إكس» as product info", async () => {
     const { r, progress } = await run(["٥٠ تغريدة من حساب وزارة الصحة عن الشائعات"]);
     expect(r.kind).toBe("plan");
     if (r.kind !== "plan") return;
     const shown = JSON.stringify([r.plan.summary_ar, r.plan.assumptions_ar ?? [], r.plan.notes_ar ?? [], progress, (r.plan.compiled as unknown as { llm: { request_parts_ar: string[] } }).llm.request_parts_ar]);
-    expect(shown).not.toContain("إكس");
-    expect(progress.join(" ")).toContain(`من ${PLATFORM_LABEL_FALLBACK_AR}`);
+    expect(shown).toContain("إكس");
+    expect(progress.join(" ")).toContain("من إكس");
     expect(r.plan.summary_ar).toContain("٥٠");
   });
 });
