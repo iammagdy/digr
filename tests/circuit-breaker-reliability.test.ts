@@ -289,7 +289,7 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
       }
     });
 
-    it("retries on transient 502/503/504 with X-Treg-Idempotency-Key and exponential backoff", async () => {
+    it("does not retry on transient 502/503/504 or timeouts: exactly 1 attempt on every path (unbudgeted & budgeted)", async () => {
       let callCount = 0;
       let capturedHeaders: HeadersInit | undefined;
       const sleepMock = vi.fn(async () => {});
@@ -298,16 +298,11 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
       globalThis.fetch = vi.fn(async (_url: any, init: any) => {
         callCount++;
         capturedHeaders = init?.headers;
-        if (callCount < 3) {
-          return new Response("Bad Gateway", { status: 502 });
-        }
-        return new Response(JSON.stringify({ output: { items: [] } }), {
-          status: 200,
-          headers: { "x-treg-cost-micro": "2000" },
-        });
+        return new Response("Bad Gateway", { status: 502 });
       }) as any;
 
       try {
+        // 1. Unbudgeted caller
         const res = await executeTregCall({
           endpointId: "anyapi.x.search.posts",
           userId: "test_user",
@@ -316,11 +311,45 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
           sleep: sleepMock,
         });
 
-        expect(callCount).toBe(3); // 1 initial + 2 retries
-        expect(sleepMock).toHaveBeenCalledTimes(2);
-        expect(res.ok).toBe(true);
+        expect(callCount).toBe(1); // exactly 1 attempt on 502/503/504
+        expect(sleepMock).not.toHaveBeenCalled();
+        expect(res.ok).toBe(false);
+        expect(res.httpStatus).toBe(502);
         expect((capturedHeaders as Record<string, string>)["X-Treg-Idempotency-Key"]).toBe("test_custom_idem_key_123");
         expect((capturedHeaders as Record<string, string>)["Idempotency-Key"]).toBe("test_custom_idem_key_123");
+
+        // 2. Budgeted caller on 503
+        callCount = 0;
+        const budget = createJobCallBudget({ ceilingUsd: 1.0, spentUsd: 0 });
+        const res503 = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "test_user",
+          jobId: "job_503_test",
+          stepId: "step_503",
+          callBudget: budget,
+          callEstimateUsd: 0.05,
+          sleep: sleepMock,
+        });
+        expect(callCount).toBe(1); // exactly 1 attempt on 503
+        expect(res503.ok).toBe(false);
+
+        // 3. Timeout caller
+        callCount = 0;
+        globalThis.fetch = vi.fn(async () => {
+          callCount++;
+          const err = new Error("timeout");
+          err.name = "TimeoutError";
+          throw err;
+        }) as any;
+        const resTimeout = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "test_user",
+          jobId: "job_timeout_test",
+          sleep: sleepMock,
+        });
+        expect(callCount).toBe(1); // exactly 1 attempt on timeout
+        expect(resTimeout.ok).toBe(false);
+        expect(resTimeout.timedOut).toBe(true);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -380,6 +409,31 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
         expect(cb.getState("anyapi.x.search.posts")).toBe("open");
         expect(cb.isAvailable("anyapi.x.search.posts")).toBe(false);
         expect(cb.getRecord("anyapi.x.search.posts").cooldownMs).toBe(EXTENDED_COOLDOWN_MS);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not fire control probe on 400 when caller has no budget and no circuitBreaker (Rule 1)", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        return new Response(JSON.stringify({ error: "Client bad request" }), {
+          status: 400,
+        });
+      }) as any;
+
+      try {
+        const res = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "test_user",
+          jobId: "test_job",
+        });
+
+        expect(callCount).toBe(1); // exactly 1 call, no control probe fired
+        expect(res.ok).toBe(false);
+        expect(res.httpStatus).toBe(400);
       } finally {
         globalThis.fetch = originalFetch;
       }

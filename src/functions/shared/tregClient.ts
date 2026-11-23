@@ -316,7 +316,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     cb.recordSuccess(options.endpointId);
   } else if (result.httpStatus !== 409) {
     // 409 is «still running» (in-flight polling), not a failure and not a circuit failure
-    if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe) {
+    if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe && (budget || options.circuitBreaker)) {
       const probeReq = getControlProbeRequest(options.endpointId);
       if (probeReq) {
         let canProbe = true;
@@ -529,14 +529,11 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   let response: Response | null = null;
   let lastNetErr: any = null;
   const sleepFn = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  // Standalone callers without budget or step id perform bounded 5xx retries; outer runners manage their own retries
-  const max5xxRetries = (options.callBudget || options.stepId || options.singleAttempt) ? 0 : 2;
-  let attempt = 0;
   let retried429 = false;
 
   const stepKey = (options.callBudget && options.jobId && options.stepId) ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
 
-  while (attempt <= max5xxRetries) {
+  while (true) {
     if (stepKey && options.callBudget) {
       const attemptsMap = getStepAttempts(options.callBudget);
       const cur = attemptsMap.get(stepKey) ?? 0;
@@ -604,24 +601,9 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
         }
       }
 
-      // Transient 5xx (502, 503, 504): retry with exponential backoff for standalone callers
-      const isTransient5xx = response.status === 502 || response.status === 503 || response.status === 504;
-      if (isTransient5xx && attempt < max5xxRetries) {
-        attempt++;
-        const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
-        await sleepFn(backoffMs);
-        continue;
-      }
-
       break;
     } catch (netErr: any) {
       lastNetErr = netErr;
-      if (attempt < max5xxRetries) {
-        attempt++;
-        const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
-        await sleepFn(backoffMs);
-        continue;
-      }
       break;
     }
   }
