@@ -11,7 +11,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
   { id: "overview", label: "نظرة عامة", pages: ["overview", "operations", "conference", "visitors"] },
   { id: "customers", label: "العملاء والطلبات", pages: ["users", "messages", "jobs", "support", "requests"] },
   { id: "money", label: "الفلوس والشحن", pages: ["topups", "finance", "invoices", "promo-codes"] },
-  { id: "providers", label: "المزودون والمفاتيح", pages: ["providers", "calls-log"] },
+  { id: "providers", label: "المزودون والمفاتيح", pages: ["providers", "calls-log", "provider-updates"] },
   { id: "agent", label: "الوكيل والجودة", pages: ["agent", "failures", "planner-selftest", "reverse-lookup"] },
   { id: "settings", label: "الإعدادات", pages: ["settings", "audit", "export"] },
 ];
@@ -33,6 +33,7 @@ export const ADMIN_PAGE_INFO: Record<AdminPageId, string> = {
   "promo-codes": "إنشاء الأكواد الترويجية ومتابعة من استخدمها.",
   providers: "حالة كل مزود ورصيده ومفاتيحه وحدوده وسجل مكالماته.",
   "calls-log": "كل المكالمات التي أجرتها المنصة مع المزودين وتكلفة كل واحدة.",
+  "provider-updates": "ما أضافه أو عدّله أو أوقفه مزودو البيانات وتقارير دراستها قبل الدمج.",
   agent: "تشغيل مهام الوكيل ومتابعتها.",
   failures: "كل ما فشل أو رجع فارغًا في آخر سبعة أيام، مع إعادة التجربة.",
   "planner-selftest": "فحص المخطط على طلبات جاهزة دون أي خصم من العملاء.",

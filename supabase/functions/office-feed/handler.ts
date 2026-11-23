@@ -1,6 +1,9 @@
 export const OFFICE_BUCKET = "office-status";
 export const OFFICE_OBJECT_PATH = "status.json";
+export const PRIVATE_INTERNAL_BUCKET = "office-internal";
+export const PROVIDER_UPDATES_OBJECT_PATH = "provider-updates.json";
 export const MAX_BODY_BYTES = 65_536;
+export const MAX_PROVIDER_UPDATES_BODY_BYTES = 524_288;
 export const CACHE_CONTROL_SECONDS = 15;
 
 export interface OfficeFeedEnv {
@@ -100,7 +103,19 @@ export async function handleOfficeFeedRequest(
     return json({ ok: false, error: "unauthorized" }, 401);
   }
 
-  const readResult = await readBodyCapped(req, MAX_BODY_BYTES);
+  let isProviderUpdates = false;
+  try {
+    const url = new URL(req.url);
+    isProviderUpdates = url.searchParams.get("target") === "provider-updates";
+  } catch {
+    // fallback if req.url is relative or invalid URL
+  }
+
+  const bucket = isProviderUpdates ? PRIVATE_INTERNAL_BUCKET : OFFICE_BUCKET;
+  const objectPath = isProviderUpdates ? PROVIDER_UPDATES_OBJECT_PATH : OFFICE_OBJECT_PATH;
+  const maxBytes = isProviderUpdates ? MAX_PROVIDER_UPDATES_BODY_BYTES : MAX_BODY_BYTES;
+
+  const readResult = await readBodyCapped(req, maxBytes);
   if (readResult.tooLarge) {
     log("office_feed_error", { code: "payload_too_large" });
     return json({ ok: false, error: "payload_too_large" }, 413);
@@ -125,7 +140,7 @@ export async function handleOfficeFeedRequest(
   }
 
   const baseUrl = env.supabaseUrl.replace(/\/+$/, "");
-  const uploadUrl = `${baseUrl}/storage/v1/object/${OFFICE_BUCKET}/${OFFICE_OBJECT_PATH}`;
+  const uploadUrl = `${baseUrl}/storage/v1/object/${bucket}/${objectPath}`;
   const canonicalBody = JSON.stringify(parsed);
 
   let storageRes: Response;
@@ -136,7 +151,7 @@ export async function handleOfficeFeedRequest(
         Authorization: `Bearer ${env.serviceKey}`,
         apikey: env.serviceKey,
         "Content-Type": "application/json",
-        "cache-control": `max-age=${CACHE_CONTROL_SECONDS}`,
+        "cache-control": isProviderUpdates ? "private, no-cache" : `max-age=${CACHE_CONTROL_SECONDS}`,
         "x-upsert": "true",
       },
       body: canonicalBody,
