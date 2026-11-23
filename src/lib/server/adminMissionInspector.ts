@@ -1,5 +1,5 @@
 import { hasAddonMarker } from "../agentMission/addonMarker";
-import { MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../agentMission/constants";
+import { AGENT_BUCKET, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../agentMission/constants";
 
 /**
  * THE ADMIN MISSION INSPECTOR (DT-20261118-06 PR 2, Megz D-0104): ONE mission for the team's read-only admin account: the catalog calls made, their status / http status / failure reason, the rows returned, the errors, the state of each stage and
@@ -120,6 +120,14 @@ export interface InspectInput {
   /** The real number of calls of the mission (a count), which can be above the rows read. */
   callTotal: number | null;
   now: Date;
+  /** DT-20261123-x-account-rumors r7 (Point B.2): Per-row judge diagnostics */
+  judgedRows?: Array<{
+    title: string;
+    url: string | null;
+    criterion: string;
+    verdict: 1 | 0;
+    reason: string;
+  }>;
 }
 
 /** The whole response, built by name. Pure. */
@@ -180,6 +188,7 @@ export function buildInspection(input: InspectInput) {
     callTotals: { total, shown: calls.length, byStatus, byEndpoint: [...byEndpoint.values()].sort((a, b) => b.failed + b.refused - (a.failed + a.refused) || a.endpointId.localeCompare(b.endpointId)) },
     events,
     files: (Array.isArray(m.files) ? m.files : []).slice(0, 10).map((f: any) => ({ kind: String(f?.kind ?? "").slice(0, 10), name: redactText(String(f?.name ?? ""), 120) })),
+    judgedRows: input.judgedRows ?? [],
   };
 }
 const countsOf = (c: unknown): Record<string, number> => {
@@ -214,7 +223,30 @@ export async function loadInspection(client: any, input: { id: string; now?: Dat
     client.from(MISSION_CALLS_TABLE).select("id", { count: "exact", head: true }).eq("mission_id", input.id).then((r: any) => r, () => ({ count: null })),
   ]);
   if (events.error || calls.error) return { ok: false, status: 500, error: "read_failed" };
-  const body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date() });
+  let judgedRows: Array<{ title: string; url: string | null; criterion: string; verdict: 1 | 0; reason: string }> = [];
+  try {
+    const downloaded = await client.storage.from(AGENT_BUCKET).download(`${input.id}/admin/judge_diagnostics.json`);
+    if (downloaded?.data) {
+      const text = typeof downloaded.data.text === "function" ? await downloaded.data.text() : String(downloaded.data);
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        judgedRows = parsed.map((item: any) => ({
+          title: redactText(item.title, 200),
+          url: typeof item.url === "string" ? redactText(item.url, 300) : null,
+          criterion: typeof item.criterion === "string"
+            ? redactText(item.criterion, 300)
+            : (item.criterion && typeof item.criterion === "object"
+                ? redactText([item.criterion.entity, item.criterion.country, item.criterion.topic].filter(Boolean).join(" — "), 300)
+                : ""),
+          verdict: (item.verdict === 1 ? 1 : 0) as 1 | 0,
+          reason: redactText(item.reason, 300),
+        }));
+      }
+    }
+  } catch {
+    // optional diagnostic file
+  }
+  const body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date(), judgedRows });
   assertNoSecrets(body);
   return { ok: true, body };
 }

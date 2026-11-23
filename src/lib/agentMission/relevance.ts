@@ -47,6 +47,10 @@ export interface RelevanceSpec {
    * customer's words. `terms` are then only what was searched (shown, never a verdict). A row that is not reviewed is not delivered and not charged, as for every review.
    */
   judge?: "model";
+  /**
+   * DT-20261123-x-account-rumors r7: Structured or string research criterion.
+   */
+  criterion?: { entity: string; country: string; topic: string } | string;
 }
 
 /** Another meaning of the name, as the planner saw it in its sample: «الحكم محمد صلاح عبد الفتاح». `extensions`: the words that follow the name in it («عبد الفتاح»); `titles`: a title right before or after the name («الحكم», «المدرب»); `markers`: words of that meaning anywhere in the text. */

@@ -17,7 +17,7 @@ import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
-import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, withoutUnwrittenLabels, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
+import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
@@ -141,23 +141,18 @@ export const PLATFORM_LABEL_FALLBACK_AR = SOURCE_LABEL_FALLBACK_AR;
 const tableLabelOf = (p: string, _capability?: string): string | null => {
   return PLATFORM_AR[p] ?? null;
 };
-/** The label of a platform, only when the customer wrote it in their own words (`said`); else «المصدر». A platform the table does not know stays «المنصة». */
-export const platformAr = (p: string, capability: string | undefined, said: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): string => {
+/** The label of a platform. A platform the table does not know stays «المنصة». */
+export const platformAr = (p: string, capability?: string, _said?: ReadonlyArray<string>): string => {
   const label = tableLabelOf(p, capability);
-  if (label === null) return "المنصة";
-  if (opts?.allowPlatformNames) return label;
-  return labelWrittenBy(label, said) ? label : PLATFORM_LABEL_FALLBACK_AR;
+  return label ?? "المنصة";
 };
 
 /**
- * A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null. With `said` (the customer's words), a sentence that names a label of
- * the code's own platform table the customer did not write is refused as well (DT-20261118-09 S2), and a Latin word the customer wrote is not a reason to refuse it (S1: their own word).
+ * A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null.
  */
-export function customerSafe(text: string | null | undefined, maxChars = 400, said?: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): string | null {
-  let t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
+export function customerSafe(text: string | null | undefined, maxChars = 400, said?: ReadonlyArray<string>): string | null {
+  const t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
   if (!t) return null;
-  // a label of the code's own table the customer did not write becomes «المصدر» inside the model's sentence (the rest of the sentence is still the model's)
-  if (said !== undefined && !opts?.allowPlatformNames) t = withoutUnwrittenLabels(t, said);
   if (said !== undefined && foreignLatinIn(t, writtenLatinWords(said)).length === 0 && /[A-Za-z]{2,}/.test(t)) {
     return checkCustomerText(t.replace(/[A-Za-z]{2,}/g, "ـ"), { maxChars }).issues.length === 0 ? t : null;
   }
@@ -712,7 +707,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   const said = customerSaidOf(input);
-  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said, { allowPlatformNames: true }) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said, { allowPlatformNames: true })).filter((o): o is string => o !== null), understanding: u, costUsd };
+  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said)).filter((o): o is string => o !== null), understanding: u, costUsd };
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
   if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
@@ -1512,9 +1507,9 @@ export function numbersWritten(text: string): Set<string> {
 }
 
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
-export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): { question_ar: string; options_ar: string[] } {
+export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
   const lines = weak.map((f) => {
-    const platformName = platformAr(f.step.platform, f.step.capability, said, opts?.allowPlatformNames ? { allowPlatformNames: true } : undefined);
+    const platformName = platformAr(f.step.platform, f.step.capability, said);
     if (f.found === 0) {
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
@@ -1551,7 +1546,7 @@ export async function scoutQuestion(
     catalog_index: index || undefined,
     searches: weak.map((f) => ({
       items: f.step.title_ar,
-      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input), { allowPlatformNames: true }),
+      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
       source: f.step.source,
       topic: f.step.topic,
       period: f.step.period,
@@ -1562,7 +1557,7 @@ export async function scoutQuestion(
       different_searches_tried: f.sets,
     })),
   };
-  const fallback = scoutFallbackAr(weak, customerSaidOf(input), { allowPlatformNames: true });
+  const fallback = scoutFallbackAr(weak, customerSaidOf(input));
   const systemPrompt = index
     ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
     : SCOUT_SYSTEM;
@@ -1574,7 +1569,7 @@ export async function scoutQuestion(
   );
   if (!isObj(answer)) return fallback;
   const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
-    .map((o) => customerSafe(str(o), 120, customerSaidOf(input), { allowPlatformNames: true }))
+    .map((o) => customerSafe(str(o), 120, customerSaidOf(input)))
     .filter((o): o is string => Boolean(o && o.trim()));
 
   // Code only checks shape: 2–4 options, first = deliver what was found
@@ -1587,7 +1582,7 @@ export async function scoutQuestion(
     return { question_ar: fallback.question_ar, options_ar };
   }
 
-  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input), { allowPlatformNames: true });
+  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
   if (!message) return fallback;
   const allowed = new Set<string>([
     ...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]),

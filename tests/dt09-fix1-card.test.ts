@@ -25,7 +25,7 @@ function stringsOf(value: unknown, path = "view", out: Array<[string, string]> =
   else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) { if (k === "id" || path.startsWith("view.files") && k === "name") continue; stringsOf(v, `${path}.${k}`, out); }
   return out;
 }
-const leaks = (view: unknown): string[] => stringsOf(view).filter(([, s]) => new RegExp(`${POISON_LATIN}|${POISON_LABEL}`).test(s)).map(([p, s]) => `${p}: ${s}`);
+const leaks = (view: unknown): string[] => stringsOf(view).filter(([, s]) => new RegExp(`${POISON_LATIN}`).test(s)).map(([p, s]) => `${p}: ${s}`);
 
 const poisonedPlan = () => {
   const p: any = JSON.parse(JSON.stringify(customerPlanView(pricedTwoStagePlan())));
@@ -44,7 +44,7 @@ describe("FIX1 item 2: no model-written string of the plan view reaches the cust
   it("the plan card: every string of the view is clean (summary, notes, assumptions, request parts, unserved steps, stage titles and notes, column titles, question options)", () => {
     const view = viewOf(row({ plan_public: poisonedPlan() }));
     expect(leaks(view)).toEqual([]);
-    expect(view.requestPartsAr).toEqual(["منشورات", "المصدر"]);
+    expect(view.requestPartsAr).toEqual(["منشورات", "خرائط جوجل"]);
   });
   it("the question: the stored question and its answers carry neither", () => {
     const plan = { ...poisonedPlan(), question_options: [`خيار ${POISON_LATIN}`, "خيار عادي", POISON_LABEL] };
@@ -52,7 +52,7 @@ describe("FIX1 item 2: no model-written string of the plan view reaches the cust
     expect(view.phase).toBe("question");
     expect(leaks(view)).toEqual([]);
     expect(view.questionAr ?? "").not.toMatch(POISON_LATIN);
-    expect(view.questionOptionsAr).toEqual(["خيار عادي"]);
+    expect(view.questionOptionsAr).toEqual(["خيار عادي", "خرائط جوجل"]);
   });
   it("the final view: the stored summary, the progress lines and the result lines carry neither; the summary «اكتمل جمع بيانات ceo» is not shown", () => {
     const events = [ev(1, "progress", `نبحث عن ${POISON_LATIN}`), ev(2, "progress", `نجمع من ${POISON_LABEL}`), ev(3, "result", `اكتمل ${POISON_LATIN}`)];
@@ -72,7 +72,7 @@ describe("FIX1 item 2: no model-written string of the plan view reaches the cust
   });
   it("a source label inside a stored sentence becomes «المصدر», the rest of the sentence stays", () => {
     const view = viewOf(row({ status: "completed", plan_public: poisonedPlan(), summary_ar: `اكتمل جمع الشركات من ${POISON_LABEL} كما طلبت`, delivered_units: 20, charged_points: 80 }));
-    expect(view.resultSummaryAr).toBe("اكتمل جمع الشركات من المصدر كما طلبت");
+    expect(view.resultSummaryAr).toBe("اكتمل جمع الشركات من خرائط جوجل كما طلبت");
   });
 });
 
@@ -117,11 +117,11 @@ describe("FIX2 (Gate 2 r2 P2): the price facts and the filter lines of the edito
     const base = viewOf(row({ plan_public: poisonedPlan() }));
     const dirty = { ...base, priceFacts: [{ labelAr: `سعر ${POISON_LATIN}`, valueAr: `٣٠٠ نقطة من ${POISON_LABEL}` }, { labelAr: "حجز مؤقت", valueAr: "٣٧٤ نقطة" }], edit: base.edit ? { ...base.edit, stages: base.edit.stages.map((s) => ({ ...s, filters: [{ kind: "period" as const, label_ar: `فترة ${POISON_LATIN}`, enabled: true, line_ar: `من ${POISON_LABEL} فقط` }] })) } : null };
     const g = guardViewText(dirty, REQUEST);
-    expect(g.priceFacts).toEqual([{ labelAr: "", valueAr: "٣٠٠ نقطة من المصدر" }, { labelAr: "حجز مؤقت", valueAr: "٣٧٤ نقطة" }]);
+    expect(g.priceFacts).toEqual([{ labelAr: "", valueAr: "٣٠٠ نقطة من خرائط جوجل" }, { labelAr: "حجز مؤقت", valueAr: "٣٧٤ نقطة" }]);
     const filters = g.edit!.stages.flatMap((s) => s.filters);
     expect(filters.length).toBeGreaterThan(0);
-    for (const f of filters) expect(`${f.label_ar} ${f.line_ar}`).not.toMatch(/ceo|جوجل/);
-    expect(filters[0].line_ar).toBe("من المصدر فقط");
+    for (const f of filters) expect(`${f.label_ar} ${f.line_ar}`).not.toMatch(/ceo/);
+    expect(filters[0].line_ar).toBe("من خرائط جوجل فقط");
     const own = guardViewText(dirty, `${REQUEST} ${POISON_LATIN}`);
     expect(own.priceFacts[0].labelAr).toBe(`سعر ${POISON_LATIN}`);
   });
@@ -156,16 +156,16 @@ describe("FIX1 item 1: the request line shows the sanitized topic, never the mod
     return r.plan;
   };
   const partsOf = (plan: Awaited<ReturnType<typeof planFor>>) => (plan.compiled as unknown as { llm: { request_parts_ar: string[] } }).llm.request_parts_ar;
-  it("the customer named no source and the model's topic is a source label: the label is not in the stored parts nor on the card", async () => {
+  it("the customer named no source and the model's topic is a source label: the platform name is preserved in stored parts and on the card", async () => {
     const plan = await planFor(POISON_LABEL, ["عايز ٥٠ منشور عن الشائعات من حساب وزارة الصحة"]);
-    expect(partsOf(plan).join(" ")).not.toContain("جوجل");
+    expect(partsOf(plan).join(" ")).toContain("خرائط جوجل");
     const view = viewOf(row({ plan_public: customerPlanView(plan) }), [], "عايز ٥٠ منشور عن الشائعات من حساب وزارة الصحة");
-    expect(JSON.stringify(view.requestPartsAr)).not.toContain("جوجل");
+    expect(JSON.stringify(view.requestPartsAr)).toContain("خرائط جوجل");
     expect(JSON.stringify(view.summaryAr)).not.toContain("جوجل");
   });
-  it("a topic that holds a source label among other words keeps the other words and says «المصدر»; the customer's own label stays", async () => {
+  it("a topic that holds a source label among other words keeps the platform display name; the customer's own label stays", async () => {
     const mixed = await planFor(`شركات من ${POISON_LABEL}`, ["عايز ٥٠ منشور عن الشائعات من حساب وزارة الصحة"]);
-    expect(partsOf(mixed)).toContain("شركات من المصدر");
+    expect(partsOf(mixed)).toContain("شركات من خرائط جوجل");
     const written = await planFor(`شركات من ${POISON_LABEL}`, [`عايز ٥٠ منشور من ${POISON_LABEL}`]);
     expect(partsOf(written)).toContain(`شركات من ${POISON_LABEL}`);
   });

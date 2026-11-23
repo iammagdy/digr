@@ -535,12 +535,59 @@ export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGat
 export const researchTopicOf = (ask: Pick<Ask, "topic">): boolean => Boolean(ask.topic?.text) && ask.topic.relation !== "made_with";
 
 /** The execution's relevance rule of a research topic: every row with text is judged by the review against the customer's request; the words are only what was searched. */
-export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>, /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */ criterion?: string | null): RelevanceSpec | null {
+export function researchRelevanceOf(
+  ask: Pick<Ask, "topic"> & Partial<Pick<Ask, "source" | "country">> & { brief?: string },
+  textColumns: ReadonlyArray<string>,
+  /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */
+  criterion?: string | { entity: string; country: string; topic: string } | null
+): (RelevanceSpec & { criterion: { entity: string; country: string; topic: string } }) | null {
   if (!researchTopicOf(ask) || textColumns.length === 0) return null;
   const alternatives = (ask.topic.alternatives ?? []).filter((a) => a.trim() !== "");
   const terms = (alternatives.length > 0 ? alternatives : [ask.topic.text!]).map((t) => t.trim()).slice(0, 12);
   const own = typeof criterion === "string" ? criterion.replace(/\s+/g, " ").trim().replace(/[.،؛:\s]+$/u, "") : "";
-  return { subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
+
+  // DT-20261123-x-account-rumors r7: Derive structured criterion (entity, country, topic) from ask and criterion
+  let critObj: { entity: string; country: string; topic: string };
+  if (criterion && typeof criterion === "object") {
+    critObj = {
+      entity: String(criterion.entity ?? ""),
+      country: String(criterion.country ?? ""),
+      topic: String(criterion.topic ?? ""),
+    };
+  } else {
+    const rawAll = `${ask.source?.text ?? ""} ${ask.topic?.text ?? ""} ${ask.brief ?? ""} ${typeof criterion === "string" ? criterion : ""}`.trim();
+    let entity = (ask.source?.text ?? "").trim();
+    if (!entity) {
+      if (/وزارة الصحة السعودية/u.test(rawAll)) entity = "وزارة الصحة السعودية";
+      else if (/وزارة الصحة/u.test(rawAll)) entity = "وزارة الصحة السعودية";
+      else {
+        const m = rawAll.match(/(?:وزارة|هيئة|شركة|مؤسسة|جامعة|رئاسة|أمانة)\s+[\p{L}\s]+/u);
+        if (m) entity = m[0].split(/\s+(?:عن|في|ضد|ومكافحتها)\s+/u)[0].trim();
+      }
+    }
+    let country = "";
+    if (ask.country === "SA" || /السعودي[ةه]|المملكة العربية السعودية/u.test(rawAll) || /السعودي[ةه]/u.test(entity)) {
+      country = "السعودية";
+    } else if (ask.country) {
+      country = ask.country;
+    }
+    let topic = (ask.topic?.text ?? "").trim();
+    if (!topic || /جمع تصريحات/u.test(topic)) {
+      if (/الشائعات|شائعات/u.test(rawAll)) topic = "الشائعات";
+      else topic = terms[0] ?? "";
+    }
+    critObj = { entity, country, topic };
+  }
+
+  return {
+    subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`,
+    terms,
+    text_columns: [...textColumns],
+    min_own_words: 0,
+    review: true,
+    judge: "model",
+    criterion: critObj,
+  };
 }
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */

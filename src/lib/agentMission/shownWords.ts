@@ -42,9 +42,9 @@ export function replaceLabel(text: string, label: string, replacement: string): 
   });
 }
 
-/** The text with every label of the code's own table the customer did not write replaced by «المصدر»; a label the customer wrote stays. The one place this rule lives (planner and customer view). */
-export function withoutUnwrittenLabels(text: string, said: ReadonlyArray<string>): string {
-  let t = text;
-  for (const l of OWN_SOURCE_LABELS) if (!labelWrittenBy(l, said)) t = replaceLabel(t, l, SOURCE_LABEL_FALLBACK_AR);
-  return t;
+/**
+ * @deprecated DT-20261123-x-account-rumors r7 (COMMANDER decision): Arabic platform display names are product information always shown to the customer.
+ */
+export function withoutUnwrittenLabels(text: string, _said?: ReadonlyArray<string>): string {
+  return text;
 }

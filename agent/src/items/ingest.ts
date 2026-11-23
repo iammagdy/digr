@@ -408,14 +408,25 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       reviewStop = (await reviewer.state()).stop;
     }
     for (const { c, v } of verdicts) {
-      if (v.verdict === "match") { outcome.set(c.id, { state: "accepted", by: "rule", basis: (v as { basis?: RuleBasis }).basis }); continue; }
+      if (v.verdict === "match") {
+        if (spec.judge === "model") {
+          outcome.set(c.id, { state: "excluded", reason: "uncertain" });
+          continue;
+        }
+        outcome.set(c.id, { state: "accepted", by: "rule", basis: (v as { basis?: RuleBasis }).basis });
+        continue;
+      }
       if (v.verdict === "exclude") { outcome.set(c.id, { state: "excluded", reason: v.reason }); continue; }
       if (verdictOf.get(c.id) === true) { outcome.set(c.id, { state: "accepted", by: "model" }); continue; }
       if (verdictOf.has(c.id)) { outcome.set(c.id, { state: "excluded", reason: "review_no" }); continue; }
       if (spec.review === false) { outcome.set(c.id, { state: "excluded", reason: "uncertain" }); continue; }
       // with a reviewer, an item not reviewed (budget, a failed call, more than the room needs) is PENDING: kept and asked again; with none, it is a final exclusion
       const reason: RelevanceReason = !reviewer ? "not_reviewed" : reviewStop === "failed" ? "review_failed" : "not_reviewed";
-      outcome.set(c.id, reviewer ? { state: "pending", reason } : { state: "excluded", reason });
+      if (spec.judge === "model") {
+        outcome.set(c.id, { state: "excluded", reason: reviewStop === "failed" ? "review_failed" : "not_reviewed" });
+      } else {
+        outcome.set(c.id, reviewer ? { state: "pending", reason } : { state: "excluded", reason });
+      }
     }
   } else for (const c of candidates) outcome.set(c.id, { state: "accepted", by: "rule" });
 

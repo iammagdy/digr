@@ -5,7 +5,12 @@ import { candidatesFor, platformIndex } from "../agent/src/llmPlanner/catalogVie
 import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, customerSafe, probeStep, chooseTools, checkOptions, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { textDedupeKey, titleDedupeKey, canonicalUrlKey } from "../src/lib/agentMission/contract";
-import { REVIEW_SYSTEM, reviewPrompt } from "../agent/src/review";
+import { REVIEW_SYSTEM, reviewPrompt, emptyReviewState } from "../agent/src/review";
+import { researchRelevanceOf } from "../src/lib/agentMission/foundation/compilePlan";
+import { ItemStore } from "../agent/src/items/itemStore";
+import { ingestRows } from "../agent/src/items/ingest";
+import { createMemoryStore } from "../agent/src/memoryStore";
+import { customerMissionView } from "../src/lib/agentMission/customerView";
 
 const catalog = loadTregCatalog();
 const access = null;
@@ -613,14 +618,14 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     expect(index).toContain("tiktok: (تيك توك)");
     expect(index).toContain("youtube: (يوتيوب)");
 
-    // 2) customerSafe without allowPlatformNames replaces unwritten catalog platforms with «المصدر»
+    // 2) customerSafe preserves all Arabic platform names
     const text = "وسّع البحث إلى فيسبوك وتيك توك ويوتيوب";
     const said = ["حساب وزارة الصحة"];
     const stripped = customerSafe(text, 120, said);
-    expect(stripped).toBe("وسّع البحث إلى المصدر والمصدر والمصدر");
+    expect(stripped).toBe("وسّع البحث إلى فيسبوك وتيك توك ويوتيوب");
 
-    // 3) customerSafe with allowPlatformNames preserves platform names
-    const preserved = customerSafe(text, 120, said, { allowPlatformNames: true });
+    // 3) customerSafe preserves platform names
+    const preserved = customerSafe(text, 120, said);
     expect(preserved).toBe("وسّع البحث إلى فيسبوك وتيك توك ويوتيوب");
   });
 
@@ -1325,5 +1330,177 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       if (s.id === "row_20") continue; // unavailable title
       expect(s.title + " " + s.text).toMatch(/شائع|إشاع|أشيع|شيع|مضلل|لا يخدعونك|أخبار زائفة|مفاهيم مغلوطة|ادعاءات/u);
     }
+  });
+
+  describe("r7 Point B.3: Deterministic Plumbing Tests (Amendment 2)", () => {
+    // Real R6 Data Used (No Invented Text):
+    // Row 1: Title: «الصحة» تتوعد مروّجي شائعة «مرضى شهار» · Link: https://www.okaz.com.sa/last-stop/na/1620688
+    // Row 2: Title: الصحة توضح حقيقة إلغاء تكليف خريجي الكليات الطبية وتؤكد استمراره وفق الاحتياج · Link: https://www.youlyou.com/100034
+    // Approved Stage Brief: جمع تصريحات وزارة الصحة السعودية عن الشائعات ومكافحتها وتوعية الأفراد ضد الشائعات من الأخبار ومواقع الويب.
+    const row1 = {
+      id: "row_okaz_1",
+      title: "«الصحة» تتوعد مروّجي شائعة «مرضى شهار»",
+      url: "https://www.okaz.com.sa/last-stop/na/1620688",
+      text: "«الصحة» تتوعد مروّجي شائعة «مرضى شهار»",
+    };
+    const row2 = {
+      id: "row_youlyou_2",
+      title: "الصحة توضح حقيقة إلغاء تكليف خريجي الكليات الطبية وتؤكد استمراره وفق الاحتياج",
+      url: "https://www.youlyou.com/100034",
+      text: "الصحة توضح حقيقة إلغاء تكليف خريجي الكليات الطبية وتؤكد استمراره وفق الاحتياج",
+    };
+    const stageBrief = "جمع تصريحات وزارة الصحة السعودية عن الشائعات ومكافحتها وتوعية الأفراد ضد الشائعات من الأخبار ومواقع الويب.";
+
+    it("Test (a) - Criterion Plumbing: carries entity, country, topic derived directly from stage brief", () => {
+      const ask = {
+        topic: { text: "الشائعات", relation: "about" as const },
+        source: { kind: "official" as const, text: "وزارة الصحة السعودية" },
+        country: "SA",
+      };
+      const spec = researchRelevanceOf(ask, ["title", "text"], stageBrief);
+      expect(spec).not.toBeNull();
+      expect(spec!.judge).toBe("model");
+      expect(spec!.criterion).toBeDefined();
+      const crit = spec!.criterion as { entity: string; country: string; topic: string };
+      expect(crit.entity).toContain("وزارة الصحة السعودية");
+      expect(crit.country).toMatch(/السعودية|المملكة العربية السعودية/);
+      expect(crit.topic).toContain("الشائعات");
+    });
+
+    it("Test (b) - Exclusion Plumbing: judge verdict 0 excludes Row 2 with reason review_no", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_r7_plumbing_b";
+      const items = await ItemStore.open(store, missionId, { legacyStages: ["news"] });
+      const stage = {
+        key: "news",
+        title_ar: "الأخبار",
+        endpoint_id: "google_news",
+        planned_rows: 10,
+        parent_key: null,
+        deliver: true,
+        columns: [{ key: "title", title_ar: "العنوان" }, { key: "url", title_ar: "الرابط" }],
+        relevance: {
+          subject_ar: stageBrief,
+          terms: ["الشائعات"],
+          text_columns: ["title", "text"],
+          review: true,
+          judge: "model" as const,
+        },
+      };
+      const reviewer = {
+        budgetUsd: 10,
+        state: async () => ({ ...emptyReviewState(), spentUsd: 0.01 }),
+        review: async () => new Map<string, boolean>([
+          [row1.id, true],
+          [row2.id, false],
+        ]),
+      };
+
+      await ingestRows(
+        { items, plan: { stages: [stage] } as any, reviewer: reviewer as any, addEvent: async () => {} },
+        stage as any,
+        [row1, row2],
+        { idField: "id" }
+      );
+
+      const accepted = items.acceptedRows("news");
+      expect(accepted.map((r: any) => r.id)).toContain(row1.id);
+      expect(accepted.map((r: any) => r.id)).not.toContain(row2.id);
+
+      const excluded = items.excludedItems("news");
+      const row2Ex = excluded.find((it) => it.id === row2.id);
+      expect(row2Ex).toBeDefined();
+      expect(row2Ex?.reason).toBe("review_no");
+      expect(row2Ex?.state).toBe("excluded");
+    });
+
+    it("Test (c) - Fail/Skip Safety Plumbing: failing reviewer excludes unjudged Row 2 with review_failed", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_r7_plumbing_c";
+      const items = await ItemStore.open(store, missionId, { legacyStages: ["news"] });
+      const stage = {
+        key: "news",
+        title_ar: "الأخبار",
+        endpoint_id: "google_news",
+        planned_rows: 10,
+        parent_key: null,
+        deliver: true,
+        columns: [{ key: "title", title_ar: "العنوان" }, { key: "url", title_ar: "الرابط" }],
+        relevance: {
+          subject_ar: stageBrief,
+          terms: ["الشائعات"],
+          text_columns: ["title", "text"],
+          review: true,
+          judge: "model" as const,
+        },
+      };
+      const failingReviewer = {
+        budgetUsd: 10,
+        state: async () => ({ ...emptyReviewState(), stop: "failed" as const, failedCalls: 1 }),
+        review: async () => new Map<string, boolean>(),
+      };
+
+      await ingestRows(
+        { items, plan: { stages: [stage] } as any, reviewer: failingReviewer as any, addEvent: async () => {} },
+        stage as any,
+        [row1, row2],
+        { idField: "id" }
+      );
+
+      const accepted = items.acceptedRows("news");
+      expect(accepted).toHaveLength(0);
+
+      const excluded = items.excludedItems("news");
+      const row2Ex = excluded.find((it) => it.id === row2.id);
+      expect(row2Ex).toBeDefined();
+      expect(row2Ex?.reason).toBe("review_failed");
+      expect(row2Ex?.state).toBe("excluded");
+    });
+
+    it("Must-Pass Case 7 (Point B.4 - Price Card Minimum Charge Clarity): displays count and minimum charge when min applies", () => {
+      const planWithMin = {
+        summary_ar: "ملخص",
+        stages: [
+          {
+            key: "news",
+            title_ar: "الأخبار",
+            deliver: true,
+            expected_rows: 2,
+            columns: [{ key: "title", title_ar: "العنوان" }],
+          },
+        ],
+        price: {
+          unit_price_points: 10,
+          delivered_rows: 2,
+          min_charge_points: 200,
+          max_charge_points: 200,
+          reserve_points: 200,
+        },
+      };
+      const mission2Rows: any = {
+        id: "msn_b4_test",
+        status: "plan_ready",
+        request_text: "أخبار عن الشائعات",
+        created_at: new Date().toISOString(),
+        plan_public: planWithMin,
+      };
+      const view2 = customerMissionView({ mission: mission2Rows, events: [] });
+      expect(view2.headlineCountAr).toContain("والحد الأدنى للطلب ٢٠٠ نقطة");
+      expect(view2.headlineCountAr).toContain("خبرين");
+
+      // Counter-case: 20 delivered rows at 10 pts = 200 >= min_charge_points
+      const plan20Rows = {
+        ...planWithMin,
+        stages: [{ ...planWithMin.stages[0], expected_rows: 20 }],
+        price: { ...planWithMin.price, delivered_rows: 20 },
+      };
+      const mission20Rows: any = {
+        ...mission2Rows,
+        plan_public: plan20Rows,
+      };
+      const view20 = customerMissionView({ mission: mission20Rows, events: [] });
+      expect(view20.headlineCountAr).toBeNull();
+      expect(view20.totalRowsAr).toBe("٢٠ خبرًا");
+    });
   });
 });
