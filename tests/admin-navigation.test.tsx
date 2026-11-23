@@ -25,8 +25,8 @@ const OLD_ROUTES = [
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ];
 /** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
-// CHANGED (DT-20261118-06 phase 2A, the page folder src/app/admin/messages lands: «الرسائل والحملات» moves from MENU_ONLY_ROUTES into NEW_ROUTES)
-const NEW_ROUTES = ["/admin/invoices", "/admin/messages"];
+// CHANGED (DT-20261118-06 phase 2A, the page folder src/app/admin/messages lands: «الرسائل والحملات» moves from MENU_ONLY_ROUTES into NEW_ROUTES; DT-20261123-admin-provider-updates adds «تحديثات المزوّدين»)
+const NEW_ROUTES = ["/admin/invoices", "/admin/messages", "/admin/provider-updates"];
 // CHANGED (DT-20261118-06 PR 2): the read-only mission inspector /admin/missions/[id] is a page folder reached by a link, not a menu entry: it is in the folder list and NOT in the menu list
 const FOLDER_ONLY_ROUTES = ["/admin/missions"];
 const MENU_ONLY_ROUTES: string[] = [];
@@ -48,10 +48,10 @@ describe("every old admin address still opens its page", () => {
   });
 
   it("the menu list produces exactly the old addresses and nothing was lost from it", () => {
-    // CHANGED (DT-20261118-06, the menu gains «الرسائل والحملات»: 21 -> 22 pages; every old address is still required)
+    // CHANGED (DT-20261118-06, the menu gains «الرسائل والحملات»: 21 -> 22 pages; DT-20261123-admin-provider-updates adds «تحديثات المزوّدين»: 22 -> 23 pages; every old address is still required)
     expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES, ...MENU_ONLY_ROUTES].sort());
     expect([...ADMIN_LEGACY_ROUTES].sort()).toEqual([...OLD_ROUTES].sort()); // the legacy list itself never changes
-    expect(ADMIN_PAGES).toHaveLength(22);
+    expect(ADMIN_PAGES).toHaveLength(23);
   });
 
   it("no redirect was added that could send an old address somewhere else", () => {
@@ -70,7 +70,7 @@ describe("the menu is a few clear sections", () => {
     for (const g of ADMIN_GROUPS) expect(g.pages.length, g.id).toBeGreaterThan(0);
     expect(ADMIN_GROUPS[0].pages[0]).toBe("overview");
     expect(adminGroupOf("topups").label).toBe("الفلوس والشحن");
-    expect(adminGroupOf("providers").pages).toEqual(["providers", "calls-log"]);
+    expect(adminGroupOf("providers").pages).toEqual(["providers", "calls-log", "provider-updates"]);
   });
 
   it("every page has one plain Arabic sentence saying what it is for, with no Latin digit", () => {

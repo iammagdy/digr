@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
@@ -40,8 +41,14 @@ export default function AdminProvidersPage() {
   const [tregUrl, setTregUrl] = useState("");
   const [smoke, setSmoke] = useState<"idle" | "run" | { ok: boolean; msg: string }>("idle");
   const [busy, setBusy] = useState(false);
+  const [totalUpdatesCount, setTotalUpdatesCount] = useState(0);
 
-  const load = () => adminFetch<ProviderStatus>("/api/admin/providers").then((r) => { setP(r); setModel(r.llm.model); setTregUrl(r.treg.baseUrl); });
+  const load = () => {
+    adminFetch<{ total?: number }>("/api/admin/provider-updates")
+      .then((r) => { if (typeof r?.total === "number") setTotalUpdatesCount(r.total); })
+      .catch(() => {});
+    return adminFetch<ProviderStatus>("/api/admin/providers").then((r) => { setP(r); setModel(r.llm.model); setTregUrl(r.treg.baseUrl); });
+  };
   useEffect(() => { load().catch(() => {}); }, []);
 
   // The address keeps the open provider and view (`?p=treg&v=keys`), so a refresh or a shared link lands on the same short view.
@@ -158,6 +165,13 @@ export default function AdminProvidersPage() {
 
   return (
     <div data-screen-label="Providers" className="flex flex-col gap-3.5" style={{ maxWidth: isMobile ? undefined : 1000 }}>
+      <div className="flex items-center justify-between gap-3">
+        <Link href="/admin/provider-updates" className="hit flex items-center gap-2 rounded-full border border-ln2 bg-sf px-3.5 py-1.5 text-xs font-semibold text-ink hover:border-ln">
+          <span className="h-2 w-2 rounded-full bg-ok" />
+          <span>تحديثات المزودين الرادارية</span>
+          <span className="rounded-full bg-sf2 px-1.5 py-0.5 text-[10px] text-mut">{formatAr(totalUpdatesCount)}</span>
+        </Link>
+      </div>
       <div role="tablist" aria-label="مزودو الخدمة" className="grid grid-cols-2 gap-1 rounded-[14px] bg-sf2 p-1 sm:grid-cols-4">
         {tabs.map(([id, label]) => (
           <button key={id} id={`tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`panel-${id}`} onClick={() => setTab(id)}
