@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { normalizeArabic } from "../arabicNormalize";
 import { PAUSED_PROVIDERS } from "./blockList";
@@ -18,6 +18,60 @@ import { CATALOG_PRICE_REV } from "./priceRev";
  * text «True»/«False» and Unix seconds as text), and `cursor_path` is not complete (the same endpoint's cursor sits at output.data.nextCursor while the file says null):
  * `shapeReader.ts` never trusts one hint alone.
  */
+
+export interface EndpointQuerySyntax {
+  operators_supported: string[];
+  operators_rejected: string[];
+  notes: string | null;
+}
+
+export interface EndpointPaginationContract {
+  cursor_in_param: string | null;
+  cursor_out_path?: string | null;
+  cursor_out_path_rest: string | null;
+  cursor_out_path_mcp: string | null;
+  mcp_cursor_out_path?: string | null;
+  default_page_size: number | null;
+  max_page_size: number | null;
+  max_page_size_semantics: string | null;
+  automated_paging_ready: boolean | null;
+  stop_rule: string | null;
+}
+
+export interface EndpointAdapterContract {
+  endpoint_id: string;
+  best_for?: string | null;
+  not_for?: string | null;
+  query_syntax?: EndpointQuerySyntax;
+  date_filter?: { supported: boolean | null; syntax: string | null; notes?: string | null } | null;
+  pagination?: EndpointPaginationContract;
+  results_path?: string | null;
+  mcp_results_path?: string | null;
+  dedupe_key?: string | null;
+  row_entity_kind?: string | null;
+  history_depth?: string | null;
+  needs_session?: boolean;
+  current_status?: "working" | "degraded" | "failing" | null;
+  status_scope?: string | null;
+  common_errors_and_fix?: Array<{ error: string; fix: string }>;
+  billing?: {
+    listed_usd_per_call?: number | null;
+    actual_cost_varies?: boolean;
+    settled_cost_mcp_field?: string;
+    settled_cost_rest_header?: string;
+    type?: string | null;
+    value?: number | null;
+    currency?: string | null;
+    per?: number | null;
+    unit?: string | null;
+    source?: string | null;
+    confidence?: string | null;
+    note?: string | null;
+    usd?: number | null;
+  } | null;
+  known_contract_discrepancies?: string[];
+  [key: string]: unknown;
+}
 
 export interface CatalogNestedField {
   type: string;
@@ -79,6 +133,7 @@ export interface CatalogEndpoint {
   cursor_path: string | null;
   item_fields: Record<string, CatalogItemField> | null;
   example_response_trimmed: unknown;
+  adapter_contract?: EndpointAdapterContract | null;
 }
 
 export interface TregCatalog {
@@ -92,8 +147,83 @@ export interface TregCatalog {
   withdrawnIds?: ReadonlySet<string>;
 }
 
+export function normalizePaginationContract(p: any): EndpointPaginationContract | undefined {
+  if (!p || typeof p !== "object") return undefined;
+  const cursor_out_rest = p.cursor_out_path_rest ?? p.cursor_out_path ?? null;
+  const cursor_out_mcp = p.cursor_out_path_mcp ?? p.mcp_cursor_out_path ?? null;
+  return {
+    cursor_in_param: p.cursor_in_param ?? null,
+    cursor_out_path: cursor_out_rest,
+    cursor_out_path_rest: cursor_out_rest,
+    cursor_out_path_mcp: cursor_out_mcp,
+    mcp_cursor_out_path: cursor_out_mcp,
+    default_page_size: typeof p.default_page_size === "number" ? p.default_page_size : (p.default_page_size === null ? null : 20),
+    max_page_size: typeof p.max_page_size === "number" ? p.max_page_size : null,
+    max_page_size_semantics: p.max_page_size_semantics ?? null,
+    automated_paging_ready: typeof p.automated_paging_ready === "boolean" ? p.automated_paging_ready : null,
+    stop_rule: p.stop_rule ?? null,
+  };
+}
+
+export function normalizeQuerySyntax(q: any): EndpointQuerySyntax | undefined {
+  if (!q || typeof q !== "object") return undefined;
+  return {
+    operators_supported: Array.isArray(q.operators_supported) ? q.operators_supported : [],
+    operators_rejected: Array.isArray(q.operators_rejected) ? q.operators_rejected : [],
+    notes: q.notes ?? null,
+  };
+}
+
+export function normalizeAdapterContract(raw: any): EndpointAdapterContract {
+  return {
+    ...raw,
+    endpoint_id: String(raw.endpoint_id),
+    best_for: raw.best_for ?? null,
+    not_for: raw.not_for ?? null,
+    query_syntax: normalizeQuerySyntax(raw.query_syntax),
+    date_filter: raw.date_filter ? {
+      supported: typeof raw.date_filter.supported === "boolean" ? raw.date_filter.supported : null,
+      syntax: raw.date_filter.syntax ?? null,
+      notes: raw.date_filter.notes ?? null,
+    } : null,
+    pagination: normalizePaginationContract(raw.pagination),
+    results_path: raw.results_path ?? null,
+    mcp_results_path: raw.mcp_results_path ?? null,
+    dedupe_key: raw.dedupe_key ?? null,
+    row_entity_kind: raw.row_entity_kind ?? null,
+    history_depth: raw.history_depth ?? null,
+    needs_session: typeof raw.needs_session === "boolean" ? raw.needs_session : false,
+    current_status: raw.current_status ?? null,
+    status_scope: raw.status_scope ?? null,
+    common_errors_and_fix: Array.isArray(raw.common_errors_and_fix) ? raw.common_errors_and_fix : [],
+    billing: raw.billing ? {
+      ...raw.billing,
+      listed_usd_per_call: raw.billing.usd ?? raw.billing.listed_usd_per_call ?? raw.cost_per_call_usd ?? null,
+      actual_cost_varies: raw.billing.actual_cost_varies ?? (raw.billing.type !== "fixed" && raw.billing.type !== "per_call"),
+      settled_cost_mcp_field: raw.actual_treg_charge?.mcp_field ?? raw.billing.settled_cost_mcp_field,
+      settled_cost_rest_header: raw.actual_treg_charge?.rest_header ?? raw.billing.settled_cost_rest_header,
+    } : null,
+    known_contract_discrepancies: Array.isArray(raw.known_contract_discrepancies) ? raw.known_contract_discrepancies : [],
+  };
+}
+
+export function applyAdapterRegistry(catalog: TregCatalog, registryData: unknown): void {
+  const data = registryData as { endpoints?: unknown[] } | undefined;
+  if (!data || !Array.isArray(data.endpoints)) return;
+  const contractMap = new Map<string, EndpointAdapterContract>();
+  for (const raw of data.endpoints) {
+    if (raw && typeof raw === "object" && typeof (raw as any).endpoint_id === "string") {
+      contractMap.set((raw as any).endpoint_id, normalizeAdapterContract(raw));
+    }
+  }
+  for (const endpoint of catalog.endpoints) {
+    const contract = contractMap.get(endpoint.id);
+    endpoint.adapter_contract = contract ?? null;
+  }
+}
+
 /** Builds the catalog from the two parsed files. Pure (no file access), so tests can hand it a small snapshot. */
-export function parseCatalog(snapshot: unknown, writeActions: unknown): TregCatalog {
+export function parseCatalog(snapshot: unknown, writeActions: unknown, adapterContracts?: unknown): TregCatalog {
   const s = snapshot as { source?: string; count?: number; excluded?: TregCatalog["excluded"]; endpoints?: CatalogEndpoint[] };
   if (!s || !Array.isArray(s.endpoints)) throw new Error("the catalog snapshot has no endpoints list");
   const byId = new Map<string, CatalogEndpoint>();
@@ -103,7 +233,7 @@ export function parseCatalog(snapshot: unknown, writeActions: unknown): TregCata
     byId.set(endpoint.id, endpoint);
   }
   const writeIds = new Set<string>(Array.isArray(writeActions) ? (writeActions as Array<{ id?: string }>).map((w) => String(w?.id ?? "")).filter(Boolean) : []);
-  return {
+  const catalog: TregCatalog = {
     source: String(s.source ?? ""),
     count: Number(s.count ?? byId.size),
     excluded: s.excluded ?? { own_account: 0, write: 0, paused: 0 },
@@ -111,6 +241,30 @@ export function parseCatalog(snapshot: unknown, writeActions: unknown): TregCata
     byId,
     writeIds,
   };
+
+  let contractsData = adapterContracts;
+  if (contractsData === undefined) {
+    const registryPath = path.join(process.cwd(), "data", "treg", "treg_research_endpoint_registry.json");
+    try {
+      if (existsSync(registryPath)) {
+        contractsData = JSON.parse(readFileSync(registryPath, "utf-8"));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (contractsData) {
+    applyAdapterRegistry(catalog, contractsData);
+  } else {
+    for (const endpoint of catalog.endpoints) {
+      if (endpoint.adapter_contract === undefined) {
+        endpoint.adapter_contract = null;
+      }
+    }
+  }
+
+  return catalog;
 }
 
 /**
@@ -222,7 +376,16 @@ export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatal
   const dir = options.dir ?? defaultDir();
   const snapshot = JSON.parse(readFileSync(path.join(dir, "treg_catalog_sellable.json"), "utf-8"));
   const writes = JSON.parse(readFileSync(path.join(dir, "treg_write_actions.json"), "utf-8"));
-  const catalog = parseCatalog(snapshot, writes);
+  let adapterContracts: unknown = undefined;
+  const regPath = path.join(dir, "treg_research_endpoint_registry.json");
+  try {
+    if (existsSync(regPath)) {
+      adapterContracts = JSON.parse(readFileSync(regPath, "utf-8"));
+    }
+  } catch {
+    // fallback
+  }
+  const catalog = parseCatalog(snapshot, writes, adapterContracts);
   declareExtraInputs(catalog);
   applyPriceCorrections(catalog);
   return catalog;
