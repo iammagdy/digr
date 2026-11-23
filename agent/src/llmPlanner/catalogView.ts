@@ -9,6 +9,7 @@ import { EMAIL_FINDER_CAPABILITIES } from "../../../src/lib/agentMission/contact
 import productionEligible from "../../../data/capabilities/production-eligible.json";
 import { WEB_SOURCES } from "../../../src/lib/agentMission/sources";
 import type { WebAvailability } from "../../../src/lib/agentMission/webAvailability";
+import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
 const PROVEN: ReadonlySet<string> = new Set(((productionEligible as { ids?: unknown }).ids as string[] | undefined) ?? []);
@@ -88,7 +89,7 @@ export function platformIndex(catalog: TregCatalog, access: AccountAccess | null
   }
   return [...byPlatform.entries()]
     .sort((a, b) => sizeOf(b[1]) - sizeOf(a[1]))
-    .map(([p, caps]) => `${p}: ${[...caps.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([c, n]) => `${c.startsWith(`${p}.`) ? c.slice(p.length + 1) : c}(${n})`).join(", ")}`)
+    .map(([p, caps]) => `${p}: ${PLATFORM_AR[p] ? `(${PLATFORM_AR[p]}) ` : ""}${[...caps.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([c, n]) => `${c.startsWith(`${p}.`) ? c.slice(p.length + 1) : c}(${n})`).join(", ")}`)
     .join("\n");
 }
 const sizeOf = (m: Map<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
