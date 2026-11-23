@@ -151,11 +151,11 @@ export const platformAr = (p: string, capability: string | undefined, said: Read
  * A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null. With `said` (the customer's words), a sentence that names a label of
  * the code's own platform table the customer did not write is refused as well (DT-20261118-09 S2), and a Latin word the customer wrote is not a reason to refuse it (S1: their own word).
  */
-export function customerSafe(text: string | null | undefined, maxChars = 400, said?: ReadonlyArray<string>): string | null {
+export function customerSafe(text: string | null | undefined, maxChars = 400, said?: ReadonlyArray<string>, opts?: { allowPlatformNames?: boolean }): string | null {
   let t = toArabicDigits(String(text ?? "").replace(/\s+/g, " ").trim());
   if (!t) return null;
   // a label of the code's own table the customer did not write becomes «المصدر» inside the model's sentence (the rest of the sentence is still the model's)
-  if (said !== undefined) t = withoutUnwrittenLabels(t, said);
+  if (said !== undefined && !opts?.allowPlatformNames) t = withoutUnwrittenLabels(t, said);
   if (said !== undefined && foreignLatinIn(t, writtenLatinWords(said)).length === 0 && /[A-Za-z]{2,}/.test(t)) {
     return checkCustomerText(t.replace(/[A-Za-z]{2,}/g, "ـ"), { maxChars }).issues.length === 0 ? t : null;
   }
@@ -273,7 +273,7 @@ export interface ToolOption { endpoint: CatalogEndpoint; params: Record<string, 
 export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogEndpoint>, isChild: boolean): ToolOption[] {
   const raw = isObj(answer) && Array.isArray(answer.options) ? answer.options : [];
   const out: ToolOption[] = [];
-  for (const o of raw.slice(0, 3)) {
+  for (const o of raw.slice(0, 8)) {
     if (!isObj(o)) continue;
     const endpoint = candidates.find((e) => e.id === str(o.endpoint_id));
     if (!endpoint || out.some((x) => x.endpoint.id === endpoint.id)) continue;
@@ -710,7 +710,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   const said = customerSaidOf(input);
-  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said)).filter((o): o is string => o !== null), understanding: u, costUsd };
+  if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said, { allowPlatformNames: true })).filter((o): o is string => o !== null), understanding: u, costUsd };
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
   if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
@@ -765,8 +765,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       const got2 = configuredChild
         ? await probeStep(step, [next], parent, deps, { left: Math.min(altBudgetLeft, 2) })
         : await probeStep(step, [next], null, deps, { left: Math.min(altBudgetLeft, 2) });
+      altBudgetLeft -= got2 ? got2.callIds.length : Math.min(altBudgetLeft, 2);
       if (got2) {
-        altBudgetLeft -= got2.callIds.length;
         let map2 = checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items);
         if (!map2) map2 = fallbackMap(got2.items);
         if (map2) {
@@ -863,6 +863,49 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       const matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
       if (matches !== null && matches.length === 0) {
         topicMatchedInSample = false;
+        // Window paging: if first page had 0 matches and source has more pages (e.g. account timeline),
+        // page over the window with the model judge until on-topic items are found or window ends.
+        const cursorKey = got.option.cursor ?? (Array.isArray(got.option.endpoint.pagination) ? got.option.endpoint.pagination.find((p) => got.option.endpoint.inputs.some((i) => i.name === p)) : null);
+        if (got.hasMore && (got.nextCursor || cursorKey) && !step.parent) {
+          let currentCursor = got.nextCursor;
+          const matchingRows: Array<Record<string, unknown>> = [];
+          const visited = new Set<string>();
+          if (currentCursor) visited.add(currentCursor);
+          const maxWindowPages = 4;
+          for (let pIdx = 0; pIdx < maxWindowPages && currentCursor && cursorKey; pIdx += 1) {
+            const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
+            const rNext = await deps.probe(got.option.endpoint.id, nextParams);
+            if (!rNext.ok) break;
+            if (rNext.call_id) got.callIds.push(rNext.call_id);
+            const nextPage = await deps.readPage(rNext.call_id);
+            if (!nextPage) break;
+            const nextRows = runMap(mapCode, nextPage);
+            if (nextRows.length === 0) break;
+            const nextTexts = nextRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
+            const nextJudgeRes = await ask(
+              "You check whether items from a source are about the customer's topic. Return the 0-based indices of items that discuss or touch on the topic. If none do, return an empty array.",
+              `Topic: «${step.topic}»\nItems:\n${nextTexts}`,
+              { name: "judge_sample", description: "Count how many items match the topic.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+              200,
+            );
+            const nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
+            if (nextMatches && nextMatches.length > 0) {
+              for (const idx of nextMatches) {
+                if (typeof idx === "number" && nextRows[idx]) matchingRows.push(nextRows[idx]!);
+              }
+            }
+            if (matchingRows.length > 0) {
+              topicMatchedInSample = true;
+              sampleRows.splice(0, sampleRows.length, ...matchingRows, ...sampleRows.slice(matchingRows.length));
+              deps.log?.(`llm_planner_judge_sample ${step.key} window_paging_found on_topic=${matchingRows.length}`);
+              break;
+            }
+            const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
+            if (!nextCursorVal || visited.has(nextCursorVal)) break;
+            visited.add(nextCursorVal);
+            currentCursor = nextCursorVal;
+          }
+        }
       } else if (matches === null) {
         deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed`);
       }
@@ -982,176 +1025,227 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
 interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null; checkedParams: Record<string, unknown>; chargedUsd: number }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
-async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }): Promise<Probed | null> {
+export async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }): Promise<Probed | null> {
   const callIds: string[] = [];
-  for (let optIdx = 0; optIdx < options.length; optIdx += 1) {
-    const option = options[optIdx];
+
+  const tryProbeParams = async (
+    option: ToolOption,
+    params: Record<string, unknown>,
+    setIndex: number,
+    allSets: Array<Record<string, unknown>>,
+    refusedEndpoints?: Set<string>,
+  ): Promise<Probed | null> => {
     const reviewed = missionPageOf(option.endpoint.id);
-    const sets = [option.params, ...option.more];
-    // a child is tried on up to PARENTS_TRIED parents, the most commented first (the newest post may have no comment yet): the first input set only
-    const parentValues = option.parent && parent ? parentValuesOf(parent.sampleRows, option.parent.from) : [null];
-    if (option.parent && parent && parentValues.length === 0) continue;
-    const allAttempts: Array<{ set: number; parentValue: unknown }> = option.parent && parent ? parentValues.map((v) => ({ set: 0, parentValue: v })) : sets.map((_, i) => ({ set: i, parentValue: null }));
-    const childCap = option.parent && parent && options.length > 2 ? Math.max(1, Math.floor(budget.left / (options.length - optIdx))) : allAttempts.length;
-    const attempts = allAttempts.slice(0, childCap);
-    for (const a of attempts) {
-      if (budget.left <= 0) break;
-      const i = a.set;
-      let params = { ...sets[i] };
-      if (option.parent && parent) params = { ...params, [option.parent.param]: a.parentValue };
-      budget.left -= 1;
-      const r = await deps.probe(option.endpoint.id, params);
-      const rAny = r as { call_ids?: string[] };
-      if (Array.isArray(rAny.call_ids) && rAny.call_ids.length > 0) {
-        for (const cid of rAny.call_ids) callIds.push(cid);
-      } else {
-        callIds.push(r.call_id);
+    budget.left -= 1;
+    const r = await deps.probe(option.endpoint.id, params);
+    const rAny = r as { call_ids?: string[] };
+    if (Array.isArray(rAny.call_ids) && rAny.call_ids.length > 0) {
+      for (const cid of rAny.call_ids) callIds.push(cid);
+    } else {
+      callIds.push(r.call_id);
+    }
+    if (!r.ok) {
+      deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
+      if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
+      if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) {
+        refusedEndpoints?.add(option.endpoint.id);
       }
-      if (!r.ok) {
-        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
-        if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
-        // 400 Bad Request / bad_input from provider: rewrite query with provider error feedback once
-        if (Number((r as any).http_status) === 400 && budget.left > 0 && !option.parent) {
-          try {
-            const providerError = String((r as any).message || (r as any).error || (r as any).detail || "bad_input");
-            const answer = await deps.model({
-              system: "A data collection tool rejected the parameters with an HTTP 400 bad_input error. Inspect the provider's exact error message and rewrite the parameters to satisfy the provider's rules (e.g. remove invalid operators, simplify boolean expressions, or format source filters as required). Do not add unrequested constraints.",
-              user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nRejected parameters: ${JSON.stringify(params)}\nProvider error: ${providerError}`,
-              tool: {
-                name: "rewrite_params",
-                description: "Rewritten parameters satisfying provider requirements",
-                schema: {
-                  type: "object",
-                  properties: {
-                    rewritten_params: { type: "object", description: "Rewritten input parameters" },
-                    why: { type: "string" },
-                  },
-                  required: ["rewritten_params"],
+      // 400 Bad Request / bad_input from provider: rewrite query with provider error feedback once
+      if (Number((r as any).http_status) === 400 && budget.left > 0 && !option.parent) {
+        try {
+          const providerError = String((r as any).message || (r as any).error || (r as any).detail || "bad_input");
+          const answer = await deps.model({
+            system: "A data collection tool rejected the parameters with an HTTP 400 bad_input error. Inspect the provider's exact error message and rewrite the parameters to satisfy the provider's rules (e.g. remove invalid operators, simplify boolean expressions, or format source filters as required). Do not add unrequested constraints.",
+            user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nRejected parameters: ${JSON.stringify(params)}\nProvider error: ${providerError}`,
+            tool: {
+              name: "rewrite_params",
+              description: "Rewritten parameters satisfying provider requirements",
+              schema: {
+                type: "object",
+                properties: {
+                  rewritten_params: { type: "object", description: "Rewritten input parameters" },
+                  why: { type: "string" },
                 },
+                required: ["rewritten_params"],
               },
-              maxTokens: 1000,
-            });
-            const rew = answer?.input;
-            const rewrittenParams = isObj(rew) && isObj((rew as any).rewritten_params) ? ((rew as any).rewritten_params as Record<string, unknown>) : null;
-            if (rewrittenParams && Object.keys(rewrittenParams).length > 0 && JSON.stringify(rewrittenParams) !== JSON.stringify(params)) {
-              deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} retry_rewritten: ${JSON.stringify(rewrittenParams)}`);
-              budget.left -= 1;
-              const rRewritten = await deps.probe(option.endpoint.id, rewrittenParams);
-              callIds.push(rRewritten.call_id);
-              if (rRewritten.ok && (reviewed || rRewritten.rows_in_page > 0)) {
-                const pageRewritten = await deps.readPage(rRewritten.call_id);
-                if (pageRewritten !== null) {
-                  const readingRewritten = reviewed
-                    ? readShape(pageRewritten, { ...hintsOf(option.endpoint), missionPage: reviewed })
-                    : buildShapeDigest(pageRewritten, option.endpoint).reading;
-                  if (readingRewritten.rows.length > 0) {
-                    deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} rewrite_ok rows=${readingRewritten.rows.length}`);
-                    return {
-                      option: { ...option, params: rewrittenParams, more: [] },
-                      page: pageRewritten,
-                      items: readingRewritten.rows,
-                      listPath: readingRewritten.listPath,
-                      callIds,
-                      hasMore: reviewed ? Boolean(readingRewritten.nextCursor) && readingRewritten.hasMore !== false : Boolean(rRewritten.next_cursor) || rRewritten.has_more === true,
-                      nextCursor: reviewed ? readingRewritten.nextCursor : typeof rRewritten.next_cursor === "string" && rRewritten.next_cursor !== "" ? rRewritten.next_cursor : null,
-                      checkedParams: rewrittenParams,
-                      chargedUsd: effectiveChargeUsd(rRewritten as { charge_usd?: number | null; reserved_usd?: number | null }),
-                    };
-                  }
+            },
+            maxTokens: 1000,
+          });
+          const rew = answer?.input;
+          const rewrittenParams = isObj(rew) && isObj((rew as any).rewritten_params) ? ((rew as any).rewritten_params as Record<string, unknown>) : null;
+          if (rewrittenParams && Object.keys(rewrittenParams).length > 0 && JSON.stringify(rewrittenParams) !== JSON.stringify(params)) {
+            deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} retry_rewritten: ${JSON.stringify(rewrittenParams)}`);
+            budget.left -= 1;
+            const rRewritten = await deps.probe(option.endpoint.id, rewrittenParams);
+            callIds.push(rRewritten.call_id);
+            if (rRewritten.ok && (reviewed || rRewritten.rows_in_page > 0)) {
+              const pageRewritten = await deps.readPage(rRewritten.call_id);
+              if (pageRewritten !== null) {
+                const readingRewritten = reviewed
+                  ? readShape(pageRewritten, { ...hintsOf(option.endpoint), missionPage: reviewed })
+                  : buildShapeDigest(pageRewritten, option.endpoint).reading;
+                if (readingRewritten.rows.length > 0) {
+                  deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} rewrite_ok rows=${readingRewritten.rows.length}`);
+                  return {
+                    option: { ...option, params: rewrittenParams, more: [] },
+                    page: pageRewritten,
+                    items: readingRewritten.rows,
+                    listPath: readingRewritten.listPath,
+                    callIds,
+                    hasMore: reviewed ? Boolean(readingRewritten.nextCursor) && readingRewritten.hasMore !== false : Boolean(rRewritten.next_cursor) || rRewritten.has_more === true,
+                    nextCursor: reviewed ? readingRewritten.nextCursor : typeof rRewritten.next_cursor === "string" && rRewritten.next_cursor !== "" ? rRewritten.next_cursor : null,
+                    checkedParams: rewrittenParams,
+                    chargedUsd: effectiveChargeUsd(rRewritten as { charge_usd?: number | null; reserved_usd?: number | null }),
+                  };
                 }
               }
             }
-          } catch { /* proceed to next */ }
-        }
-        // a refusal, or a provider that is not paid or not allowed (401/402/403: live, 16 Nov 2026, one news tool answered 402 to eight calls in a row): its other input sets are not tried, the next tool is
-        if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) break;
-        continue;
+          }
+        } catch { /* proceed to next */ }
       }
-      if (!reviewed && r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
-      const page = await deps.readPage(r.call_id);
-      if (page === null) { if (trace) trace.failures += 1; continue; }
-      const reading = reviewed
-        ? readShape(page, { ...hintsOf(option.endpoint), missionPage: reviewed })
-        : buildShapeDigest(page, option.endpoint).reading;
-      if (reviewed && (reading.listStrategy === "declared_missing" || (reading.warnings.length > 0 && reading.rows.length === 0))) {
-        if (trace) { trace.failures += 1; trace.uncertain = true; }
-        continue;
-      }
-      if (reading.rows.length === 0) {
-        if (reviewed && (reading.nextCursor || reading.hasMore === true)) {
-          if (trace) trace.uncertain = true;
-          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} open_empty`);
-          continue;
-        }
-        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`);
-        if (trace) trace.empties += 1;
-        continue;
-      }
-      // the input set that answered becomes the first one, the others follow it
-      const reordered: ToolOption = i === 0 ? option : { ...option, params: sets[i], more: sets.filter((_, j) => j !== i) };
-      return {
-        option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds,
-        hasMore: reviewed ? Boolean(reading.nextCursor) && reading.hasMore !== false : Boolean(r.next_cursor) || r.has_more === true,
-        nextCursor: reviewed ? reading.nextCursor : typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null,
-        checkedParams: params, chargedUsd: effectiveChargeUsd(r as { charge_usd?: number | null; reserved_usd?: number | null }),
-      };
+      return null;
     }
-    if (budget.left > 0 && !option.parent) {
-      try {
-        const answer = await deps.model({
-          system: "A data search tool answered with 0 records for the given parameters. Propose ONE broader parameter variant of the SAME tool to find matching records (e.g. drop narrow city/local filter while keeping country, broaden industry or search terms, or relax specific constraints). Do not add new constraints.",
-          user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nFailed parameters: ${JSON.stringify(option.params)}`,
-          tool: {
-            name: "propose_broader",
-            description: "Propose broader parameter variant of the same tool",
-            schema: {
-              type: "object",
-              properties: {
-                broader_params: { type: "object", description: "Broadened input parameters object for the same tool" },
-                change_reason: { type: "string", description: "Why these parameters are broader" },
-              },
-              required: ["broader_params"],
+    if (!reviewed && r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; return null; }
+    const page = await deps.readPage(r.call_id);
+    if (page === null) { if (trace) trace.failures += 1; return null; }
+    const reading = reviewed
+      ? readShape(page, { ...hintsOf(option.endpoint), missionPage: reviewed })
+      : buildShapeDigest(page, option.endpoint).reading;
+    if (reviewed && (reading.listStrategy === "declared_missing" || (reading.warnings.length > 0 && reading.rows.length === 0))) {
+      if (trace) { trace.failures += 1; trace.uncertain = true; }
+      return null;
+    }
+    if (reading.rows.length === 0) {
+      if (reviewed && (reading.nextCursor || reading.hasMore === true)) {
+        if (trace) trace.uncertain = true;
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} open_empty`);
+        return null;
+      }
+      deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`);
+      if (trace) trace.empties += 1;
+      return null;
+    }
+    // the input set that answered becomes the first one, the others follow it
+    const reordered: ToolOption = setIndex === 0 ? option : { ...option, params: allSets[setIndex], more: allSets.filter((_, j) => j !== setIndex) };
+    return {
+      option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds,
+      hasMore: reviewed ? Boolean(reading.nextCursor) && reading.hasMore !== false : Boolean(r.next_cursor) || r.has_more === true,
+      nextCursor: reviewed ? reading.nextCursor : typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null,
+      checkedParams: params, chargedUsd: effectiveChargeUsd(r as { charge_usd?: number | null; reserved_usd?: number | null }),
+    };
+  };
+
+  if (parent) {
+    for (let optIdx = 0; optIdx < options.length; optIdx += 1) {
+      const option = options[optIdx];
+      const sets = [option.params, ...option.more];
+      const parentValues = option.parent ? parentValuesOf(parent.sampleRows, option.parent.from) : [null];
+      if (option.parent && parentValues.length === 0) continue;
+      const allAttempts = parentValues.map((v) => ({ set: 0, parentValue: v }));
+      const childCap = options.length > 2 ? Math.max(1, Math.floor(budget.left / (options.length - optIdx))) : allAttempts.length;
+      const attempts = allAttempts.slice(0, childCap);
+      for (const a of attempts) {
+        if (budget.left <= 0) break;
+        let params = { ...sets[a.set] };
+        if (option.parent) params = { ...params, [option.parent.param]: a.parentValue };
+        const got = await tryProbeParams(option, params, a.set, sets);
+        if (got) return got;
+      }
+      if (budget.left <= 0) break;
+    }
+    return null;
+  }
+
+  const refusedEndpoints = new Set<string>();
+  if (Boolean(step.source)) {
+    // When source is known: breadth-first across DISTINCT endpoints with simplest / primary query or account inputs
+    for (const option of options) {
+      if (budget.left <= 0) break;
+      const sets = [option.params, ...option.more];
+      const got = await tryProbeParams(option, sets[0], 0, sets, refusedEndpoints);
+      if (got) return got;
+    }
+    // Extra phrasings (more_params) if primary queries yielded no rows
+    for (const option of options) {
+      if (budget.left <= 0) break;
+      if (refusedEndpoints.has(option.endpoint.id)) continue;
+      const sets = [option.params, ...option.more];
+      for (let i = 1; i < sets.length; i += 1) {
+        if (budget.left <= 0) break;
+        const got = await tryProbeParams(option, sets[i], i, sets, refusedEndpoints);
+        if (got) return got;
+      }
+    }
+  } else {
+    for (let optIdx = 0; optIdx < options.length; optIdx += 1) {
+      const option = options[optIdx];
+      const sets = [option.params, ...option.more];
+      for (let i = 0; i < sets.length; i += 1) {
+        if (budget.left <= 0) break;
+        const got = await tryProbeParams(option, sets[i], i, sets, refusedEndpoints);
+        if (got) return got;
+      }
+      if (budget.left <= 0) break;
+    }
+  }
+
+  // Pass 3: Broader parameter variant if budget remains
+  if (budget.left > 0 && options[0]) {
+    const option = options[0];
+    const reviewed = missionPageOf(option.endpoint.id);
+    try {
+      const answer = await deps.model({
+        system: "A data search tool answered with 0 records for the given parameters. Propose ONE broader parameter variant of the SAME tool to find matching records (e.g. drop narrow city/local filter while keeping country, broaden industry or search terms, or relax specific constraints). Do not add new constraints.",
+        user: `Step: ${JSON.stringify(step)}\nCandidate tool: ${JSON.stringify(describeForModel(option.endpoint))}\nFailed parameters: ${JSON.stringify(option.params)}`,
+        tool: {
+          name: "propose_broader",
+          description: "Propose broader parameter variant of the same tool",
+          schema: {
+            type: "object",
+            properties: {
+              broader_params: { type: "object", description: "Broadened input parameters object for the same tool" },
+              change_reason: { type: "string", description: "Why these parameters are broader" },
             },
+            required: ["broader_params"],
           },
-          maxTokens: 1000,
-        });
-        const got = answer?.input;
-        const broaderParams = isObj(got) && isObj(got.broader_params) ? (got.broader_params as Record<string, unknown>) : null;
-        if (broaderParams && Object.keys(broaderParams).length > 0 && JSON.stringify(broaderParams) !== JSON.stringify(option.params) && budget.left > 0) {
-          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} trying broader variant: ${JSON.stringify(broaderParams)}`);
-          budget.left -= 1;
-          const r2 = await deps.probe(option.endpoint.id, broaderParams);
-          callIds.push(r2.call_id);
-          if (r2.ok && (reviewed || r2.rows_in_page > 0)) {
-            const page2 = await deps.readPage(r2.call_id);
-            if (page2 !== null) {
-              const reading2 = reviewed
-                ? readShape(page2, { ...hintsOf(option.endpoint), missionPage: reviewed })
-                : buildShapeDigest(page2, option.endpoint).reading;
-              if (reading2.rows.length > 0) {
-                deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_ok rows=${reading2.rows.length}`);
-                return {
-                  option: { ...option, params: broaderParams, more: [] },
-                  page: page2,
-                  items: reading2.rows,
-                  listPath: reading2.listPath,
-                  callIds,
-                  hasMore: reviewed ? Boolean(reading2.nextCursor) && reading2.hasMore !== false : Boolean(r2.next_cursor) || r2.has_more === true,
-                  nextCursor: reviewed ? reading2.nextCursor : typeof r2.next_cursor === "string" && r2.next_cursor !== "" ? r2.next_cursor : null,
-                  checkedParams: broaderParams,
-                  chargedUsd: r2.charge_usd ?? 0,
-                };
-              }
+        },
+        maxTokens: 1000,
+      });
+      const got = answer?.input;
+      const broaderParams = isObj(got) && isObj(got.broader_params) ? (got.broader_params as Record<string, unknown>) : null;
+      if (broaderParams && Object.keys(broaderParams).length > 0 && JSON.stringify(broaderParams) !== JSON.stringify(option.params) && budget.left > 0) {
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} trying broader variant: ${JSON.stringify(broaderParams)}`);
+        budget.left -= 1;
+        const r2 = await deps.probe(option.endpoint.id, broaderParams);
+        callIds.push(r2.call_id);
+        if (r2.ok && (reviewed || r2.rows_in_page > 0)) {
+          const page2 = await deps.readPage(r2.call_id);
+          if (page2 !== null) {
+            const reading2 = reviewed
+              ? readShape(page2, { ...hintsOf(option.endpoint), missionPage: reviewed })
+              : buildShapeDigest(page2, option.endpoint).reading;
+            if (reading2.rows.length > 0) {
+              deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_ok rows=${reading2.rows.length}`);
+              return {
+                option: { ...option, params: broaderParams, more: [] },
+                page: page2,
+                items: reading2.rows,
+                listPath: reading2.listPath,
+                callIds,
+                hasMore: reviewed ? Boolean(reading2.nextCursor) && reading2.hasMore !== false : Boolean(r2.next_cursor) || r2.has_more === true,
+                nextCursor: reviewed ? reading2.nextCursor : typeof r2.next_cursor === "string" && r2.next_cursor !== "" ? r2.next_cursor : null,
+                checkedParams: broaderParams,
+                chargedUsd: r2.charge_usd ?? 0,
+              };
             }
           }
-          deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_empty`);
-          if (trace) trace.empties += 1;
         }
-      } catch (err) {
-        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_error: ${String((err as Error)?.message ?? err)}`);
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_empty`);
+        if (trace) trace.empties += 1;
       }
+    } catch (err) {
+      deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} broader_error: ${String((err as Error)?.message ?? err)}`);
     }
-    if (budget.left <= 0) break;
   }
   return null;
 }
@@ -1412,7 +1506,7 @@ export async function scoutQuestion(
     900
   );
   if (!isObj(answer)) return fallback;
-  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
+  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input), { allowPlatformNames: true });
   if (!message) return fallback;
   const allowed = new Set<string>([
     ...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]),
@@ -1424,7 +1518,7 @@ export async function scoutQuestion(
     return fallback;
   }
   const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
-    .map((o) => customerSafe(str(o), 120, customerSaidOf(input)))
+    .map((o) => customerSafe(str(o), 120, customerSaidOf(input), { allowPlatformNames: true }))
     .filter((o): o is string => Boolean(o && o.trim()));
 
   // Code only checks shape: 2–4 options, first = deliver what was found

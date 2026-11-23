@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import fs from "fs";
 import path from "path";
-import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
-import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, type ScoutFinding } from "../agent/src/llmPlanner/planner";
+import { candidatesFor, platformIndex } from "../agent/src/llmPlanner/catalogView";
+import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, customerSafe, probeStep, chooseTools, checkOptions, type ScoutFinding } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 
 const catalog = loadTregCatalog();
@@ -535,5 +535,198 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     expect(map?.fields.author).toEqual(["legacy", "name"]);
     expect(map?.fields.username).toEqual(["legacy", "screen_name"]);
     expect(map?.fields.posted_at).toEqual(["legacy", "created_at"]);
+  });
+
+  it("r3 Breadth-first probing order: attempts distinct endpoints before extra phrasings", async () => {
+    const searchEp1 = catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!;
+    const searchEp2 = catalog.endpoints.find((e) => e.id === "tikhub.x.twitter-web-fetch-search-timeline")!;
+    const timelineEp = catalog.endpoints.find((e) => e.id === "anyapi.x.user.posts")!;
+
+    const opt1 = { endpoint: searchEp1, params: { query: "q1" }, cursor: null, parent: null, more: [{ query: "q2" }, { query: "q3" }], notCarried: [] };
+    const opt2 = { endpoint: searchEp2, params: { keyword: "k1" }, cursor: null, parent: null, more: [{ keyword: "k2" }], notCarried: [] };
+    const opt3 = { endpoint: timelineEp, params: { username: "SaudiMOH" }, cursor: "cursor", parent: null, more: [], notCarried: [] };
+
+    const calls: Array<{ endpointId: string; params: any }> = [];
+    const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+      calls.push({ endpointId, params });
+      if (endpointId === "anyapi.x.search.posts") {
+        return { ok: true, rows_in_page: 0, call_id: "c1", charge_usd: 0.001 };
+      }
+      if (endpointId === "tikhub.x.twitter-web-fetch-search-timeline") {
+        return { ok: true, rows_in_page: 0, call_id: "c2", charge_usd: 0.001 };
+      }
+      if (endpointId === "anyapi.x.user.posts") {
+        return { ok: true, rows_in_page: 20, call_id: "c3", charge_usd: 0.001, next_cursor: "cur2" };
+      }
+      return { ok: false, call_id: "fail" };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+      if (callId === "c3") {
+        return { posts: [{ id: "tweet_1", text: "بيان رسمي بخصوص الشائعات" }] };
+      }
+      return { posts: [] };
+    });
+
+    const mockDeps: any = {
+      probe: mockProbe,
+      readPage: mockReadPage,
+      model: vi.fn(),
+      log: vi.fn(),
+    };
+
+    const step: any = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.search.posts",
+      topic: "شائعات",
+      source: { value: "SaudiMOH" },
+      count: { total: 20 },
+    };
+
+    const budget = { left: 6 };
+    const probed = await probeStep(step, [opt1, opt2, opt3], null, mockDeps, budget);
+
+    expect(probed).not.toBeNull();
+    expect(probed?.option.endpoint.id).toBe("anyapi.x.user.posts");
+
+    // Must verify the order of calls:
+    // Call 0: opt1.params (q1)
+    // Call 1: opt2.params (k1) -> Distinct endpoint before opt1's more (q2)!
+    // Call 2: opt3.params (username: SaudiMOH) -> Distinct endpoint before opt1's more (q2)!
+    expect(calls.length).toBe(3);
+    expect(calls[0].endpointId).toBe("anyapi.x.search.posts");
+    expect(calls[0].params.query).toBe("q1");
+    expect(calls[1].endpointId).toBe("tikhub.x.twitter-web-fetch-search-timeline");
+    expect(calls[1].params.keyword).toBe("k1");
+    expect(calls[2].endpointId).toBe("anyapi.x.user.posts");
+    expect(calls[2].params.username).toBe("SaudiMOH");
+  });
+
+  it("r3 Customer Safe & Platform Index: preserves Arabic platform display names in scout options", () => {
+    // 1) platformIndex includes Arabic display names
+    const index = platformIndex(catalog, access);
+    expect(index).toContain("x: (إكس)");
+    expect(index).toContain("facebook: (فيسبوك)");
+    expect(index).toContain("tiktok: (تيك توك)");
+    expect(index).toContain("youtube: (يوتيوب)");
+
+    // 2) customerSafe without allowPlatformNames replaces unwritten catalog platforms with «المصدر»
+    const text = "وسّع البحث إلى فيسبوك وتيك توك ويوتيوب";
+    const said = ["حساب وزارة الصحة"];
+    const stripped = customerSafe(text, 120, said);
+    expect(stripped).toBe("وسّع البحث إلى المصدر والمصدر والمصدر");
+
+    // 3) customerSafe with allowPlatformNames preserves platform names
+    const preserved = customerSafe(text, 120, said, { allowPlatformNames: true });
+    expect(preserved).toBe("وسّع البحث إلى فيسبوك وتيك توك ويوتيوب");
+  });
+
+  it("r3 QA Case 6: altBudgetLeft decrements on candidate probe failure/empty", () => {
+    let altBudgetLeft = 6;
+    const candidates = [
+      { id: "cand1" },
+      { id: "cand2" },
+      { id: "cand3" },
+    ];
+    for (const cand of candidates) {
+      if (altBudgetLeft <= 0) break;
+      const budgetForCandidate = { left: Math.min(altBudgetLeft, 2) };
+      const startLeft = budgetForCandidate.left;
+      budgetForCandidate.left -= 1;
+      const callsMade = Math.max(1, startLeft - budgetForCandidate.left);
+      altBudgetLeft -= callsMade;
+    }
+    expect(altBudgetLeft).toBe(3);
+  });
+
+  it("r3 Window paging with model judge: pages over account timeline when page 1 has 0 matches", async () => {
+    const timelineEp = catalog.endpoints.find((e) => e.id === "anyapi.x.user.posts")!;
+    const mockStep = {
+      key: "step_1",
+      platform: "x",
+      capability: "x.user.posts",
+      topic: "شائعات",
+      source: { value: "SaudiMOH" },
+      count: { total: 20, per_parent: null, all: false },
+      parent: null,
+      deliver: true,
+      title_ar: "تغريدات وزارة الصحة عن الشائعات",
+    };
+
+    let probeCalls = 0;
+    const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+      probeCalls += 1;
+      if (probeCalls === 1) {
+        // Page 1: daily clinic posts
+        return { ok: true, rows_in_page: 20, call_id: "c1", has_more: true, next_cursor: "page_2_cur", charge_usd: 0.001 };
+      }
+      // Page 2: rumor response posts
+      return { ok: true, rows_in_page: 20, call_id: "c2", has_more: false, next_cursor: null, charge_usd: 0.001 };
+    });
+
+    const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+      if (callId === "c1") {
+        return { output: { data: { tweets: [{ id: "t1", text: "مواعيد المراكز الصحية اليوم" }] } } };
+      }
+      return { output: { data: { tweets: [{ id: "t2", text: "توضيح رسمي بشأن الشائعة المتداولة حول اللقاحات" }] } } };
+    });
+
+    let judgeCount = 0;
+    const mockModel = vi.fn().mockImplementation(async ({ tool }: any) => {
+      if (tool.name === "request_plan") {
+        return {
+          input: {
+            decision: "plan",
+            understanding_ar: "جمع تغريدات وزارة الصحة عن الشائعات",
+            steps: [mockStep],
+          },
+        };
+      }
+      if (tool.name === "tool_choice") {
+        return {
+          input: {
+            options: [
+              { endpoint_id: timelineEp.id, params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" },
+            ],
+          },
+        };
+      }
+      if (tool.name === "field_map") {
+        return {
+          input: {
+            fields: { id: ["id"], text: ["text"] },
+            extra: [],
+          },
+        };
+      }
+      if (tool.name === "judge_sample") {
+        judgeCount += 1;
+        if (judgeCount === 1) {
+          // Page 1 has 0 matches
+          return { input: { matching_indices: [] } };
+        }
+        // Page 2 has match at index 0
+        return { input: { matching_indices: [0] } };
+      }
+      return null;
+    });
+
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const res = await planWithLlm(
+      { words: ["تغريدات وزارة الصحة عن الشائعات"], request: "", scoutAllowed: false },
+      {
+        model: mockModel,
+        catalog,
+        access,
+        today: "2026-11-23",
+        probe: mockProbe,
+        readPage: mockReadPage,
+      }
+    );
+
+    expect(res.kind).toBe("plan");
+    expect(probeCalls).toBeGreaterThanOrEqual(2);
+    expect(judgeCount).toBe(2);
   });
 });
