@@ -99,8 +99,9 @@ export class EndpointCircuitBreaker {
 
     const now = this.nowFn();
     for (const [endpointId, status] of Object.entries(statuses)) {
-      // Per Rule 3 (الكبير): all circuits start closed at boot; data-file current_status alone never blocks
-      // an endpoint unless real failures are observed at runtime in this process.
+      // Per Rule 3 (الكبير) & Phase 5 Part B: all circuits start closed at boot;
+      // data-file current_status, contract_status ("unknown" / "partial"), or schema drift ("drifted": true)
+      // alone never blocks an endpoint unless real failures are observed at runtime in this process.
       this.records.set(endpointId, {
         endpointId,
         state: "closed",
@@ -145,6 +146,24 @@ export class EndpointCircuitBreaker {
 
   isAvailable(endpointId: string): boolean {
     return this.getState(endpointId) !== "open";
+  }
+
+  /**
+   * Phase 5 Part B Invariant (Point 5.4 / D-0198):
+   * A drifted, unknown, or partial contract never blocks an endpoint by itself.
+   * Only real runtime failures (400s/5xx/timeouts) open a circuit.
+   *
+   * @param endpointId The endpoint identifier
+   * @param contract Optional contract metadata (contract_status, drifted)
+   * @returns true if the endpoint's circuit is available (closed or half-open)
+   */
+  isAvailableForContract(
+    endpointId: string,
+    contract?: { contract_status?: "full" | "partial" | "unknown" | null; drifted?: boolean | null } | null
+  ): boolean {
+    // Contract metadata (drifted: true, contract_status: "unknown" | "partial") is informational/ranking-only
+    // and NEVER trips or opens the circuit. Only real runtime failures in this process change the state.
+    return this.isAvailable(endpointId);
   }
 
   recordSuccess(endpointId: string): void {
