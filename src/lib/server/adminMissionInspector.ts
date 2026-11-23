@@ -29,15 +29,61 @@ const DATE_TIME = "\\d{4}-\\d{2}-\\d{2}(?:[T ]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)
 const DATE_OR_PHONE = new RegExp(`(${DATE_TIME})|${PHONE.source}`, "g");
 const phoneRuns = (t: string): string[] => [...t.matchAll(DATE_OR_PHONE)].filter((m) => m[1] === undefined && digitsOf(m[0]) >= 7).map((m) => m[0]);
 
+const URL_REDACT_REGEX = /(?:https?:\/\/|[a-zA-Z0-9-]+\.(?:com|org|net|gov|edu|io|co|tech|me|dev|app|ai|site|info|[a-z]{2}))(?::\d+)?\/[^\s"'«»<>]*/gi;
+
+export function cleanTrailingPunctuation(str: string): { url: string; suffix: string } {
+  let url = str;
+  let suffix = "";
+  while (url.length > 0 && [".", ",", ";", ")", "]", ">"].includes(url[url.length - 1])) {
+    suffix = url[url.length - 1] + suffix;
+    url = url.slice(0, -1);
+  }
+  return { url, suffix };
+}
+
+/**
+ * Keeps scheme/host and path prefix readable while replacing numeric IDs (e.g. social post IDs),
+ * hex runs, and long base64 slugs in the URL path with [محجوب]. Query strings become ?[محجوب].
+ */
+export function redactUrlString(raw: string): string {
+  const { url, suffix } = cleanTrailingPunctuation(raw);
+  let u = url;
+  let hash = "";
+  const hIdx = u.indexOf("#");
+  if (hIdx >= 0) {
+    hash = `#${REDACTED}`;
+    u = u.slice(0, hIdx);
+  }
+  let query = "";
+  const qIdx = u.indexOf("?");
+  if (qIdx >= 0) {
+    query = `?${REDACTED}`;
+    u = u.slice(0, qIdx);
+  }
+  const m = /^((?:https?:\/\/)?[^\/]+)(\/.*)?$/.exec(u);
+  if (!m) return raw;
+  const hostPart = m[1];
+  const pathPart = m[2] ?? "";
+  const segments = pathPart.split("/").map((seg) => {
+    if (!seg) return seg;
+    let s = seg;
+    s = s.replace(DATE_OR_PHONE, (match, date) => (date !== undefined || digitsOf(match) < 7 ? match : REDACTED));
+    if (digitsOf(s) >= 7) return REDACTED;
+    s = s.replace(HEX_RUN, REDACTED);
+    s = s.replace(B64_RUN, REDACTED);
+    return s;
+  });
+  return `${hostPart}${segments.join("/")}${query}${hash}${suffix}`;
+}
+
 /** The text with every e-mail address, phone number, token, long hex / base64 run and URL query string replaced by one fixed marker. Anything else is returned byte for byte. */
 export function redactText(text: unknown, max = 600): string {
   let t = typeof text === "string" ? text : text === null || text === undefined ? "" : String(text);
-  t = t.replace(EMAIL, REDACTED).replace(BEARER, REDACTED).replace(SK_KEY, REDACTED).replace(JWT, REDACTED).replace(HEX_RUN, REDACTED).replace(URL_QUERY, `$1?${REDACTED}`).replace(B64_RUN, REDACTED);
+  t = t.replace(URL_REDACT_REGEX, (u) => redactUrlString(u));
+  t = t.replace(EMAIL, REDACTED).replace(BEARER, REDACTED).replace(SK_KEY, REDACTED).replace(JWT, REDACTED).replace(HEX_RUN, REDACTED).replace(B64_RUN, REDACTED);
   t = t.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
-
-const URL_MATCH = /https?:\/\/[^\s"'«»]+/g;
 
 /**
  * Redacts a URL from judged diagnostics: normalizes path segments so that numeric IDs (e.g. social post IDs),
@@ -45,29 +91,7 @@ const URL_MATCH = /https?:\/\/[^\s"'«»]+/g;
  */
 export function redactJudgedUrl(rawUrl: unknown): string | null {
   if (typeof rawUrl !== "string" || !rawUrl.trim()) return null;
-  const raw = rawUrl.trim();
-  try {
-    const parsed = new URL(raw);
-    if (parsed.username || parsed.password) { parsed.username = ""; parsed.password = ""; }
-    const segments = parsed.pathname.split("/").map((seg) => {
-      if (!seg) return seg;
-      let s = seg;
-      s = s.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
-      if (digitsOf(s) >= 7) return REDACTED;
-      s = s.replace(HEX_RUN, REDACTED);
-      s = s.replace(B64_RUN, REDACTED);
-      return s;
-    });
-    const query = parsed.search ? `?${REDACTED}` : "";
-    const hash = parsed.hash ? `#${REDACTED}` : "";
-    return `${parsed.origin}${segments.join("/")}${query}${hash}`;
-  } catch {
-    let s = raw;
-    s = s.replace(URL_QUERY, `$1?${REDACTED}`);
-    s = s.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
-    s = s.replace(HEX_RUN, REDACTED).replace(B64_RUN, REDACTED);
-    return s;
-  }
+  return redactUrlString(rawUrl.trim());
 }
 
 /**
@@ -77,7 +101,7 @@ export function redactJudgedUrl(rawUrl: unknown): string | null {
  */
 export function redactJudgedText(text: unknown, max = 300): string {
   let t = typeof text === "string" ? text : text === null || text === undefined ? "" : String(text);
-  t = t.replace(URL_MATCH, (u) => redactJudgedUrl(u) ?? u);
+  t = t.replace(URL_REDACT_REGEX, (u) => redactUrlString(u));
   t = t.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
   t = t.replace(HEX_RUN, REDACTED);
   t = t.replace(B64_RUN, REDACTED);
@@ -247,6 +271,75 @@ const countsOf = (c: unknown): Record<string, number> => {
 };
 
 const SECRET_SHAPES = [EMAIL, BEARER, SK_KEY, JWT, HEX_RUN, B64_RUN];
+
+export function isSecretLeaf(value: string): boolean {
+  for (const re of SECRET_SHAPES) {
+    re.lastIndex = 0;
+    if (re.test(value)) return true;
+  }
+  if (phoneRuns(value).length > 0) return true;
+  return false;
+}
+
+/** Redacts a single string with all secret, URL, phone, hex, and base64 rules. */
+export function redactDeepString(text: string): string {
+  if (typeof text !== "string" || !text) return text;
+  let t = text;
+  t = t.replace(URL_REDACT_REGEX, (m) => redactUrlString(m));
+  t = t.replace(EMAIL, REDACTED).replace(BEARER, REDACTED).replace(SK_KEY, REDACTED).replace(JWT, REDACTED);
+  t = t.replace(DATE_OR_PHONE, (m, date) => (date !== undefined || digitsOf(m) < 7 ? m : REDACTED));
+  t = t.replace(HEX_RUN, REDACTED);
+  t = t.replace(B64_RUN, REDACTED);
+  return t;
+}
+
+/** Recursively redacts every string in an object or array. */
+export function redactDeep<T>(value: T): T {
+  if (typeof value === "string") {
+    return redactDeepString(value) as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactDeep(item)) as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = redactDeep(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
+/**
+ * If any leaf string still trips secret/phone patterns, drop only the offending leaf
+ * (replace with REDACTED) instead of failing the whole inspection, and record its path.
+ */
+export function sanitizeLeaves(
+  value: unknown,
+  path = "$",
+  redactedPaths: string[] = []
+): unknown {
+  if (typeof value === "string") {
+    if (isSecretLeaf(value)) {
+      redactedPaths.push(path);
+      return REDACTED;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v, i) => sanitizeLeaves(v, `${path}[${i}]`, redactedPaths));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = sanitizeLeaves(v, `${path}.${k}`, redactedPaths);
+    }
+    return out;
+  }
+  return value;
+}
+
 /** The last guard: every string of the response is checked again; a string that still looks like a secret throws (the route answers 500, the page never shows it). */
 export function assertNoSecrets(value: unknown, path = "$"): void {
   if (typeof value === "string") {
@@ -308,7 +401,19 @@ export async function loadInspection(client: any, input: { id: string; now?: Dat
   if (judgedRowsDropped > 0) {
     console.log(`inspector_judged_rows_dropped mission=${input.id} count=${judgedRowsDropped}`);
   }
-  const body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date(), judgedRows, judgedRowsDropped });
+  let body = buildInspection({ mission, events: Array.isArray(events.data) ? events.data : [], calls: Array.isArray(calls.data) ? calls.data : [], callTotal: typeof count?.count === "number" ? count.count : null, now: input.now ?? new Date(), judgedRows, judgedRowsDropped });
+
+  // 1. Run deep redaction over EVERY string in the body
+  body = redactDeep(body);
+
+  // 2. If any leaf still trips secret/phone guards, drop the offending leaf and log paths (paths only, no content)
+  const redactedPaths: string[] = [];
+  body = sanitizeLeaves(body, "$", redactedPaths) as typeof body;
+  if (redactedPaths.length > 0) {
+    console.log(`inspector_redacted_paths mission=${input.id} count=${redactedPaths.length}`);
+  }
+
+  // 3. Final guard: assertNoSecrets stays as the last check (it must now pass)
   assertNoSecrets(body);
   return { ok: true, body };
 }
