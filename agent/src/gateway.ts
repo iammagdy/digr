@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { executeTregCall, type TregCallOptions, type TregCallResult, maxTregAttempts } from "../../src/functions/shared/tregClient";
 import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
 import { commitTregSpend, commitTregSpendAcknowledged, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
@@ -145,6 +147,86 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
   return catalogUsd !== null && catalogUsd > 0 ? catalogUsd : GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD;
 }
 
+let cachedContracts: Map<string, { max_page_size: number | null; page_size_param: string | null }> | null = null;
+
+function loadContractsRegistry(): Map<string, { max_page_size: number | null; page_size_param: string | null }> {
+  if (cachedContracts) return cachedContracts;
+  cachedContracts = new Map();
+  try {
+    const dir = path.join(process.cwd(), "data", "treg");
+    const p1 = path.join(dir, "adapter_contracts.json");
+    if (existsSync(p1)) {
+      const raw = JSON.parse(readFileSync(p1, "utf-8"));
+      if (Array.isArray(raw?.endpoints)) {
+        for (const ep of raw.endpoints) {
+          if (ep?.endpoint_id && ep?.pagination) {
+            cachedContracts.set(ep.endpoint_id, {
+              max_page_size: typeof ep.pagination.max_page_size === "number" ? ep.pagination.max_page_size : null,
+              page_size_param: typeof ep.pagination.page_size_param === "string" ? ep.pagination.page_size_param : null,
+            });
+          }
+        }
+      }
+    }
+    const p2 = path.join(dir, "treg_research_endpoint_registry.json");
+    if (existsSync(p2)) {
+      const raw2 = JSON.parse(readFileSync(p2, "utf-8"));
+      if (Array.isArray(raw2?.endpoints)) {
+        for (const ep of raw2.endpoints) {
+          if (ep?.endpoint_id && ep?.pagination) {
+            const prev = cachedContracts.get(ep.endpoint_id);
+            cachedContracts.set(ep.endpoint_id, {
+              max_page_size: typeof ep.pagination.max_page_size === "number" ? ep.pagination.max_page_size : prev?.max_page_size ?? null,
+              page_size_param: typeof ep.pagination.page_size_param === "string" ? ep.pagination.page_size_param : prev?.page_size_param ?? null,
+            });
+          }
+        }
+      }
+    }
+  } catch {
+    // Offline/test fallback
+  }
+  return cachedContracts;
+}
+
+export function getContractPagination(
+  endpoint?: CatalogEndpoint | null
+): { max_page_size?: number | null; page_size_param?: string | null } | undefined {
+  const direct = endpoint?.adapter_contract?.pagination as any;
+  const fromRegistry = endpoint?.id ? loadContractsRegistry().get(endpoint.id) : undefined;
+  if (!direct && !fromRegistry) return undefined;
+  return {
+    max_page_size: typeof direct?.max_page_size === "number" ? direct.max_page_size : (fromRegistry?.max_page_size ?? null),
+    page_size_param: typeof direct?.page_size_param === "string" ? direct.page_size_param : (fromRegistry?.page_size_param ?? null),
+  };
+}
+
+/**
+ * Point 3.4: Runtime Page-Size Clamping.
+ * Clamps the outgoing limit/page-size parameter to the endpoint's contract max_page_size.
+ * STRICT (Zero-Guessing): Clamps ONLY when the endpoint contract explicitly defines BOTH page_size_param AND max_page_size.
+ * If contract has no page_size_param or no max_page_size, or endpoint has no contract, parameters remain unchanged.
+ * Generic: zero guessing, zero hardcoded parameter name fallbacks, zero provider names.
+ */
+export function clampOutgoingPageSize(
+  endpoint: CatalogEndpoint | null | undefined,
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  const pagination = getContractPagination(endpoint);
+  const maxPage = pagination?.max_page_size;
+  const paramKey = pagination?.page_size_param;
+  if (typeof maxPage !== "number" || maxPage <= 0) return params;
+  if (!paramKey || typeof paramKey !== "string" || !paramKey.trim()) return params;
+
+  if (params[paramKey] === undefined) return params;
+
+  const requested = Number(params[paramKey]);
+  if (!isNaN(requested) && requested > maxPage) {
+    return { ...params, [paramKey]: maxPage };
+  }
+  return params;
+}
+
 /**
  * THE ESTIMATED BOUND OF ONE TREG CALL (DT-20261119-11): the catalog estimate for the call the gateway will really send (the parameters the catalog does not know are dropped, the size clamped to the input's maximum), rounded UP to the micro-dollar and floored at 0.001.
  * It is the SMALLEST amount a call is admitted with, and what a capped stage checks a call against. It is NOT what is sent to the provider: the header is the money that is really left (the amount reserved on every ledger, `tregCall` step 6). Null: not a catalog id or lacks a usable price.
@@ -152,8 +234,9 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
 export function tregCallBoundOf(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
   const endpoint = catalog.byId.get(endpointId);
   if (!endpoint || !hasUsablePrice(endpoint, catalog)) return null;
+  const clamped = clampOutgoingPageSize(endpoint, params ?? {});
   const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
-  const kept = Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => known.has(k)));
+  const kept = Object.fromEntries(Object.entries(clamped).filter(([k]) => known.has(k)));
   return tregCallBoundUsd(estimateCallUsd(endpoint, kept, catalog));
 }
 
@@ -249,7 +332,7 @@ export function createGateway(deps: GatewayDeps) {
       deps.counter.seq += 1;
       const id = callIdOf(deps.counter.seq);
       const endpointId = String(input.endpoint_id ?? "").trim();
-      const params: Record<string, unknown> = input.params && typeof input.params === "object" && !Array.isArray(input.params) ? { ...(input.params as Record<string, unknown>) } : {};
+      let params: Record<string, unknown> = input.params && typeof input.params === "object" && !Array.isArray(input.params) ? { ...(input.params as Record<string, unknown>) } : {};
 
       // 1 + 2: sellable, usable price, block list
       const endpoint = deps.catalog.byId.get(endpointId);
@@ -259,6 +342,9 @@ export function createGateway(deps: GatewayDeps) {
       if (!endpoint || !isSellable(endpointId, deps.catalog) || (!hasUsablePrice(endpoint, deps.catalog) && !isCatalogPoll)) {
         return refuse(id, endpointId, params, "not_sellable");
       }
+
+      // Point 3.4: Runtime page-size clamp
+      params = clampOutgoingPageSize(endpoint, params);
 
       // 3: data policy
       const verdict = policyVerdict(endpointId, deps.access);
