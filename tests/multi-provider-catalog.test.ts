@@ -9,7 +9,7 @@ import {
 } from "../src/lib/multiProvider/catalog";
 import { recordCostFor } from "../src/lib/recordPricing";
 import { AdapterContractSchema, loadAdapterContracts } from "../scripts/treg/refresh-catalog-contracts";
-import { EndpointCircuitBreaker } from "../src/lib/treg/circuitBreaker";
+import { EndpointCircuitBreaker, getCircuitBreaker } from "../src/lib/treg/circuitBreaker";
 import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createWebGateway } from "../agent/src/webGateway";
@@ -380,59 +380,213 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
   });
 
   describe("Point 6.4: Gateway Budget Enforcement & Strict Spend Caps", () => {
-    it("Must-Pass 3: Operation with remaining budget below bound ($0.025 bound, $0.010 budget) is refused upfront with over_budget", async () => {
+    const createMockFetch = () =>
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, links: [{ url: "https://example.com/item" }], urls: ["https://example.com/item"], data: { web: [] } }),
+        clone: () => ({ json: async () => ({ success: true, links: [], urls: [] }) }),
+      });
+
+    it("(a) planning gateway refuses the 25th call (over_budget) and step cap refuses 5th step call", async () => {
       const store = createMemoryStore();
-      const budget = createJobCallBudget({ holdPoints: 10, defaultJobProviderCeilingUsd: 0.010 }); // only 0.010 USD ceiling
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
       const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
 
       const gw = createWebGateway({
         store,
-        missionId: "msn_test_budget",
+        missionId: "msn_test_planning_caps",
         jobId: "job_test",
         phase: "planning",
         budget,
         recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
         providerKey: async () => "dummy_key",
         counter,
+        fetchFn,
       });
 
-      // Attempt stealth scrape (bound is 5 credits = $0.025)
+      // 1. Step cap (4 calls maximum per step in planning)
+      const stepKey = "step_entity_site";
+      for (let i = 0; i < 4; i++) {
+        const r = await gw.siteMap({ url: "https://www.example.com", stepKey });
+        expect(r.ok).toBe(true);
+      }
+      const fifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey });
+      expect(fifthCall.ok).toBe(false);
+      expect((fifthCall as any).refused).toBe("over_budget");
+
+      // 2. Job cap: makes remaining calls up to 24 calls total across different steps
+      for (let i = 0; i < 20; i++) {
+        const r = await gw.siteMap({ url: "https://www.example.com", stepKey: `step_${i}` });
+        expect(r.ok).toBe(true);
+      }
+
+      // The 25th call across planning is refused with over_budget
+      const twentyFifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey: "step_another" });
+      expect(twentyFifthCall.ok).toBe(false);
+      expect((twentyFifthCall as any).refused).toBe("over_budget");
+    });
+
+    it("(b) an execution gateway makes 30 calls with budget available and all go out", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 20.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_exec_calls",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // Execution phase makes 30 calls cleanly (no 24-call cap and no 4-call step cap in execution)
+      const stepKey = "step_execution_site";
+      for (let i = 0; i < 30; i++) {
+        const res = await gw.siteMap({ url: "https://www.example.com", stepKey });
+        expect(res.ok).toBe(true);
+      }
+      expect(counter.seq).toBe(30);
+    });
+
+    it("(c) execution still refuses on budget/spend gate/daily cap as before (Must-Pass 3)", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 0.010, spentUsd: 0 }); // only 0.010 USD ceiling
+      const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_exec_budget",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // Attempt stealth scrape in execution (bound is 5 credits = $0.025)
       const res = await gw.webScrape({ provider: "firecrawl", url: "https://www.example.com" });
 
       expect(res.ok).toBe(false);
-      if (!res.ok && "refused" in res) {
-        expect(res.refused).toBe("over_budget");
-      }
+      expect((res as any).refused).toBe("over_budget");
     });
 
-    it("Counter-Case: Step call cap <= 4 calls and job call cap <= 24 calls are strictly enforced", async () => {
+    it("(d) breaker 402 per provider trips and blocks calls in execution as well as planning", async () => {
       const store = createMemoryStore();
-      const budget = createJobCallBudget({ holdPoints: 5000, defaultJobProviderCeilingUsd: 10.0 });
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
       const counter = { seq: 0 };
+      const fetchFn = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        json: async () => ({ success: false, error: "Payment Required" }),
+        clone: () => ({ json: async () => ({ success: false }) }),
+      });
 
       const gw = createWebGateway({
         store,
-        missionId: "msn_test_caps",
+        missionId: "msn_test_breaker_exec",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      const res = await gw.siteMap({ provider: "firecrawl", url: "https://www.example.com" });
+      expect(res.ok).toBe(false);
+      expect((res as any).refused).toBe("source_unavailable");
+
+      // Subsequent call is immediately refused without fetch
+      fetchFn.mockClear();
+      const subRes = await gw.siteMap({ provider: "firecrawl", url: "https://www.example.com" });
+      expect(subRes.ok).toBe(false);
+      expect((subRes as any).refused).toBe("source_unavailable");
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it("(e) siteMap provider picking and fallback: provider A 402 -> call goes to B; both tripped -> refused source_unavailable", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+
+      // Reset circuit breaker for clean state
+      const cb = getCircuitBreaker();
+      cb.resetProvider("firecrawl");
+      cb.resetProvider("contextdev");
+
+      // Mock fetch: firecrawl answers 402, contextdev answers 200
+      const fetchFn = vi.fn().mockImplementation(async (input: unknown) => {
+        const urlStr = String(input);
+        if (urlStr.includes("firecrawl") || urlStr.includes("api.firecrawl.dev")) {
+          return {
+            ok: false,
+            status: 402,
+            json: async () => ({ success: false, error: "Payment Required" }),
+            clone: () => ({ json: async () => ({ success: false }) }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, links: [{ url: "https://example.com/b" }], urls: ["https://example.com/b"] }),
+          clone: () => ({ json: async () => ({ success: true, links: [], urls: [] }) }),
+        };
+      });
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_fallback",
         jobId: "job_test",
         phase: "planning",
         budget,
         recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
         providerKey: async () => "dummy_key",
         counter,
+        fetchFn,
       });
 
-      // 4 calls for same step pass (simulated with empty result or mock fetch)
-      // When step exceeds 4 calls with stepKey, 5th call is refused over_budget
-      const stepKey = "step_entity_site";
-      for (let i = 0; i < 4; i++) {
-        await gw.siteMap({ url: "https://www.example.com", stepKey });
-      }
+      // 1. Caller provides no provider. Provider A (firecrawl) answers 402 -> fallback tries B (contextdev) and succeeds
+      const res = await gw.siteMap({ url: "https://www.example.com" });
+      expect(res.ok).toBe(true);
 
-      const fifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey });
-      expect(fifthCall.ok).toBe(false);
-      if (!fifthCall.ok && "refused" in fifthCall) {
-        expect(fifthCall.refused).toBe("over_budget");
-      }
+      // 2. Both tripped: trip contextdev as well
+      const fetchFnBothTrip = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        json: async () => ({ success: false, error: "Payment Required" }),
+        clone: () => ({ json: async () => ({ success: false }) }),
+      });
+
+      const gw2 = createWebGateway({
+        store,
+        missionId: "msn_test_both_tripped",
+        jobId: "job_test",
+        phase: "planning",
+        budget: createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 }),
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter: { seq: 0 },
+        fetchFn: fetchFnBothTrip,
+      });
+
+      // Contextdev is explicitly called and trips 402
+      await gw2.siteMap({ provider: "contextdev", url: "https://www.example.com" });
+
+      // Now both firecrawl.map and contextdev.map are tripped -> refused source_unavailable
+      const resBothTripped = await gw2.siteMap({ url: "https://www.example.com" });
+      expect(resBothTripped.ok).toBe(false);
+      expect((resBothTripped as any).refused).toBe("source_unavailable");
     });
   });
 

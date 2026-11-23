@@ -107,6 +107,7 @@ export interface WebGatewayDeps {
   budget: JobCallBudget;
   recorder: CallRecorder;
   providerKey: ProviderKeyFn;
+  webAvailable?: { firecrawl?: boolean; contextdev?: boolean };
   fetchFn?: FetchFn;
   /** Shared with the TREG gateway: call ids continue in one sequence per mission. */
   counter: { seq: number };
@@ -186,12 +187,12 @@ export function createWebGateway(deps: WebGatewayDeps) {
     if (!cb.isAvailable(source)) {
       return refuse(id, source, params, "source_unavailable", "provider circuit open (402 credit exhausted)");
     }
-    if (totalCallsMade >= 24) {
-      return refuse(id, source, params, "over_budget", "job call cap reached (24 calls maximum across all providers)");
+    if (deps.phase === "planning" && totalCallsMade >= 24) {
+      return refuse(id, source, params, "over_budget", "job call cap reached (24 calls maximum across all providers in planning)");
     }
     const stepKey = typeof params._step === "string" ? params._step : typeof params.stepKey === "string" ? params.stepKey : null;
-    if (stepKey && (stepCallCounts.get(stepKey) ?? 0) >= 4) {
-      return refuse(id, source, params, "over_budget", "step call cap reached (4 calls maximum per step)");
+    if (deps.phase === "planning" && stepKey && (stepCallCounts.get(stepKey) ?? 0) >= 4) {
+      return refuse(id, source, params, "over_budget", "step call cap reached (4 calls maximum per step in planning)");
     }
 
     const b = providerCallBound(args.bound);
@@ -403,10 +404,18 @@ export function createWebGateway(deps: WebGatewayDeps) {
 
   return {
     /** ONE parser, ONE URL. */
-    async parsePage(input: { parser?: unknown; url?: unknown; sort?: unknown; limit?: unknown; why?: unknown }): Promise<WebCallResult> {
+    async parsePage(input: { parser?: unknown; url?: unknown; sort?: unknown; limit?: unknown; why?: unknown; stepKey?: unknown; _step?: unknown }): Promise<WebCallResult> {
       const id = nextId();
       const name = String(input.parser ?? "").trim();
-      const params: Record<string, unknown> = { parser: name, url: clip(input.url, 300), ...(input.sort ? { sort: clip(input.sort, 20) } : {}), ...(input.limit ? { limit: Number(input.limit) } : {}), ...(input.why ? { _why: clip(input.why, 300) } : {}) };
+      const params: Record<string, unknown> = {
+        parser: name,
+        url: clip(input.url, 300),
+        ...(input.sort ? { sort: clip(input.sort, 20) } : {}),
+        ...(input.limit ? { limit: Number(input.limit) } : {}),
+        ...(input.why ? { _why: clip(input.why, 300) } : {}),
+        ...(input.stepKey ? { stepKey: clip(input.stepKey, 64) } : {}),
+        ...(input._step ? { _step: clip(input._step, 64) } : {}),
+      };
       const source = Object.prototype.hasOwnProperty.call(PARSERS, name) ? PARSERS[name as ParserName].id : `contextdev.parse.${clip(name, 40)}`;
       if (!Object.prototype.hasOwnProperty.call(PARSERS, name)) return refuse(id, source, params, "bad_source", name);
       const spec = PARSERS[name as ParserName];
@@ -443,13 +452,20 @@ export function createWebGateway(deps: WebGatewayDeps) {
     },
 
     /** Web search through Firecrawl or Context.dev. */
-    async webSearch(input: { provider?: unknown; query?: unknown; limit?: unknown; country?: unknown; why?: unknown }): Promise<WebCallResult> {
+    async webSearch(input: { provider?: unknown; query?: unknown; limit?: unknown; country?: unknown; why?: unknown; stepKey?: unknown; _step?: unknown }): Promise<WebCallResult> {
       const id = nextId();
       const provider = input.provider === "firecrawl" ? "firecrawl" : "contextdev";
       const source = `${provider}.search`;
       const query = String(input.query ?? "").trim();
       const limit = Math.max(10, Math.min(30, Math.ceil((Number(input.limit) || 10) / 10) * 10));
-      const params: Record<string, unknown> = { query: clip(query, 200), limit, ...(input.country ? { country: clip(input.country, 2) } : {}), ...(input.why ? { _why: clip(input.why, 300) } : {}) };
+      const params: Record<string, unknown> = {
+        query: clip(query, 200),
+        limit,
+        ...(input.country ? { country: clip(input.country, 2) } : {}),
+        ...(input.why ? { _why: clip(input.why, 300) } : {}),
+        ...(input.stepKey ? { stepKey: clip(input.stepKey, 64) } : {}),
+        ...(input._step ? { _step: clip(input._step, 64) } : {}),
+      };
       if (query.length < 2) return refuse(id, source, params, "bad_input", "query");
       const spec = WEB_SOURCES.find((s) => s.id === source)!;
       const adapter = provider === "firecrawl" ? firecrawlAdapter : contextDevAdapter;
@@ -465,12 +481,17 @@ export function createWebGateway(deps: WebGatewayDeps) {
     },
 
     /** One public page as text and links, through Firecrawl or Context.dev. */
-    async webScrape(input: { provider?: unknown; url?: unknown; why?: unknown }): Promise<WebCallResult> {
+    async webScrape(input: { provider?: unknown; url?: unknown; why?: unknown; stepKey?: unknown; _step?: unknown }): Promise<WebCallResult> {
       const id = nextId();
       const provider = input.provider === "firecrawl" ? "firecrawl" : "contextdev";
       const source = `${provider}.scrape`;
       const urlText = String(input.url ?? "").trim();
-      const params: Record<string, unknown> = { url: clip(urlText, 300), ...(input.why ? { _why: clip(input.why, 300) } : {}) };
+      const params: Record<string, unknown> = {
+        url: clip(urlText, 300),
+        ...(input.why ? { _why: clip(input.why, 300) } : {}),
+        ...(input.stepKey ? { stepKey: clip(input.stepKey, 64) } : {}),
+        ...(input._step ? { _step: clip(input._step, 64) } : {}),
+      };
       const verdict = checkPublicReadUrl(urlText);
       if (!verdict.ok) return refuse(id, source, params, "bad_url", verdict.reason ?? "");
       const spec = WEB_SOURCES.find((s) => s.id === source)!;
@@ -510,11 +531,18 @@ export function createWebGateway(deps: WebGatewayDeps) {
     },
 
     /** Context.dev people search (names, roles, companies, public profile links; never an e-mail or a phone). */
-    async peopleSearch(input: { query?: unknown; country?: unknown; cursor?: unknown; why?: unknown }): Promise<WebCallResult> {
+    async peopleSearch(input: { query?: unknown; country?: unknown; cursor?: unknown; why?: unknown; stepKey?: unknown; _step?: unknown }): Promise<WebCallResult> {
       const id = nextId();
       const source = "contextdev.people.search";
       const query = String(input.query ?? "").trim();
-      const params: Record<string, unknown> = { query: clip(query, 300), ...(input.country ? { country: clip(input.country, 2) } : {}), ...(input.cursor ? { cursor: "yes" } : {}), ...(input.why ? { _why: clip(input.why, 300) } : {}) };
+      const params: Record<string, unknown> = {
+        query: clip(query, 300),
+        ...(input.country ? { country: clip(input.country, 2) } : {}),
+        ...(input.cursor ? { cursor: "yes" } : {}),
+        ...(input.why ? { _why: clip(input.why, 300) } : {}),
+        ...(input.stepKey ? { stepKey: clip(input.stepKey, 64) } : {}),
+        ...(input._step ? { _step: clip(input._step, 64) } : {}),
+      };
       if (query.length < 3 || query.length > 500) return refuse(id, source, params, "bad_input", "query");
       const spec = WEB_SOURCES.find((s) => s.id === source)!;
       return execute({
@@ -530,33 +558,71 @@ export function createWebGateway(deps: WebGatewayDeps) {
     },
 
     /** Site map exploration (Firecrawl or Context.dev). */
-    async siteMap(input: { provider?: unknown; url?: unknown; domain?: unknown; search?: unknown; limit?: unknown; why?: unknown }): Promise<WebCallResult> {
-      const id = nextId();
-      const provider = input.provider === "contextdev" ? "contextdev" : "firecrawl";
-      const source = `${provider}.map`;
+    async siteMap(input: { provider?: unknown; url?: unknown; domain?: unknown; search?: unknown; limit?: unknown; why?: unknown; stepKey?: unknown; _step?: unknown }): Promise<WebCallResult> {
       const targetUrl = String(input.url ?? input.domain ?? "").trim();
       const params: Record<string, unknown> = {
         url: clip(targetUrl, 300),
         ...(input.search ? { search: clip(input.search, 100) } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
         ...(input.why ? { _why: clip(input.why, 300) } : {}),
+        ...(input.stepKey ? { stepKey: clip(input.stepKey, 64) } : {}),
+        ...(input._step ? { _step: clip(input._step, 64) } : {}),
       };
       const verdict = checkPublicReadUrl(targetUrl);
-      if (!verdict.ok) return refuse(id, source, params, "bad_url", verdict.reason ?? "");
-      const adapter = provider === "contextdev" ? contextDevAdapter : firecrawlAdapter;
-      const estimateUsd = provider === "contextdev" ? CONTEXTDEV_USD_PER_CREDIT : FIRECRAWL_USD_PER_CREDIT;
-      return execute({
-        id, source, provider, params, estimateUsd,
-        bound: provider === "contextdev" ? { provider: "contextdev", op: "map" } : { provider: "firecrawl", op: "map" },
-        run: (ctx) => adapter.run("site.map", { url: targetUrl, search: typeof input.search === "string" ? input.search : undefined, limit: typeof input.limit === "number" ? Math.min(input.limit, 50) : 50 } as any, ctx),
-        shape: (r) => {
-          const d = r.data as { urls?: string[]; links?: Array<{ url: string }> } | null;
-          if (!r.ok || !d) return { saved: null, rows: [], costBasis: "reported" };
-          const rawUrls: string[] = Array.isArray(d.urls) ? d.urls : Array.isArray(d.links) ? d.links.map((l) => l.url) : [];
-          const rows = rawUrls.filter(Boolean).map((u) => ({ url: u }));
-          return { saved: { rows, urls: rawUrls }, rows, costBasis: "reported", note: "site map URLs discovered" };
-        },
-      });
+      if (!verdict.ok) {
+        const id = nextId();
+        return refuse(id, "firecrawl.map", params, "bad_url", verdict.reason ?? "");
+      }
+
+      const explicitProvider = input.provider === "contextdev" ? "contextdev" : input.provider === "firecrawl" ? "firecrawl" : null;
+
+      const doMap = async (id: string, provider: "firecrawl" | "contextdev"): Promise<WebCallResult> => {
+        const source = `${provider}.map`;
+        const adapter = provider === "contextdev" ? contextDevAdapter : firecrawlAdapter;
+        const estimateUsd = provider === "contextdev" ? CONTEXTDEV_USD_PER_CREDIT : FIRECRAWL_USD_PER_CREDIT;
+        return execute({
+          id, source, provider, params, estimateUsd,
+          bound: provider === "contextdev" ? { provider: "contextdev", op: "map" } : { provider: "firecrawl", op: "map" },
+          run: (ctx) => adapter.run("site.map", { url: targetUrl, search: typeof input.search === "string" ? input.search : undefined, limit: typeof input.limit === "number" ? Math.min(input.limit, 50) : 50 } as any, ctx),
+          shape: (r) => {
+            const d = r.data as { urls?: string[]; links?: Array<{ url: string }> } | null;
+            if (!r.ok || !d) return { saved: null, rows: [], costBasis: "reported" };
+            const rawUrls: string[] = Array.isArray(d.urls) ? d.urls : Array.isArray(d.links) ? d.links.map((l) => l.url) : [];
+            const rows = rawUrls.filter(Boolean).map((u) => ({ url: u }));
+            return { saved: { rows, urls: rawUrls }, rows, costBasis: "reported", note: "site map URLs discovered" };
+          },
+        });
+      };
+
+      if (explicitProvider) {
+        const id = nextId();
+        return doMap(id, explicitProvider);
+      }
+
+      // No fixed default when provider omitted: pick from available & not tripped
+      const cb = getCircuitBreaker();
+      const isAvail = (p: "firecrawl" | "contextdev") => (deps.webAvailable ? deps.webAvailable[p] !== false : true);
+      const candidates = (["firecrawl", "contextdev"] as const).filter((p) => isAvail(p) && cb.isAvailable(`${p}.map`));
+
+      if (candidates.length === 0) {
+        const id = nextId();
+        return refuse(id, "firecrawl.map", params, "source_unavailable", "credit_exhausted");
+      }
+
+      const primary = candidates[0];
+      const primaryId = nextId();
+      const primaryRes = await doMap(primaryId, primary);
+
+      if (!primaryRes.ok && "refused" in primaryRes && primaryRes.refused === "source_unavailable") {
+        // Primary was credit_exhausted / unavailable: try the other available provider if present
+        const secondary = (["firecrawl", "contextdev"] as const).find((p) => p !== primary && isAvail(p) && cb.isAvailable(`${p}.map`));
+        if (secondary) {
+          const secondaryId = nextId();
+          return doMap(secondaryId, secondary);
+        }
+      }
+
+      return primaryRes;
     },
   };
 }
