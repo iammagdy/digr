@@ -89,6 +89,7 @@ export interface UnderstoodStep {
   count: { total: number | null; per_parent: number | null; all: boolean };
   source: { kind: string; value: string } | null; topic: string | null; search_terms: string[]; period: { from: string; to: string } | null;
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
+  entity?: string | null;
 }
 export interface Understanding {
   decision: "plan" | "ask" | "cannot"; understanding_ar: string; /** the essential inputs an «ask» says are missing (DT-20261119-03); only the valid kinds */ missing?: string[]; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; /** the required answer: the people of the companies were asked (DT-20261118-08); present only when asked */ people_of_companies?: PeopleOfCompaniesAsk; /** the companies' count the customer's own words support, set by code (withCheckedCompaniesCount); never the model's total */ companies_count?: number; steps: UnderstoodStep[];
@@ -1752,14 +1753,20 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = stageCostPerRawRowUsd(b, catalog);
     const textCols = b.columns.filter((c) => ["text", "title", "content", "body", "full_text"].includes(c.key)).map((c) => c.key);
-    const askTopic = s.topic ? { topic: { text: s.topic, relation: "about" as const, alternatives: s.search_terms } } : null;
-    const fullCriterion = [
-      u.understanding_ar,
-      s.source?.value ? `الجهة أو الحساب: ${s.source.value}` : null,
-      s.country ? `البلد: ${s.country}` : null,
-      s.topic ? `الموضوع: ${s.topic}` : null,
-    ].filter(Boolean).join(" - ");
-    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], fullCriterion || u.understanding_ar) ?? undefined) : undefined;
+    const askTopic = s.topic ? {
+      topic: { text: s.topic, relation: "about" as const, alternatives: s.search_terms },
+      source: s.source ? { kind: s.source.kind as any, text: s.source.value } : undefined,
+      country: s.country ?? undefined,
+      entity: s.entity ?? undefined,
+      brief: u.understanding_ar,
+    } : null;
+    const criterionObj = {
+      entity: s.entity ?? (s.source?.kind !== "url" ? (s.source?.value ?? "") : ""),
+      country: s.country ?? "",
+      topic: s.topic ?? "",
+      brief: u.understanding_ar ?? "",
+    };
+    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], criterionObj) ?? undefined) : undefined;
     const alternatives = isTotalOnlyChild
       ? []
       : [

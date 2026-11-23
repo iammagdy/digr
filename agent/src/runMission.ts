@@ -532,6 +532,7 @@ export interface JudgedRowDiagnostic {
     entity: string;
     country: string;
     topic: string;
+    brief?: string;
   };
   verdict: 1 | 0;
   reason: string;
@@ -573,12 +574,19 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
     const diagnostics: JudgedRowDiagnostic[] = [];
     for (const s of plan.stages) {
       if (s.relevance?.judge !== "model") continue;
-      const criterion = (s.relevance.criterion && typeof s.relevance.criterion === "object")
-        ? (s.relevance.criterion as { entity: string; country: string; topic: string })
+      const rawCrit = s.relevance.criterion;
+      const criterion = (rawCrit && typeof rawCrit === "object")
+        ? {
+            entity: String((rawCrit as any).entity ?? ""),
+            country: String((rawCrit as any).country ?? ""),
+            topic: String((rawCrit as any).topic ?? ""),
+            ...((rawCrit as any).brief ? { brief: String((rawCrit as any).brief) } : {}),
+          }
         : {
-            entity: "وزارة الصحة السعودية",
-            country: "السعودية",
-            topic: s.relevance?.terms?.[0] ?? "الشائعات",
+            entity: "",
+            country: "",
+            topic: s.relevance?.terms?.[0] ?? "",
+            ...(typeof rawCrit === "string" ? { brief: rawCrit } : {}),
           };
       const stageItems = [...snap.stage(s.key).items.values()];
       for (const it of stageItems) {

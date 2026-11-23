@@ -1351,20 +1351,67 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     };
     const stageBrief = "جمع تصريحات وزارة الصحة السعودية عن الشائعات ومكافحتها وتوعية الأفراد ضد الشائعات من الأخبار ومواقع الويب.";
 
-    it("Test (a) - Criterion Plumbing: carries entity, country, topic derived directly from stage brief", () => {
+    it("Test (a) - R6 stage criterion carries entity/country/topic produced by model", () => {
       const ask = {
         topic: { text: "الشائعات", relation: "about" as const },
-        source: { kind: "official" as const, text: "وزارة الصحة السعودية" },
+        source: { kind: "official" as const, text: "Mohgovsa" },
         country: "SA",
+        entity: "وزارة الصحة السعودية",
+        brief: stageBrief,
       };
-      const spec = researchRelevanceOf(ask, ["title", "text"], stageBrief);
+      const modelCriterion = {
+        entity: "وزارة الصحة السعودية",
+        country: "SA",
+        topic: "الشائعات",
+        brief: stageBrief,
+      };
+      const spec = researchRelevanceOf(ask, ["title", "text"], modelCriterion);
       expect(spec).not.toBeNull();
       expect(spec!.judge).toBe("model");
       expect(spec!.criterion).toBeDefined();
-      const crit = spec!.criterion as { entity: string; country: string; topic: string };
-      expect(crit.entity).toContain("وزارة الصحة السعودية");
-      expect(crit.country).toMatch(/السعودية|المملكة العربية السعودية/);
-      expect(crit.topic).toContain("الشائعات");
+      expect(spec!.criterion.entity).toBe("وزارة الصحة السعودية");
+      expect(spec!.criterion.country).toBe("SA");
+      expect(spec!.criterion.topic).toBe("الشائعات");
+      expect(spec!.criterion.brief).toBe(stageBrief);
+    });
+
+    it("Test (b) - Generic: different request (Egyptian company) carries its own criterion without R6 coupling", () => {
+      const egAsk = {
+        topic: { text: "أرباح الربع الثالث", relation: "about" as const },
+        source: { kind: "official" as const, text: "TelecomEgypt" },
+        country: "EG",
+        entity: "الشركة المصرية للاتصالات",
+        brief: "جمع أخبار أرباح الربع الثالث للشركة المصرية للاتصالات",
+      };
+      const egCriterion = {
+        entity: "الشركة المصرية للاتصالات",
+        country: "EG",
+        topic: "أرباح الربع الثالث",
+        brief: "جمع أخبار أرباح الربع الثالث للشركة المصرية للاتصالات",
+      };
+      const spec = researchRelevanceOf(egAsk, ["title", "text"], egCriterion);
+      expect(spec).not.toBeNull();
+      expect(spec!.criterion.entity).toBe("الشركة المصرية للاتصالات");
+      expect(spec!.criterion.country).toBe("EG");
+      expect(spec!.criterion.topic).toBe("أرباح الربع الثالث");
+      expect(spec!.criterion.entity).not.toContain("وزارة الصحة");
+      expect(spec!.criterion.country).not.toBe("SA");
+    });
+
+    it("Test (c) - Generic: missing entity/country stays empty with brief passed and no defaults", () => {
+      const bareAsk = {
+        topic: { text: "أسعار الذهب", relation: "about" as const },
+        brief: "متابعة حركة أسعار الذهب اليومية",
+      };
+      const spec = researchRelevanceOf(bareAsk, ["title", "text"], "متابعة حركة أسعار الذهب اليومية");
+      expect(spec).not.toBeNull();
+      expect(spec!.criterion.entity).toBe("");
+      expect(spec!.criterion.country).toBe("");
+      expect(spec!.criterion.topic).toBe("أسعار الذهب");
+      expect(spec!.criterion.brief).toBe("متابعة حركة أسعار الذهب اليومية");
+      // Must NOT have defaulted to any ministry or country
+      expect(spec!.criterion.entity).not.toBe("وزارة الصحة السعودية");
+      expect(spec!.criterion.country).not.toBe("السعودية");
     });
 
     it("Test (b) - Exclusion Plumbing: judge verdict 0 excludes Row 2 with reason review_no", async () => {

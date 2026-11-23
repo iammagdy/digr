@@ -24,18 +24,23 @@ Independent Reviews:
 - **Status:** Deferred to TREG Playbook Phase 3 point 3.2 (`timelineScanner.ts`).
 - **Rationale:** Deep account reading requires the P3 timeline scanner engine. The scout guard in r7 remains completely untouched.
 
-### Group B.2: Admin Inspector Judged Rows Diagnostics (Priority of r7)
-- **Problem:** QA and developers could only see aggregate item check counts in internal events, with zero per-row visibility into the judge's input, criterion, verdict, or reason.
+### Group B.2: Admin Inspector Judged Rows Diagnostics & Generic Criterion Contract
+- **Problem:** QA and developers lacked per-row visibility into the judge's input, criterion, verdict, or reason. Moreover, hardcoding customer words, regexes, or word lists violates D-0086 / D-0198.
 - **Solution:**
-  - In `agent/src/runMission.ts`: Exported `JudgedRowDiagnostic` interface. In `recordChecks`, collected all judged row decisions for stages with `judge === "model"` and persisted to `admin/judge_diagnostics.json` in storage bucket `agent-missions` (`AGENT_BUCKET`).
+  - In `agent/src/runMission.ts`: Exported `JudgedRowDiagnostic` interface with `{ entity: string; country: string; topic: string; brief?: string }`. In `recordChecks`, collected all judged row decisions for stages with `judge === "model"` and persisted to `admin/judge_diagnostics.json` in storage bucket `agent-missions` (`AGENT_BUCKET`). If any criterion field is missing, it stays empty (`""`) and `brief` is provided instead—never defaulting to any hardcoded ministry or country.
   - In `src/lib/server/adminMissionInspector.ts`: In `loadInspection`, safely read `admin/judge_diagnostics.json`, redacted all strings with `redactText`, and exposed under `judgedRows: Array<{ title: string; url: string | null; criterion: string; verdict: 1 | 0; reason: string }>`. Enforced `assertNoSecrets(body)` to guarantee zero secrets or customer PII leakage.
+  - In `src/lib/agentMission/foundation/compilePlan.ts`: Generic derivation of `criterion: { entity, country, topic, brief }` directly from the model's structured step output (`s.entity`, `s.country`, `s.topic`, `u.understanding_ar`) or `Ask`, with zero word lists, zero regexes, and zero hardcoded domain strings.
+  - In `agent/src/llmPlanner/prompts.ts` and `planner.ts`: Added `entity` to `UnderstoodStep` and `UNDERSTAND_SCHEMA` so the LLM populates it directly from customer messages.
 
 ### Group B.3: Deterministic Plumbing Tests & Safe Model Judge Exclusion
 - **Problem:** If a model judge failed or unreviewed rows remained, legacy fallback paths could deliver unjudged rows to the customer.
 - **Solution:**
   - In `agent/src/items/ingest.ts`: For any stage where `stage.relevance?.judge === "model"`, candidate rows are never accepted by keyword rule matching (`by: "rule"`), and unreviewed or failed review rows (`reviewStop === "failed"`) are marked `state: "excluded"`, `reason: "review_failed"` and never delivered as matched items.
-  - In `src/lib/agentMission/foundation/compilePlan.ts`: `researchRelevanceOf` attaches structured criterion (`entity`, `country`, `topic`) derived from the stage brief and ask inputs.
-  - In `tests/x-account-rumors-replay.test.ts`: Added 3 deterministic plumbing tests using real R6 fixture data (`okaz.com.sa` Row 1, `youlyou.com` Row 2) with zero invented text.
+  - In `tests/x-account-rumors-replay.test.ts`:
+    - Test (a): R6 stage fixture carries model-produced entity, country, and topic.
+    - Test (b): Generic request (e.g. Egyptian telecom company) carries its own criterion without R6 coupling.
+    - Test (c): Missing fields stay empty and pass brief without default values.
+    - Real R6 fixture data (`okaz.com.sa` Row 1, `youlyou.com` Row 2) verifies exclusion of non-qualifying rows (`review_no`) and unreviewed rows on failure (`review_failed`).
 
 ### Group B.4: Price Card Minimum Charge Display (Megz D-0196) — Tier A Review
 - **Problem:** When delivered rows cost less than `min_charge_points`, the card did not explain the minimum charge before customer approval.

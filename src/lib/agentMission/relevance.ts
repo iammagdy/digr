@@ -50,7 +50,7 @@ export interface RelevanceSpec {
   /**
    * DT-20261123-x-account-rumors r7: Structured or string research criterion.
    */
-  criterion?: { entity: string; country: string; topic: string } | string;
+  criterion?: { entity: string; country: string; topic: string; brief?: string } | string;
 }
 
 /** Another meaning of the name, as the planner saw it in its sample: «الحكم محمد صلاح عبد الفتاح». `extensions`: the words that follow the name in it («عبد الفتاح»); `titles`: a title right before or after the name («الحكم», «المدرب»); `markers`: words of that meaning anywhere in the text. */
