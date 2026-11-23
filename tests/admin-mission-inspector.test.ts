@@ -204,11 +204,147 @@ describe("the reads are by named columns and the last guard holds", () => {
     for (const [t, cols] of selects) { expect(String(cols), t).not.toContain("*"); expect(String(cols)).toMatch(/^id/); }
     expect(String(selects.find(([t]) => t === "missions")![1])).not.toMatch(/user_id|worker_id|lease_until|question_ar|plan_public|answer_text/);
   });
-  it("a string that escapes the redaction (an endpoint id that is an e-mail) trips the final walk: 500, and the secret is not in the answer", async () => {
+  it("a string in an un-redacted field (an endpoint id that is an e-mail) is caught by deep redaction / leaf sanitize: returns 200 and the secret is replaced with [محجوب]", async () => {
     state.db.seed("mission_calls", [call(9, { endpoint_id: "leak@corp.example" })]);
     const r = await get();
-    expect(r.status).toBe(500);
-    expect(JSON.stringify(await body(r))).not.toContain("leak@corp.example");
+    expect(r.status).toBe(200);
+    const b = await body(r);
+    expect(JSON.stringify(b)).not.toContain("leak@corp.example");
+    expect(b.calls.find((c: any) => c.id.endsWith("call_0009")).endpointId).toBe("[محجوب]");
+  });
+  it("live shape test: plan with x.com 19-digit URLs in stages and planner topic, 32-hex params_digest, cursor token, event email -> returns 200 and passes assertNoSecrets without 500 (DT-20261124)", async () => {
+    const liveMissionId = "msn_a9e3167d3cb1d7e60ef7";
+    state.db.seed("missions", [{
+      id: liveMissionId,
+      status: "running",
+      created_at: at(0),
+      updated_at: at(50),
+      request_text: "فحص حسابات وتغريدات سابقة",
+      plan: {
+        stages: [
+          {
+            key: "tweets_scan",
+            title_ar: "فحص تغريدات https://x.com/sample_author/status/1859678493029485721 وسجل",
+            endpoint_id: "x.tweets.scan",
+            parent_key: null,
+            deliver: true,
+            planned_rows: 50,
+            sample_rows: [
+              { url: "https://x.com/sample_author/status/1859678493029485721", text: "تغريدة عادية" },
+              { url: "x.com/other_author/status/1859678493029485722", text: "تغريدة بدون بروتوكول" },
+            ],
+          },
+        ],
+        compiled: {
+          llm: {
+            understanding_ar: "فحص حساب x.com/sample_author/status/1859678493029485721 واستخراج النتائج.",
+            steps: [
+              {
+                key: "tweets_scan",
+                platform: "x",
+                capability: "x.tweets.scan",
+                topic: "بحث https://x.com/sample_author/status/1859678493029485721 في تويتر",
+                source: null,
+                period: null,
+                terms: ["x.com/sample_author/status/1859678493029485721"],
+              },
+            ],
+          },
+        },
+      },
+    }]);
+
+    state.db.seed("mission_calls", [
+      {
+        id: `${liveMissionId}:call_0001`,
+        mission_id: liveMissionId,
+        phase: "execution",
+        endpoint_id: "x.tweets.scan",
+        status: "ok",
+        http_status: 200,
+        rows_returned: 20,
+        cost_usd: 0.002,
+        duration_ms: 450,
+        params_digest: {
+          query_hash: "0123456789abcdef0123456789abcdef",
+          cursor: "dXNlcl9pZD0xODU5Njc4NDkzMDI5NDg1NzIxJnBhZ2U9Mg==",
+        },
+        created_at: at(10),
+      },
+    ]);
+
+    state.db.seed("mission_events", [
+      {
+        id: 101,
+        mission_id: liveMissionId,
+        kind: "progress",
+        message_ar: "تم التواصل مع scanner.team@corp.internal بنجاح وتحديث الحالة.",
+        counts: { items: 20 },
+        created_at: at(15),
+      },
+    ]);
+
+    const r = await get(liveMissionId);
+    expect(r.status).toBe(200);
+    const b = await body(r);
+
+    // URL path retained readable host and prefix, 19-digit post ID replaced with [محجوب]
+    expect(b.stages[0].titleAr).toBe("فحص تغريدات https://x.com/sample_author/status/[محجوب] وسجل");
+    expect(b.planner.understandingAr).toContain("x.com/sample_author/status/[محجوب]");
+    expect(b.planner.steps[0].topic).toBe("بحث https://x.com/sample_author/status/[محجوب] في تويتر");
+
+    // Email inside event is redacted
+    const event = b.events.find((e: any) => e.id === 101);
+    expect(event.messageAr).not.toContain("scanner.team@corp.internal");
+    expect(event.messageAr).toContain("[محجوب]");
+
+    // Verify raw output has no secret shapes, 19-digit phones/IDs, 32-hex, or raw email
+    const raw = JSON.stringify(b);
+    expect(raw).not.toContain("1859678493029485721");
+    expect(raw).not.toContain("1859678493029485722");
+    expect(raw).not.toContain("0123456789abcdef0123456789abcdef");
+    expect(raw).not.toContain("scanner.team@corp.internal");
+  });
+  it("sanitizeLeaves fallback replaces any unexpected secret-shaped leaf and logs inspector_redacted_paths without failing 500", async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: any[]) => {
+      logs.push(args.join(" "));
+      origLog(...args);
+    };
+    try {
+      const fallbackMissionId = "msn_fallback1234";
+      state.db.seed("missions", [{
+        id: fallbackMissionId,
+        status: "completed",
+        created_at: at(0),
+        updated_at: at(10),
+        request_text: "طلب بسيط",
+        plan: { stages: [] },
+      }]);
+      state.db.seed("mission_calls", [
+        {
+          id: `${fallbackMissionId}:call_0001`,
+          mission_id: fallbackMissionId,
+          phase: "planning",
+          endpoint_id: "0123456789abcdef0123456789abcdef",
+          status: "ok",
+          http_status: 200,
+          rows_returned: 1,
+          cost_usd: 0.001,
+          duration_ms: 100,
+          params_digest: {},
+          created_at: at(1),
+        },
+      ]);
+      const r = await get(fallbackMissionId);
+      expect(r.status).toBe(200);
+      const b = await body(r);
+      expect(b.calls[0].endpointId).toBe("[محجوب]");
+      expect(JSON.stringify(b)).not.toContain("0123456789abcdef0123456789abcdef");
+    } finally {
+      console.log = origLog;
+    }
   });
 });
 

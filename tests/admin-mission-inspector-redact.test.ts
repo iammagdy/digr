@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED, assertNoSecrets, buildInspection, noCardReasonOf, paramKeysOf, redactError, redactFailure, redactJudgedText, redactJudgedUrl, redactText } from "../src/lib/server/adminMissionInspector";
+import {
+  REDACTED,
+  assertNoSecrets,
+  buildInspection,
+  cleanTrailingPunctuation,
+  isSecretLeaf,
+  noCardReasonOf,
+  paramKeysOf,
+  redactDeep,
+  redactDeepString,
+  redactError,
+  redactFailure,
+  redactJudgedText,
+  redactJudgedUrl,
+  redactText,
+  redactUrlString,
+  sanitizeLeaves,
+} from "../src/lib/server/adminMissionInspector";
 
 /**
  * DT-20261118-06 PR 2: the redaction of the admin mission inspector. Table-driven: what must be masked, what must stay byte for byte (a count of tweets is not a phone number, a date is not a phone number), and the stricter rule for the free text of a failure
@@ -135,5 +152,84 @@ describe("redactJudgedUrl & redactJudgedText (DT-20261123 judgedRows redaction)"
     expect(redactJudgedText("معرف b64 QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2")).toBe("معرف b64 [محجوب]");
     // Emails remain unmasked so they trip assertNoSecrets
     expect(redactJudgedText("راسلنا عبر info@example.com")).toBe("راسلنا عبر info@example.com");
+  });
+});
+
+describe("deep redaction: redactUrlString, redactDeepString, redactDeep & sanitizeLeaves (DT-20261124)", () => {
+  it("cleanTrailingPunctuation separates sentence punctuation from URLs", () => {
+    expect(cleanTrailingPunctuation("https://x.com/status/123.")).toEqual({ url: "https://x.com/status/123", suffix: "." });
+    expect(cleanTrailingPunctuation("https://x.com/status/123).")).toEqual({ url: "https://x.com/status/123", suffix: ")." });
+    expect(cleanTrailingPunctuation("https://x.com/status/123")).toEqual({ url: "https://x.com/status/123", suffix: "" });
+  });
+
+  it("redactUrlString masks long IDs, hex, and base64 runs while preserving host and path structure", () => {
+    expect(redactUrlString("https://x.com/sample_author/status/1859678493029485721")).toBe("https://x.com/sample_author/status/[محجوب]");
+    expect(redactUrlString("x.com/sample_author/status/1859678493029485721")).toBe("x.com/sample_author/status/[محجوب]");
+    expect(redactUrlString("https://x.com/sample_author/status/1859678493029485721?ref=src&utm=123#frag")).toBe("https://x.com/sample_author/status/[محجوب]?[محجوب]#[محجوب]");
+    expect(redactUrlString("https://news.example.com/item/aHR0cHM6Ly9leGFtcGxlLmNvbS9zb21lL2xvbmcvc2x1Zy90aGF0L2lzLXZlcnktbG9uZw==")).toBe("https://news.example.com/item/[محجوب]");
+    expect(redactUrlString("not-a-url")).toBe("not-a-url");
+  });
+
+  it("redactDeepString handles sentences with embedded URLs, emails, tokens, and hashes", () => {
+    const raw = "راجع المنشور https://x.com/author/status/1859678493029485721 أو راسل admin@diger.tech أو الرمز 0123456789abcdef0123456789abcdef";
+    const cleaned = redactDeepString(raw);
+    expect(cleaned).toContain("https://x.com/author/status/[محجوب]");
+    expect(cleaned).toContain("[محجوب]");
+    expect(cleaned).not.toContain("1859678493029485721");
+    expect(cleaned).not.toContain("admin@diger.tech");
+    expect(cleaned).not.toContain("0123456789abcdef0123456789abcdef");
+  });
+
+  it("redactDeep walks deep nested objects and arrays", () => {
+    const payload = {
+      stages: [
+        {
+          key: "stage_1",
+          title_ar: "متابعة حساب x.com/user/status/1859678493029485721",
+          items: ["0123456789abcdef0123456789abcdef", "normal text"],
+        },
+      ],
+      details: {
+        email: "test@example.com",
+        phone: "+20 100 123 4567",
+        count: 42,
+        active: true,
+      },
+    };
+    const redacted = redactDeep(payload);
+    expect(redacted.stages[0].title_ar).toBe("متابعة حساب x.com/user/status/[محجوب]");
+    expect(redacted.stages[0].items[0]).toBe("[محجوب]");
+    expect(redacted.stages[0].items[1]).toBe("normal text");
+    expect(redacted.details.email).toBe("[محجوب]");
+    expect(redacted.details.phone).toBe("[محجوب]");
+    expect(redacted.details.count).toBe(42);
+    expect(redacted.details.active).toBe(true);
+  });
+
+  it("isSecretLeaf correctly tests for secrets and phone numbers", () => {
+    expect(isSecretLeaf("test@example.com")).toBe(true);
+    expect(isSecretLeaf("Bearer abcdef1234567890123456")).toBe(true);
+    expect(isSecretLeaf("sk-abcdef1234567890")).toBe(true);
+    expect(isSecretLeaf("0123456789abcdef0123456789abcdef")).toBe(true);
+    expect(isSecretLeaf("+20 100 123 4567")).toBe(true);
+    expect(isSecretLeaf("نص عادي سليم")).toBe(false);
+    expect(isSecretLeaf("2026-11-24T12:00:00Z")).toBe(false);
+  });
+
+  it("sanitizeLeaves replaces offending leaves and logs paths", () => {
+    const paths: string[] = [];
+    const obj = {
+      safe: "نص آمن",
+      sub: {
+        secret: "0123456789abcdef0123456789abcdef",
+      },
+      list: ["سليم", "user@corp.example"],
+    };
+    const sanitized = sanitizeLeaves(obj, "$", paths) as any;
+    expect(sanitized.safe).toBe("نص آمن");
+    expect(sanitized.sub.secret).toBe(REDACTED);
+    expect(sanitized.list[0]).toBe("سليم");
+    expect(sanitized.list[1]).toBe(REDACTED);
+    expect(paths).toEqual(["$.sub.secret", "$.list[1]"]);
   });
 });
