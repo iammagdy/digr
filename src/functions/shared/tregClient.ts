@@ -233,10 +233,17 @@ export function serializeProviderParams(
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
-const stepAttempts = new Map<string, number>();
+function getStepAttempts(budget: JobCallBudget): Map<string, number> {
+  let map = (budget as any)._stepAttempts as Map<string, number> | undefined;
+  if (!map) {
+    map = new Map<string, number>();
+    (budget as any)._stepAttempts = map;
+  }
+  return map;
+}
 
 export function resetStepAttempts(): void {
-  stepAttempts.clear();
+  // Retained for test utility compatibility
 }
 
 /**
@@ -257,16 +264,20 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked: "sensitive_not_allowed" });
   }
 
-  const stepKey = options.jobId && options.stepId ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
-  if (stepKey) {
-    const current = stepAttempts.get(stepKey) ?? 0;
+  const budget = options.callBudget;
+  // Per Rule 1 (الكبير): attempt cap strictly applies ONLY when options.callBudget is present.
+  // When no budget is passed, today's behavior holds (no cap refusal).
+  // Per Rule 2: attempt count lives with the job's own budget object (never process-wide).
+  const stepKey = (budget && options.jobId && options.stepId) ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+  if (stepKey && budget) {
+    const attemptsMap = getStepAttempts(budget);
+    const current = attemptsMap.get(stepKey) ?? 0;
     if (current >= 4) {
       console.warn(JSON.stringify({ tag: "treg_call_step_limit", endpointId: options.endpointId, stepKey, attempts: current }));
       return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
     }
   }
 
-  const budget = options.callBudget;
   const cap = Number(options.routeMaxCostUsd);
   let estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
   // DT-20261119-11 D1/D2: the header IS the money the budget has left (whole micro-dollars, rounded down), held in ONE step before the request and kept for a call whose charge is unknown; no positive amount that covers the estimate, no request
@@ -303,14 +314,17 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   const cb = options.circuitBreaker ?? getCircuitBreaker();
   if (result.ok) {
     cb.recordSuccess(options.endpointId);
-  } else {
-    // On 400, execute minimal documented control request to diagnose if provider itself is broken
+  } else if (result.httpStatus !== 409) {
+    // 409 is «still running» (in-flight polling), not a failure and not a circuit failure
     if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe) {
       const probeReq = getControlProbeRequest(options.endpointId);
       if (probeReq) {
         let canProbe = true;
-        if (stepKey && (stepAttempts.get(stepKey) ?? 0) >= 4) {
-          canProbe = false;
+        if (stepKey && budget) {
+          const attemptsMap = getStepAttempts(budget);
+          if ((attemptsMap.get(stepKey) ?? 0) >= 4) {
+            canProbe = false;
+          }
         }
         if (budget && !budget.reserve(estimate)) {
           canProbe = false;
@@ -520,11 +534,12 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   let attempt = 0;
   let retried429 = false;
 
-  const stepKey = options.jobId && options.stepId ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+  const stepKey = (options.callBudget && options.jobId && options.stepId) ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
 
   while (attempt <= max5xxRetries) {
-    if (stepKey) {
-      const cur = stepAttempts.get(stepKey) ?? 0;
+    if (stepKey && options.callBudget) {
+      const attemptsMap = getStepAttempts(options.callBudget);
+      const cur = attemptsMap.get(stepKey) ?? 0;
       if (cur >= 4) {
         return {
           ok: false,
@@ -539,7 +554,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
           isPlatformBalanceLow: false,
         };
       }
-      stepAttempts.set(stepKey, cur + 1);
+      attemptsMap.set(stepKey, cur + 1);
     }
 
     lastNetErr = null;
@@ -558,8 +573,11 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       if (response.status === 429 && !retried429) {
         const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
         if (retryAfter !== null && retryAfter <= 10) {
-          if (stepKey && (stepAttempts.get(stepKey) ?? 0) >= 4) {
-            break;
+          if (stepKey && options.callBudget) {
+            const attemptsMap = getStepAttempts(options.callBudget);
+            if ((attemptsMap.get(stepKey) ?? 0) >= 4) {
+              break;
+            }
           }
           if (options.callBudget) {
             const est = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) ? Number(options.callEstimateUsd) : 0.05);

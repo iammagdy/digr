@@ -99,29 +99,18 @@ export class EndpointCircuitBreaker {
 
     const now = this.nowFn();
     for (const [endpointId, status] of Object.entries(statuses)) {
-      if (status === "failing") {
-        this.records.set(endpointId, {
-          endpointId,
-          state: "open",
-          failures: 0,
-          consecutive400: 0,
-          consecutiveFailures: 0,
-          lastFailureTime: null,
-          openedAt: now,
-          cooldownMs: DEFAULT_COOLDOWN_MS,
-        });
-      } else {
-        this.records.set(endpointId, {
-          endpointId,
-          state: "closed",
-          failures: 0,
-          consecutive400: 0,
-          consecutiveFailures: 0,
-          lastFailureTime: null,
-          openedAt: null,
-          cooldownMs: DEFAULT_COOLDOWN_MS,
-        });
-      }
+      // Per Rule 3 (الكبير): all circuits start closed at boot; data-file current_status alone never blocks
+      // an endpoint unless real failures are observed at runtime in this process.
+      this.records.set(endpointId, {
+        endpointId,
+        state: "closed",
+        failures: 0,
+        consecutive400: 0,
+        consecutiveFailures: 0,
+        lastFailureTime: null,
+        openedAt: null,
+        cooldownMs: DEFAULT_COOLDOWN_MS,
+      });
     }
   }
 

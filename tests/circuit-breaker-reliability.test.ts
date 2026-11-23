@@ -42,9 +42,10 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
   });
 
   describe("Point 2.1: EndpointCircuitBreaker State Transitions", () => {
-    it("1. Boot initialization sets TikHub search to open based on registry current_status: failing", () => {
+    it("1. Boot initialization starts closed; registry current_status does not block alone per Rule 3", () => {
       const cb = new EndpointCircuitBreaker(undefined, mockNow);
-      expect(cb.getState("tikhub.x.twitter-web-fetch-search-timeline")).toBe("open");
+      expect(cb.getState("tikhub.x.twitter-web-fetch-search-timeline")).toBe("closed");
+      expect(cb.isAvailable("tikhub.x.twitter-web-fetch-search-timeline")).toBe(true);
     });
 
     it("behaves as no contract data when in-repo registry file is absent (defaults to closed)", () => {
@@ -58,6 +59,9 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
     it("2. While open, circuitBreaker.isAvailable(endpointId) returns false", () => {
       const cb = new EndpointCircuitBreaker(undefined, mockNow);
       const epId = "tikhub.x.twitter-web-fetch-search-timeline";
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
       expect(cb.getState(epId)).toBe("open");
       expect(cb.isAvailable(epId)).toBe(false);
     });
@@ -65,6 +69,9 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
     it("transitions from open to half-open after 5-minute cooldown, where isAvailable returns true", () => {
       const cb = new EndpointCircuitBreaker(undefined, mockNow);
       const epId = "tikhub.x.twitter-web-fetch-search-timeline";
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
       expect(cb.getState(epId)).toBe("open");
       expect(cb.isAvailable(epId)).toBe(false);
 
@@ -82,6 +89,10 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
     it("in half-open: a single success resets to closed, while a single failure returns to open", () => {
       const cb = new EndpointCircuitBreaker(undefined, mockNow);
       const epId = "tikhub.x.twitter-web-fetch-search-timeline";
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
+      expect(cb.getState(epId)).toBe("open");
 
       // Advance to half-open
       virtualTime += DEFAULT_COOLDOWN_MS + 10;
@@ -130,6 +141,9 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
     it("reset(endpointId) manually clears circuit to closed", () => {
       const cb = new EndpointCircuitBreaker(undefined, mockNow);
       const epId = "tikhub.x.twitter-web-fetch-search-timeline";
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
+      cb.recordFailure(epId, 500);
       expect(cb.getState(epId)).toBe("open");
 
       cb.reset(epId);
@@ -200,6 +214,10 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
         "tikhub.x.twitter-web-fetch-search-timeline": "failing",
         "anyapi.x.search.posts": "working",
       }, mockNow);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      expect(cb.getState("tikhub.x.twitter-web-fetch-search-timeline")).toBe("open");
 
       const candidates = candidatesFor(
         mockCatalog,
@@ -371,6 +389,10 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
   describe("Point 2.4: Integrate Circuit Breaker into asyncTreg.ts", () => {
     it("early rejects call with circuit_open when endpoint circuit is open without calling callFn", async () => {
       const cb = new EndpointCircuitBreaker({ "tikhub.x.twitter-web-fetch-search-timeline": "failing" }, mockNow);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      cb.recordFailure("tikhub.x.twitter-web-fetch-search-timeline", 500);
+      expect(cb.getState("tikhub.x.twitter-web-fetch-search-timeline")).toBe("open");
       const callFnMock = vi.fn();
 
       const deps: AsyncTregDeps = {
@@ -589,6 +611,114 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
       expect((result as any).failed).toBe(false);
       expect((result as any).blocked).toBe("circuit_open");
       expect((result as any).http_status).toBe(503);
+    });
+
+    it("5. two different jobs with the same step key each get their own 4 attempts (Rule 2)", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        return new Response(JSON.stringify({ error: "err" }), { status: 502 });
+      }) as any;
+
+      try {
+        const budgetA = createJobCallBudget({ ceilingUsd: 1.0, spentUsd: 0 });
+        const budgetB = createJobCallBudget({ ceilingUsd: 1.0, spentUsd: 0 });
+
+        // Job A runs 4 calls on step_shared
+        for (let i = 0; i < 4; i++) {
+          const res = await executeTregCall({
+            endpointId: "anyapi.x.search.posts",
+            userId: "uA",
+            jobId: "jobA",
+            stepId: "step_shared",
+            callBudget: budgetA,
+            callEstimateUsd: 0.01,
+            singleAttempt: true,
+          });
+          expect(res.ok).toBe(false);
+        }
+        // 5th call on Job A is blocked
+        const fifthA = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "uA",
+          jobId: "jobA",
+          stepId: "step_shared",
+          callBudget: budgetA,
+          callEstimateUsd: 0.01,
+          singleAttempt: true,
+        });
+        expect(fifthA.budgetStopped).toBe(true);
+
+        // Job B with its own budget runs on the same step_shared -> must NOT be blocked by Job A
+        const firstB = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "uB",
+          jobId: "jobB",
+          stepId: "step_shared",
+          callBudget: budgetB,
+          callEstimateUsd: 0.01,
+          singleAttempt: true,
+        });
+        expect(firstB.budgetStopped).toBeUndefined();
+        expect(firstB.ok).toBe(false); // status 502 returned from fetch, not refused
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("6. call without budget has no cap refusal (Rule 1)", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        return new Response(JSON.stringify({ ok: true, data: [] }), {
+          status: 200,
+          headers: { "x-treg-cost-micro": "1000", "x-treg-call-id": `c_${callCount}` },
+        });
+      }) as any;
+
+      try {
+        // Run 6 calls without callBudget
+        for (let i = 0; i < 6; i++) {
+          const res = await executeTregCall({
+            endpointId: "anyapi.x.search.posts",
+            userId: "u_nobudget",
+            jobId: "job_nobudget",
+            stepId: "step_nobudget",
+            singleAttempt: true,
+          });
+          expect(res.ok).toBe(true);
+        }
+        expect(callCount).toBe(6);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("7. HTTP 409 «still running» does not record a circuit failure (Rule 2)", async () => {
+      const cb = new EndpointCircuitBreaker(undefined, mockNow);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        return new Response(JSON.stringify({ error: "still running" }), { status: 409 });
+      }) as any;
+
+      try {
+        const res = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "u_409",
+          jobId: "job_409",
+          circuitBreaker: cb,
+          singleAttempt: true,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.httpStatus).toBe(409);
+        // Circuit consecutive failures must remain 0
+        expect(cb.getRecord("anyapi.x.search.posts").consecutiveFailures).toBe(0);
+        expect(cb.getState("anyapi.x.search.posts")).toBe("closed");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });
