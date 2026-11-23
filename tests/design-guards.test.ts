@@ -71,6 +71,27 @@ describe("Design Guard Detectors (Unit Tests for Required Detectors)", () => {
     expect(provViolation!.formatted).toContain("fake/file2.ts:2");
   });
 
+  it("Module specifiers containing provider or endpoint IDs are not flagged, while normal strings are", () => {
+    const sampleProvider = "crawl4ai";
+    expect(catalog.providers.has(sampleProvider)).toBe(true);
+
+    const fakeCode = [
+      `import { something } from "../${sampleProvider}/catalog";`,
+      `export * from "./providers/${sampleProvider}";`,
+      `const mod = import("../lib/${sampleProvider}");`,
+      `const req = require("../lib/${sampleProvider}");`,
+      `const providerName = "${sampleProvider}";`,
+    ].join("\n");
+
+    const violations = scanSourceCode("fake/moduleSpecifiers.ts", fakeCode, catalog, new AllowIndex());
+
+    // Only line 5 (normal string literal) should be flagged; lines 1-4 are module specifiers
+    expect(violations.length).toBe(1);
+    expect(violations[0].line).toBe(5);
+    expect(violations[0].rule).toBe("treg_token");
+    expect(violations[0].detail).toContain(sampleProvider);
+  });
+
   it("Detector 3 fires: detects string literal containing «/srv/»", () => {
     const fakeCode = [
       'const tempDir = "/srv/diger-team/fawaaly/work";',
