@@ -21,7 +21,7 @@ import { planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMi
 import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
-import { RAW_PATH } from "./gateway";
+import { RAW_PATH, clampOutgoingPageSize } from "./gateway";
 import { callTregWithAsync } from "./asyncTreg";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
@@ -828,6 +828,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // the model's own request carries the customer's Cairo days (live finding B), never its day-only operators
         const endpoint = ctx.catalog.byId.get(id);
         let sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, endpoint, a.params) : a.params;
+        if (isObject(sent)) {
+          sent = clampOutgoingPageSize(endpoint, sent as Record<string, unknown>);
+        }
         // C5: small planning samples for a child (people) stage using catalog metadata size input = asked per-parent count (default 1)
         const hasPeopleStructure = ctx.understoodPeople !== undefined || ctx.peopleOfCompanies === true;
         const textAsksPeople = perParentQuantities(askedTextOf(mission)).some((q) => isPeopleNoun(q.noun ?? ""));
@@ -898,7 +901,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const target = Math.max(1, Math.min(5000, Math.floor(Number(a.target_rows) || 0)));
         if (!Number.isFinite(target) || !(Number(a.target_rows) > 0)) return err("target_rows is required (a whole number of rows)");
         const maxPages = Math.max(1, Math.min(AGENT_COLLECT_MAX_PAGES, Math.floor(Number(a.max_pages) || AGENT_COLLECT_MAX_PAGES)));
-        const first = isObject(a.params) ? { ...a.params } : {};
+        const first = isObject(a.params) ? clampOutgoingPageSize(endpoint, { ...a.params }) : {};
         // RESUME, NOT RESTART: a call with the same endpoint and the same inputs continues from where the last one stopped (its cursor) and skips the rows it already returned. Starting from the first page again re-bought the same
         // pages (the live run of 2026-10-28 paid for 60 pages to get 25 of new rows) and made the live count look frozen.
         const streamKey = collectStreamKey(id, first, cursorParam);
