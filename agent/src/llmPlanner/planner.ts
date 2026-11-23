@@ -11,6 +11,7 @@ import { APPROVED_CAPABILITY_CATALOG } from "../../../src/functions/shared/capab
 import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../../src/functions/shared/quotes";
 import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
+import { researchRelevanceOf } from "../../../src/lib/agentMission/foundation/compilePlan";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
@@ -283,6 +284,10 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
       if (!endpoint.pagination?.includes(cfg.cursorParam) || !endpoint.inputs.some((input) => input.name === cfg.cursorParam && input.type === cfg.cursorType)) continue;
       cursor = cfg.cursorParam;
     }
+    if (!cursor && Array.isArray(endpoint.pagination) && endpoint.pagination.length > 0) {
+      const candidate = endpoint.pagination.find((p) => endpoint.inputs.some((i) => i.name === p));
+      if (candidate) cursor = candidate;
+    }
     const clean = (p: unknown): Record<string, unknown> => {
       const res: Record<string, unknown> = {};
       if (!isObj(p)) return res;
@@ -477,6 +482,8 @@ interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
   second?: { option: ToolOption; mapCode: string; sample?: PageSample };
+  /** Additional alternate tools across sub-providers that also answered on a real page. */
+  alternates?: Array<{ option: ToolOption; mapCode: string; sample?: PageSample }>;
   sample?: PageSample;
   variantSamples?: Map<Record<string, unknown>, PageSample>;
   /** OUR OWN WEB SEARCH (Firecrawl / Context.dev) as the last fallback of a web or news search, proven on a real page: execution reads it after the catalog's tools run out. */
@@ -656,6 +663,21 @@ function dayAr(day: string | null | undefined): { text: string; year: number } |
   if (!m) return null;
   return { text: `${toArabicDigits(Number(m[3]))} ${MONTHS_AR[Number(m[2]) - 1] ?? ""}`, year: Number(m[1]) };
 }
+/** Synchronizes step.period from since: / until: date expressions in query params or search terms when single day was defaulted */
+export function syncStepPeriodFromStep(step: UnderstoodStep, params?: Record<string, unknown>): void {
+  const strings: string[] = [
+    ...(params ? Object.values(params).filter((v): v is string => typeof v === "string") : []),
+    ...(step.search_terms ?? []),
+  ];
+  for (const s of strings) {
+    const m = s.match(/\bsince:(\d{4}-\d{2}-\d{2})\s+until:(\d{4}-\d{2}-\d{2})\b/);
+    if (m && (!step.period || step.period.from === step.period.to)) {
+      step.period = { from: m[1], to: m[2] };
+      break;
+    }
+  }
+}
+
 /**
  * THE REQUEST LINE OF THE CARD (card redesign, 16 Nov 2026): the parts of what the customer asked for, read from the understanding (the platform, the topic, the period), so the card can say
  * «٣٠ تغريدة · إكس · لقاح الإنفلونزا · ١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦» in every state. Display only; the count is the card's own.
@@ -671,7 +693,11 @@ export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>, said: Reado
   const shown = topic && topic.length <= 60 ? customerSafe(topic, 60, said) : null;
   if (shown !== null && shown !== PLATFORM_LABEL_FALLBACK_AR) parts.push(shown);
   const from = dayAr(first.period?.from), to = dayAr(first.period?.to);
-  if (from && to) parts.push(`${from.text} – ${to.text} ${toArabicDigits(to.year)}`);
+  if (from && to) {
+    if (first.period?.from !== first.period?.to || said.some((w) => w.includes(first.period!.from))) {
+      parts.push(`${from.text} – ${to.text} ${toArabicDigits(to.year)}`);
+    }
+  }
   return parts.filter(Boolean);
 }
 
@@ -724,24 +750,41 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     step.title_ar = customerSafe(step.title_ar, 60, said) ?? "العناصر";
     // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
     let second: BuiltStep["second"];
+    const alternates: NonNullable<BuiltStep["alternates"]> = [];
     const secondRows: Array<Record<string, unknown>> = [];
     let secondMore = false;
     const configuredChild = Boolean(parent && missionPageOf(got.option.endpoint.id));
     const canTryChildAlternate = configuredChild && (parent?.lookup || step.count.per_parent !== null);
-    const next = canTryChildAlternate || (!step.parent && step.topic)
-      ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && Boolean(o.parent) === Boolean(parent)
+    const nextCandidates = (canTryChildAlternate || (!step.parent && step.topic))
+      ? options.filter((o) => o.endpoint.id !== got.option.endpoint.id && Boolean(o.parent) === Boolean(parent)
         && (!configuredChild || (o.endpoint.capability === step.capability && parent?.sampleRows.some((row) => filled(row[o.parent!.from])))))
-      : undefined;
-    if (next) {
+      : [];
+    let altBudgetLeft = configuredChild ? MAX_PROBES_PER_STEP - got.callIds.length : MAX_PROBES_PER_STEP;
+    for (const next of nextCandidates) {
+      if (altBudgetLeft <= 0) break;
       const got2 = configuredChild
-        ? await probeStep(step, [next], parent, deps, { left: MAX_PROBES_PER_STEP - got.callIds.length })
-        : await probeStep(step, [next], null, deps, { left: MAX_PROBES_PER_STEP });
+        ? await probeStep(step, [next], parent, deps, { left: Math.min(altBudgetLeft, 2) })
+        : await probeStep(step, [next], null, deps, { left: Math.min(altBudgetLeft, 2) });
       if (got2) {
-        const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
+        altBudgetLeft -= got2.callIds.length;
+        let map2 = checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items);
+        if (!map2) map2 = fallbackMap(got2.items);
         if (map2) {
-          const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
-          const rows2 = runMap(code2, got2.page);
-          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2, sample: pageSample(rows2, got2.checkedParams, got2.chargedUsd) }; secondRows.push(...rows2); secondMore = got2.hasMore && rows2.length >= Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS); }
+          const enriched = enrichedMap(map2, got2.items);
+          if (enriched) {
+            const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, enriched, got2.items.length, carryFieldsOf(got2.items, enriched), got2.items));
+            const rows2 = runMap(code2, got2.page);
+            if (rows2.length > 0) {
+              const entry = { option: got2.option, mapCode: code2, sample: pageSample(rows2, got2.checkedParams, got2.chargedUsd) };
+              if (!second) {
+                second = entry;
+                secondRows.push(...rows2);
+                secondMore = got2.hasMore && rows2.length >= Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS);
+              } else {
+                alternates.push(entry);
+              }
+            }
+          }
         }
       }
     }
@@ -803,30 +846,55 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability, said)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [ANY_RESULT_OPTION_AR], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, sample, variantSamples, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
+    syncStepPeriodFromStep(step, got.option.params);
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, sample, variantSamples, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(alternates.length > 0 ? { alternates } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     // THE ITEMS OF ONE FOUND THING (the reviews of the one product the lookup found) are a top-level request in all but name: a source that answered them all on one page, with no next page, is what exists
     // (live, 16 Nov 2026: 10 Amazon reviews with no next page were planned silently as 20, and 10 were delivered)
-    if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
-      const found = new Set(sampleRows.map(rowKeyOf)).size;
-      deps.log?.(`llm_planner_scout ${step.key} found=${found} requested=${step.count.total} exhausted=${found < step.count.total} sets=1 (one found item)`);
-      findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
+    let topicMatchedInSample = true;
+    if (step.topic && sampleRows.length > 0) {
+      const sampleTexts = sampleRows.slice(0, 10).map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`).join("\n");
+      const judgeRes = await ask(
+        "You check whether items from a source are about the customer's topic. Return the 0-based indices of items that discuss or touch on the topic. If none do, return an empty array.",
+        `Topic: «${step.topic}»\nItems:\n${sampleTexts}`,
+        { name: "judge_sample", description: "Count how many items match the topic.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
+        200,
+      );
+      const matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
+      if (matches !== null && matches.length === 0) {
+        topicMatchedInSample = false;
+      } else if (matches === null) {
+        const terms = [step.topic, ...(step.search_terms ?? [])].filter(Boolean);
+        const hasMatch = sampleRows.some((r) => terms.some((t) => String(r.text ?? "").includes(t)));
+        if (!hasMatch) topicMatchedInSample = false;
+      }
     }
-    if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total,
-        onSample: (params, rows, chargedUsd) => {
-          const observed = pageSample(rows, params, chargedUsd);
-          if (!observed.rowsPerPage) return;
-          if (params === got.option.params) {
-            sample.rowsPerPage = Math.min(sample.rowsPerPage, observed.rowsPerPage);
-            sample.chargedUsd = Math.max(sample.chargedUsd, observed.chargedUsd);
-          } else {
-            variantSamples.set(params, observed);
-          }
-        },
-      }, deps);
-      deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
-      findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
+
+    if (!topicMatchedInSample) {
+      deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
+      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: 1 });
+    } else {
+      if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
+        const found = new Set(sampleRows.map(rowKeyOf)).size;
+        deps.log?.(`llm_planner_scout ${step.key} found=${found} requested=${step.count.total} exhausted=${found < step.count.total} sets=1 (one found item)`);
+        findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
+      }
+      if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
+        const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total,
+          onSample: (params, rows, chargedUsd) => {
+            const observed = pageSample(rows, params, chargedUsd);
+            if (!observed.rowsPerPage) return;
+            if (params === got.option.params) {
+              sample.rowsPerPage = Math.min(sample.rowsPerPage, observed.rowsPerPage);
+              sample.chargedUsd = Math.max(sample.chargedUsd, observed.chargedUsd);
+            } else {
+              variantSamples.set(params, observed);
+            }
+          },
+        }, deps);
+        deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
+        findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
+      }
     }
   }
   // THE CONVERSATION: the real search found far less than the customer asked for → the customer is told what was found and chooses (take it, or widen); the model re-plans from the answer. Asked at most twice per mission,
@@ -887,11 +955,11 @@ export function enrichedMap(map: FieldMap | null, items: ReadonlyArray<Record<st
 /** A map made by code when the model gave none usable: the common names, at the item's top or inside its one wrapping object (TikTok's `aweme_info`). */
 export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): FieldMap | null {
   const guess: Record<string, string[][]> = {
-    id: [["id"], ["id_str"], ["aweme_id"], ["post_id"], ["video_id"], ["comment_id"], ["cid"], ["pk"], ["url"]],
-    text: [["text"], ["full_text"], ["desc"], ["caption"], ["body"], ["selftext"], ["content"], ["message"], ["title"]],
-    author: [["author", "name"], ["authorName"], ["user", "name"], ["author"]],
-    username: [["authorUsername"], ["username"], ["user", "screen_name"], ["author", "username"]],
-    posted_at: [["createdUtc"], ["created_at"], ["create_time"], ["created_utc"], ["timestamp"], ["date"], ["publishedAt"]],
+    id: [["id"], ["id_str"], ["aweme_id"], ["post_id"], ["video_id"], ["comment_id"], ["cid"], ["pk"], ["url"], ["rest_id"]],
+    text: [["text"], ["full_text"], ["desc"], ["caption"], ["body"], ["selftext"], ["content"], ["message"], ["title"], ["legacy", "full_text"], ["legacy", "text"]],
+    author: [["author", "name"], ["authorName"], ["user", "name"], ["author"], ["legacy", "name"]],
+    username: [["authorUsername"], ["username"], ["user", "screen_name"], ["author", "username"], ["legacy", "screen_name"]],
+    posted_at: [["createdUtc"], ["created_at"], ["create_time"], ["created_utc"], ["timestamp"], ["date"], ["publishedAt"], ["legacy", "created_at"]],
     link: [["url"], ["link"], ["permalink"], ["share_url"]],
   };
   guess.author.push(["author", "nickname"], ["user", "full_name"], ["owner", "full_name"], ["author", "displayName"]);
@@ -1515,11 +1583,15 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = stageCostPerRawRowUsd(b, catalog);
+    const textCols = b.columns.filter((c) => ["text", "title", "content", "body", "full_text"].includes(c.key)).map((c) => c.key);
+    const askTopic = s.topic ? { topic: { text: s.topic, relation: "about" as const, alternatives: s.search_terms } } : null;
+    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], u.understanding_ar) ?? undefined) : undefined;
     const alternatives = isTotalOnlyChild
       ? []
       : [
           ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
           ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page", ...(b.second!.option.parent ? { parent_binding: { param: b.second!.option.parent.param, from: b.second!.option.parent.from } } : {}) })) : []),
+          ...(b.alternates ?? []).flatMap((alt) => [alt.option.params, ...alt.option.more].map((params) => ({ endpoint_id: alt.option.endpoint.id, params, cursor_param: alt.option.cursor, map_code: alt.mapCode, map_file_id: "page", ...(alt.option.parent ? { parent_binding: { param: alt.option.parent.param, from: alt.option.parent.from } } : {}) }))),
           ...(b.webFallbacks ?? []).flatMap((w) => [w.option.params, ...w.option.more].map((params) => ({ endpoint_id: w.option.endpoint.id, params, cursor_param: null, map_code: w.mapCode, map_file_id: "page" }))),
         ];
     const funding = listed ? sealedFunding(b, alternatives, listed.catalog) : undefined;
@@ -1529,6 +1601,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       ...(s.parent && s.count.all ? { children_cap_per_parent: perParent } : {}),
       deliver: s.deliver, columns: b.columns, sample_rows: b.sampleRows.slice(0, 3), measured_by: b.callIds, measured_from_calls: b.callIds, measured_cost_per_row_usd: costPerRow,
       yield_share: 1, review_share: 0,
+      ...(relevance ? { relevance } : {}),
       ...(listed?.stageKey === s.key ? { listed_rate: listed.rate } : {}),
       ...(funding ? { execution_funding: funding } : {}),
       ...(b.carryKeys.length > 0 ? { carry_keys: [...b.carryKeys] } : {}),
