@@ -1461,7 +1461,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(row2Ex?.state).toBe("excluded");
     });
 
-    it("Test (c) - Fail/Skip Safety Plumbing: failing reviewer excludes unjudged Row 2 with review_failed", async () => {
+    it("Test (c) - Fail/Skip Safety Plumbing: failing reviewer leaves unjudged rows pending with review_failed and never accepted", async () => {
       const store = createMemoryStore();
       const missionId = "msn_r7_plumbing_c";
       const items = await ItemStore.open(store, missionId, { legacyStages: ["news"] });
@@ -1497,11 +1497,11 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       const accepted = items.acceptedRows("news");
       expect(accepted).toHaveLength(0);
 
-      const excluded = items.excludedItems("news");
-      const row2Ex = excluded.find((it) => it.id === row2.id);
-      expect(row2Ex).toBeDefined();
-      expect(row2Ex?.reason).toBe("review_failed");
-      expect(row2Ex?.state).toBe("excluded");
+      const pending = items.pendingItems("news");
+      const row2Pending = pending.find((it) => it.id === row2.id);
+      expect(row2Pending).toBeDefined();
+      expect(row2Pending?.reason).toBe("review_failed");
+      expect(row2Pending?.state).toBe("pending");
     });
 
     it("Must-Pass Case 7 (Point B.4 - Price Card Minimum Charge Clarity): displays count and minimum charge when min applies", () => {

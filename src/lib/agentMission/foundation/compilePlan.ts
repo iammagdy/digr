@@ -572,7 +572,7 @@ export function researchRelevanceOf(
   };
 
   return {
-    subject_ar: own !== "" ? own : (brief || `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`),
+    subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`,
     terms,
     text_columns: [...textColumns],
     min_own_words: 0,

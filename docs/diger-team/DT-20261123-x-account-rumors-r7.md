@@ -53,11 +53,22 @@ Independent Reviews:
 
 ---
 
-## 2. Test Verification Matrix
+## 2. Test Verification Matrix & CI Regression Fixes
+
+### CI Test Updates (PR #652 r7 head 47217a91 Fixes)
+1. `tests/p0-research-spec.test.ts:178`: Restored `subject_ar` in `compilePlan.ts` to main's builder (`own !== "" ? own : \`محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}\``) so display subject is never blank.
+2. `tests/fx08-pa1-shortfall-and-review.test.ts:359`: Reverted `agent/src/items/ingest.ts` lines 410–430 to `origin/main` so unreviewed rows remain `pending` with reviewer to trigger `retryReviewLater`.
+3. `tests/plan-card-r57.test.ts:43`: Updated assertion to expect preserved Arabic platform name `خرائط جوجل` instead of masked `المصدر` per Group A.
+4. `tests/admin-mission-inspector.test.ts:81`: Added `judgedRows` to allow-list keys and asserted row items hold only `title, url, criterion, verdict, reason` per Group B.2.
+5. `tests/fixtures/flags-off-digests.json`: Updated `x_posts_300` `planView` (`9f0236a4c0d908f1`) and `finalView` (`3dd68df7fd4700dc`) golden digests due to unmasked platform names in `customerMissionView`; all other sections and worlds remain 100% byte-identical.
 
 | Suite | Tests Passed | Status |
 | :--- | :--- | :--- |
 | `tests/x-account-rumors-replay.test.ts` | 31/31 | PASSED |
 | `tests/dt09-leaks.test.ts` | 14/14 | PASSED |
 | `tests/dt09-fix1-card.test.ts` | 12/12 | PASSED |
-| **Total Targeted Suites** | **57/57** | **ALL GREEN** |
+| `tests/p0-research-spec.test.ts` | 27/27 | PASSED |
+| `tests/fx08-pa1-shortfall-and-review.test.ts` | 20/20 | PASSED |
+| `tests/plan-card-r57.test.ts` | PASSED |
+| `tests/admin-mission-inspector.test.ts` | PASSED |
+| `tests/flags-off-byte-identical.test.ts` | PASSED |

@@ -78,11 +78,35 @@ describe("the response is an allow-list", () => {
   it("has exactly these keys, and a column nobody named (user id, worker id, lease, question, public plan, a made-up column) is absent", async () => {
     const r = await get(); expect(r.status).toBe(200);
     const b = await body(r);
-    expect(Object.keys(b).sort()).toEqual(["calls", "callTotals", "events", "files", "generatedAt", "mission", "ok", "planner", "stages", "truncated"].sort());
+    expect(Object.keys(b).sort()).toEqual(["calls", "callTotals", "events", "files", "generatedAt", "judgedRows", "mission", "ok", "planner", "stages", "truncated"].sort());
+    expect(b.judgedRows).toEqual([]);
     expect(Object.keys(b.mission).sort()).toEqual(["chargedPoints", "createdAt", "deliveredRows", "error", "id", "kind", "requestText", "requestedRows", "reservedPoints", "status", "summaryAr", "terminal", "updatedAt"].sort());
     expect(Object.keys(b.calls[0]).sort()).toEqual(["at", "durationMs", "endpointId", "failure", "httpStatus", "id", "paramKeys", "phase", "refusedReason", "rowsReturned", "costUsd", "status"].sort());
     expect(JSON.stringify(b)).not.toMatch(/secretcol|never-named-column|worker|lease|question_ar|plan_public/);
     expect(r.headers.get("cache-control")).toBe("no-store");
+  });
+  it("judgedRows items hold only title, url, criterion, verdict, reason (Group B.2)", async () => {
+    (state.db.storage as any).from = () => ({
+      download: async () => ({
+        data: {
+          text: async () => JSON.stringify([
+            { title: "منشور تجريبي", url: "https://x.com/post/123", criterion: "حساب إكس موثق", verdict: 1, reason: "مطابق للشروط", extra_disallowed_col: "strip_me" },
+          ]),
+        },
+      }),
+    });
+    const r = await get();
+    expect(r.status).toBe(200);
+    const b = await body(r);
+    expect(b.judgedRows.length).toBe(1);
+    expect(Object.keys(b.judgedRows[0]).sort()).toEqual(["criterion", "reason", "title", "url", "verdict"]);
+    expect(b.judgedRows[0]).toEqual({
+      title: "منشور تجريبي",
+      url: "https://x.com/post/123",
+      criterion: "حساب إكس موثق",
+      verdict: 1,
+      reason: "مطابق للشروط",
+    });
   });
   it("LEAK PROBE: none of the planted secrets and customer data appears anywhere in the response (every string walked)", async () => {
     const text = JSON.stringify(await body(await get()));
