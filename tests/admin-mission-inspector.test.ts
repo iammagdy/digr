@@ -78,8 +78,9 @@ describe("the response is an allow-list", () => {
   it("has exactly these keys, and a column nobody named (user id, worker id, lease, question, public plan, a made-up column) is absent", async () => {
     const r = await get(); expect(r.status).toBe(200);
     const b = await body(r);
-    expect(Object.keys(b).sort()).toEqual(["calls", "callTotals", "events", "files", "generatedAt", "judgedRows", "mission", "ok", "planner", "stages", "truncated"].sort());
+    expect(Object.keys(b).sort()).toEqual(["calls", "callTotals", "events", "files", "generatedAt", "judgedRows", "judgedRowsDropped", "mission", "ok", "planner", "stages", "truncated"].sort());
     expect(b.judgedRows).toEqual([]);
+    expect(b.judgedRowsDropped).toBe(0);
     expect(Object.keys(b.mission).sort()).toEqual(["chargedPoints", "createdAt", "deliveredRows", "error", "id", "kind", "requestText", "requestedRows", "reservedPoints", "status", "summaryAr", "terminal", "updatedAt"].sort());
     expect(Object.keys(b.calls[0]).sort()).toEqual(["at", "durationMs", "endpointId", "failure", "httpStatus", "id", "paramKeys", "phase", "refusedReason", "rowsReturned", "costUsd", "status"].sort());
     expect(JSON.stringify(b)).not.toMatch(/secretcol|never-named-column|worker|lease|question_ar|plan_public/);
@@ -107,6 +108,71 @@ describe("the response is an allow-list", () => {
       verdict: 1,
       reason: "مطابق للشروط",
     });
+    expect(b.judgedRowsDropped).toBe(0);
+  });
+  it("realistic judgedRows are redacted and kept, while a row containing a secret/email is dropped without failing the inspection (DT-20261123 hotfix)", async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: any[]) => {
+      logs.push(args.join(" "));
+      origLog(...args);
+    };
+    try {
+      (state.db.storage as any).from = () => ({
+        download: async () => ({
+          data: {
+            text: async () => JSON.stringify([
+              {
+                title: "تغريدة جديدة عن المؤتمر الاقتصادي في مصر",
+                url: "https://x.com/user/status/1859678493029485721",
+                criterion: "حساب إكس موثق",
+                verdict: 1,
+                reason: "مطابق للشروط رقم 01001234567 للتواصل",
+              },
+              {
+                title: "مقال إخباري مع معرف طويل",
+                url: "https://news.example.com/articles/aHR0cHM6Ly9leGFtcGxlLmNvbS9zb21lL2xvbmcvc2x1Zy90aGF0L2lzLXZlcnktbG9uZw==",
+                criterion: "أخبار معتمدة",
+                verdict: 1,
+                reason: "مطابق للمعايير",
+              },
+              {
+                title: "منشور يحتوي بريد إلكتروني مسرب leaked@example.com يجب إسقاطه",
+                url: "https://x.com/user/status/987",
+                criterion: "تسريبات خاصة",
+                verdict: 0,
+                reason: "بريد شخصي",
+              },
+            ]),
+          },
+        }),
+      });
+      const r = await get();
+      expect(r.status).toBe(200);
+      const b = await body(r);
+      expect(b.judgedRows.length).toBe(2);
+      expect(b.judgedRowsDropped).toBe(1);
+      // Row 1: social post url has 19-digit ID redacted, reason phone redacted
+      expect(b.judgedRows[0]).toEqual({
+        title: "تغريدة جديدة عن المؤتمر الاقتصادي في مصر",
+        url: "https://x.com/user/status/[محجوب]",
+        criterion: "حساب إكس موثق",
+        verdict: 1,
+        reason: "مطابق للشروط رقم [محجوب] للتواصل",
+      });
+      // Row 2: news url has long base64 slug redacted
+      expect(b.judgedRows[1]).toEqual({
+        title: "مقال إخباري مع معرف طويل",
+        url: "https://news.example.com/articles/[محجوب]",
+        criterion: "أخبار معتمدة",
+        verdict: 1,
+        reason: "مطابق للمعايير",
+      });
+      // Server log was emitted with mission id and dropped count
+      expect(logs.some((l) => l.includes(`inspector_judged_rows_dropped mission=${ID} count=1`))).toBe(true);
+    } finally {
+      console.log = origLog;
+    }
   });
   it("LEAK PROBE: none of the planted secrets and customer data appears anywhere in the response (every string walked)", async () => {
     const text = JSON.stringify(await body(await get()));
