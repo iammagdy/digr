@@ -9,7 +9,8 @@ import {
 } from "../src/lib/treg/circuitBreaker";
 import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
 import { callTregWithAsync, type AsyncTregDeps } from "../agent/src/asyncTreg";
-import { executeTregCall, executeControlProbe, parseRetryAfter } from "../src/functions/shared/tregClient";
+import { executeTregCall, executeControlProbe, parseRetryAfter, resetStepAttempts } from "../src/functions/shared/tregClient";
+import { createJobCallBudget } from "../src/lib/server/callBudget";
 import type { CatalogEndpoint, TregCatalog } from "../src/lib/treg/catalog";
 
 describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", () => {
@@ -428,6 +429,166 @@ describe("Phase 2: Live Reliability & Circuit Breaker (DT-20261123-treg-p2)", ()
       expect(result.ok).toBe(true);
       expect(cb.getRecord("anyapi.x.search.posts").consecutiveFailures).toBe(0);
       expect(cb.getState("anyapi.x.search.posts")).toBe("closed");
+    });
+  });
+
+  describe("Point 2.5: Must-pass Cases for Fix (الكبير / فزاع)", () => {
+    it("1. 429 with Retry-After then success = 2 calls total, both counted against budget/step", async () => {
+      resetStepAttempts();
+      let callCount = 0;
+      const sleepMock = vi.fn(async () => {});
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: "rate_limited" }), {
+            status: 429,
+            headers: { "retry-after": "1" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true, data: [{ id: "res_ok" }] }), {
+          status: 200,
+          headers: { "x-treg-cost-micro": "4000", "x-treg-call-id": "call_retry_ok" },
+        });
+      }) as any;
+
+      try {
+        const budget = createJobCallBudget({ ceilingUsd: 0.05, spentUsd: 0 });
+        const res = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "user_test",
+          jobId: "job_must_pass_1",
+          stepId: "step_1",
+          callBudget: budget,
+          callEstimateUsd: 0.01,
+          sleep: sleepMock,
+        });
+
+        expect(callCount).toBe(2);
+        expect(sleepMock).toHaveBeenCalled();
+        expect(res.ok).toBe(true);
+        expect(res.httpStatus).toBe(200);
+        expect(budget.spentUsd()).toBeCloseTo(0.004, 6);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("2. repeated 5xx never exceeds 4 paid calls per step, retries included", async () => {
+      resetStepAttempts();
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        return new Response(JSON.stringify({ error: "gateway error" }), {
+          status: 502,
+        });
+      }) as any;
+
+      try {
+        const budget = createJobCallBudget({ ceilingUsd: 1.0, spentUsd: 0 });
+        for (let i = 0; i < 4; i++) {
+          const res = await executeTregCall({
+            endpointId: "anyapi.x.search.posts",
+            userId: "user_test",
+            jobId: "job_must_pass_2",
+            stepId: "step_2",
+            callBudget: budget,
+            callEstimateUsd: 0.01,
+            singleAttempt: true,
+          });
+          expect(res.ok).toBe(false);
+        }
+        expect(callCount).toBe(4);
+
+        // 5th attempt must be refused by step cap and not call fetch
+        const fifth = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "user_test",
+          jobId: "job_must_pass_2",
+          stepId: "step_2",
+          callBudget: budget,
+          callEstimateUsd: 0.01,
+          singleAttempt: true,
+        });
+        expect(fifth.ok).toBe(false);
+        expect(fifth.budgetStopped).toBe(true);
+        expect(callCount).toBe(4);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("3. a retry that would exceed the budget is not sent and the step stops with budget_reached", async () => {
+      resetStepAttempts();
+      let callCount = 0;
+      const sleepMock = vi.fn(async () => {});
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => {
+        callCount++;
+        return new Response(JSON.stringify({ error: "rate_limited" }), {
+          status: 429,
+          headers: { "retry-after": "1" },
+        });
+      }) as any;
+
+      try {
+        const budget = createJobCallBudget({ ceilingUsd: 0.01, spentUsd: 0 });
+        const originalReserve = budget.reserve.bind(budget);
+        let reserveCount = 0;
+        budget.reserve = vi.fn((amount: number) => {
+          reserveCount++;
+          if (reserveCount === 1) return originalReserve(amount);
+          return false;
+        });
+
+        const res = await executeTregCall({
+          endpointId: "anyapi.x.search.posts",
+          userId: "user_test",
+          jobId: "job_must_pass_3",
+          stepId: "step_3",
+          callBudget: budget,
+          callEstimateUsd: 0.01,
+          sleep: sleepMock,
+        });
+
+        expect(callCount).toBe(1);
+        expect(res.ok).toBe(false);
+        expect(res.budgetStopped).toBe(true);
+        expect(res.httpStatus).toBe(429);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("4. open circuit returns refused source_unavailable, failed: false (never failed)", async () => {
+      const cb = new EndpointCircuitBreaker({ "anyapi.x.search.posts": "failing" }, mockNow);
+      cb.recordFailure("anyapi.x.search.posts", 500);
+      cb.recordFailure("anyapi.x.search.posts", 500);
+      cb.recordFailure("anyapi.x.search.posts", 500);
+      expect(cb.getState("anyapi.x.search.posts")).toBe("open");
+
+      const callFnMock = vi.fn();
+      const deps: AsyncTregDeps = {
+        catalog: { endpoints: [], byId: new Map() } as any,
+        store: {} as any,
+        missionId: "msn_test_circuit",
+        circuitBreaker: cb,
+      };
+
+      const result = await callTregWithAsync(
+        deps,
+        callFnMock,
+        "anyapi.x.search.posts",
+        { q: "query" }
+      );
+
+      expect(callFnMock).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      expect((result as any).refused).toBe("source_unavailable");
+      expect((result as any).failed).toBe(false);
+      expect((result as any).blocked).toBe("circuit_open");
+      expect((result as any).http_status).toBe(503);
     });
   });
 });

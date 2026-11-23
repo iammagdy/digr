@@ -195,7 +195,7 @@ export class EndpointCircuitBreaker {
     }
 
     // In closed state, track consecutive 400s and 5xx errors
-    const isConsecutiveCandidate = status === 400 || (status >= 500 && status < 600) || status === 0;
+    const isConsecutiveCandidate = status === 400 || (status >= 500 && status < 600);
     if (isConsecutiveCandidate) {
       rec.consecutiveFailures += 1;
       if (status === 400) {

@@ -233,6 +233,12 @@ export function serializeProviderParams(
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
+const stepAttempts = new Map<string, number>();
+
+export function resetStepAttempts(): void {
+  stepAttempts.clear();
+}
+
 /**
  * One gateway call, behind two hard gates that run in code before any request leaves:
  *  1. the block list (`blockedEndpointReason`): a write action, an own-account endpoint or an endpoint outside the sellable catalog is never called;
@@ -250,6 +256,16 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: "sensitive_not_allowed" }));
     return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked: "sensitive_not_allowed" });
   }
+
+  const stepKey = options.jobId && options.stepId ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+  if (stepKey) {
+    const current = stepAttempts.get(stepKey) ?? 0;
+    if (current >= 4) {
+      console.warn(JSON.stringify({ tag: "treg_call_step_limit", endpointId: options.endpointId, stepKey, attempts: current }));
+      return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
+    }
+  }
+
   const budget = options.callBudget;
   const cap = Number(options.routeMaxCostUsd);
   let estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
@@ -292,23 +308,39 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     if (result.httpStatus === 400 && !options.isControlProbe && !options.skipControlProbe) {
       const probeReq = getControlProbeRequest(options.endpointId);
       if (probeReq) {
-        try {
-          const probeResult = await executeTregCallUnguarded({
-            ...options,
-            isControlProbe: true,
-            method: probeReq.method,
-            params: probeReq.params,
-            singleAttempt: true,
-            callBudget: undefined,
-          });
-          if (!probeResult.ok && probeResult.httpStatus === 400) {
-            // Control probe failed with 400: provider itself is broken, trip circuit immediately
-            cb.recordFailure(options.endpointId, 400, true);
-          } else {
-            // Control probe succeeded or returned other status: original query was invalid
+        let canProbe = true;
+        if (stepKey && (stepAttempts.get(stepKey) ?? 0) >= 4) {
+          canProbe = false;
+        }
+        if (budget && !budget.reserve(estimate)) {
+          canProbe = false;
+        }
+        if (canProbe) {
+          try {
+            const probeResult = await executeTregCallUnguarded({
+              ...options,
+              isControlProbe: true,
+              method: probeReq.method,
+              params: probeReq.params,
+              singleAttempt: true,
+              callBudget: undefined,
+            });
+            if (budget) {
+              const probeCharge = classifyTregCharge(probeResult);
+              budget.settle(estimate, probeCharge.known ? probeCharge.usd : null);
+            }
+            if (!probeResult.ok && probeResult.httpStatus === 400) {
+              // Control probe failed with 400: provider itself is broken, trip circuit immediately
+              cb.recordFailure(options.endpointId, 400, true);
+            } else {
+              // Control probe succeeded or returned other status: original query was invalid
+              cb.recordFailure(options.endpointId, 400, false);
+            }
+          } catch {
+            if (budget) budget.settle(estimate, null);
             cb.recordFailure(options.endpointId, 400, false);
           }
-        } catch {
+        } else {
           cb.recordFailure(options.endpointId, 400, false);
         }
       } else {
@@ -483,11 +515,33 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   let response: Response | null = null;
   let lastNetErr: any = null;
   const sleepFn = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const maxRetries = options.singleAttempt ? 0 : 2;
+  // Standalone callers without budget or step id perform bounded 5xx retries; outer runners manage their own retries
+  const max5xxRetries = (options.callBudget || options.stepId || options.singleAttempt) ? 0 : 2;
   let attempt = 0;
   let retried429 = false;
 
-  while (attempt <= maxRetries) {
+  const stepKey = options.jobId && options.stepId ? `${options.jobId}:${options.stepId}:${options.page ?? 1}` : null;
+
+  while (attempt <= max5xxRetries) {
+    if (stepKey) {
+      const cur = stepAttempts.get(stepKey) ?? 0;
+      if (cur >= 4) {
+        return {
+          ok: false,
+          httpStatus: 0,
+          tregCallId: `err_${Date.now()}`,
+          costMicro: 0,
+          latencyMs: Date.now() - startTime,
+          data: null,
+          error: JOB_BUDGET_ERROR_CODE,
+          budgetStopped: true,
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        };
+      }
+      stepAttempts.set(stepKey, cur + 1);
+    }
+
     lastNetErr = null;
     try {
       response = await fetch(targetUrl, {
@@ -504,15 +558,37 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       if (response.status === 429 && !retried429) {
         const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
         if (retryAfter !== null && retryAfter <= 10) {
+          if (stepKey && (stepAttempts.get(stepKey) ?? 0) >= 4) {
+            break;
+          }
+          if (options.callBudget) {
+            const est = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) ? Number(options.callEstimateUsd) : 0.05);
+            // Settle first 429 call at 0
+            options.callBudget.settle(est, 0);
+            if (!options.callBudget.reserve(est)) {
+              return {
+                ok: false,
+                httpStatus: 429,
+                tregCallId: `err_${Date.now()}`,
+                costMicro: 0,
+                latencyMs: Date.now() - startTime,
+                data: null,
+                error: JOB_BUDGET_ERROR_CODE,
+                budgetStopped: true,
+                isRouteMaxCost: false,
+                isPlatformBalanceLow: false,
+              };
+            }
+          }
           retried429 = true;
           await sleepFn(Math.max(50, retryAfter * 1000));
           continue;
         }
       }
 
-      // Transient 5xx (502, 503, 504): retry with exponential backoff
+      // Transient 5xx (502, 503, 504): retry with exponential backoff for standalone callers
       const isTransient5xx = response.status === 502 || response.status === 503 || response.status === 504;
-      if (isTransient5xx && attempt < maxRetries) {
+      if (isTransient5xx && attempt < max5xxRetries) {
         attempt++;
         const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
         await sleepFn(backoffMs);
@@ -522,7 +598,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       break;
     } catch (netErr: any) {
       lastNetErr = netErr;
-      if (attempt < maxRetries) {
+      if (attempt < max5xxRetries) {
         attempt++;
         const backoffMs = Math.min(1000, 100 * Math.pow(2, attempt)) + Math.floor(Math.random() * 50);
         await sleepFn(backoffMs);

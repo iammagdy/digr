@@ -63,7 +63,8 @@ export async function callTregWithAsync(
     return {
       ok: false,
       call_id: `blocked_${Date.now()}`,
-      failed: true,
+      refused: "source_unavailable",
+      failed: false,
       http_status: 503,
       blocked: "circuit_open",
       error: "Endpoint circuit is open due to recent repeated failures",
@@ -74,7 +75,10 @@ export async function callTregWithAsync(
   if (res.ok) {
     cb.recordSuccess(endpointId);
   } else {
-    cb.recordFailure(endpointId, (res as any).http_status ?? 500);
+    const status = (res as any).http_status;
+    if (typeof status === "number" && (status === 400 || (status >= 500 && status < 600))) {
+      cb.recordFailure(endpointId, status);
+    }
   }
   const endpoint = deps.catalog.byId.get(endpointId);
   const cfg = endpoint?.async_config as AsyncConfig | undefined | null;
@@ -125,7 +129,10 @@ export async function callTregWithAsync(
     if (pollRes.ok) {
       cb.recordSuccess(cfg.poll.endpoint);
     } else {
-      cb.recordFailure(cfg.poll.endpoint, (pollRes as any).http_status ?? 500);
+      const pStatus = (pollRes as any).http_status;
+      if (typeof pStatus === "number" && (pStatus === 400 || (pStatus >= 500 && pStatus < 600))) {
+        cb.recordFailure(cfg.poll.endpoint, pStatus);
+      }
     }
     callIds.push(pollRes.call_id);
     totalChargeUsd += effectiveChargeUsd(pollRes);
