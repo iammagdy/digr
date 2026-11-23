@@ -12,8 +12,16 @@ import type { ItemSnapshot } from "../items/itemStore";
 import { COUNTER_UNAVAILABLE_AR, deliveredSheetsOf, displayMissingValue, ID_HEADER_AR, MISSING_LABELS, PARENT_HEADER_AR, type CompanyMailboxes, type SheetLayout } from "../workbook";
 import { dateUnreadColumnsOf } from "../../../src/lib/agentMission/relativeDates";
 import type { MissionFacts } from "../methodology";
+import { computeScopeCounters, scopeLabelAr, type ItemScope, type ScopeCounters, SCOPE_COLUMN_KEY, SCOPE_COLUMN_TITLE_AR } from "../llmPlanner/widening";
 
 type Row = Record<string, unknown>;
+
+export interface LiveSnapshotWithScope extends LiveSnapshot {
+  counters: ScopeCounters;
+  stop_reason_ar?: string;
+  coverage_note_ar?: string;
+  readonly rows: LiveRow[];
+}
 
 /**
  * STAGE 2, THE LIVE SNAPSHOT (docs/STAGE-2.md). Built by the WORKER from its item log, with the delivery's own steps, so what the customer watches is what the file will hold:
@@ -31,6 +39,35 @@ export function deliveryRowsOf(approvedPlan: PricedPlan, snap: Pick<ItemSnapshot
   let plan = withPromiseCaps(approvedPlan);
   const rowsByStage: Record<string, Row[]> = {};
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.deliver ? s.planned_rows : undefined);
+
+  // STAGE 2 / TREG P4: Scope-separated widening & live sheet parity.
+  // Populate scope_label_ar as an explicit cell column in live sheet and delivered workbook.
+  let planWithScope = plan;
+  for (const s of plan.stages) {
+    const rows = rowsByStage[s.key] ?? [];
+    const hasScope = rows.some((r) => r.scope !== undefined || r[SCOPE_COLUMN_KEY] !== undefined) || s.columns.some((c) => c.key === SCOPE_COLUMN_KEY);
+    if (hasScope) {
+      for (const r of rows) {
+        if (!r[SCOPE_COLUMN_KEY]) {
+          const scope = (r.scope as ItemScope) || "primary_account";
+          r.scope = scope;
+          r[SCOPE_COLUMN_KEY] = scopeLabelAr(scope);
+        }
+      }
+      if (!s.columns.some((c) => c.key === SCOPE_COLUMN_KEY)) {
+        planWithScope = {
+          ...planWithScope,
+          stages: planWithScope.stages.map((st) =>
+            st.key === s.key
+              ? { ...st, columns: [...st.columns, { key: SCOPE_COLUMN_KEY, title_ar: SCOPE_COLUMN_TITLE_AR }] }
+              : st
+          ),
+        };
+      }
+    }
+  }
+  plan = planWithScope;
+
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   const repliesJudged = plan.stages.some((s) => s.replies_open || s.children_open);
   if (repliesJudged) plan = withRepliesJudged(plan, rowsByStage, (k) => { const st = snap.stage(k).stop; return !st || st === "source_exhausted"; });
@@ -101,9 +138,13 @@ export interface LiveSnapshotInput {
   /** The mission's stored live events (the work log is made from their numbers only). */
   events?: ReadonlyArray<{ kind: string; created_at: string; counts?: Record<string, unknown> | null }>;
   nowMs: number;
+  /** Stop reason in Arabic (Point 4.2: done live snapshot embeds stop_reason_ar). */
+  stopReasonAr?: string;
+  /** Coverage note in Arabic (Point 4.2: done live snapshot embeds coverage note). */
+  coverageNoteAr?: string;
 }
 
-export function buildLiveSnapshot(input: LiveSnapshotInput): LiveSnapshot {
+export function buildLiveSnapshot(input: LiveSnapshotInput): LiveSnapshotWithScope {
   const { plan, rowsByStage, repliesJudged } = deliveryRowsOf(input.plan, input.snap);
   const { rowsByStage: laidRows, layouts } = deliveredSheetsOf(plan, rowsByStage, input.facts, input.companyMailboxes, { repliesJudged, approvedPlan: input.plan, now: input.nowMs });
   const newPipeline = Object.values(laidRows).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
@@ -124,8 +165,31 @@ export function buildLiveSnapshot(input: LiveSnapshotInput): LiveSnapshot {
   // at the moment it was built. A running snapshot never says so.
   if (input.status === "done" && input.events) { const ready = workLogLine({ code: "file_ready", at: input.nowMs }); if (ready) workLog.push(ready); }
   const promisedOrNull = promised > 0 ? promised : null;
-  return {
-    v: 1, missionId: input.missionId, cursor: `${input.snap.lastSeq}.${workLog.length}.${input.status}`, status: input.status,
-    delivered, promised: promisedOrNull, counterAr: counterAr(delivered, promisedOrNull), sheets, workLog, builtAt: input.nowMs,
+
+  // Compute live scope breakdown counters across all accepted rows
+  const allAccepted = Object.values(rowsByStage).flat();
+  const counters = computeScopeCounters(allAccepted);
+
+  const stop_reason_ar: string | undefined = input.stopReasonAr ?? (input.facts as { stopReasonAr?: string } | undefined)?.stopReasonAr;
+  const coverage_note_ar: string | undefined = input.coverageNoteAr ?? (input.facts as { coverageNoteAr?: string } | undefined)?.coverageNoteAr;
+
+  const snapshot: LiveSnapshotWithScope = {
+    v: 1,
+    missionId: input.missionId,
+    cursor: `${input.snap.lastSeq}.${workLog.length}.${input.status}`,
+    status: input.status,
+    delivered,
+    promised: promisedOrNull,
+    counterAr: counterAr(delivered, promisedOrNull),
+    sheets,
+    workLog,
+    builtAt: input.nowMs,
+    counters,
+    ...(input.status === "done" && stop_reason_ar ? { stop_reason_ar } : {}),
+    ...(input.status === "done" && coverage_note_ar ? { coverage_note_ar } : {}),
+    get rows() {
+      return this.sheets.flatMap((s) => s.rows);
+    },
   };
+  return snapshot;
 }
