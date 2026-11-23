@@ -387,15 +387,15 @@ export default function ChatWorkspacePage() {
       if (conversationIds.length) {
         const { data: messages } = await supabase
           .from("messages")
-          .select("conversation_id, content, role, created_at")
+          .select("conversation_id, content_ar, role, created_at")
           .eq("user_id", user.id)
           .eq("role", "user")
           .in("conversation_id", conversationIds)
           .order("created_at", { ascending: true })
           .limit(200);
         for (const message of messages || []) {
-          if (!firstUserMessages.has(message.conversation_id) && typeof message.content === "string") {
-            firstUserMessages.set(message.conversation_id, message.content);
+          if (!firstUserMessages.has(message.conversation_id) && typeof message.content_ar === "string") {
+            firstUserMessages.set(message.conversation_id, message.content_ar);
           }
         }
       }

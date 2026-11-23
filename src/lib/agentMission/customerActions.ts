@@ -33,7 +33,7 @@ const bad = (status: number, error: string): { ok: false; status: number; error:
 const MIN_TEXT = 3;
 const MAX_TEXT = 4000;
 const CANCELLABLE = ["queued", "needs_input", "plan_ready"];
-const SAFE_COLUMNS = `id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,error,created_at,${ADDON_MARKER_COLUMN}`;
+const SAFE_COLUMNS = `id,user_id,status,request_text,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,error,created_at,${ADDON_MARKER_COLUMN}`;
 /**
  * MONEY PR 7e (docs/MONEY-PR-7A.md section 17): a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a research mission. Every action below that is written for a research mission refuses it, BEFORE it reads a plan,
  * claims a row or calls a money function, and changes nothing. Its own endpoint (stage4/reviewRequest.ts) is the only way to see or cancel it. The approval keeps its own sentence (below); every other action says this one.

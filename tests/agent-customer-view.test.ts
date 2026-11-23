@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { customerPlanView, validateAndPricePlan, firstSentenceAr, isInternalColumn, type PlanLookup } from "../src/lib/agentMission/plan";
-import { customerMissionView, queueLine, stagesView, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
+import { customerMissionView, queueLine, stagesView, NEUTRAL_QUESTION_AR, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { estimateMissionMinutes } from "../src/lib/agentMission/price";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_QUEUE_LINE_AR } from "../src/lib/agentMission/constants";
@@ -167,5 +167,59 @@ describe("the live panel and the queue", () => {
     const v = customerMissionView({ mission: row({ status: "needs_input", plan_public: null, question_ar: "أي بلد تقصد؟" }), events: [] });
     expect(v.phase).toBe("question");
     expect(v.questionAr).toBe("أي بلد تقصد؟");
+  });
+
+  it("msn_c82385d13a07ff5af4b5: preserves customer @handle, question, and platform names in options", () => {
+    const mission = row({
+      id: "msn_c82385d13a07ff5af4b5",
+      status: "needs_input",
+      question_ar: "دورت في حساب SaudiMOH على إكس عن الشائعات … تحب نعمل إيه؟",
+      plan_public: {
+        question_options: [
+          "سلّمني الموجود فقط",
+          "وسّع البحث إلى فيسبوك وتيك توك",
+          "ابحث في حسابات صحية أخرى",
+          "استخدم صيغ بحث أوسع",
+        ],
+      } as any,
+    });
+    const requestText = "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات";
+
+    const v = customerMissionView({ mission, events: [], requestText });
+    expect(v.phase).toBe("question");
+    expect(v.questionAr).toContain("SaudiMOH");
+    expect(v.questionOptionsAr.length).toBe(4);
+    expect(v.questionOptionsAr[0]).toBe("سلّمني الموجود فقط");
+
+    // Card rendering must never be empty
+    const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
+    expect(html).toContain("محتاجين رأيك");
+    expect(html).toContain("SaudiMOH");
+    expect(html).toContain("سلّمني الموجود فقط");
+  });
+
+  it("question phase fallback: unwritten Latin word falls back to neutral Arabic question (never blank bubble)", () => {
+    const mission = row({
+      id: "msn_unwritten_latin",
+      status: "needs_input",
+      question_ar: "دورت في حساب SaudiMOH على إكس عن الشائعات … تحب نعمل إيه؟",
+      plan_public: {
+        question_options: [
+          "سلّمني الموجود فقط",
+          "وسّع البحث إلى فيسبوك وتيك توك",
+        ],
+      } as any,
+    });
+    // Request does not contain the Latin handle
+    const v = customerMissionView({ mission, events: [], requestText: "عايز بيانات عن الشائعات الصحية" });
+    expect(v.phase).toBe("question");
+    expect(v.questionAr).toBe(NEUTRAL_QUESTION_AR);
+    expect(v.questionOptionsAr.length).toBe(2);
+    expect(v.questionOptionsAr[0]).toBe("سلّمني الموجود فقط");
+
+    const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
+    expect(html).toContain("محتاجين رأيك");
+    expect(html).toContain(NEUTRAL_QUESTION_AR);
+    expect(html).toContain("سلّمني الموجود فقط");
   });
 });
