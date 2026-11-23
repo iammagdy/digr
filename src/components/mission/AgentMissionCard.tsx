@@ -419,10 +419,10 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
       {planning ? <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-planning-usual"><span className="text-mut">بعدها: </span>نحسب السعر ونعرض عليك الخطة.</p> : null}
       {planning ? <MoneyLine>لن يُخصم شيء قبل موافقتك.</MoneyLine> : null}
 
-      {v.phase === "question" && v.questionAr ? (
+      {v.phase === "question" ? (
         <div className="flex flex-col gap-2.5" data-testid="agent-question">
           <p className="m-0 text-[12px] font-semibold" style={{ color: "var(--goldT)" }}>محتاجين رأيك</p>
-          <p className="m-0 text-[17px] font-semibold leading-[1.8] text-ink">{v.questionAr}</p>
+          <p className="m-0 text-[17px] font-semibold leading-[1.8] text-ink">{v.questionAr || "تحب نكمل إزاي في طلبك؟"}</p>
           {v.questionOptionsAr.length > 0 ? (
             <div className="flex flex-col gap-2" role="group" aria-label="إجابات جاهزة" data-testid="agent-question-options">
               {v.questionOptionsAr.map((o) => <button key={o} type="button" className="min-h-[52px] w-full cursor-pointer rounded-[14px] border border-ln2 bg-bg px-4 text-start text-[14px] font-semibold text-ink focus-visible:outline-2 disabled:cursor-wait disabled:opacity-60" disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}

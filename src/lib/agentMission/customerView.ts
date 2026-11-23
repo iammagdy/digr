@@ -675,6 +675,8 @@ export const columnLabelAr = (index: number): string => `عمود ${toArabicDigi
 /** What a filter of the plan editor says when its own wording may not be shown (a Latin word the customer did not write; FIX2). */
 const FILTER_FALLBACK_AR = "تصفية محددة في طلبك.";
 export const NEUTRAL_HEADLINE_AR = "نجهّز لك البيانات التي طلبتها كما وصفتها.";
+/** The question when the model's own question may not be shown (a Latin word the customer did not write): never an empty question bubble. */
+export const NEUTRAL_QUESTION_AR = "تحب نكمل إزاي في طلبك؟";
 
 export function guardViewText(v: CustomerMissionView, requestText = ""): CustomerMissionView {
   // ONE CHOKE POINT (DT-20261118-09 FIX1, QA FAIL on #578: a field routed around the S1/S2 rules leaked): every string of the view goes through `m`, and the view is rebuilt below field by field, so a field that is
@@ -705,7 +707,7 @@ export function guardViewText(v: CustomerMissionView, requestText = ""): Custome
     samples: v.samples ? { ...v.samples, stageTitleAr: m(v.samples.stageTitleAr) || "مرحلة", columns: v.samples.columns.map((c, i) => ({ ...c, titleAr: colTitle(c.titleAr, i) })) } : null,
     fileContentsAr: nm(v.fileContentsAr), priceLineAr: nm(v.priceLineAr), priceFacts: (v.priceFacts ?? []).map((f) => ({ labelAr: m(f.labelAr), valueAr: m(f.valueAr) })), priceNoteAr: nm(v.priceNoteAr), priceExplainAr: list(v.priceExplainAr), countLinesAr: list(v.countLinesAr), headlineCountAr: nm(v.headlineCountAr ?? null),
     totalRowsAr: m(v.totalRowsAr), ...(v.fileRowsAr !== undefined ? { fileRowsAr: nm(v.fileRowsAr) } : {}), periodAr: nm(v.periodAr), expectedAr: nm(v.expectedAr), progressLineAr: nm(v.progressLineAr), collectLineAr: nm(v.collectLineAr),
-    questionAr: nm(v.questionAr), queueLineAr: nm(v.queueLineAr),
+    questionAr: v.phase === "question" ? (m(v.questionAr ?? "") || NEUTRAL_QUESTION_AR) : nm(v.questionAr), queueLineAr: nm(v.queueLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: m(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: m(s.countAr) } : {}) })),
     currentLineAr: m(v.currentLineAr), delayAr: nm(v.delayAr), remainingAr: nm(v.remainingAr), closePageAr: nm(v.closePageAr),
     resultLinesAr: list(v.resultLinesAr), resultSummaryAr: nm(v.resultSummaryAr), endLineAr: nm(v.endLineAr),
