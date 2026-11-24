@@ -28,7 +28,7 @@ import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf, multiProviderEndpoints } from "./catalogView";
 import { validateInputShape } from "../tools";
-import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import { buildScoutSchema, DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 import { REVIEW_SYSTEM, reviewPrompt, formatJudgeRowText } from "../review";
 import { getCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
 import { sessionRestriction } from "../../../src/lib/agentMission/sources";
@@ -2351,42 +2351,40 @@ export function buildCatalogWideningFacts(
   return out;
 }
 
+export interface ScoutModelOptionInput {
+  kind?: string;
+  stem_ar?: string;
+}
+
 export function stampScoutOptionsWithCodeFacts(
-  rawOptions: ReadonlyArray<string>,
+  rawOptions: ReadonlyArray<ScoutModelOptionInput | string>,
   wideningFacts: ReadonlyArray<CatalogWideningOptionFact>,
   said: ReadonlyArray<string>,
 ): string[] {
-  if (wideningFacts.length === 0) return [...rawOptions];
-  const takeFact = wideningFacts.find((w) => w.kind === "take_found");
-  const routeFacts = wideningFacts.filter((w) => w.kind !== "take_found");
-  const used = new Set<CatalogWideningOptionFact>();
-  const candidates = takeFact
-    ? rawOptions
-    : rawOptions.filter((o) => !/سلّم|سلِّم|الموجود فقط/.test(o));
-  if (candidates.length === 0) {
-    return wideningFacts.map((w) => w.label_ar);
+  if (wideningFacts.length === 0) return [];
+  const factsByKind = new Map<string, CatalogWideningOptionFact>(
+    wideningFacts.map((w) => [w.kind, w])
+  );
+  const seenKinds = new Set<string>();
+  const matchedOptions: Array<{ kind: string; text: string }> = [];
+
+  for (const raw of rawOptions) {
+    const rawKind = typeof raw === "object" && raw !== null ? String(raw.kind ?? "").trim() : "";
+    const rawStem = typeof raw === "object" && raw !== null ? String(raw.stem_ar ?? "").trim() : "";
+    if (!rawKind || !factsByKind.has(rawKind) || seenKinds.has(rawKind)) {
+      continue;
+    }
+    seenKinds.add(rawKind);
+    const fact = factsByKind.get(rawKind)!;
+    const cleanStem = customerSafe(rawStem, 140, said) ?? fact.stem_ar;
+    const stampedText = customerSafe(`${cleanStem} ${fact.suffix_ar}`, 140, said) ?? fact.label_ar;
+    matchedOptions.push({ kind: rawKind, text: stampedText });
   }
-  return candidates.map((raw, idx) => {
-    const cleanStem = raw.replace(/\s*\([^)]*\)\s*$/u, "").trim();
-    if (idx === 0 && takeFact) {
-      const stem = cleanStem || takeFact.stem_ar;
-      return customerSafe(`${stem} ${takeFact.suffix_ar}`, 140, said) ?? takeFact.label_ar;
-    }
-    let matched: CatalogWideningOptionFact | undefined;
-    if (/حساب/.test(cleanStem)) {
-      matched = routeFacts.find((f) => f.kind === "related_accounts" && !used.has(f));
-    } else if (/أخبار|ويب|مواقع|جوجل/.test(cleanStem)) {
-      matched = routeFacts.find((f) => f.kind === "web_news" && !used.has(f));
-    } else if (/كل\s|بحث|ابحث/.test(cleanStem)) {
-      matched = routeFacts.find((f) => f.kind === "platform_search" && !used.has(f));
-    }
-    if (!matched) {
-      matched = routeFacts.find((f) => !used.has(f)) ?? routeFacts[Math.min(idx, routeFacts.length - 1)] ?? wideningFacts[0]!;
-    }
-    used.add(matched);
-    const stem = cleanStem || matched.stem_ar;
-    return customerSafe(`${stem} ${matched.suffix_ar}`, 140, said) ?? matched.label_ar;
-  });
+
+  // Put take_found first when present
+  matchedOptions.sort((a, b) => (a.kind === "take_found" ? -1 : (b.kind === "take_found" ? 1 : 0)));
+
+  return matchedOptions.map((o) => o.text);
 }
 
 /** The question the customer reads when the search found less than they asked for: the model writes it from the facts (code allows only the numbers it was given); code's own sentence when the model's cannot be shown. */
@@ -2402,7 +2400,6 @@ export async function scoutQuestion(
   const customerText = said.join(" ");
   const customerNumbers = numbersWritten(customerText);
   const wideningFacts = buildCatalogWideningFacts(weak, deps.catalog, deps.access ?? null, deps.pricingSettings, deps.webTools);
-  const hasFound = weak.some((f) => f.found > 0);
 
   const facts = {
     customer_words: input.words.slice(-4),
@@ -2426,10 +2423,11 @@ export async function scoutQuestion(
       observed_related_accounts: (f.relatedAccounts ?? []).map((a) => ({ role: a.role, rationale_ar: a.rationale })),
     })),
   };
+  const hasFound = weak.some((f) => f.found > 0);
   const baseFallback = scoutFallbackAr(weak, said);
   const fallbackOptions = wideningFacts.length > 0
     ? wideningFacts.map((w) => w.label_ar)
-    : (hasFound ? baseFallback.options_ar : baseFallback.options_ar.filter((o) => !/سلّم|الموجود/.test(o)));
+    : (hasFound ? baseFallback.options_ar : baseFallback.options_ar.slice(1));
   const fallback = {
     question_ar: baseFallback.question_ar,
     options_ar: fallbackOptions,
@@ -2437,25 +2435,49 @@ export async function scoutQuestion(
   const systemPrompt = index
     ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
     : SCOUT_SYSTEM;
+  const allowedKinds = wideningFacts.map((w) => w.kind);
+  const scoutSchema = buildScoutSchema(allowedKinds);
   const answer = await asker(deps, cost)(
     systemPrompt,
     JSON.stringify(facts),
-    { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA },
+    { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: scoutSchema },
     900
   );
   if (!isObj(answer)) return fallback;
-  const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
-    .map((o) => customerSafe(str(o), 140, said))
-    .filter((o): o is string => Boolean(o && o.trim()));
 
-  // Amendment A1: When hasFound is true, first option is take_found (2–4 options); when hasFound is false (found = 0), never offer take_found (1–3 widening options only).
-  const nonTakeOptions = rawOptions.filter((o) => !/سلّم|سلِّم|الموجود فقط/.test(o));
-  const isDeliverFirst = rawOptions.length >= 1 && (rawOptions[0].includes("سلّم") || rawOptions[0].includes("موجود"));
-  const validShape = hasFound
-    ? (rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst)
-    : (nonTakeOptions.length >= 1 && nonTakeOptions.length <= 3);
-  const options_ar = validShape
-    ? stampScoutOptionsWithCodeFacts(hasFound ? rawOptions : nonTakeOptions, wideningFacts, said)
+  const rawArray = Array.isArray((answer as any).options)
+    ? (answer as any).options
+    : (Array.isArray((answer as any).options_ar) ? (answer as any).options_ar : []);
+
+  const factsByKind = new Map<string, CatalogWideningOptionFact>(
+    wideningFacts.map((w) => [w.kind, w])
+  );
+  const seenKinds = new Set<string>();
+  const parsedOptions: Array<{ kind: string; stem_ar: string }> = [];
+
+  for (const item of rawArray) {
+    const k = typeof item === "object" && item !== null ? String(item.kind ?? "").trim() : "";
+    const stem = typeof item === "object" && item !== null ? String(item.stem_ar ?? "").trim() : "";
+    if (!k || !factsByKind.has(k) || seenKinds.has(k)) {
+      continue;
+    }
+    seenKinds.add(k);
+    parsedOptions.push({ kind: k, stem_ar: stem });
+  }
+
+  // Put take_found first when present
+  parsedOptions.sort((a, b) => (a.kind === "take_found" ? -1 : (b.kind === "take_found" ? 1 : 0)));
+
+  const hasTakeFact = factsByKind.has("take_found");
+  // Validate by kinds:
+  // When take_found fact is present (found > 0): options must be 2–4 and start with take_found.
+  // When take_found fact is absent (found = 0): options must be 1–3 and contain NO take_found.
+  const validShape = hasTakeFact
+    ? (parsedOptions.length >= 2 && parsedOptions.length <= 4 && parsedOptions[0]?.kind === "take_found")
+    : (parsedOptions.length >= 1 && parsedOptions.length <= 3 && !parsedOptions.some((o) => o.kind === "take_found"));
+
+  const options_ar = validShape && wideningFacts.length > 0
+    ? stampScoutOptionsWithCodeFacts(parsedOptions, wideningFacts, said)
     : fallback.options_ar;
 
   const message = customerSafe(str(answer.message_ar), 700, said);

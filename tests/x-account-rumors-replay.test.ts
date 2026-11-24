@@ -204,7 +204,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         deliver: true,
         count: { total: 20, per_parent: null, all: false },
         parent: null,
-        source: null,
+        source: { kind: "account", value: "SaudiMOH" },
         topic: null,
         period: null,
         search_terms: ["شائعة"],
@@ -261,11 +261,11 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "وجدنا ٥ تغريدات فقط من ٢٠ طلبتها لحساب وزارة الصحة. تحب نسلّمك الموجود ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الموجود فقط",
-              "وسّع البحث إلى مواقع الأخبار وجوجل نيوز (نحو ٥٠ خبر)",
-              "وسّع البحث في حسابات رسمية وإخبارية موثقة",
-              "وسّع صياغة البحث لتشمل التوعية الصحية ونفي الشائعات",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+              { kind: "web_news", stem_ar: "وسّع البحث إلى مواقع الأخبار وجوجل نيوز" },
+              { kind: "related_accounts", stem_ar: "وسّع البحث في حسابات رسمية وإخبارية موثقة" },
+              { kind: "platform_search", stem_ar: "وسّع صياغة البحث لتشمل التوعية الصحية ونفي الشائعات" },
             ],
           },
         };
@@ -274,10 +274,10 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "وجدنا ٨ مراجعات فقط من ٣٠ طلبتها لهذا المنتج. تحب نسلّمك الموجود ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الموجود فقط",
-              "وسّع البحث إلى متاجر إلكترونية أخرى في الكتالوج (نحو ٤٠ مراجعة)",
-              "وسّع ليشمل تقييمات الموديلات السابقة للمنتج",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+              { kind: "platform_search", stem_ar: "وسّع البحث إلى متاجر إلكترونية أخرى في الكتالوج" },
+              { kind: "web_news", stem_ar: "وسّع ليشمل تقييمات الموديلات السابقة للمنتج" },
             ],
           },
         };
@@ -1157,10 +1157,10 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "لقيت ٧ تغريدات عن الشائعات من أصل ٢٠ طلبتها، والمصدر لا يعرض المزيد. تحب نسلّمك الـ٧ ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الـ٧",
-              "وسّع البحث إلى مصادر إخبارية ورسمية أخرى في الكتالوج",
-              "وسّع البحث في فيسبوك ومصادر الويب",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الـ٧" },
+              { kind: "related_accounts", stem_ar: "وسّع البحث إلى مصادر إخبارية ورسمية أخرى في الكتالوج" },
+              { kind: "web_news", stem_ar: "وسّع البحث في فيسبوك ومصادر الويب" },
             ],
           },
         };
@@ -2364,11 +2364,15 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         [{ step: stepR9, requested: 20, found: 0, exhausted: true, sets: 1, examinedCount: 40 }],
         { words: [customerPromptR9], request: customerPromptR9 },
         {
-          // Even if the model tries to include "سلّمني الموجود فقط" when found = 0, code strips it!
+          // Even if the model tries to include "take_found" when found = 0, code strips it!
           model: vi.fn().mockResolvedValue({
             input: {
               message_ar: "دورت في ٤٠ تغريدة ومالقيتش ولا تغريدة مطابقة، وأنصحك نوسّع البحث في كل إكس. تحب نعمل إيه؟",
-              options_ar: ["سلّمني الموجود فقط", "ابحث عن الموضوع في كل إكس", "أضف الأخبار وصفحات الويب العامة"],
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+                { kind: "web_news", stem_ar: "أضف الأخبار وصفحات الويب العامة" },
+              ],
             },
             costUsd: 0.001,
           }),
@@ -2379,6 +2383,38 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       );
       expect(qZero.options_ar.some((o) => o.includes("سلّم") || o.includes("الموجود"))).toBe(false);
       expect(qZero.options_ar[0]).toContain("ابحث عن الموضوع في كل إكس");
+
+      // Structured Output Test: options matched by kind, unknown kind dropped, duplicate kind dropped
+      const qStructured = await scoutQuestion(
+        { decision: "plan", understanding_ar: "الشائعات", steps: [stepR9] },
+        [{ step: stepR9, requested: 20, found: 5, exhausted: true, sets: 1, examinedCount: 40 }],
+        { words: [customerPromptR9], request: customerPromptR9 },
+        {
+          model: vi.fn().mockResolvedValue({
+            input: {
+              message_ar: "وجدنا ٥ تغريدات فقط، تحب نسلّمك ولا نوسّع؟",
+              options: [
+                { kind: "unknown_route", stem_ar: "خيار غير معروف" },
+                { kind: "platform_search", stem_ar: "ابحث في كل إكس" },
+                { kind: "platform_search", stem_ar: "تكرار بحث إكس" },
+                { kind: "take_found", stem_ar: "سلّمني الـ٥" },
+              ],
+            },
+            costUsd: 0.001,
+          }),
+          catalog,
+          access,
+        },
+        { usd: 0 },
+      );
+      // take_found is put first when present
+      expect(qStructured.options_ar[0]).toContain("سلّمني الـ٥");
+      // platform_search is matched and stamped with code facts
+      expect(qStructured.options_ar[1]).toContain("ابحث في كل إكس");
+      // unknown_route is dropped, duplicate platform_search is dropped
+      expect(qStructured.options_ar).toHaveLength(2);
+      expect(qStructured.options_ar.some((o) => o.includes("خيار غير معروف"))).toBe(false);
+      expect(qStructured.options_ar.some((o) => o.includes("تكرار بحث إكس"))).toBe(false);
 
       // Counter-case A1: found = 1 -> take_found IS offered with its real price (200 pts minimum)
       const factsOne = buildCatalogWideningFacts(

@@ -37,15 +37,16 @@ Live mission `msn_f91f7e220bbf60fd7c9c` failed with count parity discrepancies, 
 ## 2. Changed Files (<= 5 files)
 
 1. `agent/src/llmPlanner/prompts.ts`:
-   - Updated `SCOUT_SYSTEM` and `SCOUT_SCHEMA` instructing the model to rely on code facts for options and prices, and strictly forbidding offering `take_found` when `found = 0`.
+   - Updated `SCOUT_SYSTEM` and structured `buildScoutSchema` / `SCOUT_SCHEMA` with `{ kind, stem_ar }` items matching dynamic `facts.widening_options` enums.
 2. `agent/src/llmPlanner/planner.ts`:
    - Unified `secondRows` judging with `judgeSampleRows` before shortfall findings.
    - Added `priceStageForOption` and `buildCatalogWideningFacts` with code-stamped option pricing and honest per-route widening.
    - Added `PriorScoutStepSnapshot` restoration logic in `planWithLlm`.
+   - Structured output option mapping: replaced Arabic word regexes with kind-based mapping (`stampScoutOptionsWithCodeFacts`), dropping unknown/duplicate kinds and sorting `take_found` first when present.
 3. `agent/src/llmPlanner/run.ts`:
    - Persisted and cleared `scoutSnapshot` in `PlannerState` across planning turns with single-use scoped restoration.
 4. `tests/x-account-rumors-replay.test.ts`:
-   - Added test suite for r9 covering Must-Pass 1 (Round 1 & 2 count parity on real Call #6 replay), Must-Pass 2 (Amendment A1 `found = 0` no take_found), and Must-Pass 3 (Amendment A3 code-stamped option prices & per-route widening).
+   - Added test suite for r9 covering Must-Pass 1 (Round 1 & 2 count parity on real Call #6 replay), Must-Pass 2 (Amendment A1 `found = 0` no take_found), and Must-Pass 3 (Amendment A3 code-stamped option prices & per-route widening), plus structured output kind validation and unknown-kind dropping.
 5. `docs/diger-team/DT-20261123-x-account-rumors-r9.md`:
    - This documentation file.
 
@@ -53,6 +54,7 @@ Live mission `msn_f91f7e220bbf60fd7c9c` failed with count parity discrepancies, 
 
 ## 3. Verification
 
+- Design guards: `npx vitest run tests/design-guards.test.ts` (7 passed, 0 violations).
 - All 40 replay tests pass: `npx vitest run tests/x-account-rumors-replay.test.ts` (40 passed).
 - TypeScript compilation: `npm run agent:typecheck && npx tsc --noEmit` exits with code 0.
 - Dependent suites verified: `tests/retrieval-state-machine.test.ts` and `tests/dt09-leaks.test.ts` pass.
