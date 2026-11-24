@@ -264,8 +264,9 @@ export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null
     const kind = kindOf(capability);
     const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
     const web = [...(options.web ?? [])];
-    const extra = [...others, ...web, ...mpEndpoints.filter((e) => !base.some((b) => b.id === e.id))].sort(rank);
-    return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra].slice(0, max);
+    const mpSearch = mpEndpoints.filter((e) => !base.some((b) => b.id === e.id) && !web.some((w) => w.id === e.id));
+    const extra = [...others, ...mpSearch];
+    return [...base.slice(0, Math.max(3, max + 2 - (extra.length + web.length))), ...extra, ...web];
   }
 
   // Cross-provider capability tag matching: include matching endpoints across all 3 providers
