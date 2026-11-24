@@ -161,23 +161,47 @@ export const FIELD_MAP_SCHEMA: Record<string, unknown> = {
 
 export const SCOUT_SYSTEM = `You are Diger's assistant, talking to a customer who asked for data. Before preparing their plan you ran REAL searches for their request, and the source gave LESS than they asked for. Tell them honestly what you found and ask what they prefer, like a thoughtful person would in a chat.
 
-Write in the customer's own dialect (if they wrote Egyptian Arabic, answer in friendly Egyptian Arabic; otherwise clear, simple Arabic). 2 to 4 short sentences: what you searched (in their words: the account, the topic, the period), how many you found. If the customer requested a specific count and you found fewer, compare what was found against what they asked for; if the customer gave NO number, state ONLY what was found (never invent a target count and never say «طلبتهم» or «من الـ...»). Never mention a period or timeframe (such as «في آخر سنتين» or dates) unless the customer explicitly specified a time period in their messages. Then state that you can either hand over what exists or widen the search. Never ask for an account handle, name or link that the customer already provided in their messages.
+Write in the customer's own dialect (if they wrote Egyptian Arabic, answer in friendly Egyptian Arabic; otherwise clear, simple Arabic). 2 to 4 short sentences: what you searched (in their words: the account, the topic, the period), how many you found. If the customer requested a specific count and you found fewer, compare what was found against what they asked for; if the customer gave NO number, state ONLY what was found (never invent a target count and never say «طلبتهم» or «من الـ...»). Never mention a period or timeframe (such as «في آخر سنتين» or dates) unless the customer explicitly specified a time period in their messages. When found > 0, state that you can either hand over what exists or widen the search; when found is 0, state honestly that 0 matching items were found in that source (never offer to deliver 0 items) and recommend the widening option from facts.widening_options that best serves the customer's goal. Never ask for an account handle, name or link that the customer already provided in their messages.
 
-Offer 2 to 4 concrete, closed options the customer can tap, tailored specifically to THIS request's goal and the catalog index:
-- The first option MUST always be to deliver what was found («سلّمني الـN» where N is the count found in Arabic-Indic digits, e.g. «سلّمني الـ٧», or «سلّمني الموجود فقط» when 0 was found).
-- The remaining 1 to 3 options must be concrete widening choices based on available capabilities in the catalog for this request's goal: specify which other platforms, news sources, web sources, related accounts, or broader topic phrasings exist, and roughly how many more rows each could add. Use the catalog's Arabic display names for platforms (such as فيسبوك، إنستجرام، يوتيوب، تيك توك، أخبار ومواقع الويب) rather than generic words like «المصدر». Never use generic words like «المصدر» to refer to platforms or sources.
-- Options must differ according to the request's goal (e.g. a public statement/rumor request widens to news/web/official accounts, whereas a product review request widens to other e-commerce platforms/stores).
+Offer concrete, closed options the customer can tap, tailored specifically to THIS request's goal and matching facts.widening_options:
+- Each option MUST be an object with { kind, stem_ar }. The kind must match one of the kinds in facts.widening_options.
+- When found > 0, include take_found as an option (or first option). When found is 0, facts.widening_options contains NO take_found option, so offer ONLY widening options.
+- The widening options (1 to 3 options) must match the available routes in facts.widening_options for this request's goal: specify which platform search, related official accounts, or news/web sources to add, using the catalog's Arabic display names for platforms (such as إكس، فيسبوك، إنستجرام، يوتيوب، تيك توك، الأخبار وصفحات الويب العامة) rather than generic words like «المصدر». Write only the clear Arabic action phrase for each option stem (stem_ar) — code automatically appends the exact count/adds and max price in points from facts.widening_options.
+- Options must differ according to the request's goal (e.g. a public statement/rumor request widens to platform search, related official accounts, or news/web, whereas a product review request widens to other e-commerce platforms/stores).
 
-Facts are given as JSON. Use ONLY the numbers in the facts (what was requested, what was found) and the numbers the customer wrote in message_ar. If requested is null, no count was requested by the customer. No provider, tool or price talk; no Latin letters, handles or links; digits in Arabic-Indic form; no emoji.`;
+Facts are given as JSON. Use ONLY the numbers in the facts (what was requested, what was found, what was examined) and the numbers the customer wrote in message_ar. If requested is null, no count was requested by the customer. No provider or internal tool-id talk; no Latin letters, handles or links; digits in Arabic-Indic form; no emoji.`;
 
-export const SCOUT_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  properties: {
-    message_ar: { type: "string", description: "what was found and what you can do, 2 to 4 short sentences, ending with the question" },
-    options_ar: { type: "array", items: { type: "string" }, description: "2 to 4 short options, each under 60 characters" },
-  },
-  required: ["message_ar", "options_ar"],
-};
+export function buildScoutSchema(allowedKinds: ReadonlyArray<string> = []): Record<string, unknown> {
+  const kindProp: Record<string, unknown> = allowedKinds.length > 0
+    ? { type: "string", enum: [...allowedKinds], description: "the widening option kind matching facts.widening_options" }
+    : { type: "string", description: "the widening option kind matching facts.widening_options" };
+  return {
+    type: "object",
+    properties: {
+      message_ar: { type: "string", description: "what was found, which widening option you recommend for this request, and the question, in 2 to 4 short sentences" },
+      options: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            kind: kindProp,
+            stem_ar: { type: "string", description: "short Arabic option stem" },
+          },
+          required: ["kind", "stem_ar"],
+        },
+        description: "options matching facts.widening_options by kind; code appends the exact count and max points suffix",
+      },
+    },
+    required: ["message_ar", "options"],
+  };
+}
+
+export const SCOUT_SCHEMA: Record<string, unknown> = buildScoutSchema([
+  "take_found",
+  "platform_search",
+  "related_accounts",
+  "web_news",
+]);
 
 /** The same schema WITHOUT the «ask» decision: asked once more when the model's «ask» named nothing missing (DT-20261119-03: asking is a permission the answer must earn). */
 export const UNDERSTAND_SCHEMA_NO_ASK: Record<string, unknown> = {

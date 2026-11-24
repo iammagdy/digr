@@ -24,6 +24,7 @@ import {
   type ScoutFinding,
 } from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { SCOUT_SYSTEM } from "../agent/src/llmPlanner/prompts";
 import { textDedupeKey, titleDedupeKey, canonicalUrlKey, deriveItemId } from "../src/lib/agentMission/contract";
 import { REVIEW_SYSTEM, reviewPrompt, emptyReviewState, formatJudgeRowText } from "../agent/src/review";
 import { researchRelevanceOf } from "../src/lib/agentMission/foundation/compilePlan";
@@ -203,7 +204,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         deliver: true,
         count: { total: 20, per_parent: null, all: false },
         parent: null,
-        source: null,
+        source: { kind: "account", value: "SaudiMOH" },
         topic: null,
         period: null,
         search_terms: ["شائعة"],
@@ -260,11 +261,11 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "وجدنا ٥ تغريدات فقط من ٢٠ طلبتها لحساب وزارة الصحة. تحب نسلّمك الموجود ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الموجود فقط",
-              "وسّع البحث إلى مواقع الأخبار وجوجل نيوز (نحو ٥٠ خبر)",
-              "وسّع البحث في حسابات رسمية وإخبارية موثقة",
-              "وسّع صياغة البحث لتشمل التوعية الصحية ونفي الشائعات",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+              { kind: "web_news", stem_ar: "وسّع البحث إلى مواقع الأخبار وجوجل نيوز" },
+              { kind: "related_accounts", stem_ar: "وسّع البحث في حسابات رسمية وإخبارية موثقة" },
+              { kind: "platform_search", stem_ar: "وسّع صياغة البحث لتشمل التوعية الصحية ونفي الشائعات" },
             ],
           },
         };
@@ -273,10 +274,10 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "وجدنا ٨ مراجعات فقط من ٣٠ طلبتها لهذا المنتج. تحب نسلّمك الموجود ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الموجود فقط",
-              "وسّع البحث إلى متاجر إلكترونية أخرى في الكتالوج (نحو ٤٠ مراجعة)",
-              "وسّع ليشمل تقييمات الموديلات السابقة للمنتج",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+              { kind: "platform_search", stem_ar: "وسّع البحث إلى متاجر إلكترونية أخرى في الكتالوج" },
+              { kind: "web_news", stem_ar: "وسّع ليشمل تقييمات الموديلات السابقة للمنتج" },
             ],
           },
         };
@@ -304,8 +305,8 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     // Fallback test: when model fails, fixed fallback is returned
     const failingModel = vi.fn().mockResolvedValue(null);
     const qFallback = await scoutQuestion(understandingRumors, weakRumors, inputRumors, { model: failingModel, log: () => {}, catalog, access }, cost);
-    expect(qFallback.options_ar[0]).toBe("سلّمني الموجود فقط");
-    expect(qFallback.options_ar[1]).toBe("وسّع البحث إلى منصات ومصادر أخرى في الكتالوج");
+    expect(qFallback.options_ar[0]).toContain("سلّمني الموجود فقط");
+    expect(qFallback.options_ar[1]).toContain("إكس");
   });
 
   it("Multi-provider merge: AnyAPI, TikHub and Crawl4ai tweets de-duplicated by ID yield >17 on-topic tweets", () => {
@@ -1156,10 +1157,10 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         return {
           input: {
             message_ar: "لقيت ٧ تغريدات عن الشائعات من أصل ٢٠ طلبتها، والمصدر لا يعرض المزيد. تحب نسلّمك الـ٧ ولا نوسّع؟",
-            options_ar: [
-              "سلّمني الـ٧",
-              "وسّع البحث إلى مصادر إخبارية ورسمية أخرى في الكتالوج",
-              "وسّع البحث في فيسبوك ومصادر الويب",
+            options: [
+              { kind: "take_found", stem_ar: "سلّمني الـ٧" },
+              { kind: "related_accounts", stem_ar: "وسّع البحث إلى مصادر إخبارية ورسمية أخرى في الكتالوج" },
+              { kind: "web_news", stem_ar: "وسّع البحث في فيسبوك ومصادر الويب" },
             ],
           },
         };
@@ -1170,7 +1171,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     const cost = { usd: 0 };
     const q = await scoutQuestion(understanding, [weakFinding], { words: ["SaudiMOH", "شائعات"], request: "" }, { model: mockModel, catalog }, cost);
     expect(q.question_ar).toContain("٧");
-    expect(q.options_ar[0]).toBe("سلّمني الـ٧");
+    expect(q.options_ar[0]).toContain("سلّمني الـ٧");
     expect(q.options_ar.length).toBeGreaterThanOrEqual(2);
 
     // When customer selects «سلّمني الـ٧», accepts_available is set to true
@@ -2067,6 +2068,470 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       if (linkedInSearch) {
         expect(needsMissingSession(linkedInSearch, { query: "test" })).toBe(true);
       }
+    });
+  });
+
+  describe("DT-20261123-x-account-rumors r9: One Accepted Set Count Parity, Code-Owned Option Prices & Honest Per-Route Widening (msn_f91f7e220bbf60fd7c9c replay + CTO Amendments A1-A3)", () => {
+    const customerPromptR9 =
+      "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
+
+    // Exact 16 unique tweets from msn_f91f7e220bbf60fd7c9c Call #6 (/srv/diger-team/qa/work/LIVE-RUMORS-POST-667-inspector.md)
+    const acceptedTweetR9 = {
+      id: "1466135018154205187",
+      title: "تم رصد المتحور في المملكة وعدد من دول العالم، ومن المهم جداً أن نأخذ المعلومات من مصادرها الموثوقة وأن نحذر من الشائعات.",
+      text: "تم رصد المتحور في المملكة وعدد من دول العالم، ومن المهم جداً أن نأخذ المعلومات من مصادرها الموثوقة وأن نحذر من الشائعات. https://t.co/7XIYxHghkr",
+      url: "https://x.com/SaudiMOH/status/1466135018154205187",
+      authorUsername: "SaudiMOH",
+      createdUtc: "2021-12-01T22:00:00Z",
+    };
+
+    const rejectedCall6TweetsR9 = [
+      { id: "1795486173152113063", text: "أخطاء شائعة عند علاج الإدمان، تعرف عليها", url: "https://x.com/SaudiMOH/status/1795486173152113063", authorUsername: "SaudiMOH" },
+      { id: "1783068055615991878", text: "تعرّف على إجابات الأسئلة الشائعة حول التبرع بالدم عبر ملف الأسئلة الشائعة", url: "https://x.com/SaudiMOH/status/1783068055615991878", authorUsername: "SaudiMOH" },
+      { id: "1725151378635411641", text: "مشاكل الجهاز الهضمي الشائعة أثناء الحمل وطرق التعامل معها", url: "https://x.com/SaudiMOH/status/1725151378635411641", authorUsername: "SaudiMOH" },
+      { id: "1607724279717830658", text: "أعراض شائعة في الشتاء وكيفية الوقاية منها", url: "https://x.com/SaudiMOH/status/1607724279717830658", authorUsername: "SaudiMOH" },
+      { id: "1605972748119199744", text: "نزلات البرد الشائعة في فصل الشتاء وطرق التخفيف من أعراضها", url: "https://x.com/SaudiMOH/status/1605972748119199744", authorUsername: "SaudiMOH" },
+      { id: "1527333290868686849", text: "أخطاء شائعة في استخدام الأدوية يجب تجنبها", url: "https://x.com/SaudiMOH/status/1527333290868686849", authorUsername: "SaudiMOH" },
+      { id: "1420096654456430602", text: "من الأسئلة الشائعة.. هل لقاح كورونا آمن للمرضع؟", url: "https://x.com/SaudiMOH/status/1420096654456430602", authorUsername: "SaudiMOH" },
+      { id: "1411035681783291907", text: "من الأسئلة الشائعة.. متى تظهر المناعة بعد أخذ اللقاح؟", url: "https://x.com/SaudiMOH/status/1411035681783291907", authorUsername: "SaudiMOH" },
+      { id: "1409934690992349184", text: "من الأسئلة الشائعة.. هل يمكن أخذ جرعتين من لقاحين مختلفين؟", url: "https://x.com/SaudiMOH/status/1409934690992349184", authorUsername: "SaudiMOH" },
+      { id: "1408488014750461957", text: "من الأسئلة الشائعة.. هل يؤثر لقاح كورونا على الخصوبة؟", url: "https://x.com/SaudiMOH/status/1408488014750461957", authorUsername: "SaudiMOH" },
+      { id: "1407036094718345222", text: "من الأسئلة الشائعة.. ما هي الأعراض الجانبية المتوقعة بعد اللقاح؟", url: "https://x.com/SaudiMOH/status/1407036094718345222", authorUsername: "SaudiMOH" },
+      { id: "1395439977916420102", text: "من الأسئلة الشائعة.. هل يلزم فحص كورونا قبل أخذ اللقاح؟", url: "https://x.com/SaudiMOH/status/1395439977916420102", authorUsername: "SaudiMOH" },
+      { id: "1393989166439030789", text: "من الأسئلة الشائعة.. كم المدة بين الإصابة وأخذ اللقاح؟", url: "https://x.com/SaudiMOH/status/1393989166439030789", authorUsername: "SaudiMOH" },
+      { id: "1373698874968420354", text: "من الأسئلة الشائعة.. هل يفطر لقاح كورونا في رمضان؟", url: "https://x.com/SaudiMOH/status/1373698874968420354", authorUsername: "SaudiMOH" },
+      { id: "1366810483949477892", text: "من الأسئلة الشائعة.. هل يحتاج المتعافي من كورونا إلى أخذ اللقاح؟", url: "https://x.com/SaudiMOH/status/1366810483949477892", authorUsername: "SaudiMOH" },
+    ];
+
+    const call6All16Rows = [
+      ...rejectedCall6TweetsR9.slice(0, 6),
+      acceptedTweetR9,
+      ...rejectedCall6TweetsR9.slice(6),
+    ];
+
+    it("Must-Pass 1 & Amendment A2: Round 1 judges alternate search rows (finding 1466135018154205187 = 1), Round 2 answer reuses priorScout once, and edited request ignores snapshot", async () => {
+      const routineTimelinePage = Array.from({ length: 15 }, (_, i) => ({
+        id: `186009900000000${i + 1}`,
+        text: `RT @SaudiMOH937: نصائح صحية يومية ومواعيد العيادات رقم ${i + 1}`,
+        url: `https://x.com/SaudiMOH/status/186009900000000${i + 1}`,
+        authorUsername: "SaudiMOH",
+      }));
+
+      const mockProbeR1 = vi.fn().mockImplementation(async (endpointId: string) => {
+        if (endpointId === "anyapi.x.user.posts") {
+          return { ok: true, rows_in_page: 15, call_id: "r1_timeline", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+        }
+        return { ok: true, rows_in_page: 16, call_id: "r1_search", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+      });
+
+      const mockReadPageR1 = vi.fn().mockImplementation(async (callId: string) => {
+        if (callId === "r1_timeline") return { output: { data: { tweets: routineTimelinePage } } };
+        return { output: { data: { tweets: call6All16Rows } } };
+      });
+
+      const mockModelR1 = vi.fn().mockImplementation(async ({ tool, user }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع تغريدات وزارة الصحة السعودية @SaudiMOH عن الشائعات ومكافحتها وتوعية الأفراد ضدها",
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات ومكافحة الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                { endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" },
+                { endpoint_id: "anyapi.x.search.posts", params_json: JSON.stringify({ query: 'from:SaudiMOH "نفي شائعة"' }), cursor_input: "cursor" },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          const uStr = String(user ?? "");
+          if (uStr.includes("1466135018154205187") || uStr.includes("المتحور")) {
+            return { input: { matching_indices: [6] } }; // only index 6 (1466135018154205187) is on-topic
+          }
+          return { input: { matching_indices: [] } };
+        }
+        if (tool?.name === "scout_report") {
+          return {
+            input: {
+              message_ar: "دورت في حساب وزارة الصحة السعودية على إكس عن الشائعات ومكافحتها ولقيت تغريدة واحدة بس مطابقة. أنصحك نوسّع البحث في كل إكس أو نضيف الأخبار وصفحات الويب العامة عشان نجمع نتائج أكتر، أو أسلّمك الموجود. تحب نعمل إيه؟",
+              options_ar: [
+                "سلّمني الموجود فقط",
+                "ابحث عن الموضوع في كل إكس",
+                "أضف الحساب الرسمي المرتبط اللي ظهر على إكس",
+                "أضف الأخبار وصفحات الويب العامة",
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const r1 = await planWithLlm(
+        { words: [customerPromptR9], request: customerPromptR9, scoutAllowed: true },
+        {
+          model: mockModelR1,
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: mockProbeR1,
+          readPage: mockReadPageR1,
+        }
+      );
+
+      expect(r1.kind).toBe("question");
+      if (r1.kind !== "question") throw new Error("Expected scout question in Round 1");
+      expect(r1.scout).toBe(true);
+      expect(r1.scoutSnapshot).toBeDefined();
+      expect(r1.scoutSnapshot).toHaveLength(1);
+      expect(r1.scoutSnapshot![0].found).toBe(1);
+      expect(r1.scoutSnapshot![0].acceptedIds).toEqual(["1466135018154205187"]);
+      expect(r1.question_ar).toContain("تغريدة واحدة");
+      expect(r1.options_ar[0]).toBe("سلّمني الموجود فقط (تغريدة واحدة، والحد الأدنى للطلب ٢٠٠ نقطة)");
+
+      // Round 2 (Must-pass A2): Customer answers the last scout question -> reuses priorScout without re-probing
+      const mockProbeR2 = vi.fn().mockRejectedValue(new Error("Round 2 must not re-probe when priorScout is restored on accepts_available"));
+      const mockModelR2 = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع تغريدات وزارة الصحة السعودية @SaudiMOH عن الشائعات ومكافحتها",
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات ومكافحة الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const r2 = await planWithLlm(
+        {
+          words: [customerPromptR9, r1.options_ar[0]],
+          request: customerPromptR9,
+          exchanges: [{ question: r1.question_ar, answer: r1.options_ar[0] }],
+          scoutAllowed: false,
+          priorScout: r1.scoutSnapshot,
+        },
+        {
+          model: mockModelR2,
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: mockProbeR2,
+          readPage: mockReadPageR1,
+        }
+      );
+
+      expect(mockProbeR2).not.toHaveBeenCalled();
+      expect(r2.kind).toBe("plan");
+      if (r2.kind !== "plan") throw new Error("Expected plan in Round 2");
+
+      const stage = r2.plan.stages[0];
+      expect(stage.planned_rows).toBe(1);
+      expect((stage.relevance as any)?.accepted_ids).toEqual(["1466135018154205187"]);
+      expect(r2.plan.price.reservePoints).toBe(200);
+      expect(r2.plan.price.maxChargePoints).toBe(200);
+
+      // Counter-case A2: Customer edits the request to a different topic ("اللقاحات" instead of "الشائعات") -> snapshot is ignored and fresh planning probes
+      let editedProbed = 0;
+      const mockProbeEdited = vi.fn().mockImplementation(async () => {
+        editedProbed += 1;
+        return { ok: true, rows_in_page: 15, call_id: "r1_timeline", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+      });
+      const mockModelEdited = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع تغريدات وزارة الصحة عن اللقاحات",
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن اللقاحات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "اللقاحات", // DIFFERENT topic!
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [{ endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" }],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          return { input: { matching_indices: [0, 1, 2] } };
+        }
+        return null;
+      });
+
+      const rEdited = await planWithLlm(
+        {
+          words: ["عايز تغريدات وزارة الصحة عن اللقاحات"],
+          request: "عايز تغريدات وزارة الصحة عن اللقاحات",
+          scoutAllowed: false,
+          priorScout: r1.scoutSnapshot,
+        },
+        {
+          model: mockModelEdited,
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: mockProbeEdited,
+          readPage: mockReadPageR1,
+        }
+      );
+      expect(editedProbed).toBeGreaterThan(0);
+      expect(rEdited.kind).toBe("plan");
+      if (rEdited.kind === "plan") {
+        expect(rEdited.plan.stages[0].planned_rows).toBe(3);
+      }
+    });
+
+    it("Must-Pass 2 (Amendment A1): found = 0 never offers take_found («سلّمني الموجود»); counter-case found = 1 offers take_found with real price", async () => {
+      const stepR9 = {
+        key: "tweets",
+        title_ar: "تغريدات وزارة الصحة عن الشائعات",
+        platform: "x",
+        capability: "x.user.posts",
+        topic: "الشائعات",
+        source: { kind: "account", value: "SaudiMOH" },
+        deliver: true,
+        parent: null,
+        count: { total: null, per_parent: null, all: false },
+        search_terms: ["شائعات"],
+        period: null,
+      };
+
+      // Must-pass A1: found = 0 -> NO take_found in buildCatalogWideningFacts or scoutQuestion.options_ar
+      const factsZero = buildCatalogWideningFacts(
+        [{ step: stepR9, requested: 20, found: 0, exhausted: true, sets: 1, examinedCount: 40 }],
+        catalog,
+        access,
+      );
+      expect(factsZero.some((f) => f.kind === "take_found")).toBe(false);
+      expect(factsZero.every((f) => !f.label_ar.includes("سلّمني الموجود"))).toBe(true);
+
+      const qZero = await scoutQuestion(
+        { decision: "plan", understanding_ar: "الشائعات", steps: [stepR9] },
+        [{ step: stepR9, requested: 20, found: 0, exhausted: true, sets: 1, examinedCount: 40 }],
+        { words: [customerPromptR9], request: customerPromptR9 },
+        {
+          // Even if the model tries to include "take_found" when found = 0, code strips it!
+          model: vi.fn().mockResolvedValue({
+            input: {
+              message_ar: "دورت في ٤٠ تغريدة ومالقيتش ولا تغريدة مطابقة، وأنصحك نوسّع البحث في كل إكس. تحب نعمل إيه؟",
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+                { kind: "web_news", stem_ar: "أضف الأخبار وصفحات الويب العامة" },
+              ],
+            },
+            costUsd: 0.001,
+          }),
+          catalog,
+          access,
+        },
+        { usd: 0 },
+      );
+      expect(qZero.options_ar.some((o) => o.includes("سلّم") || o.includes("الموجود"))).toBe(false);
+      expect(qZero.options_ar[0]).toContain("ابحث عن الموضوع في كل إكس");
+
+      // Structured Output Test: options matched by kind, unknown kind dropped, duplicate kind dropped
+      const qStructured = await scoutQuestion(
+        { decision: "plan", understanding_ar: "الشائعات", steps: [stepR9] },
+        [{ step: stepR9, requested: 20, found: 5, exhausted: true, sets: 1, examinedCount: 40 }],
+        { words: [customerPromptR9], request: customerPromptR9 },
+        {
+          model: vi.fn().mockResolvedValue({
+            input: {
+              message_ar: "وجدنا ٥ تغريدات فقط، تحب نسلّمك ولا نوسّع؟",
+              options: [
+                { kind: "unknown_route", stem_ar: "خيار غير معروف" },
+                { kind: "platform_search", stem_ar: "ابحث في كل إكس" },
+                { kind: "platform_search", stem_ar: "تكرار بحث إكس" },
+                { kind: "take_found", stem_ar: "سلّمني الـ٥" },
+              ],
+            },
+            costUsd: 0.001,
+          }),
+          catalog,
+          access,
+        },
+        { usd: 0 },
+      );
+      // take_found is put first when present
+      expect(qStructured.options_ar[0]).toContain("سلّمني الـ٥");
+      // platform_search is matched and stamped with code facts
+      expect(qStructured.options_ar[1]).toContain("ابحث في كل إكس");
+      // unknown_route is dropped, duplicate platform_search is dropped
+      expect(qStructured.options_ar).toHaveLength(2);
+      expect(qStructured.options_ar.some((o) => o.includes("خيار غير معروف"))).toBe(false);
+      expect(qStructured.options_ar.some((o) => o.includes("تكرار بحث إكس"))).toBe(false);
+
+      // Counter-case A1: found = 1 -> take_found IS offered with its real price (200 pts minimum)
+      const factsOne = buildCatalogWideningFacts(
+        [{ step: stepR9, requested: 20, found: 1, exhausted: true, sets: 1, examinedCount: 40 }],
+        catalog,
+        access,
+      );
+      expect(factsOne[0].kind).toBe("take_found");
+      expect(factsOne[0].max_price_points).toBe(200);
+      expect(factsOne[0].label_ar).toBe("سلّمني الموجود فقط (تغريدة واحدة، والحد الأدنى للطلب ٢٠٠ نقطة)");
+    });
+
+    it("Must-Pass 3 (Amendment A3 & Per-Route Honesty): one price source matching assemblePlan for found = 1 and found above minimum, zero 0.0005 fallback, and distinct per-route adds ~N vs up to N", () => {
+      expect(SCOUT_SYSTEM).not.toContain("No provider, tool or price talk");
+      expect(SCOUT_SYSTEM).toContain("recommend the widening option from facts.widening_options");
+
+      const stepR9 = {
+        key: "tweets",
+        title_ar: "تغريدات وزارة الصحة عن الشائعات",
+        platform: "x",
+        capability: "x.user.posts",
+        topic: "الشائعات",
+        source: { kind: "account", value: "SaudiMOH" },
+        deliver: true,
+        parent: null,
+        count: { total: null, per_parent: null, all: false },
+        search_terms: ["شائعات"],
+        period: null,
+      };
+      const userPostsEp = catalog.endpoints.find((e) => e.id === "anyapi.x.user.posts")!;
+      const makeBuiltStep = (foundRows: number): any => ({
+        step: { ...stepR9, count: { total: foundRows, per_parent: null, all: false } },
+        option: { endpoint: userPostsEp, params: { handle: "SaudiMOH" }, cursor: "cursor", parent: null, more: [], notCarried: [] },
+        mapCode: "return [];",
+        columns: [{ key: "text", title_ar: "النص" }],
+        carryKeys: [],
+        sampleRows: Array.from({ length: foundRows }, (_, i) => ({ id: `t_${i}`, text: `شائعة ${i}` })),
+        rowsPerPage: 15,
+        callIds: ["c1"],
+        hasMore: false,
+        timelineAcceptedCount: foundRows,
+        timelineExhausted: true,
+      });
+
+      // A3 Case 1: found = 1 (minimum applies) -> option max_price_points == card maxChargePoints == card reservePoints == 200
+      const built1 = makeBuiltStep(1);
+      const facts1 = buildCatalogWideningFacts(
+        [{ step: built1.step, requested: 20, found: 1, exhausted: true, sets: 1, builtStep: built1, relatedAccounts: [{ handle: "SaudiMOH937", role: "official_spokesperson", rationale: "حساب 937" }] }],
+        catalog,
+        access,
+      );
+      const card1 = assemblePlan(
+        { decision: "plan", understanding_ar: "الشائعات", steps: [built1.step] },
+        [built1],
+        [],
+        undefined,
+        [],
+        undefined,
+        catalog,
+      );
+      const take1 = facts1.find((f) => f.kind === "take_found")!;
+      expect(take1.max_price_points).toBe(card1.price.maxChargePoints);
+      expect(take1.max_price_points).toBe(card1.price.reservePoints);
+      expect(take1.max_price_points).toBe(200);
+
+      // A3 Case 2 (Counter-case): found = 1500 (above 200-pt minimum) -> option max_price_points == card maxChargePoints == card reservePoints > 200
+      const builtAboveMin = makeBuiltStep(1500);
+      const factsAboveMin = buildCatalogWideningFacts(
+        [{ step: builtAboveMin.step, requested: 2000, found: 1500, exhausted: true, sets: 1, builtStep: builtAboveMin }],
+        catalog,
+        access,
+      );
+      const cardAboveMin = assemblePlan(
+        { decision: "plan", understanding_ar: "الشائعات", steps: [builtAboveMin.step] },
+        [builtAboveMin],
+        [],
+        undefined,
+        [],
+        undefined,
+        catalog,
+      );
+      const takeAboveMin = factsAboveMin.find((f) => f.kind === "take_found")!;
+      expect(cardAboveMin.price.maxChargePoints).toBeGreaterThan(200);
+      expect(takeAboveMin.max_price_points).toBe(cardAboveMin.price.maxChargePoints);
+      expect(cardAboveMin.price.reservePoints).toBe(494);
+      expect(takeAboveMin.min_applied).toBe(false);
+
+      // A3 Case 3: Unknown step cost (no catalog and no builtStep) -> do not show a guessed price number (max_price_points is null)
+      const factsUnknownCost = buildCatalogWideningFacts(
+        [{ step: stepR9, requested: 20, found: 3, exhausted: true, sets: 1 }],
+        undefined,
+        null,
+      );
+      expect(factsUnknownCost[0].kind).toBe("take_found");
+      expect(factsUnknownCost[0].max_price_points).toBeNull();
+      expect(factsUnknownCost[0].label_ar).not.toContain("نقطة");
+
+      // Honest per-route widening estimates: unprobed routes use "up_to" ("يضيف حتى") with distinct counts (19, 5, 10)
+      const searchOpt = facts1.find((f) => f.kind === "platform_search")!;
+      const relOpt = facts1.find((f) => f.kind === "related_accounts")!;
+      const webOpt = facts1.find((f) => f.kind === "web_news")!;
+      expect(searchOpt.estimate_kind).toBe("up_to");
+      expect(relOpt.estimate_kind).toBe("up_to");
+      expect(webOpt.estimate_kind).toBe("up_to");
+      expect(searchOpt.label_ar).toContain("يضيف حتى");
+      expect(relOpt.label_ar).toContain("يضيف حتى");
+      expect(webOpt.label_ar).toContain("يضيف حتى");
+      expect(new Set([searchOpt.addable_rows, relOpt.addable_rows, webOpt.addable_rows]).size).toBe(3);
+
+      // Measured routes use "measured" ("يضيف نحو")
+      const factsMeasured = buildCatalogWideningFacts(
+        [{ step: built1.step, requested: 20, found: 1, exhausted: true, sets: 1, builtStep: built1, probedPlatformSearchRows: 14, probedWebRows: 8 }],
+        catalog,
+        access,
+      );
+      expect(factsMeasured.find((f) => f.kind === "platform_search")!.label_ar).toContain("يضيف نحو ١٤ تغريدة");
+      expect(factsMeasured.find((f) => f.kind === "web_news")!.label_ar).toContain("يضيف نحو ٨");
     });
   });
 });

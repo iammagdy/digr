@@ -28,7 +28,7 @@ import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf, multiProviderEndpoints } from "./catalogView";
 import { validateInputShape } from "../tools";
-import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import { buildScoutSchema, DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 import { REVIEW_SYSTEM, reviewPrompt, formatJudgeRowText } from "../review";
 import { getCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
 import { sessionRestriction } from "../../../src/lib/agentMission/sources";
@@ -82,6 +82,34 @@ export interface LlmPlannerDeps {
   probeTimeoutMs?: number;
 }
 
+export interface PriorScoutStepSnapshot {
+  stepKey: string;
+  title_ar: string;
+  platform: string;
+  capability: string;
+  topic?: string | null;
+  sourceValue?: string | null;
+  requestText?: string;
+  endpointId: string;
+  params: Record<string, unknown>;
+  cursor: string | null;
+  more: Array<Record<string, unknown>>;
+  notCarried: string[];
+  mapCode: string;
+  columns: PlanColumn[];
+  carryKeys: string[];
+  found: number;
+  requested: number;
+  acceptedIds: string[];
+  sampleRows: Array<Record<string, unknown>>;
+  rowsPerPage: number;
+  callIds: string[];
+  chargedUsd: number;
+  examinedCount: number;
+  stopReason?: StopReason | null;
+  relatedAccounts: RelatedAccountCandidate[];
+}
+
 export interface LlmPlannerInput {
   /** The customer's own messages for this request, oldest first (authoritative). */
   words: string[];
@@ -96,6 +124,8 @@ export interface LlmPlannerInput {
   exchanges?: Array<{ question: string; answer: string }>;
   /** May this run stop and ask the customer what to do when the real search found far less than they asked for (false once the limit is reached). Absent: yes. */
   scoutAllowed?: boolean;
+  /** Amendment A2: Scoped single-use snapshot from Round 1, restored only when answering the last scout question of this request. */
+  priorScout?: PriorScoutStepSnapshot[];
 }
 
 export interface UnderstoodStep {
@@ -111,7 +141,7 @@ export interface Understanding {
 
 export type LlmPlanResult =
   | { kind: "plan"; plan: PricedPlan; understanding: Understanding; costUsd: number }
-  | { kind: "question"; question_ar: string; options_ar: string[]; understanding: Understanding; costUsd: number; /** the question reports what the real search found (the customer chooses: take it, or widen) */ scout?: true }
+  | { kind: "question"; question_ar: string; options_ar: string[]; understanding: Understanding; costUsd: number; /** the question reports what the real search found (the customer chooses: take it, or widen) */ scout?: true; scoutSnapshot?: PriorScoutStepSnapshot[] }
   | { kind: "cannot"; reason_ar: string; understanding: Understanding | null; costUsd: number; detail: string };
 
 /** Asked when the model's own question cannot be shown as it wrote it. */
@@ -863,9 +893,72 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   const built = new Map<string, BuiltStep>();
   const findings: ScoutFinding[] = [];
   const unserved: Array<{ what_ar: string; reason_ar: string }> = [];
+  const normScope = (v: string | null | undefined): string => String(v ?? "").trim().toLowerCase().replace(/^@/, "");
+  const sameScopeText = (a: string | null | undefined, b: string | null | undefined): boolean => {
+    const na = normScope(a);
+    const nb = normScope(b);
+    if (!na || !nb) return na === nb;
+    return na === nb || na.includes(nb) || nb.includes(na);
+  };
   for (const step of u.steps) {
     const parent = step.parent ? built.get(step.parent) ?? null : null;
     if (step.parent && !parent) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة الخطوة التي تسبقها، فلن تُضاف هذه الخطوة ولن تُحسب في السعر." }); continue; }
+    if (u.accepts_available && !step.parent && input.priorScout && input.priorScout.length > 0) {
+      const snap = input.priorScout.find((s) =>
+        s.found > 0
+        && s.platform === step.platform
+        && (s.topic === undefined || sameScopeText(s.topic, step.topic))
+        && (s.sourceValue === undefined || sameScopeText(s.sourceValue, step.source?.value))
+        && (s.stepKey === step.key || s.capability === step.capability || u.steps.length === 1)
+      );
+      const snapEndpoint = snap ? deps.catalog.byId.get(snap.endpointId) : undefined;
+      if (snap && snapEndpoint) {
+        step.title_ar = customerSafe(step.title_ar || snap.title_ar, 60, said) ?? "العناصر";
+        const restoredOption: ToolOption = {
+          endpoint: snapEndpoint,
+          params: { ...snap.params },
+          cursor: snap.cursor,
+          parent: null,
+          more: snap.more.map((m) => ({ ...m })),
+          notCarried: [...snap.notCarried],
+        };
+        const restoredSample: PageSample = {
+          rowsPerPage: Math.max(1, snap.rowsPerPage),
+          chargedUsd: snap.chargedUsd,
+          checkedParams: { ...snap.params },
+        };
+        const restoredStep: BuiltStep = {
+          step,
+          option: restoredOption,
+          mapCode: snap.mapCode,
+          columns: [...snap.columns],
+          carryKeys: [...snap.carryKeys],
+          sampleRows: snap.sampleRows.map((r) => ({ ...r })),
+          sample: restoredSample,
+          rowsPerPage: Math.max(1, snap.rowsPerPage),
+          callIds: [...snap.callIds],
+          hasMore: false,
+          nextCursor: null,
+          timelineAcceptedCount: snap.found,
+          timelineExhausted: true,
+          acceptedIds: [...snap.acceptedIds],
+          observedRelatedAccounts: [...snap.relatedAccounts],
+        };
+        built.set(step.key, restoredStep);
+        findings.push({
+          step,
+          requested: snap.requested,
+          found: snap.found,
+          exhausted: true,
+          sets: Math.max(1, snap.callIds.length),
+          examinedCount: snap.examinedCount,
+          stopReason: snap.stopReason ?? "terminal_cursor",
+          relatedAccounts: [...snap.relatedAccounts],
+          builtStep: restoredStep,
+        });
+        continue;
+      }
+    }
     await say(customerSafe(`نختار المصدر المناسب لجمع ${step.title_ar} من ${platformAr(step.platform, step.capability, said)} ونجرب عينة حقيقية منه.`, 200, said));
     const { candidates, options } = await chooseTools(step, parent ? parent.sampleRows : null, deps, cost);
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
@@ -1187,13 +1280,58 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       }
     }
 
+    // ONE FINAL ACCEPTED SET ACROSS ALL PROBED CANDIDATES (DT-20261123-x-account-rumors r9):
+    // When secondRows (from options[1..], e.g. account search) was probed during planning and primary sampleRows is short of target,
+    // judge secondRows with the same judgeSampleRows so Round 1's shortfall question and Round 2's card always share the exact same accepted set.
+    if (step.topic && secondRows.length > 0 && sampleRows.length < target) {
+      allExaminedRows.push(...secondRows);
+      totalExamined += secondRows.length;
+      const secondMatches = await judgeSampleRows(secondRows, step, u, said, ask, isTimelineScan, deps.log, "second");
+      if (secondMatches !== null) {
+        const secondOnTopic = secondMatches.map((idx: number) => secondRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+        secondRows.splice(0, secondRows.length, ...secondOnTopic);
+        const existingKeys = new Set(sampleRows.map(rowKeyOf));
+        const primaryWasEmpty = sampleRows.length === 0;
+        for (const r of secondOnTopic) {
+          const id = deriveItemId(r);
+          if (id) stepAcceptedIds.add(id);
+          const k = rowKeyOf(r);
+          if (!existingKeys.has(k)) {
+            existingKeys.add(k);
+            sampleRows.push(r);
+          }
+        }
+        if (secondOnTopic.length > 0) {
+          topicMatchedInSample = true;
+          if (isTimelineScan) judgeAffirmative = true;
+          const builtStep = built.get(step.key);
+          if (builtStep && primaryWasEmpty && second) {
+            builtStep.option = second.option;
+            builtStep.mapCode = second.mapCode;
+            builtStep.sample = second.sample;
+            builtStep.rowsPerPage = Math.max(1, second.sample?.rowsPerPage || secondOnTopic.length);
+            builtStep.hasMore = secondMore;
+            builtStep.nextCursor = null;
+            builtStep.second = undefined;
+          }
+        }
+      } else {
+        secondRows.splice(0, secondRows.length);
+      }
+    }
+
+    const builtStepAfterScan = built.get(step.key);
+    if (builtStepAfterScan && !judgeFailedInSample && stepAcceptedIds.size > 0) {
+      builtStepAfterScan.acceptedIds = [...stepAcceptedIds];
+    }
+
     if (isTimelineScan && judgeAffirmative) {
       const builtStep = built.get(step.key);
       if (builtStep) {
         builtStep.timelineAcceptedCount = Math.min(step.count.total ?? sampleRows.length, sampleRows.length);
-        if (!got.hasMore || (stopReason && stopReason !== "target_reached" && (stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed"))) {
+        if (!builtStep.hasMore || (stopReason && stopReason !== "target_reached" && (stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed"))) {
           builtStep.timelineExhausted = true;
-          if (!stopReason && !got.hasMore) stopReason = "terminal_cursor";
+          if (!stopReason && !builtStep.hasMore) stopReason = "terminal_cursor";
         }
         if (!judgeFailedInSample) {
           builtStep.acceptedIds = [...stepAcceptedIds];
@@ -1208,6 +1346,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       ];
     }
 
+    const probedWebCount = webRows.length > 0 ? webRows.length : undefined;
+
     if (!topicMatchedInSample || (isTimelineScan && judgeAffirmative && sampleRows.length === 0 && !judgeFailedInSample)) {
       deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
       findings.push({
@@ -1219,6 +1359,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         examinedCount: totalExamined,
         stopReason: stopReason ?? "terminal_cursor",
         relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+        builtStep: builtStepAfterScan,
+        probedWebRows: probedWebCount,
       });
     } else {
       if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
@@ -1233,6 +1375,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           examinedCount: totalExamined,
           stopReason: stopReason ?? "target_reached",
           relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+          builtStep: builtStepAfterScan,
+          probedWebRows: probedWebCount,
         });
       }
       if (isTimelineScan && judgeAffirmative && !judgeFailedInSample) {
@@ -1251,6 +1395,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             examinedCount: totalExamined,
             stopReason: stopReason ?? "terminal_cursor",
             relatedAccounts: builtStep?.observedRelatedAccounts ?? [],
+            builtStep,
+            probedWebRows: probedWebCount,
           });
         } else {
           findings.push({
@@ -1262,6 +1408,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             examinedCount: totalExamined,
             stopReason: stopReason ?? "target_reached",
             relatedAccounts: builtStep?.observedRelatedAccounts ?? [],
+            builtStep,
+            probedWebRows: probedWebCount,
           });
         }
       } else if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
@@ -1287,6 +1435,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           examinedCount: totalExamined,
           stopReason: stopReason ?? "target_reached",
           relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+          builtStep: builtStepAfterScan,
+          probedWebRows: probedWebCount,
         });
       }
     }
@@ -1295,6 +1445,19 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // and never after the customer accepted what exists. Nothing is dropped and nothing is hidden: the customer decides with the facts in front of them.
   const weak = findings.filter((f) => f.exhausted && f.found < Math.max(1, Math.ceil(f.requested * SCOUT_SHORT_SHARE)));
   if (weak.length > 0 && input.scoutAllowed !== false && !u.accepts_available) {
+    // Amendment A1: «cannot» is ONLY for when found === 0 and no widening route exists in the catalog for this request.
+    if (weak.every((f) => f.found === 0)) {
+      const availableWidening = buildCatalogWideningFacts(weak, deps.catalog, deps.access ?? null, deps.pricingSettings, deps.webTools);
+      if (availableWidening.length === 0) {
+        return {
+          kind: "cannot",
+          reason_ar: "لم نجد نتائج مطابقة للشروط المحددة في المصدر، ولا يتوفر مسار توسيع مناسب لهذا الطلب في الكتالوج.",
+          understanding: u,
+          costUsd: cost.usd,
+          detail: "no_step_served",
+        };
+      }
+    }
     const canAsk = weak.every((f) => {
       const b = built.get(f.step.key);
       const pagesRead = (b?.callIds.length ?? 1);
@@ -1308,7 +1471,38 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (canAsk) {
       await say("جرّبنا عينة حقيقية ووجدنا أقل مما طلبت، فنعرض عليك الموقف لتختار كيف نكمل.");
       const q = await scoutQuestion(u, weak, input, deps, cost);
-      return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true };
+      const scoutSnapshot: PriorScoutStepSnapshot[] = weak.flatMap((f) => {
+        const b = built.get(f.step.key);
+        if (!b) return [];
+        return [{
+          stepKey: f.step.key,
+          title_ar: f.step.title_ar,
+          platform: f.step.platform,
+          capability: f.step.capability,
+          topic: f.step.topic,
+          sourceValue: f.step.source?.value ?? null,
+          requestText: input.words[input.words.length - 1] ?? input.request,
+          endpointId: b.option.endpoint.id,
+          params: { ...b.option.params },
+          cursor: b.option.cursor,
+          more: b.option.more.map((m) => ({ ...m })),
+          notCarried: [...b.option.notCarried],
+          mapCode: b.mapCode,
+          columns: [...b.columns],
+          carryKeys: [...b.carryKeys],
+          found: f.found,
+          requested: f.requested,
+          acceptedIds: [...(b.acceptedIds ?? b.sampleRows.map((r) => deriveItemId(r)).filter((id): id is string => Boolean(id)))],
+          sampleRows: b.sampleRows.map((r) => ({ ...r })),
+          rowsPerPage: Math.max(1, b.rowsPerPage),
+          callIds: [...b.callIds],
+          chargedUsd: b.sample?.chargedUsd ?? 0,
+          examinedCount: f.examinedCount ?? b.rowsPerPage,
+          stopReason: f.stopReason ?? null,
+          relatedAccounts: [...(f.relatedAccounts ?? b.observedRelatedAccounts ?? [])],
+        }];
+      });
+      return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true, scoutSnapshot };
     }
   }
   costUsd = cost.usd;
@@ -1318,9 +1512,17 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // THE CUSTOMER ACCEPTED WHAT EXISTS (their answer to the question about what the real search found): the plan targets what was found, and says so (live, 16 Nov 2026: after «سلّمني الموجود» the plan still read
   // «هتستلم ٢٠ تقييمًا» and the end «١٠ من ٢٠»)
   if (u.accepts_available) {
+    if (findings.length > 0 && findings.every((f) => f.exhausted && f.found === 0)) {
+      return { kind: "cannot", reason_ar: "لم نجد نتائج مطابقة للشروط المحددة لتسليمها دون توسيع البحث.", understanding: u, costUsd, detail: "no_step_served" };
+    }
     for (const f of findings) {
       if (!f.exhausted) continue;
       f.step.count = { ...(f.step.count ?? { total: null, per_parent: null, all: false }), total: f.found };
+      const b = built.get(f.step.key);
+      if (b) {
+        b.timelineAcceptedCount = f.found;
+        b.timelineExhausted = true;
+      }
       if (f.found > 0) {
         const requestedPart = (f.step.count?.total ?? null) !== null ? `طلبتَ ${toArabicDigits(f.requested)}، و` : "";
         u.assumptions_ar = [...(u.assumptions_ar ?? []), `${requestedPart}وافقت على تسليم الموجود فعلًا من ${f.step.title_ar}: نحو ${toArabicDigits(f.found)}.`];
@@ -1634,6 +1836,9 @@ export interface ScoutFinding {
   examinedCount?: number;
   stopReason?: StopReason | null;
   relatedAccounts?: RelatedAccountCandidate[];
+  builtStep?: BuiltStep;
+  probedPlatformSearchRows?: number;
+  probedWebRows?: number;
 }
 
 const rowKeyOf = (row: Record<string, unknown>): string => {
@@ -1885,10 +2090,100 @@ export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: Readonl
 }
 
 export interface CatalogWideningOptionFact {
-  kind: string;
+  kind: "take_found" | "platform_search" | "related_accounts" | "web_news";
+  stem_ar: string;
+  suffix_ar: string;
   label_ar: string;
   addable_rows: number;
-  max_price_points: number;
+  estimate_kind: "exact" | "measured" | "up_to";
+  max_price_points: number | null;
+  min_applied: boolean;
+  min_charge_points: number | null;
+}
+
+/**
+ * Amendment A3 (One price source, zero hard-coded fallback cost):
+ * Prices a stage of `rows` items using the EXACT same pricing call and inputs as `assemblePlan`
+ * (`stageCostPerRawRowUsd` + `listedQuoteOf` + `stagePriceInputs` + `priceMissionByCode`).
+ * When neither `builtStep` nor a priceable catalog endpoint exists, returns `null` so no guessed price is shown.
+ */
+export function priceStageForOption(arg: {
+  builtStep?: BuiltStep;
+  endpoint?: CatalogEndpoint;
+  step: UnderstoodStep;
+  rows: number;
+  rowsPerPage?: number;
+  catalog?: TregCatalog;
+  access?: AccountAccess | null;
+  pricingSettings?: unknown;
+}): { maxChargePoints: number; reservePoints: number; minApplied: boolean; minChargePoints: number } | null {
+  const rows = Math.max(1, Math.floor(arg.rows));
+  let b = arg.builtStep;
+  if (!b) {
+    let ep = arg.endpoint;
+    if (!ep && arg.catalog) {
+      const cands = candidatesFor(arg.catalog, arg.access ?? null, arg.step.platform, arg.step.capability, 4).filter((c) => !needsMissingSession(c));
+      ep = cands[0]
+        ?? arg.catalog.endpoints.find((e) => e.platform === arg.step.platform && e.capability === arg.step.capability && !needsMissingSession(e))
+        ?? arg.catalog.endpoints.find((e) => e.platform === arg.step.platform && !needsMissingSession(e));
+    }
+    if (!ep) return null;
+    if (ep.cost === undefined && !arg.catalog?.byId.get(ep.id)?.cost) return null;
+    const rpp = Math.max(1, arg.rowsPerPage ?? 15);
+    b = {
+      step: arg.step,
+      option: {
+        endpoint: ep,
+        params: arg.step.source?.value ? { handle: arg.step.source.value } : {},
+        cursor: null,
+        parent: null,
+        more: [],
+        notCarried: [],
+      },
+      mapCode: "",
+      columns: [],
+      carryKeys: [],
+      sampleRows: [],
+      rowsPerPage: rpp,
+      callIds: [],
+      hasMore: false,
+    };
+  }
+  let costPerRow: number;
+  try {
+    costPerRow = stageCostPerRawRowUsd(b, arg.catalog);
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(costPerRow) || costPerRow < 0) return null;
+  const listed = listedQuoteOf([b], arg.pricingSettings);
+  const stage: PricedStage = {
+    key: b.step.key,
+    title_ar: b.step.title_ar,
+    endpoint_id: b.option.endpoint.id,
+    capability: b.step.capability,
+    expected_rows: rows,
+    planned_rows: rows,
+    parent_key: null,
+    deliver: true,
+    columns: b.columns,
+    sample_rows: [],
+    measured_by: b.callIds,
+    measured_from_calls: b.callIds,
+    measured_cost_per_row_usd: costPerRow,
+    yield_share: 1,
+    review_share: 0,
+    ...(listed?.stageKey === b.step.key ? { listed_rate: listed.rate } : {}),
+  } as unknown as PricedStage;
+  const price = priceMissionByCode(stagePriceInputs([stage]), {
+    settings: listed?.settings ?? (arg.pricingSettings as MissionPricingSettings | undefined),
+  });
+  return {
+    maxChargePoints: price.maxChargePoints,
+    reservePoints: price.reservePoints,
+    minApplied: Boolean(price.minApplied),
+    minChargePoints: price.minChargePoints ?? 0,
+  };
 }
 
 export function buildCatalogWideningFacts(
@@ -1900,62 +2195,196 @@ export function buildCatalogWideningFacts(
 ): CatalogWideningOptionFact[] {
   const first = weak[0];
   if (!first) return [];
-  const settings = normalizeMissionPricingSettings(pricingSettings);
-  const priceForRows = (rows: number, costPerRowUsd = 0.0005): number => {
-    try {
-      const p = priceMissionByCode(
-        [{ rows: Math.max(1, rows), costPerRowUsd, deliver: true, yield: 1, reviewShare: 0 }],
-        { settings },
-      );
-      return p.maxChargePoints;
-    } catch {
-      return 200; // minimum fallback points
-    }
-  };
+  const byTitle = itemNounOf(first.step.title_ar);
+  const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
+    ? byTitle
+    : (itemNounFromCapability(first.step.capability, first.step.platform) ?? byTitle);
+
   const out: CatalogWideningOptionFact[] = [];
   const foundCount = Math.max(0, first.found);
-  const takeRows = Math.max(1, foundCount);
-  const takePts = foundCount > 0 ? priceForRows(takeRows) : 0;
-  out.push({
-    kind: "take_found",
-    label_ar: foundCount > 0
-      ? `سلّمني الموجود فقط (${toArabicDigits(foundCount)}، بحد أقصى ${toArabicDigits(takePts)} نقطة)`
-      : "سلّمني الموجود فقط",
-    addable_rows: foundCount,
-    max_price_points: takePts,
-  });
-  const addRows = DEFAULT_COUNT;
-  const addPts = priceForRows(addRows);
+
+  // Amendment A1: NEVER offer «سلّمني الموجود» when foundCount === 0 (offering "take nothing" is useless to the customer).
+  if (foundCount > 0) {
+    const takeQuote = priceStageForOption({
+      builtStep: first.builtStep,
+      step: first.step,
+      rows: foundCount,
+      catalog,
+      access,
+      pricingSettings,
+    });
+    const takeStem = "سلّمني الموجود فقط";
+    const takeSuffix = takeQuote
+      ? (takeQuote.minApplied
+          ? `(${countAr(foundCount, noun)}، والحد الأدنى للطلب ${toArabicDigits(takeQuote.maxChargePoints)} نقطة)`
+          : `(${countAr(foundCount, noun)}، بحد أقصى ${toArabicDigits(takeQuote.maxChargePoints)} نقطة)`)
+      : `(${countAr(foundCount, noun)})`;
+    out.push({
+      kind: "take_found",
+      stem_ar: takeStem,
+      suffix_ar: takeSuffix,
+      label_ar: `${takeStem} ${takeSuffix}`,
+      addable_rows: foundCount,
+      estimate_kind: "exact",
+      max_price_points: takeQuote ? takeQuote.maxChargePoints : null,
+      min_applied: takeQuote ? takeQuote.minApplied : false,
+      min_charge_points: takeQuote ? takeQuote.minChargePoints : null,
+    });
+  }
+
   const platformName = platformAr(first.step.platform, first.step.capability);
-  const hasPlatformSearch = catalog
-    ? candidatesFor(catalog, access, first.step.platform, `${first.step.platform}.search.posts`, 4).length > 0
-    : true;
+  const searchCap = `${first.step.platform}.search.posts`;
+  const searchCandidates = catalog
+    ? candidatesFor(catalog, access, first.step.platform, searchCap, 4).filter((c) => !needsMissingSession(c))
+    : [];
+  const hasPlatformSearch = catalog ? searchCandidates.length > 0 : true;
   if (hasPlatformSearch) {
+    const searchEp = searchCandidates[0];
+    const measuredSearch = (first.probedPlatformSearchRows ?? 0) > 0;
+    const remainingNeeded = Math.max(1, first.requested - foundCount);
+    const epLimitMax = searchEp?.inputs.find((i) => /^(limit|count|max_results|page_size)$/i.test(i.name))?.maximum;
+    const searchRows = measuredSearch
+      ? first.probedPlatformSearchRows!
+      : (typeof epLimitMax === "number" && epLimitMax > 0 ? Math.min(remainingNeeded, epLimitMax) : remainingNeeded);
+    const searchStep: UnderstoodStep = { ...first.step, capability: searchEp?.capability ?? searchCap, source: null };
+    const searchQuote = priceStageForOption({
+      endpoint: searchEp,
+      step: searchStep,
+      rows: searchRows,
+      rowsPerPage: Math.max(1, searchRows),
+      catalog,
+      access,
+      pricingSettings,
+    });
+    const searchKind: "measured" | "up_to" = measuredSearch ? "measured" : "up_to";
+    const searchVerb = searchKind === "measured" ? "يضيف نحو" : "يضيف حتى";
+    const searchStem = `ابحث عن الموضوع في كل ${platformName}`;
+    const searchSuffix = searchQuote
+      ? `(${searchVerb} ${countAr(searchRows, noun)}، بحد أقصى ${toArabicDigits(searchQuote.maxChargePoints)} نقطة)`
+      : `(${searchVerb} ${countAr(searchRows, noun)})`;
     out.push({
       kind: "platform_search",
-      label_ar: `ابحث عن الموضوع في كل ${platformName} (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
-      addable_rows: addRows,
-      max_price_points: addPts,
+      stem_ar: searchStem,
+      suffix_ar: searchSuffix,
+      label_ar: `${searchStem} ${searchSuffix}`,
+      addable_rows: searchRows,
+      estimate_kind: searchKind,
+      max_price_points: searchQuote ? searchQuote.maxChargePoints : null,
+      min_applied: searchQuote ? searchQuote.minApplied : false,
+      min_charge_points: searchQuote ? searchQuote.minChargePoints : null,
     });
   }
-  if ((first.relatedAccounts?.length ?? 0) > 0 || first.step.source?.value) {
+
+  const relCount = first.relatedAccounts?.length ?? (first.step.source?.value ? 1 : 0);
+  if (relCount > 0) {
+    const relRows = Math.min(10, Math.max(3, relCount * 5));
+    const userPostsEp = catalog
+      ? candidatesFor(catalog, access, first.step.platform, `${first.step.platform}.user.posts`, 2).find((c) => !needsMissingSession(c))
+      : undefined;
+    const relQuote = priceStageForOption({
+      endpoint: userPostsEp ?? first.builtStep?.option.endpoint,
+      step: first.step,
+      rows: relRows,
+      rowsPerPage: 15,
+      catalog,
+      access,
+      pricingSettings,
+    });
+    const relStem = relCount === 1
+      ? `أضف الحساب الرسمي المرتبط اللي ظهر على ${platformName}`
+      : `أضف الحسابات المرتبطة التي ظهرت في الفحص على ${platformName}`;
+    const relSuffix = relQuote
+      ? `(يضيف حتى ${countAr(relRows, noun)}، بحد أقصى ${toArabicDigits(relQuote.maxChargePoints)} نقطة)`
+      : `(يضيف حتى ${countAr(relRows, noun)})`;
     out.push({
       kind: "related_accounts",
-      label_ar: `أضف الحسابات المرتبطة التي ظهرت في الفحص على ${platformName} (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
-      addable_rows: addRows,
-      max_price_points: addPts,
+      stem_ar: relStem,
+      suffix_ar: relSuffix,
+      label_ar: `${relStem} ${relSuffix}`,
+      addable_rows: relRows,
+      estimate_kind: "up_to",
+      max_price_points: relQuote ? relQuote.maxChargePoints : null,
+      min_applied: relQuote ? relQuote.minApplied : false,
+      min_charge_points: relQuote ? relQuote.minChargePoints : null,
     });
   }
-  const hasWebOrMulti = (webTools && webTools.length > 0) || multiProviderEndpoints().length > 0 || Boolean(catalog);
+
+  const multiEps = multiProviderEndpoints();
+  const hasWebOrMulti = (webTools && webTools.length > 0) || multiEps.length > 0 || Boolean(catalog);
   if (hasWebOrMulti) {
+    const webEp = webTools?.[0]
+      ?? (catalog ? candidatesFor(catalog, access, "google_news", "google_news.search", 1)[0] ?? candidatesFor(catalog, access, "web", "web.search", 1)[0] : undefined)
+      ?? multiEps.find((e) => e.cost !== undefined);
+    const measuredWeb = (first.probedWebRows ?? 0) > 0;
+    const webRows = measuredWeb
+      ? first.probedWebRows!
+      : Math.min(10, Math.max(5, Math.ceil(first.requested / 2)));
+    const webStep: UnderstoodStep = { ...first.step, platform: webEp?.platform ?? "google_news", capability: webEp?.capability ?? "google_news.search", source: null };
+    const webQuote = priceStageForOption({
+      endpoint: webEp,
+      step: webStep,
+      rows: webRows,
+      rowsPerPage: 10,
+      catalog,
+      access,
+      pricingSettings,
+    });
+    const webNoun = itemNounFromCapability("google_news.search", "google_news") ?? noun;
+    const webKind: "measured" | "up_to" = measuredWeb ? "measured" : "up_to";
+    const webVerb = webKind === "measured" ? "يضيف نحو" : "يضيف حتى";
+    const webStem = "أضف الأخبار وصفحات الويب العامة";
+    const webSuffix = webQuote
+      ? `(${webVerb} ${countAr(webRows, webNoun)}، بحد أقصى ${toArabicDigits(webQuote.maxChargePoints)} نقطة)`
+      : `(${webVerb} ${countAr(webRows, webNoun)})`;
     out.push({
       kind: "web_news",
-      label_ar: `أضف الأخبار وصفحات الويب العامة (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
-      addable_rows: addRows,
-      max_price_points: addPts,
+      stem_ar: webStem,
+      suffix_ar: webSuffix,
+      label_ar: `${webStem} ${webSuffix}`,
+      addable_rows: webRows,
+      estimate_kind: webKind,
+      max_price_points: webQuote ? webQuote.maxChargePoints : null,
+      min_applied: webQuote ? webQuote.minApplied : false,
+      min_charge_points: webQuote ? webQuote.minChargePoints : null,
     });
   }
   return out;
+}
+
+export interface ScoutModelOptionInput {
+  kind?: string;
+  stem_ar?: string;
+}
+
+export function stampScoutOptionsWithCodeFacts(
+  rawOptions: ReadonlyArray<ScoutModelOptionInput | string>,
+  wideningFacts: ReadonlyArray<CatalogWideningOptionFact>,
+  said: ReadonlyArray<string>,
+): string[] {
+  if (wideningFacts.length === 0) return [];
+  const factsByKind = new Map<string, CatalogWideningOptionFact>(
+    wideningFacts.map((w) => [w.kind, w])
+  );
+  const seenKinds = new Set<string>();
+  const matchedOptions: Array<{ kind: string; text: string }> = [];
+
+  for (const raw of rawOptions) {
+    const rawKind = typeof raw === "object" && raw !== null ? String(raw.kind ?? "").trim() : "";
+    const rawStem = typeof raw === "object" && raw !== null ? String(raw.stem_ar ?? "").trim() : "";
+    if (!rawKind || !factsByKind.has(rawKind) || seenKinds.has(rawKind)) {
+      continue;
+    }
+    seenKinds.add(rawKind);
+    const fact = factsByKind.get(rawKind)!;
+    const cleanStem = customerSafe(rawStem, 140, said) ?? fact.stem_ar;
+    const stampedText = customerSafe(`${cleanStem} ${fact.suffix_ar}`, 140, said) ?? fact.label_ar;
+    matchedOptions.push({ kind: rawKind, text: stampedText });
+  }
+
+  // Put take_found first when present
+  matchedOptions.sort((a, b) => (a.kind === "take_found" ? -1 : (b.kind === "take_found" ? 1 : 0)));
+
+  return matchedOptions.map((o) => o.text);
 }
 
 /** The question the customer reads when the search found less than they asked for: the model writes it from the facts (code allows only the numbers it was given); code's own sentence when the model's cannot be shown. */
@@ -1967,9 +2396,9 @@ export async function scoutQuestion(
   cost: { usd: number }
 ): Promise<{ question_ar: string; options_ar: string[] }> {
   const index = deps.catalog ? platformIndex(deps.catalog, deps.access ?? null) : "";
-  const customerText = customerSaidOf(input).join(" ");
+  const said = customerSaidOf(input);
+  const customerText = said.join(" ");
   const customerNumbers = numbersWritten(customerText);
-  const customerHasCount = weak.some((f) => (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)));
   const wideningFacts = buildCatalogWideningFacts(weak, deps.catalog, deps.access ?? null, deps.pricingSettings, deps.webTools);
 
   const facts = {
@@ -1979,7 +2408,7 @@ export async function scoutQuestion(
     widening_options: wideningFacts,
     searches: weak.map((f) => ({
       items: f.step.title_ar,
-      platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
+      platform: platformAr(f.step.platform, f.step.capability, said),
       source: f.step.source,
       topic: f.step.topic,
       period: f.step.period && [...numbersWritten(`${f.step.period.from} ${f.step.period.to}`)].some((n) => customerNumbers.has(n)) ? f.step.period : null,
@@ -1994,27 +2423,64 @@ export async function scoutQuestion(
       observed_related_accounts: (f.relatedAccounts ?? []).map((a) => ({ role: a.role, rationale_ar: a.rationale })),
     })),
   };
-  const fallback = scoutFallbackAr(weak, customerSaidOf(input));
+  const hasFound = weak.some((f) => f.found > 0);
+  const baseFallback = scoutFallbackAr(weak, said);
+  const fallbackOptions = wideningFacts.length > 0
+    ? wideningFacts.map((w) => w.label_ar)
+    : (hasFound ? baseFallback.options_ar : baseFallback.options_ar.slice(1));
+  const fallback = {
+    question_ar: baseFallback.question_ar,
+    options_ar: fallbackOptions,
+  };
   const systemPrompt = index
     ? `${SCOUT_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${index}`
     : SCOUT_SYSTEM;
+  const allowedKinds = wideningFacts.map((w) => w.kind);
+  const scoutSchema = buildScoutSchema(allowedKinds);
   const answer = await asker(deps, cost)(
     systemPrompt,
     JSON.stringify(facts),
-    { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA },
+    { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: scoutSchema },
     900
   );
   if (!isObj(answer)) return fallback;
-  const rawOptions = (Array.isArray(answer.options_ar) ? answer.options_ar : [])
-    .map((o) => customerSafe(str(o), 120, customerSaidOf(input)))
-    .filter((o): o is string => Boolean(o && o.trim()));
 
-  // Code only checks shape: 2–4 options, first = deliver what was found
-  const isDeliverFirst = rawOptions.length >= 1 && (rawOptions[0].includes("سلّم") || rawOptions[0].includes("موجود"));
-  const validShape = rawOptions.length >= 2 && rawOptions.length <= 4 && isDeliverFirst;
-  const options_ar = validShape ? rawOptions : fallback.options_ar;
+  const rawArray = Array.isArray((answer as any).options)
+    ? (answer as any).options
+    : (Array.isArray((answer as any).options_ar) ? (answer as any).options_ar : []);
 
-  const message = customerSafe(str(answer.message_ar), 700, customerSaidOf(input));
+  const factsByKind = new Map<string, CatalogWideningOptionFact>(
+    wideningFacts.map((w) => [w.kind, w])
+  );
+  const seenKinds = new Set<string>();
+  const parsedOptions: Array<{ kind: string; stem_ar: string }> = [];
+
+  for (const item of rawArray) {
+    const k = typeof item === "object" && item !== null ? String(item.kind ?? "").trim() : "";
+    const stem = typeof item === "object" && item !== null ? String(item.stem_ar ?? "").trim() : "";
+    if (!k || !factsByKind.has(k) || seenKinds.has(k)) {
+      continue;
+    }
+    seenKinds.add(k);
+    parsedOptions.push({ kind: k, stem_ar: stem });
+  }
+
+  // Put take_found first when present
+  parsedOptions.sort((a, b) => (a.kind === "take_found" ? -1 : (b.kind === "take_found" ? 1 : 0)));
+
+  const hasTakeFact = factsByKind.has("take_found");
+  // Validate by kinds:
+  // When take_found fact is present (found > 0): options must be 2–4 and start with take_found.
+  // When take_found fact is absent (found = 0): options must be 1–3 and contain NO take_found.
+  const validShape = hasTakeFact
+    ? (parsedOptions.length >= 2 && parsedOptions.length <= 4 && parsedOptions[0]?.kind === "take_found")
+    : (parsedOptions.length >= 1 && parsedOptions.length <= 3 && !parsedOptions.some((o) => o.kind === "take_found"));
+
+  const options_ar = validShape && wideningFacts.length > 0
+    ? stampScoutOptionsWithCodeFacts(parsedOptions, wideningFacts, said)
+    : fallback.options_ar;
+
+  const message = customerSafe(str(answer.message_ar), 700, said);
   if (!message) return fallback;
 
   // Only numbers appearing in customer messages or actual search results (found, examined, sets) are allowed
