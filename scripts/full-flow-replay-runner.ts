@@ -47,6 +47,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/gateway";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { executeTregCall, type TregCallOptions, type TregCallResult } from "../src/functions/shared/tregClient";
+import type { CallRecorder } from "../src/lib/server/multiProvider/adapterTypes";
 
 // Verbatim customer prompt from live mission msn_f91f7e220bbf60fd7c9c & msn_c41586cf9d40986250d0
 const DEFAULT_CUSTOMER_PROMPT =
@@ -108,10 +109,14 @@ export interface RunIterationResult {
   deliveredIds: string[];
   providerCostUsd: number;
   optionPrice: number | null;
-  crit1Pass: boolean;
-  crit2Pass: boolean;
+  crit1Pass: boolean | "N/A";
+  crit2Pass: boolean | "N/A";
   crit3Pass: boolean;
   crit4Pass: boolean;
+  passed: boolean;
+  failureReason?: string;
+  questionText?: string;
+  notes?: string;
 }
 
 function parseCliArgs(): RunnerConfig {
@@ -263,234 +268,368 @@ async function runSingleIteration(
   config: RunnerConfig,
   apiKey: string,
   fixture: ReplayRows,
+  spentSoFar: number,
 ): Promise<RunIterationResult> {
-  const store = createMemoryStore();
-  const catalog = loadTregCatalog();
-  const missionId = `${config.missionId}_run${runIndex + 1}_${Date.now()}`;
   let iterationProviderCostUsd = 0;
+  try {
+    const store = createMemoryStore();
+    const catalog = loadTregCatalog();
+    const missionId = `${config.missionId}_run${runIndex + 1}_${Date.now()}`;
 
-  let gateway: { tregCall: (input: any) => Promise<GatewayCallResult> };
+    // Valid access object for sensitive access checks and data policy
+    const access = { isAdmin: false, tier: "starter", limits: {} } as any;
 
-  if (config.providers === "live") {
-    // --- MODE A: LIVE CATALOG GATEWAY ---
-    const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
-    const liveGateway = createGateway({
-      store,
-      client: null,
-      missionId,
-      userId: "usr_e2e_runner",
-      jobId: null,
-      phase: "planning",
-      access: null as never,
-      catalog,
-      budget: createJobCallBudget({ ceilingUsd: config.maxUsd, spentUsd: 0 }),
-      recorder: null as never,
-      token: providerToken,
-      defaultPurpose: config.prompt,
-      counter: { seq: 0 },
-      commit: async () => true, // ZERO database / ledger / wallet writes
-      call: async (options: TregCallOptions): Promise<TregCallResult> => {
-        if (iterationProviderCostUsd >= config.maxUsd) {
-          throw new Error(`Provider spend cap reached: $${iterationProviderCostUsd.toFixed(4)} >= $${config.maxUsd.toFixed(2)}`);
-        }
-        const res = await executeTregCall(options);
-        const cost = typeof res.costUsd === "number" ? res.costUsd : 0;
-        iterationProviderCostUsd += cost;
-        if (config.verbose) {
-          console.log(`[live-treg] ${options.endpointId} status=${res.status} rows=${res.rowsReturned ?? 0} cost=$${cost.toFixed(4)} (spent: $${iterationProviderCostUsd.toFixed(4)})`);
-        }
-        if (iterationProviderCostUsd > config.maxUsd) {
-          throw new Error(`Provider spend cap exceeded: $${iterationProviderCostUsd.toFixed(4)} > $${config.maxUsd.toFixed(2)}`);
-        }
-        return res;
-      },
-    });
-    gateway = liveGateway;
-  } else {
-    // --- MODE B: RECORDED FIXTURE GATEWAY ---
-    let callSeq = 0;
-    gateway = {
-      tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
-        callSeq += 1;
-        const callId = `call_recorded_${callSeq}`;
-        const rows = fixture.probeRows;
-        const pageData = {
-          output: {
-            data: {
-              tweets: rows,
-              items: rows,
-              nextCursor: null,
+    let gateway: { tregCall: (input: any) => Promise<GatewayCallResult> };
+
+    if (config.providers === "live") {
+      // --- MODE A: LIVE CATALOG GATEWAY ---
+      const inMemoryRecorder: CallRecorder = {
+        reserve: async () => ({ allowed: true, costId: 1 }),
+        commit: async () => {},
+      };
+
+      const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+      const liveGateway = createGateway({
+        store,
+        client: null,
+        missionId,
+        userId: "usr_e2e_runner",
+        jobId: null,
+        phase: "planning",
+        access,
+        catalog,
+        budget: createJobCallBudget({ ceilingUsd: config.maxUsd, spentUsd: spentSoFar }),
+        recorder: inMemoryRecorder,
+        token: providerToken,
+        defaultPurpose: config.prompt,
+        counter: { seq: 0 },
+        commit: async () => true, // ZERO database / ledger / wallet writes
+        call: async (options: TregCallOptions): Promise<TregCallResult> => {
+          if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
+            throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(4)} >= $${config.maxUsd.toFixed(2)}`);
+          }
+          const res = await executeTregCall(options);
+          const cost = typeof res.costUsd === "number" ? res.costUsd : 0;
+          iterationProviderCostUsd += cost;
+          if (config.verbose) {
+            console.log(`[live-treg] ${options.endpointId} status=${res.status} rows=${res.rowsReturned ?? 0} cost=$${cost.toFixed(4)} (spent: $${(spentSoFar + iterationProviderCostUsd).toFixed(4)})`);
+          }
+          if (spentSoFar + iterationProviderCostUsd > config.maxUsd) {
+            throw new Error(`Provider spend cap exceeded: $${(spentSoFar + iterationProviderCostUsd).toFixed(4)} > $${config.maxUsd.toFixed(2)}`);
+          }
+          return res;
+        },
+      });
+      gateway = liveGateway;
+    } else {
+      // --- MODE B: RECORDED FIXTURE GATEWAY ---
+      let callSeq = 0;
+      gateway = {
+        tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
+          callSeq += 1;
+          const callId = `call_recorded_${callSeq}`;
+          const rows = fixture.probeRows;
+          const pageData = {
+            output: {
+              data: {
+                tweets: rows,
+                items: rows,
+                nextCursor: null,
+              },
             },
-          },
-        };
+          };
 
-        await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(pageData), "application/json");
+          await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(pageData), "application/json");
 
-        if (config.verbose) {
-          console.log(`[recorded-gateway] probe ${endpoint_id} -> ${callId} (${rows.length} rows)`);
-        }
+          if (config.verbose) {
+            console.log(`[recorded-gateway] probe ${endpoint_id} -> ${callId} (${rows.length} rows)`);
+          }
 
-        return {
-          ok: true,
-          call_id: callId,
-          http_status: 200,
-          rows_in_page: rows.length,
-          has_more: false,
-          next_cursor: null,
-          shape: null,
-          first_rows: rows.slice(0, 3) as never,
-          warnings: [],
-          saved: callId,
-        };
-      },
+          return {
+            ok: true,
+            call_id: callId,
+            http_status: 200,
+            rows_in_page: rows.length,
+            has_more: false,
+            next_cursor: null,
+            shape: null,
+            first_rows: rows.slice(0, 3) as never,
+            warnings: [],
+            saved: callId,
+          };
+        },
+      };
+    }
+
+    // Real Anthropic LLM models for planning and review
+    const plannerModel = anthropicPlannerModel(apiKey, LLM_PLANNER_MODEL, {
+      log: config.verbose ? (line: string) => console.log(`[anthropic-planner] ${line}`) : undefined,
+    });
+    const reviewCall = anthropicReviewCall(apiKey);
+
+    if (config.verbose) {
+      console.log(`\n--- Starting Turn 1: Planning for ${missionId} ---`);
+    }
+
+    // --- Turn 1: Planning (probe evaluation -> asks shortfall question) ---
+    const missionTurn1 = {
+      id: missionId,
+      request_text: config.prompt,
+      answer_text: null,
+    };
+
+    const r1 = await runLlmPlanning({
+      mission: missionTurn1 as never,
+      store,
+      gateway: gateway as never,
+      catalog,
+      access,
+      model: plannerModel,
+      words: { current: [config.prompt], earlier: [] } as never,
+      now: Date.now(),
+      log: config.verbose ? (line: string) => console.log(`[runLlmPlanning-T1] ${line}`) : undefined,
+    });
+
+    if (r1.kind !== "question") {
+      return {
+        runIndex,
+        questionCount: 0,
+        options: [],
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: iterationProviderCostUsd,
+        optionPrice: null,
+        crit1Pass: false,
+        crit2Pass: false,
+        crit3Pass: false,
+        crit4Pass: false,
+        passed: false,
+        failureReason: `Turn 1 expected scout question, got kind="${r1.kind}" (detail: ${(r1 as any).detail ?? (r1 as any).reason_ar ?? "none"})`,
+        questionText: (r1 as any).question_ar ?? (r1 as any).message ?? "",
+      };
+    }
+
+    const questionCount = typeof r1.scoutSnapshot?.[0]?.found === "number" ? r1.scoutSnapshot[0].found : 0;
+    const options = r1.options_ar ?? [];
+
+    if (config.verbose) {
+      console.log(`[Turn 1 Output] question_ar: ${r1.question_ar}`);
+      console.log(`[Turn 1 Output] scout found: ${questionCount}`);
+      console.log(`[Turn 1 Output] options (${options.length}):`);
+      options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
+    }
+
+    // Handle found = 0 path (Amendment A1)
+    if (questionCount === 0) {
+      const hasTakeFound = options.some((opt) => opt.includes("الموجود") || opt.includes("سلّمني"));
+      const crit3Pass = options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt));
+      const crit4Pass = !hasTakeFound;
+
+      return {
+        runIndex,
+        questionCount: 0,
+        options,
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: iterationProviderCostUsd,
+        optionPrice: null,
+        crit1Pass: "N/A",
+        crit2Pass: "N/A",
+        crit3Pass,
+        crit4Pass,
+        passed: crit3Pass && crit4Pass,
+        questionText: r1.question_ar,
+        notes: "found=0, take_found absent: PASS for A1",
+      };
+    }
+
+    // When found > 0: take_found is always at index 0 (options[0])
+    const takeFoundOption = options[0];
+
+    if (!takeFoundOption) {
+      return {
+        runIndex,
+        questionCount,
+        options,
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: iterationProviderCostUsd,
+        optionPrice: null,
+        crit1Pass: false,
+        crit2Pass: false,
+        crit3Pass: false,
+        crit4Pass: false,
+        passed: false,
+        failureReason: "Turn 1 did not return any options in options_ar",
+        questionText: r1.question_ar,
+      };
+    }
+
+    const optionPrice = extractOptionPricePoints(takeFoundOption);
+
+    if (config.verbose) {
+      console.log(`\n--- Starting Turn 2: Option Selection ("${takeFoundOption}") ---`);
+    }
+
+    // --- Turn 2: Customer selects take_found option -> Generates Plan Card ---
+    const missionTurn2 = {
+      id: missionId,
+      request_text: config.prompt,
+      answer_text: takeFoundOption,
+    };
+
+    const r2 = await runLlmPlanning({
+      mission: missionTurn2 as never,
+      store,
+      gateway: gateway as never,
+      catalog,
+      access,
+      model: plannerModel,
+      words: { current: [takeFoundOption], earlier: [config.prompt] } as never,
+      now: Date.now(),
+      log: config.verbose ? (line: string) => console.log(`[runLlmPlanning-T2] ${line}`) : undefined,
+    });
+
+    if (r2.kind !== "plan") {
+      return {
+        runIndex,
+        questionCount,
+        options,
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: iterationProviderCostUsd,
+        optionPrice,
+        crit1Pass: false,
+        crit2Pass: false,
+        crit3Pass: options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt)),
+        crit4Pass: true,
+        passed: false,
+        failureReason: `Turn 2 expected plan, got kind="${r2.kind}" (reason: ${(r2 as any).reason_ar ?? (r2 as any).detail ?? "none"})`,
+        questionText: (r2 as any).question_ar ?? "",
+      };
+    }
+
+    const primaryStage = r2.plan.stages[0];
+    if (!primaryStage) {
+      return {
+        runIndex,
+        questionCount,
+        options,
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: iterationProviderCostUsd,
+        optionPrice,
+        crit1Pass: false,
+        crit2Pass: false,
+        crit3Pass: options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt)),
+        crit4Pass: true,
+        passed: false,
+        failureReason: "Turn 2 plan has no stages",
+        questionText: "",
+      };
+    }
+
+    const cardCount = primaryStage.planned_rows ?? primaryStage.expected_rows;
+    const maxPoints = r2.plan.price.maxChargePoints;
+    const holdAmount = r2.plan.price.reservePoints;
+
+    if (config.verbose) {
+      console.log(`[Turn 2 Output] cardCount: ${cardCount}, maxChargePoints: ${maxPoints}, reservePoints: ${holdAmount}`);
+    }
+
+    // --- Execution: createReviewer & ingestRows (in-memory only, no wallet charge) ---
+    if (config.verbose) {
+      console.log(`\n--- Starting Execution: ItemStore & Reviewer ---`);
+    }
+
+    const items = await ItemStore.open(store, missionId, {
+      legacyStages: r2.plan.stages.map((s) => s.key),
+    });
+
+    const reviewBudgetUsd = r2.plan.price.reviewBudgetUsd ?? 0.05;
+    const reviewer = createReviewer({
+      call: reviewCall,
+      store,
+      missionId,
+      requestText: `${config.prompt} — ${takeFoundOption}`,
+      budgetUsd: reviewBudgetUsd,
+      ceilingUsd: reviewBudgetUsd * 2,
+      log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
+    });
+
+    await ingestRows(
+      { items, plan: r2.plan, reviewer, addEvent: async () => {} },
+      primaryStage,
+      fixture.executionRows,
+    );
+
+    const stageCounts = items.counts(primaryStage.key);
+    const deliveredCount = stageCounts.accepted;
+    const deliveredRows = items.acceptedRows(primaryStage.key);
+    const deliveredIds = deliveredRows.map((r) => String(r.id));
+
+    // Evaluate D-0202 Criteria for this run
+    const crit1Pass = questionCount === cardCount && cardCount === deliveredCount;
+    const crit2Pass = maxPoints === holdAmount && (optionPrice === null || maxPoints === optionPrice);
+    const crit3Pass = options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt));
+    const crit4Pass = questionCount === 0 ? !options.some((opt) => opt.includes("الموجود") || opt.includes("سلّمني")) : true;
+    const passed = crit1Pass && crit2Pass && crit3Pass && crit4Pass;
+
+    return {
+      runIndex,
+      questionCount,
+      options,
+      cardCount,
+      maxPoints,
+      holdAmount,
+      deliveredCount,
+      deliveredIds,
+      providerCostUsd: iterationProviderCostUsd,
+      optionPrice,
+      crit1Pass,
+      crit2Pass,
+      crit3Pass,
+      crit4Pass,
+      passed,
+      questionText: r1.question_ar,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      runIndex,
+      questionCount: 0,
+      options: [],
+      cardCount: 0,
+      maxPoints: 0,
+      holdAmount: 0,
+      deliveredCount: 0,
+      deliveredIds: [],
+      providerCostUsd: iterationProviderCostUsd,
+      optionPrice: null,
+      crit1Pass: false,
+      crit2Pass: false,
+      crit3Pass: false,
+      crit4Pass: false,
+      passed: false,
+      failureReason: `Exception: ${msg}`,
+      questionText: "",
     };
   }
-
-  // Real Anthropic LLM models for planning and review
-  const plannerModel = anthropicPlannerModel(apiKey, LLM_PLANNER_MODEL, {
-    log: config.verbose ? (line: string) => console.log(`[anthropic-planner] ${line}`) : undefined,
-  });
-  const reviewCall = anthropicReviewCall(apiKey);
-
-  if (config.verbose) {
-    console.log(`\n--- Starting Turn 1: Planning for ${missionId} ---`);
-  }
-
-  // --- Turn 1: Planning (probe evaluation -> asks shortfall question) ---
-  const missionTurn1 = {
-    id: missionId,
-    request_text: config.prompt,
-    answer_text: null,
-  };
-
-  const r1 = await runLlmPlanning({
-    mission: missionTurn1 as never,
-    store,
-    gateway: gateway as never,
-    catalog,
-    access: null,
-    model: plannerModel,
-    words: { current: [config.prompt], earlier: [] } as never,
-    now: Date.now(),
-    log: config.verbose ? (line: string) => console.log(`[runLlmPlanning-T1] ${line}`) : undefined,
-  });
-
-  if (r1.kind !== "question") {
-    throw new Error(`Turn 1 expected scout question, got kind="${r1.kind}" (detail: ${(r1 as any).detail ?? "none"})`);
-  }
-
-  const questionCount = r1.scoutSnapshot?.[0]?.found ?? 1;
-  const options = r1.options_ar ?? [];
-
-  if (config.verbose) {
-    console.log(`[Turn 1 Output] question_ar: ${r1.question_ar}`);
-    console.log(`[Turn 1 Output] scout found: ${questionCount}`);
-    console.log(`[Turn 1 Output] options (${options.length}):`);
-    options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
-  }
-
-  // Pick take_found option: "سلّمني الموجود فقط..."
-  const takeFoundOption = options.find((opt) => opt.includes("سلّمني الموجود") || opt.includes("الموجود فقط")) ?? options[0];
-
-  if (!takeFoundOption) {
-    throw new Error("Turn 1 did not return any options in options_ar");
-  }
-
-  const optionPrice = extractOptionPricePoints(takeFoundOption);
-
-  if (config.verbose) {
-    console.log(`\n--- Starting Turn 2: Option Selection ("${takeFoundOption}") ---`);
-  }
-
-  // --- Turn 2: Customer selects take_found option -> Generates Plan Card ---
-  const missionTurn2 = {
-    id: missionId,
-    request_text: config.prompt,
-    answer_text: takeFoundOption,
-  };
-
-  const r2 = await runLlmPlanning({
-    mission: missionTurn2 as never,
-    store,
-    gateway: gateway as never,
-    catalog,
-    access: null,
-    model: plannerModel,
-    words: { current: [takeFoundOption], earlier: [config.prompt] } as never,
-    now: Date.now(),
-    log: config.verbose ? (line: string) => console.log(`[runLlmPlanning-T2] ${line}`) : undefined,
-  });
-
-  if (r2.kind !== "plan") {
-    throw new Error(`Turn 2 expected plan, got kind="${r2.kind}" (reason: ${(r2 as any).reason_ar ?? "none"})`);
-  }
-
-  const primaryStage = r2.plan.stages[0];
-  if (!primaryStage) {
-    throw new Error("Turn 2 plan has no stages");
-  }
-
-  const cardCount = primaryStage.planned_rows ?? primaryStage.expected_rows;
-  const maxPoints = r2.plan.price.maxChargePoints;
-  const holdAmount = r2.plan.price.reservePoints;
-
-  if (config.verbose) {
-    console.log(`[Turn 2 Output] cardCount: ${cardCount}, maxChargePoints: ${maxPoints}, reservePoints: ${holdAmount}`);
-  }
-
-  // --- Execution: createReviewer & ingestRows (in-memory only, no wallet charge) ---
-  if (config.verbose) {
-    console.log(`\n--- Starting Execution: ItemStore & Reviewer ---`);
-  }
-
-  const items = await ItemStore.open(store, missionId, {
-    legacyStages: r2.plan.stages.map((s) => s.key),
-  });
-
-  const reviewBudgetUsd = r2.plan.price.reviewBudgetUsd ?? 0.05;
-  const reviewer = createReviewer({
-    call: reviewCall,
-    store,
-    missionId,
-    requestText: `${config.prompt} — ${takeFoundOption}`,
-    budgetUsd: reviewBudgetUsd,
-    ceilingUsd: reviewBudgetUsd * 2,
-    log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
-  });
-
-  await ingestRows(
-    { items, plan: r2.plan, reviewer, addEvent: async () => {} },
-    primaryStage,
-    fixture.executionRows,
-  );
-
-  const stageCounts = items.counts(primaryStage.key);
-  const deliveredCount = stageCounts.accepted;
-  const deliveredRows = items.acceptedRows(primaryStage.key);
-  const deliveredIds = deliveredRows.map((r) => String(r.id));
-
-  // Evaluate D-0202 Criteria for this run
-  const crit1Pass = questionCount === cardCount && cardCount === deliveredCount;
-  const crit2Pass = maxPoints === holdAmount && (optionPrice === null || maxPoints === optionPrice);
-  const crit3Pass = options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt));
-  const crit4Pass = questionCount === 0 ? !options.some((opt) => opt.includes("سلّمني الموجود")) : true;
-
-  return {
-    runIndex,
-    questionCount,
-    options,
-    cardCount,
-    maxPoints,
-    holdAmount,
-    deliveredCount,
-    deliveredIds,
-    providerCostUsd: iterationProviderCostUsd,
-    optionPrice,
-    crit1Pass,
-    crit2Pass,
-    crit3Pass,
-    crit4Pass,
-  };
 }
 
 async function main(): Promise<void> {
@@ -535,39 +674,84 @@ async function main(): Promise<void> {
   let totalProviderCost = 0;
 
   for (let i = 0; i < config.runs; i++) {
-    const res = await runSingleIteration(i, config, apiKey.trim(), fixture);
-    results.push(res);
-    totalProviderCost += res.providerCostUsd;
+    try {
+      const res = await runSingleIteration(i, config, apiKey.trim(), fixture, totalProviderCost);
+      results.push(res);
+      totalProviderCost += res.providerCostUsd;
 
-    // Single concise summary line per run
-    const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
-    console.log(
-      `Run ${i + 1}: question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(4)}`
-    );
+      // Single concise summary line per run
+      if (!res.passed) {
+        console.log(
+          `Run ${i + 1}: FAIL | reason: ${res.failureReason} | question: "${res.questionText || "(none)"}" | cost=$${res.providerCostUsd.toFixed(4)}`
+        );
+      } else if (res.notes) {
+        const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
+        console.log(
+          `Run ${i + 1}: question=${res.questionCount} | ${res.notes} | options=${optionsSummary} | cost=$${res.providerCostUsd.toFixed(4)}`
+        );
+      } else {
+        const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
+        console.log(
+          `Run ${i + 1}: question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(4)}`
+        );
+      }
 
-    // Detailed output block
-    console.log(`\n--- Run ${i + 1}/${config.runs} Detailed Breakdown ---`);
-    console.log(`1. Question count: ${res.questionCount}`);
-    console.log("2. Option strings:");
-    res.options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
-    console.log(`3. Card count: ${res.cardCount}`);
-    console.log(`4. Max points / hold amount: ${res.maxPoints} pts / ${res.holdAmount} pts`);
-    console.log(`5. Delivered count: ${res.deliveredCount}`);
-    console.log(`6. Delivered row IDs: ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
-    console.log(`7. Provider cost: $${res.providerCostUsd.toFixed(4)}`);
-    console.log(`----------------------------------------------------\n`);
+      // Detailed output block
+      console.log(`\n--- Run ${i + 1}/${config.runs} Detailed Breakdown ---`);
+      if (!res.passed) {
+        console.log(`Status: FAILED`);
+        console.log(`Failure Reason: ${res.failureReason}`);
+        if (res.questionText) console.log(`Question Text: ${res.questionText}`);
+      } else {
+        console.log(`Status: PASSED ${res.notes ? `(${res.notes})` : ""}`);
+        console.log(`1. Question count: ${res.questionCount}`);
+        console.log("2. Option strings:");
+        res.options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
+        console.log(`3. Card count: ${res.cardCount}`);
+        console.log(`4. Max points / hold amount: ${res.maxPoints} pts / ${res.holdAmount} pts`);
+        console.log(`5. Delivered count: ${res.deliveredCount}`);
+        console.log(`6. Delivered row IDs: ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
+      }
+      console.log(`7. Provider cost: $${res.providerCostUsd.toFixed(4)}`);
+      console.log(`----------------------------------------------------\n`);
+    } catch (unexpectedErr: unknown) {
+      const msg = unexpectedErr instanceof Error ? unexpectedErr.message : String(unexpectedErr);
+      const failRes: RunIterationResult = {
+        runIndex: i,
+        questionCount: 0,
+        options: [],
+        cardCount: 0,
+        maxPoints: 0,
+        holdAmount: 0,
+        deliveredCount: 0,
+        deliveredIds: [],
+        providerCostUsd: 0,
+        optionPrice: null,
+        crit1Pass: false,
+        crit2Pass: false,
+        crit3Pass: false,
+        crit4Pass: false,
+        passed: false,
+        failureReason: `Unexpected error in run: ${msg}`,
+        questionText: "",
+      };
+      results.push(failRes);
+      console.log(`Run ${i + 1}: FAIL | unexpected error: ${msg}`);
+    }
   }
 
   // Summary PASS/FAIL per criterion
-  const allCrit1Pass = results.every((r) => r.crit1Pass);
-  const allCrit2Pass = results.every((r) => r.crit2Pass);
-  const allCrit3Pass = results.every((r) => r.crit3Pass);
-  const allCrit4Pass = results.every((r) => r.crit4Pass);
-  const allPassed = allCrit1Pass && allCrit2Pass && allCrit3Pass && allCrit4Pass;
+  const allCrit1Pass = results.length > 0 && results.every((r) => r.crit1Pass === true || r.crit1Pass === "N/A");
+  const allCrit2Pass = results.length > 0 && results.every((r) => r.crit2Pass === true || r.crit2Pass === "N/A");
+  const allCrit3Pass = results.length > 0 && results.every((r) => r.crit3Pass === true);
+  const allCrit4Pass = results.length > 0 && results.every((r) => r.crit4Pass === true);
+  const allRunsPassed = results.length > 0 && results.every((r) => r.passed);
+  const allPassed = allCrit1Pass && allCrit2Pass && allCrit3Pass && allCrit4Pass && allRunsPassed;
 
   console.log("================================================================================");
-  console.log(`E2E REPLAY RUNNER SUMMARY (${config.runs} run(s), mode: ${config.providers.toUpperCase()})`);
+  console.log(`E2E REPLAY RUNNER SUMMARY (${results.length}/${config.runs} run(s), mode: ${config.providers.toUpperCase()})`);
   console.log("--------------------------------------------------------------------------------");
+  console.log(`Runs Passed:                                                  ${results.filter((r) => r.passed).length}/${results.length}`);
   console.log(`Criterion 1: Count Parity (question == card == delivered):        ${allCrit1Pass ? "PASS" : "FAIL"}`);
   console.log(`Criterion 2: Price & Hold Parity (card max == option == hold):   ${allCrit2Pass ? "PASS" : "FAIL"}`);
   console.log(`Criterion 3: Code-Stamped Option Numbers:                         ${allCrit3Pass ? "PASS" : "FAIL"}`);
