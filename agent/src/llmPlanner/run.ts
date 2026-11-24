@@ -86,14 +86,15 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
   const words = input.words && input.words.current.length > 0 ? input.words.current : [mission.request_text];
   // Amendment A2: PriorScoutStepSnapshot is used ONLY when the customer's reply answers the LAST scout question of this same mission, and only once.
   // Clear it immediately after use, and when the customer sends a new or changed request instead of answering.
-  const latestRequestWord = words[words.length - 1] ?? mission.request_text;
+  // A turn answers the last scout question when: the last asked is scout, it was unanswered, and this turn carries the customer's answer (mission.answer_text).
+  // Do NOT compare request text at all (remove requestText equality condition).
   const answeredLastScoutThisTurn = Boolean(
     last
     && last.scout === true
     && last.answer === null
     && answer !== null
     && state.scoutSnapshot
-    && state.scoutSnapshot.every((s) => !s.requestText || s.requestText === latestRequestWord || s.requestText === mission.request_text)
+    && state.scoutSnapshot.length > 0
   );
   const priorScoutForTurn = answeredLastScoutThisTurn ? state.scoutSnapshot : undefined;
   let stateDirty = false;
