@@ -571,10 +571,12 @@ interface PageSample {
 
 interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
+  /** Actual number of pages read on the active option during planning (excluding failed/empty probes of other options). */
+  pagesRead?: number;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
-  second?: { option: ToolOption; mapCode: string; sample?: PageSample };
+  second?: { option: ToolOption; mapCode: string; sample?: PageSample; hasMore?: boolean; nextCursor?: string | null; callIds?: string[]; rowsPerPage?: number };
   /** Additional alternate tools across sub-providers that also answered on a real page. */
-  alternates?: Array<{ option: ToolOption; mapCode: string; sample?: PageSample }>;
+  alternates?: Array<{ option: ToolOption; mapCode: string; sample?: PageSample; hasMore?: boolean; nextCursor?: string | null; callIds?: string[]; rowsPerPage?: number }>;
   sample?: PageSample;
   variantSamples?: Map<Record<string, unknown>, PageSample>;
   /** OUR OWN WEB SEARCH (Firecrawl / Context.dev) as the last fallback of a web or news search, proven on a real page: execution reads it after the catalog's tools run out. */
@@ -1014,7 +1016,15 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, enriched, got2.items.length, carryFieldsOf(got2.items, enriched), got2.items));
             const rows2 = runMap(code2, got2.page);
             if (rows2.length > 0) {
-              const entry = { option: got2.option, mapCode: code2, sample: pageSample(rows2, got2.checkedParams, got2.chargedUsd) };
+              const entry = {
+                option: got2.option,
+                mapCode: code2,
+                sample: pageSample(rows2, got2.checkedParams, got2.chargedUsd),
+                hasMore: got2.hasMore,
+                nextCursor: got2.nextCursor,
+                callIds: [...got2.callIds],
+                rowsPerPage: rows2.length,
+              };
               if (!second) {
                 second = entry;
                 secondRows.push(...rows2);
@@ -1181,7 +1191,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
         while (currentCursor && cursorKey && sampleRows.length < pagingThreshold) {
           const reachedCap = isTimelineScan
-            ? (got.callIds.length >= maxCallsForStep || (cursorPagesProbed + 1) >= maxCallsForStep)
+            ? ((cursorPagesProbed + 1) >= maxCallsForStep)
             : (probeCallCount >= maxCallsForStep);
           if (reachedCap) {
             stopReason = "budget_reached";
@@ -1270,7 +1280,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
         if (!stopReason) {
           if (sampleRows.length >= pagingThreshold) stopReason = "target_reached";
-          else if (got.callIds.length >= maxCallsForStep || (cursorPagesProbed + 1) >= maxCallsForStep) stopReason = "budget_reached";
+          else if ((cursorPagesProbed + 1) >= maxCallsForStep) stopReason = "budget_reached";
           else if (!got.hasMore) stopReason = "terminal_cursor";
         }
 
@@ -1280,22 +1290,30 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         if (builtStep) {
           builtStep.hasMore = got.hasMore;
           builtStep.nextCursor = got.nextCursor;
+          builtStep.pagesRead = 1 + cursorPagesProbed;
         }
       }
     }
 
-    // ONE FINAL ACCEPTED SET ACROSS ALL PROBED CANDIDATES (DT-20261123-x-account-rumors r9):
-    // When secondRows (from options[1..], e.g. account search) was probed during planning and primary sampleRows is short of target,
-    // judge secondRows with the same judgeSampleRows so Round 1's shortfall question and Round 2's card always share the exact same accepted set.
+    const builtStepInitial = built.get(step.key);
+    if (builtStepInitial && builtStepInitial.pagesRead === undefined) {
+      builtStepInitial.pagesRead = 1 + cursorPagesProbed;
+    }
+
+    // ONE FINAL ACCEPTED SET & CURSOR CONTINUITY ACROSS PROBED CANDIDATES (DT-20261123-x-account-rumors r9 + DT-20261124-account-early-stop):
+    // 1. Judge secondRows (page 1 of second) when primary sampleRows is short of target.
+    // 2. If sampleRows is still below pagingThreshold and second has unread cursor pages (second.hasMore && second.nextCursor),
+    //    follow second's cursor up to maxCallsForStep (4 pages of second) with the same chronological cutoff, repeated/terminal cursor stops, and model judge.
     if (step.topic && secondRows.length > 0 && sampleRows.length < target) {
+      const primaryWasEmpty = sampleRows.length === 0;
+      const existingKeys = new Set(sampleRows.map(rowKeyOf));
       allExaminedRows.push(...secondRows);
       totalExamined += secondRows.length;
       const secondMatches = await judgeSampleRows(secondRows, step, u, said, ask, isTimelineScan, deps.log, "second");
       if (secondMatches !== null) {
+        if (isTimelineScan) judgeAffirmative = true;
         const secondOnTopic = secondMatches.map((idx: number) => secondRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
         secondRows.splice(0, secondRows.length, ...secondOnTopic);
-        const existingKeys = new Set(sampleRows.map(rowKeyOf));
-        const primaryWasEmpty = sampleRows.length === 0;
         for (const r of secondOnTopic) {
           const id = deriveItemId(r);
           if (id) stepAcceptedIds.add(id);
@@ -1307,20 +1325,125 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         }
         if (secondOnTopic.length > 0) {
           topicMatchedInSample = true;
-          if (isTimelineScan) judgeAffirmative = true;
-          const builtStep = built.get(step.key);
-          if (builtStep && primaryWasEmpty && second) {
-            builtStep.option = second.option;
-            builtStep.mapCode = second.mapCode;
-            builtStep.sample = second.sample;
-            builtStep.rowsPerPage = Math.max(1, second.sample?.rowsPerPage || secondOnTopic.length);
-            builtStep.hasMore = secondMore;
-            builtStep.nextCursor = null;
-            builtStep.second = undefined;
-          }
         }
       } else {
         secondRows.splice(0, secondRows.length);
+      }
+
+      // Follow second's pagination cursor if primary + second page 1 is still short and second has unread pages
+      let secondPagesProbed = 0;
+      if (second && second.hasMore && second.nextCursor && !step.parent && sampleRows.length < pagingThreshold) {
+        const secondCursorKey = second.option.cursor
+          ?? (Array.isArray(second.option.endpoint.pagination)
+            ? second.option.endpoint.pagination.find((p) => second!.option.endpoint.inputs.some((i) => i.name === p)) ?? null
+            : null);
+        if (secondCursorKey) {
+          if (!second.option.cursor) second.option.cursor = secondCursorKey;
+          let secCursor: string | null = second.nextCursor;
+          const secVisited = new Set<string>([secCursor]);
+          const maxCallsForSecond = 4;
+          let secStopReason: StopReason | null = null;
+
+          while (secCursor && sampleRows.length < pagingThreshold) {
+            if ((secondPagesProbed + 1) >= maxCallsForSecond) {
+              secStopReason = "budget_reached";
+              break;
+            }
+            const nextParams = { ...second.option.params, [secondCursorKey]: secCursor };
+            const rNext = await callProbeWithTimeout(deps.probe, second.option.endpoint.id, nextParams, deps.probeTimeoutMs ?? PLANNER_PROBE_TIMEOUT_MS);
+            if (!rNext.ok) break;
+            secondPagesProbed += 1;
+            if (rNext.call_id) {
+              got.callIds.push(rNext.call_id);
+              second.callIds = [...(second.callIds ?? []), rNext.call_id];
+            }
+            const nextPage = await deps.readPage(rNext.call_id);
+            if (!nextPage) break;
+            const nextRows = runMap(second.mapCode, nextPage);
+            if (nextRows.length === 0) {
+              second.hasMore = false;
+              second.nextCursor = null;
+              secStopReason = "terminal_cursor";
+              break;
+            }
+
+            allExaminedRows.push(...nextRows);
+            totalExamined += nextRows.length;
+
+            const rowDates: (Date | string | number)[] = nextRows
+              .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
+              .filter(Boolean);
+            const isPastWindow = rowDates.length > 0 && shouldStopChronologicalScan(rowDates, timeWindow);
+
+            const secMatches = await judgeSampleRows(nextRows, step, u, said, ask, isTimelineScan, deps.log, `second_page_${secondPagesProbed + 1}`);
+            if (secMatches !== null) {
+              if (isTimelineScan) judgeAffirmative = true;
+              const secOnTopic = secMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+              for (const r of secOnTopic) {
+                const id = deriveItemId(r);
+                if (id) stepAcceptedIds.add(id);
+                const k = rowKeyOf(r);
+                if (!existingKeys.has(k)) {
+                  existingKeys.add(k);
+                  sampleRows.push(r);
+                  secondRows.push(r);
+                }
+              }
+              if (secOnTopic.length > 0) {
+                topicMatchedInSample = true;
+                deps.log?.(`llm_planner_judge_sample ${step.key} second_paging_found on_topic=${secOnTopic.length} total=${sampleRows.length}`);
+              }
+            }
+
+            if (sampleRows.length >= pagingThreshold) {
+              secStopReason = "target_reached";
+              break;
+            }
+            if (isPastWindow) {
+              secStopReason = "window_crossed";
+              break;
+            }
+            const nextCursorVal = typeof rNext.next_cursor === "string" && rNext.next_cursor !== "" ? rNext.next_cursor : null;
+            if (!nextCursorVal) {
+              second.hasMore = false;
+              second.nextCursor = null;
+              secStopReason = "terminal_cursor";
+              break;
+            }
+            if (secVisited.has(nextCursorVal)) {
+              second.hasMore = false;
+              second.nextCursor = null;
+              secStopReason = "repeated_cursor";
+              break;
+            }
+            secVisited.add(nextCursorVal);
+            secCursor = nextCursorVal;
+            second.nextCursor = secCursor;
+          }
+
+          if (!secStopReason) {
+            if (sampleRows.length >= pagingThreshold) secStopReason = "target_reached";
+            else if ((secondPagesProbed + 1) >= maxCallsForSecond) secStopReason = "budget_reached";
+            else if (!second.hasMore) secStopReason = "terminal_cursor";
+          }
+          stopReason = secStopReason ?? stopReason;
+          cursorPagesProbed += secondPagesProbed;
+          deps.log?.(`llm_planner_timeline_scan ${step.key} second_stopped reason=${stopReason} pages=${secondPagesProbed + 1} examined=${totalExamined} accepted=${sampleRows.length}`);
+        }
+      }
+
+      if (second && (secondRows.length > 0 || (primaryWasEmpty && (secondPagesProbed > 0 || !got.hasMore)))) {
+        const builtStep = built.get(step.key);
+        if (builtStep && primaryWasEmpty) {
+          builtStep.option = second.option;
+          builtStep.mapCode = second.mapCode;
+          builtStep.sample = second.sample;
+          builtStep.rowsPerPage = Math.max(1, second.rowsPerPage ?? second.sample?.rowsPerPage ?? secondRows.length);
+          builtStep.hasMore = Boolean(second.hasMore);
+          builtStep.nextCursor = second.nextCursor ?? null;
+          builtStep.pagesRead = 1 + secondPagesProbed;
+          builtStep.second = undefined;
+        }
       }
     }
 
@@ -1464,7 +1587,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     }
     const canAsk = weak.every((f) => {
       const b = built.get(f.step.key);
-      const pagesRead = (b?.callIds.length ?? 1);
+      const pagesRead = b?.pagesRead ?? (b?.callIds.length ?? 1);
       return canAskShortfallQuestion({
         pagesRead,
         maxBudgetedPages: 4,
