@@ -16,7 +16,7 @@ import { APPROX_DATES_KEY, DATE_UNREAD_KEY, approxColumnsOf, approxDayOf, approx
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
-import type { Reviewer } from "../review";
+import { formatJudgeRowText, type Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
 import { AcceptedCompanies, COMPANY_BRANCH_FIELDS, COMPANY_EVIDENCE_KEY, COMPANY_SOURCE_ID_KEY, COMPANY_UNCERTAIN_KEY, companyEvidenceOf, companyRelationship, storedCompanyEvidence } from "../../../src/lib/agentMission/companyQuality";
 import { isCompanyStage } from "../../../src/lib/agentMission/entities";
@@ -420,22 +420,49 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // THE CUSTOMER NAMED THE SOURCE (a channel, a page, an account): an item that passed the source filter is from it, so «the text names none of the topic's words» is not enough to throw it away (a video title in English about an Arabic topic, a
     // post in another dialect): the model judges the topic only, in the item's own language
     const namedSource = enabledFilters.some((f) => f.kind === "account");
+    const rawAcceptedIds = (spec as unknown as { accepted_ids?: unknown }).accepted_ids;
+    const planningAcceptedIds = new Set<string>(
+      Array.isArray(rawAcceptedIds)
+        ? rawAcceptedIds.map((x) => String(x ?? "").trim()).filter(Boolean)
+        : []
+    );
+    const isAcceptedAtPlanning = (c: Candidate): boolean =>
+      planningAcceptedIds.size > 0 &&
+      (planningAcceptedIds.has(c.id) ||
+        (c.row.id !== undefined && c.row.id !== null && planningAcceptedIds.has(String(c.row.id).trim())) ||
+        planningAcceptedIds.has(deriveItemId(c.row, options.idField ?? null)));
     const verdicts = candidates.map((c) => { const v0 = classifyRowDetailed(spec, c.row); const v = namedSource && v0.verdict === "exclude" && v0.reason === "no_term" ? ({ verdict: "review", reason: "uncertain" } as const) : v0; return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || doubts.has(c.id) || (c.carried && (governmentUnclear(stage.filters, c.row) || typeof c.row._doubt === "string"))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
     const matches = verdicts.filter((x) => x.v.verdict === "match").length;
-    const uncertain = verdicts.filter((x) => x.v.verdict === "review");
     let verdictOf = new Map<string, boolean>();
-    if (uncertain.length > 0 && spec.review !== false && reviewer && matches < room) {
+    let modelAccepted = 0;
+    for (const x of verdicts) {
+      if (x.v.verdict === "review" && isAcceptedAtPlanning(x.c)) {
+        verdictOf.set(x.c.id, true);
+        modelAccepted += 1;
+      }
+    }
+    const uncertain = verdicts.filter((x) => x.v.verdict === "review" && !verdictOf.has(x.c.id));
+    if (uncertain.length > 0 && spec.review !== false && reviewer && matches + modelAccepted < room) {
       const governmentAsked = (stage.filters ?? []).some((f) => f.kind === "exclude_government" && isEnabled(f));
       // a company stage with a promised place: the model check is told the company must really be of that kind and place (a head office abroad, a law firm, a news site, a trade show is not)
       const placeWords = spec.entity && placeFilter ? (placeFilter.values ?? []).join("، ") : "";
-      const subject = `${spec.subject_ar}${governmentAsked ? " (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)" : ""}${placeWords ? ` (شركة حقيقية من هذا النوع مقرها أو نشاطها في ${placeWords}؛ وليست حدثًا أو معرضًا أو مكتب محاماة أو موقعًا إخباريًا أو منتدى أو شركة مقرها في بلد آخر)` : ""}`;
+      const rawCrit = (spec as { criterion?: { entity?: string; country?: string; topic?: string; brief?: string } | string }).criterion;
+      const critSummary = rawCrit && typeof rawCrit === "object"
+        ? [
+            rawCrit.entity ? `Source/Account: ${rawCrit.entity}` : null,
+            rawCrit.country ? `Country: ${rawCrit.country}` : null,
+            rawCrit.topic ? `Topic: «${rawCrit.topic}»` : null,
+            rawCrit.brief ? `Brief: ${rawCrit.brief}` : null,
+          ].filter(Boolean).join(", ")
+        : "";
+      const baseSubject = critSummary ? `${spec.subject_ar} (${critSummary})` : spec.subject_ar;
+      const subject = `${baseSubject}${governmentAsked ? " (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)" : ""}${placeWords ? ` (شركة حقيقية من هذا النوع مقرها أو نشاطها في ${placeWords}؛ وليست حدثًا أو معرضًا أو مكتب محاماة أو موقعًا إخباريًا أو منتدى أو شركة مقرها في بلد آخر)` : ""}`;
       // THE REVIEW GOES ON, SLICE AFTER SLICE, UNTIL THE ROOM IS FILLED, EVERY WAITING ITEM WAS REVIEWED, OR A STOP WAS RECORDED (audit G13: one slice per pass left paid rows waiting for a later round). Each slice is no more than the room still left can use (x3 for the rows the model says no to, plus 25).
-      let modelAccepted = 0;
       let at = 0;
       while (at < uncertain.length && matches + modelAccepted < room) {
         const slice = uncertain.slice(at, at + (room - matches - modelAccepted) * 3 + 25);
         at += slice.length;
-        const got = await reviewer.review({ subject, rows: slice.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+        const got = await reviewer.review({ subject, rows: slice.map((x) => ({ id: x.c.id, text: formatJudgeRowText(x.c.row, spec.text_columns) })) });
         for (const [id, ok] of got) { verdictOf.set(id, ok); if (ok) modelAccepted += 1; }
         if ((await reviewer.state()).stop) break;
       }

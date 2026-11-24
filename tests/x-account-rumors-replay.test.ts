@@ -2,10 +2,30 @@ import { describe, it, expect, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import { candidatesFor, platformIndex } from "../agent/src/llmPlanner/catalogView";
-import { askIsEarned, scoutYield, scoutFallbackAr, scoutQuestion, assemblePlan, fallbackMap, requestPartsAr, syncStepPeriodFromStep, customerSafe, probeStep, chooseTools, checkOptions, type ScoutFinding } from "../agent/src/llmPlanner/planner";
+import {
+  askIsEarned,
+  scoutYield,
+  scoutFallbackAr,
+  scoutQuestion,
+  assemblePlan,
+  fallbackMap,
+  requestPartsAr,
+  syncStepPeriodFromStep,
+  customerSafe,
+  probeStep,
+  chooseTools,
+  checkOptions,
+  planWithLlm,
+  PLANNER_PROBE_TIMEOUT_MS,
+  needsMissingSession,
+  extractObservedRelatedAccounts,
+  judgeSampleRows,
+  buildCatalogWideningFacts,
+  type ScoutFinding,
+} from "../agent/src/llmPlanner/planner";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
-import { textDedupeKey, titleDedupeKey, canonicalUrlKey } from "../src/lib/agentMission/contract";
-import { REVIEW_SYSTEM, reviewPrompt, emptyReviewState } from "../agent/src/review";
+import { textDedupeKey, titleDedupeKey, canonicalUrlKey, deriveItemId } from "../src/lib/agentMission/contract";
+import { REVIEW_SYSTEM, reviewPrompt, emptyReviewState, formatJudgeRowText } from "../agent/src/review";
 import { researchRelevanceOf } from "../src/lib/agentMission/foundation/compilePlan";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { ingestRows } from "../agent/src/items/ingest";
@@ -1057,7 +1077,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     });
 
     expect(REVIEW_SYSTEM).toContain("EVERY constraint");
-    expect(REVIEW_SYSTEM).toContain("news about another country's ministry of health when a specific country or ministry was requested");
+    expect(REVIEW_SYSTEM).toContain("different entity, organization, person or country than requested");
     expect(userPrompt).toContain("Rows:");
     expect(userPrompt).toContain(criterion);
 
@@ -1327,8 +1347,8 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     expect(dup25?.reason).toBe("title_duplicate");
 
     // Check execution judge prompt: pages merely belonging to ministry without rumors are 0
-    expect(REVIEW_SYSTEM).toContain("A row, page, article or post that merely belongs to or mentions the requested entity or country");
-    expect(REVIEW_SYSTEM).toContain("A page merely belonging to the ministry is 0");
+    expect(REVIEW_SYSTEM).toContain("A row, page, article or post that merely belongs to, comes from, or mentions the requested entity, account or country");
+    expect(REVIEW_SYSTEM).toContain("both the entity/account/country AND the topic must be satisfied");
 
     // Off-topic ministry rows (5, 6, 7, 8, 9, 29, 32)
     const offTopicIds = new Set(["row_5", "row_6", "row_7", "row_8", "row_9", "row_29", "row_32"]);
@@ -1557,6 +1577,496 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       const view20 = customerMissionView({ mission: mission20Rows, events: [] });
       expect(view20.headlineCountAr).toBeNull();
       expect(view20.totalRowsAr).toBe("٢٠ خبرًا");
+    });
+  });
+
+  describe("DT-20261123-x-account-rumors r8: Unified Judge, Honest Unspecified Count & Dead Widening Routes (msn_8841 replay)", () => {
+    const customerRequest =
+      "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
+
+    const post1 = {
+      id: "1860010000000000001",
+      title: "RT @SaudiMOH937: سلامة اللقاحات والأدوية ومأمونيتها",
+      text: "RT @SaudiMOH937: مساء الخير دكتور سليمان العقل، للتوضيح، تلتزم المنشآت الصحية بمعايير سلامة اللقاحات والأدوية ومأمونيتها وفق أعلى المعايير العالمية المعتمدة.",
+      url: "https://x.com/SaudiMOH/status/1860010000000000001",
+    };
+    const post2 = {
+      id: "1860010000000000002",
+      title: "رصد مقطع متداول لإعداد طعام داخل غرفة مريض",
+      text: "رصدت وزارة الصحة مقطعًا متداولًا يُظهر إعداد الطعام باستخدام جهاز طهي كهربائي داخل غرفة مريض بمنشأة صحية خاصة بالرياض؛ واتخذت الإجراءات النظامية بحق المنشأة.",
+      url: "https://x.com/SaudiMOH/status/1860010000000000002",
+    };
+
+    // 96 routine off-topic posts
+    const offTopicRows = Array.from({ length: 96 }, (_, i) => ({
+      id: `186001000000000${(i + 10).toString().padStart(4, "0")}`,
+      title: `نصائح صحية دورية ومواعيد المراكز الصحية رقم ${i + 1}`,
+      text: `احرص على أخذ تطعيم الإنفلونزا الموسمية لحماية نفسك وعائلتك، وتفضل بزيارة أقرب مركز رعاية صحية أولية رقم ${i + 1}.`,
+      url: `https://x.com/SaudiMOH/status/186001000000000${(i + 10).toString().padStart(4, "0")}`,
+    }));
+
+    const all98Rows = [post1, ...offTopicRows.slice(0, 19), post2, ...offTopicRows.slice(19)];
+
+    it("Must-Pass 1a: msn_8841 replay — initial turn with no customer count asks honest shortfall question before any card", async () => {
+      let pageIdx = 0;
+      const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+        pageIdx += 1;
+        const hasMore = pageIdx < 4;
+        return {
+          ok: true,
+          rows_in_page: 20,
+          call_id: `call_${pageIdx}`,
+          has_more: hasMore,
+          next_cursor: hasMore ? `cur_${pageIdx + 1}` : null,
+          charge_usd: 0.00048,
+        };
+      });
+
+      const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+        if (callId === "call_1") return { output: { data: { tweets: [post1, ...offTopicRows.slice(0, 19)] } } };
+        if (callId === "call_2") return { output: { data: { tweets: [post2, ...offTopicRows.slice(19, 38)] } } };
+        if (callId === "call_3") return { output: { data: { tweets: offTopicRows.slice(38, 56) } } };
+        return { output: { data: { tweets: offTopicRows.slice(56, 76) } } };
+      });
+
+      const mockModel = vi.fn().mockImplementation(async ({ tool, user }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع بيانات الشائعات ومكافحتها من حساب وزارة الصحة السعودية @SaudiMOH",
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "شائعات",
+                  source: { kind: "official", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                {
+                  endpoint_id: "anyapi.x.user.posts",
+                  params_json: JSON.stringify({ handle: "SaudiMOH" }),
+                  cursor_input: "cursor",
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], title: ["title"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          const userStr = String(user ?? "");
+          const matches: number[] = [];
+          if (userStr.includes("سلامة اللقاحات") || userStr.includes("1860010000000000001")) matches.push(0);
+          if (userStr.includes("جهاز طهي كهربائي") || userStr.includes("1860010000000000002")) matches.push(0);
+          return { input: { matching_indices: matches } };
+        }
+        if (tool?.name === "scout_question") {
+          return {
+            input: {
+              message_ar: "جرّبنا البحث في ٧٨ تغريدة من @SaudiMOH على إكس بالشروط التي كتبتها ووجدنا تغريدتين فقط، تحب نسلّمك الموجود ولا نوسّع؟",
+              options_ar: [
+                "سلّمني الموجود فقط (تغريدتان، بحد أقصى ٢٠٠ نقطة)",
+                "ابحث عن الموضوع في كل إكس (يضيف نحو ٢٠ بحد أقصى ٢٠٠ نقطة)",
+                "أضف الحسابات المرتبطة التي ظهرت في الفحص على إكس (يضيف نحو ٢٠ بحد أقصى ٢٠٠ نقطة)",
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const res = await planWithLlm(
+        { words: [customerRequest], request: "", scoutAllowed: true },
+        {
+          model: mockModel,
+          catalog,
+          access,
+          today: "2026-11-23",
+          probe: mockProbe,
+          readPage: mockReadPage,
+        }
+      );
+
+      // Must be a question, never a card promising 20!
+      expect(res.kind).toBe("question");
+      if (res.kind === "question") {
+        expect(res.scout).toBe(true);
+        expect(res.question_ar).not.toContain("٢٠ تغريدة طلبتها");
+        expect(res.options_ar.length).toBeGreaterThanOrEqual(2);
+        // Verify code includes widening options from catalog
+        expect(res.options_ar.some((o) => o.includes("سلّم") || o.includes("الموجود"))).toBe(true);
+      }
+    });
+
+    it("Must-Pass 1b & 2: msn_8841 replay — honest card count = 2, strict stage accepted_ids, and one topic decision parity", async () => {
+      let pageIdx = 0;
+      const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+        pageIdx += 1;
+        const hasMore = pageIdx < 4;
+        return {
+          ok: true,
+          rows_in_page: 20,
+          call_id: `call_${pageIdx}`,
+          has_more: hasMore,
+          next_cursor: hasMore ? `cur_${pageIdx + 1}` : null,
+          charge_usd: 0.00048,
+        };
+      });
+
+      const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+        if (callId === "call_1") return { output: { data: { tweets: [post1, ...offTopicRows.slice(0, 19)] } } };
+        if (callId === "call_2") return { output: { data: { tweets: [post2, ...offTopicRows.slice(19, 38)] } } };
+        if (callId === "call_3") return { output: { data: { tweets: offTopicRows.slice(38, 56) } } };
+        return { output: { data: { tweets: offTopicRows.slice(56, 76) } } };
+      });
+
+      const mockModel = vi.fn().mockImplementation(async ({ tool, user }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع بيانات الشائعات ومكافحتها من حساب وزارة الصحة السعودية @SaudiMOH",
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "شائعات",
+                  source: { kind: "official", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                {
+                  endpoint_id: "anyapi.x.user.posts",
+                  params_json: JSON.stringify({ handle: "SaudiMOH" }),
+                  cursor_input: "cursor",
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], title: ["title"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          const userStr = String(user ?? "");
+          const matches: number[] = [];
+          if (userStr.includes("سلامة اللقاحات") || userStr.includes("1860010000000000001")) matches.push(0);
+          if (userStr.includes("جهاز طهي كهربائي") || userStr.includes("1860010000000000002")) matches.push(0);
+          return { input: { matching_indices: matches } };
+        }
+        return null;
+      });
+
+      // Customer accepts what exists
+      const res = await planWithLlm(
+        { words: [customerRequest, "سلّمني الموجود فقط"], request: "", scoutAllowed: false },
+        {
+          model: mockModel,
+          catalog,
+          access,
+          today: "2026-11-23",
+          probe: mockProbe,
+          readPage: mockReadPage,
+        }
+      );
+
+      expect(res.kind).toBe("plan");
+      if (res.kind !== "plan") throw new Error("Expected plan");
+
+      const tweetsStage = res.plan.stages.find((s) => s.deliver);
+      expect(tweetsStage).toBeDefined();
+      // Card count is strictly 2, NEVER default 20!
+      expect(tweetsStage?.planned_rows).toBe(2);
+
+      // accepted_ids strictly contains ONLY the 2 planning-accepted IDs
+      const relevance = tweetsStage?.relevance as any;
+      expect(relevance).toBeDefined();
+      expect(relevance.accepted_ids).toEqual([post1.id, post2.id]);
+
+      // Execution Parity Verification (ingestRows):
+      // Even if execution reviewer returns false for EVERY row, the 2 planning-accepted posts are accepted
+      // and NONE of the 96 off-topic rows are admitted.
+      const store = createMemoryStore();
+      const items = await ItemStore.open(store, "msn_8841_parity", { legacyStages: ["tweets"] });
+      const strictMockReviewer = {
+        budgetUsd: 10,
+        state: async () => ({ ...emptyReviewState(), spentUsd: 0.001 }),
+        review: async () => new Map<string, boolean>(), // returns false for everything
+      };
+
+      await ingestRows(
+        { items, plan: res.plan as any, reviewer: strictMockReviewer as any, addEvent: async () => {} },
+        tweetsStage as any,
+        all98Rows,
+        { idField: "id" }
+      );
+
+      const accepted = items.acceptedRows("tweets");
+      expect(accepted).toHaveLength(2);
+      expect(accepted.map((r: any) => r.id)).toContain(post1.id);
+      expect(accepted.map((r: any) => r.id)).toContain(post2.id);
+
+      // Verify off-topic rows are never accepted, preventing card 20 -> 0!
+      expect(accepted.every((r: any) => r.id === post1.id || r.id === post2.id)).toBe(true);
+      expect(items.pendingItems("tweets").length + items.excludedItems("tweets").length).toBe(96);
+    });
+
+    it("Must-Pass 3: Counter-cases (generic discrimination, on-topic timeline, explicit count, failed judge)", async () => {
+      // 3a: formatJudgeRowText formats up to 500 chars and captures RT text
+      const longRtRow = {
+        id: "rt_1",
+        title: "RT @SaudiMOH: تغريدة",
+        text: "RT @SaudiMOH937: مساء الخير دكتور سليمان العقل، للتوضيح، تلتزم المنشآت الصحية بمعايير سلامة اللقاحات والأدوية ومأمونيتها وفق أعلى المعايير العالمية المعتمدة لضمان جودة الرعاية المقدمة للمرضى في جميع مناطق المملكة العربية السعودية وتدقيق الفحوصات بانتظام.",
+      };
+      const formatted = formatJudgeRowText(longRtRow);
+      expect(formatted.length).toBeGreaterThan(160);
+      expect(formatted).toContain("سلامة اللقاحات والأدوية");
+
+      // 3b: On-topic timeline without count returns kind === 'plan' with planned_rows === 20
+      const onTopicFeed = Array.from({ length: 20 }, (_, i) => ({
+        id: `news_${i + 1}`,
+        title: `تقرير إخباري رقم ${i + 1}`,
+        text: `تفاصيل الخبر الحصري رقم ${i + 1}`,
+        url: `https://news.example.com/${i + 1}`,
+      }));
+
+      const mockModelOnTopic = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "أخبار الحساب الإخباري",
+              steps: [
+                {
+                  key: "news",
+                  title_ar: "أخبار الحساب",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "أخبار",
+                  source: { kind: "official", value: "NewsChannel" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                {
+                  endpoint_id: "anyapi.x.user.posts",
+                  params_json: JSON.stringify({ handle: "NewsChannel" }),
+                  cursor_input: "cursor",
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], title: ["title"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          // All 20 match
+          return { input: { matching_indices: Array.from({ length: 20 }, (_, i) => i) } };
+        }
+        return null;
+      });
+
+      const resOnTopic = await planWithLlm(
+        { words: ["عايز أخبار الحساب"], request: "", scoutAllowed: true },
+        {
+          model: mockModelOnTopic,
+          catalog,
+          access,
+          today: "2026-11-23",
+          probe: vi.fn().mockResolvedValue({ ok: true, rows_in_page: 20, call_id: "c_ot", has_more: true, charge_usd: 0.00048 }),
+          readPage: vi.fn().mockResolvedValue({ output: { data: { tweets: onTopicFeed } } }),
+        }
+      );
+      expect(resOnTopic.kind).toBe("plan");
+      if (resOnTopic.kind === "plan") {
+        expect(resOnTopic.plan.stages[0].planned_rows).toBe(20);
+      }
+
+      // 3c: Explicit count 50 kept
+      const mockModel50 = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "٥٠ خبر",
+              steps: [
+                {
+                  key: "news",
+                  title_ar: "الأخبار",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "أخبار",
+                  source: { kind: "official", value: "NewsChannel" },
+                  deliver: true,
+                  count: { total: 50, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                {
+                  endpoint_id: "anyapi.x.user.posts",
+                  params_json: JSON.stringify({ handle: "NewsChannel" }),
+                  cursor_input: "cursor",
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], title: ["title"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          return { input: { matching_indices: Array.from({ length: 20 }, (_, i) => i) } };
+        }
+        return null;
+      });
+
+      const res50 = await planWithLlm(
+        { words: ["عايز ٥٠ خبر"], request: "", scoutAllowed: false },
+        {
+          model: mockModel50,
+          catalog,
+          access,
+          today: "2026-11-23",
+          probe: vi.fn().mockResolvedValue({ ok: true, rows_in_page: 20, call_id: "c_50", has_more: true, charge_usd: 0.00048 }),
+          readPage: vi.fn().mockResolvedValue({ output: { data: { tweets: onTopicFeed } } }),
+        }
+      );
+      expect(res50.kind).toBe("plan");
+      if (res50.kind === "plan") {
+        expect(res50.plan.stages[0].planned_rows).toBe(50);
+      }
+    });
+
+    it("Must-Pass 4: Dead widening routes (30s probe timeout, 5xx refuse, needsMissingSession)", async () => {
+      // 4a: Timeout constant is 30,000ms
+      expect(PLANNER_PROBE_TIMEOUT_MS).toBe(30_000);
+
+      // Probe timeout adds to refusedEndpoints and does not hang 90s
+      let callsCount = 0;
+      const hangingProbe = vi.fn().mockImplementation(async (endpointId: string, params: any) => {
+        callsCount += 1;
+        if (endpointId === "anyapi.x.search.posts") {
+          // Hang past probeTimeoutMs (50ms in this test)
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          return { ok: true, rows_in_page: 5, call_id: "late" };
+        }
+        return { ok: true, rows_in_page: 10, call_id: "c_ok" };
+      });
+
+      const hangingStep = {
+        key: "search_step",
+        platform: "x",
+        capability: "x.search.posts",
+        topic: "شائعات",
+        source: null,
+        count: { total: 20, per_parent: null, all: false },
+        parent: null,
+        deliver: true,
+        title_ar: "بحث إكس",
+        search_terms: ["شائعات"],
+        period: null,
+      };
+
+      const refused = new Set<string>();
+      const probeRes = await probeStep(
+        hangingStep as any,
+        [
+          {
+            endpoint: catalog.endpoints.find((e) => e.id === "anyapi.x.search.posts")!,
+            params: { query: "شائعات" },
+            cursor: "cursor",
+            parent: null,
+            more: [{ query: "شائعات وزارة الصحة" }],
+            notCarried: [],
+          },
+        ],
+        null,
+        {
+          model: vi.fn() as any,
+          probe: hangingProbe,
+          readPage: async () => [],
+          catalog,
+          access: null,
+          today: "2026-11-23",
+          probeTimeoutMs: 50, // fast test timeout
+        },
+        { left: 3 },
+        { empties: 0, failures: 0, uncertain: false },
+        refused
+      );
+
+      // anyapi.x.search.posts was added to refusedEndpoints due to timeout
+      expect(refused.has("anyapi.x.search.posts")).toBe(true);
+
+      // 4b: needsMissingSession filters out session-restricted endpoints before any probe call
+      const crawl4aiSearch = catalog.endpoints.find((e) => e.id === "crawl4ai.x.search.posts");
+      if (crawl4aiSearch) {
+        expect(needsMissingSession(crawl4aiSearch, { query: "test", mode: "top" })).toBe(true);
+        expect(needsMissingSession(crawl4aiSearch, { query: "test", session: "valid_session" })).toBe(false);
+      }
+
+      // LinkedIn search without session is restricted
+      const linkedInSearch = catalog.endpoints.find((e) => e.id === "crawl4ai.linkedin.search.posts");
+      if (linkedInSearch) {
+        expect(needsMissingSession(linkedInSearch, { query: "test" })).toBe(true);
+      }
     });
   });
 });

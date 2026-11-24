@@ -509,12 +509,16 @@ describe("Point 3.2: System Prompts & Semantic Discrimination (D-0086)", () => {
     expect(TOOL_CHOICE_SYSTEM).toContain("account timeline or posts endpoint");
   });
 
-  it("REVIEW_SYSTEM explicitly distinguishes rumors/misinformation from FAQs and administrative policies", async () => {
+  it("REVIEW_SYSTEM is generic (zero hardcoded topic/entity examples) while distinguishing homonyms and general entity activity from the topic", async () => {
     const { REVIEW_SYSTEM } = await import("../agent/src/review");
-    expect(REVIEW_SYSTEM).toContain("الأسئلة الشائعة");
-    expect(REVIEW_SYSTEM).toContain("administrative policies");
-    expect(REVIEW_SYSTEM).toContain("preventative health procedures");
-    expect(REVIEW_SYSTEM).toContain("rumors/misinformation");
+    expect(REVIEW_SYSTEM).toContain("EVERY constraint");
+    expect(REVIEW_SYSTEM).toContain("different meaning or sense");
+    expect(REVIEW_SYSTEM).toContain("general routine activity");
+    expect(REVIEW_SYSTEM).toContain("without satisfying the specific topic constraint is 0");
+    // D-0086: zero one-case rumors/ministry words in the generic system prompt
+    expect(REVIEW_SYSTEM).not.toContain("الأسئلة الشائعة");
+    expect(REVIEW_SYSTEM).not.toContain("rumors/misinformation");
+    expect(REVIEW_SYSTEM).not.toContain("ministry of health");
   });
 });
 

@@ -12,7 +12,7 @@ import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../..
 import { pointsAr } from "../../../src/lib/pointsFormat";
 import { stagePriceInputs, type PricedPlan, type PricedStage, type PlanColumn } from "../../../src/lib/agentMission/plan";
 import { researchRelevanceOf } from "../../../src/lib/agentMission/foundation/compilePlan";
-import { textDedupeKey, titleDedupeKey, canonicalUrlKey, ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
+import { textDedupeKey, titleDedupeKey, canonicalUrlKey, ROW_KEY_FIELDS, deriveItemId } from "../../../src/lib/agentMission/contract";
 import { cardMapCode } from "../../../src/lib/agentMission/foundation/toolCards/mapCode";
 import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCards/types";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
@@ -26,9 +26,13 @@ import { countAr, itemNounOf, itemNounFromCapability, GENERIC_ITEM_NOUN } from "
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
-import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf } from "./catalogView";
+import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf, multiProviderEndpoints } from "./catalogView";
 import { validateInputShape } from "../tools";
 import { DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import { REVIEW_SYSTEM, reviewPrompt, formatJudgeRowText } from "../review";
+import { getCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
+import { sessionRestriction } from "../../../src/lib/agentMission/sources";
+import type { RelatedAccountCandidate } from "./widening";
 import {
   freezeTimeWindow,
   isRowDateInWindow,
@@ -75,6 +79,7 @@ export interface LlmPlannerDeps {
   /** Whether this planner plans what the model understood (false: the caller's other path plans it, before any paid call). Absent: always. */
   accept?: (u: Understanding) => boolean;
   log?: (line: string) => void;
+  probeTimeoutMs?: number;
 }
 
 export interface LlmPlannerInput {
@@ -180,9 +185,57 @@ export const CONDITION_AR: Record<string, string> = { source: "الحساب أو
 const jsonObject = (v: unknown): Record<string, unknown> | null => { if (isObj(v)) return v; if (typeof v !== "string") return null; try { const o = JSON.parse(v) as unknown; return isObj(o) ? o : null; } catch { return null; } };
 const filled = (v: unknown): boolean => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
 
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-// 1. UNDERSTAND
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/** Maximum time (ms) a single planning probe call may wait before timing out and moving to the next catalog route (Root Cause C, CTO Amendment 2: 30s). */
+export const PLANNER_PROBE_TIMEOUT_MS = 30_000;
+
+async function callProbeWithTimeout(
+  probe: LlmPlannerDeps["probe"],
+  endpointId: string,
+  params: Record<string, unknown>,
+  timeoutMs: number = PLANNER_PROBE_TIMEOUT_MS,
+): Promise<GatewayCallResult> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<GatewayCallResult>((resolve) => {
+      timer = setTimeout(() => {
+        getCircuitBreaker().recordFailure(endpointId, 504);
+        resolve({
+          ok: false,
+          call_id: `timeout_${Date.now()}`,
+          failed: true,
+          http_status: 504,
+          message: `planning probe timed out after ${timeoutMs}ms`,
+        } as GatewayCallResult);
+      }, timeoutMs);
+    });
+    return await Promise.race([probe(endpointId, params), timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Structured missing-session check (CTO Amendment 1, D-0086 / LLM-first: zero prose regex parsing):
+ * True only when (1) the endpoint declares a REQUIRED session/cookie input in the catalog, or
+ * (2) the gateway's own sessionRestriction(endpoint.id, params) rejects the params about to be sent.
+ * Any route that still answers HTTP 400 at runtime goes to refusedEndpoints in probeStep and the next catalog route is tried.
+ */
+export function needsMissingSession(
+  endpoint: CatalogEndpoint,
+  params?: Record<string, unknown>,
+): boolean {
+  const hasSessionParam = Boolean(params && filled(params.session ?? params.cookie ?? params.cookies ?? params.auth_token));
+  if (hasSessionParam) return false;
+  // 1. Required session/cookie input declared in catalog
+  if (endpoint.inputs.some((i) => /^(session|cookie|cookies|auth_token|login_cookie)$/i.test(i.name) && i.required)) {
+    return true;
+  }
+  // 2. Gateway's own sessionRestriction(endpoint.id, params) on the params the planner is about to send
+  if (params && sessionRestriction(endpoint.id, params) !== null) {
+    return true;
+  }
+  return false;
+}
 
 export function understandPrompt(input: LlmPlannerInput, today: string): string {
   const lines = [
@@ -326,7 +379,8 @@ export function checkOptions(answer: unknown, candidates: ReadonlyArray<CatalogE
     const missing = endpoint.inputs.filter((i) => i.required && !filled(params[i.name]) && i.name !== parent?.param && i.name !== cursor);
     if (missing.length > 0) continue;
     if (validateInputShape(endpoint, params) !== null) continue;
-    const more = (Array.isArray(o.more_params) ? o.more_params : Array.isArray(o.more_params_json) ? o.more_params_json.map(jsonObject) : []).map(clean).filter((p) => Object.keys(p).length > 0 && JSON.stringify(p) !== JSON.stringify(params)).slice(0, 6);
+    if (needsMissingSession(endpoint, params)) continue;
+    const more = (Array.isArray(o.more_params) ? o.more_params : Array.isArray(o.more_params_json) ? o.more_params_json.map(jsonObject) : []).map(clean).filter((p) => Object.keys(p).length > 0 && JSON.stringify(p) !== JSON.stringify(params) && !needsMissingSession(endpoint, p)).slice(0, 6);
     if (cfg && parent) for (const m of more) delete m[parent.param];
     const notCarried = (Array.isArray(o.conditions_not_carried) ? o.conditions_not_carried : []).map(str).filter((c) => CONDITION_AR[c] !== undefined);
     out.push({ endpoint, params, cursor, parent, more, notCarried: [...new Set(notCarried)] });
@@ -500,6 +554,8 @@ interface BuiltStep {
   /** True on-topic accepted count from an account timeline scan (P0 DT-20261123-timeline-acceptance). */
   timelineAcceptedCount?: number;
   timelineExhausted?: boolean;
+  acceptedIds?: string[];
+  observedRelatedAccounts?: RelatedAccountCandidate[];
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -649,7 +705,8 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
-  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), hasSource: Boolean(step.source && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
+  const allCandidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), hasSource: Boolean(step.source && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
+  const candidates = allCandidates.filter((c) => !needsMissingSession(c));
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample, deps.catalog), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   const options = checkOptions(choice, candidates, parentSample !== null);
@@ -709,6 +766,81 @@ export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>, said: Reado
     }
   }
   return parts.filter(Boolean);
+}
+
+export async function judgeSampleRows(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  step: UnderstoodStep,
+  u: Understanding,
+  said: ReadonlyArray<string>,
+  ask: ReturnType<typeof asker>,
+  isTimelineScan: boolean,
+  log?: (line: string) => void,
+  pageLabel = "sample",
+): Promise<number[] | null> {
+  const batch = isTimelineScan ? rows.slice(0, 20) : rows.slice(0, 10);
+  if (batch.length === 0) return [];
+  const constraintCriterion = [
+    step.source?.value ? `Source/Account: ${step.source.value}` : null,
+    step.country ? `Country: ${step.country}` : null,
+    `Topic: «${step.topic}»`,
+    u.understanding_ar ? `Brief: ${u.understanding_ar}` : null,
+  ].filter(Boolean).join(", ");
+  const requestText = said.join(" — ") || u.understanding_ar || String(step.topic ?? "");
+  const userPrompt = `${reviewPrompt({
+    requestText,
+    subject: constraintCriterion,
+    rows: batch.map((r) => ({ text: formatJudgeRowText(r) })),
+  })}\n\nReturn the 0-based indices (0 to ${batch.length - 1}) of the rows that qualify (verdict 1). If none qualify, return an empty array.`;
+  const schema = {
+    type: "object",
+    properties: { matching_indices: { type: "array", items: { type: "integer" } } },
+    required: ["matching_indices"],
+  };
+  let judgeRes = await ask(
+    REVIEW_SYSTEM,
+    userPrompt,
+    { name: "judge_sample", description: "Count how many items match the criteria.", schema },
+    200,
+  );
+  let matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? ((judgeRes as any).matching_indices as number[]) : null;
+  if (matches === null && isTimelineScan) {
+    log?.(`llm_planner_judge_sample ${step.key} ${pageLabel} absent_or_failed retry=1`);
+    judgeRes = await ask(
+      REVIEW_SYSTEM,
+      userPrompt,
+      { name: "judge_sample", description: "Count how many items match the criteria.", schema },
+      200,
+    );
+    matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? ((judgeRes as any).matching_indices as number[]) : null;
+  }
+  return matches;
+}
+
+export function extractObservedRelatedAccounts(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  primarySource?: string | null,
+): RelatedAccountCandidate[] {
+  const cleanPrimary = String(primarySource ?? "").replace(/^@/, "").trim().toLowerCase();
+  const seen = new Set<string>();
+  const out: RelatedAccountCandidate[] = [];
+  for (const r of rows) {
+    const text = formatJudgeRowText(r);
+    for (const m of text.matchAll(/(?:^|[\s(\[{"'«:])@([A-Za-z0-9_]{3,15})\b/g)) {
+      const handle = m[1];
+      const lower = handle.toLowerCase();
+      if (!handle || lower === cleanPrimary || seen.has(lower)) continue;
+      seen.add(lower);
+      const isRt = new RegExp(`\\bRT\\s+@${handle}\\b`, "i").test(text);
+      out.push({
+        handle,
+        role: isRt ? "official_spokesperson" : "media_outlet",
+        rationale: isRt ? "حساب رسمي يعيد الحساب المطلوب نشر بياناته" : "حساب مرتبط ظهر في منشورات الحساب المطلوب",
+      });
+      if (out.length >= 4) return out;
+    }
+  }
+  return out;
 }
 
 export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps): Promise<LlmPlanResult> {
@@ -865,37 +997,19 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     let topicMatchedInSample = true;
     let judgeFailedInSample = false;
     let judgeAffirmative = false;
+    const allExaminedRows: Array<Record<string, unknown>> = [...sampleRows];
+    const stepAcceptedIds = new Set<string>();
 
     if (step.topic && sampleRows.length > 0) {
-      const sampleTexts = (isTimelineScan ? sampleRows.slice(0, 20) : sampleRows.slice(0, 10))
-        .map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`)
-        .join("\n");
-      const constraintCriterion = [
-        step.source?.value ? `Source/Account: ${step.source.value}` : null,
-        step.country ? `Country: ${step.country}` : null,
-        `Topic: «${step.topic}»`,
-      ].filter(Boolean).join(", ");
-      let judgeRes = await ask(
-        "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
-        `Criteria:\n${constraintCriterion}\n\nItems:\n${sampleTexts}`,
-        { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-        200,
-      );
-      let matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
-      if (matches === null && isTimelineScan) {
-        deps.log?.(`llm_planner_judge_sample ${step.key} absent_or_failed retry=1`);
-        judgeRes = await ask(
-          "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
-          `Criteria:\n${constraintCriterion}\n\nItems:\n${sampleTexts}`,
-          { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-          200,
-        );
-        matches = isObj(judgeRes) && Array.isArray((judgeRes as any).matching_indices) ? (judgeRes as any).matching_indices : null;
-      }
+      const matches = await judgeSampleRows(sampleRows, step, u, said, ask, isTimelineScan, deps.log, "sample");
       if (matches !== null) {
         if (isTimelineScan) {
           judgeAffirmative = true;
           const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+          for (const r of matchedItems) {
+            const id = deriveItemId(r);
+            if (id) stepAcceptedIds.add(id);
+          }
           sampleRows.splice(0, sampleRows.length, ...matchedItems);
           if (matchedItems.length === 0) {
             topicMatchedInSample = false;
@@ -907,6 +1021,10 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             topicMatchedInSample = false;
           } else {
             const matchedItems = matches.map((idx: number) => sampleRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+            for (const r of matchedItems) {
+              const id = deriveItemId(r);
+              if (id) stepAcceptedIds.add(id);
+            }
             if (matchedItems.length > 0) sampleRows.splice(0, sampleRows.length, ...matchedItems);
           }
         }
@@ -974,7 +1092,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           }
 
           const nextParams = { ...got.option.params, [cursorKey]: currentCursor };
-          const rNext = await deps.probe(got.option.endpoint.id, nextParams);
+          const rNext = await callProbeWithTimeout(deps.probe, got.option.endpoint.id, nextParams, deps.probeTimeoutMs ?? PLANNER_PROBE_TIMEOUT_MS);
           if (!rNext.ok) break;
           cursorPagesProbed += 1;
           if (rNext.call_id) { got.callIds.push(rNext.call_id); probeCallCount += 1; }
@@ -986,6 +1104,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             break;
           }
 
+          allExaminedRows.push(...nextRows);
           totalExamined += nextRows.length;
 
           // Check chronological cutoff (Point 3.1 & 3.3)
@@ -996,33 +1115,13 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
           let nextOnTopic: Array<Record<string, unknown>> = nextRows;
           if (step.topic) {
-            const nextTexts = (isTimelineScan ? nextRows.slice(0, 20) : nextRows.slice(0, 10))
-              .map((r, i) => `${i}: ${String(r.text ?? r.title ?? r.caption ?? r.content ?? "").slice(0, 160)}`)
-              .join("\n");
-            const constraintCriterion = [
-              step.source?.value ? `Source/Account: ${step.source.value}` : null,
-              step.country ? `Country: ${step.country}` : null,
-              `Topic: «${step.topic}»`,
-            ].filter(Boolean).join(", ");
-            let nextJudgeRes = await ask(
-              "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
-              `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
-              { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-              200,
-            );
-            let nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
-            if (nextMatches === null && isTimelineScan) {
-              deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed retry=1`);
-              nextJudgeRes = await ask(
-                "You check whether items from a source satisfy EVERY constraint of the request (entity, account, country, and topic). Return the 0-based indices of items that match ALL constraints. If an item is about another country's entity (e.g. Egyptian MOH instead of Saudi MOH) or another entity, it fails even if the topic matches. If none match, return an empty array.",
-                `Criteria:\n${constraintCriterion}\n\nItems:\n${nextTexts}`,
-                { name: "judge_sample", description: "Count how many items match the criteria.", schema: { type: "object", properties: { matching_indices: { type: "array", items: { type: "integer" } } }, required: ["matching_indices"] } },
-                200,
-              );
-              nextMatches = isObj(nextJudgeRes) && Array.isArray((nextJudgeRes as any).matching_indices) ? (nextJudgeRes as any).matching_indices : null;
-            }
+            const nextMatches = await judgeSampleRows(nextRows, step, u, said, ask, isTimelineScan, deps.log, `page_${cursorPagesProbed + 1}`);
             if (nextMatches !== null) {
               nextOnTopic = nextMatches.map((idx: number) => nextRows[idx]).filter((r: unknown): r is Record<string, unknown> => Boolean(r));
+              for (const r of nextOnTopic) {
+                const id = deriveItemId(r);
+                if (id) stepAcceptedIds.add(id);
+              }
             } else {
               deps.log?.(`llm_planner_judge_sample ${step.key} page_${cursorPagesProbed + 1} absent_or_failed`);
               if (isTimelineScan) {
@@ -1092,9 +1191,14 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       const builtStep = built.get(step.key);
       if (builtStep) {
         builtStep.timelineAcceptedCount = Math.min(step.count.total ?? sampleRows.length, sampleRows.length);
-        if (stopReason && stopReason !== "target_reached" && (!got.hasMore || stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed")) {
+        if (!got.hasMore || (stopReason && stopReason !== "target_reached" && (stopReason === "terminal_cursor" || stopReason === "budget_reached" || stopReason === "window_crossed"))) {
           builtStep.timelineExhausted = true;
+          if (!stopReason && !got.hasMore) stopReason = "terminal_cursor";
         }
+        if (!judgeFailedInSample) {
+          builtStep.acceptedIds = [...stepAcceptedIds];
+        }
+        builtStep.observedRelatedAccounts = extractObservedRelatedAccounts(allExaminedRows, step.source?.value);
       }
     }
     if (isTimelineScan && judgeFailedInSample) {
@@ -1106,14 +1210,61 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
     if (!topicMatchedInSample || (isTimelineScan && judgeAffirmative && sampleRows.length === 0 && !judgeFailedInSample)) {
       deps.log?.(`llm_planner_scout ${step.key} topic_unenforced 0 matches found in sample for topic ${step.topic}`);
-      findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: isTimelineScan ? (1 + cursorPagesProbed) : 1, examinedCount: totalExamined, stopReason: stopReason ?? "terminal_cursor" });
+      findings.push({
+        step,
+        requested: step.count.total ?? DEFAULT_COUNT,
+        found: 0,
+        exhausted: true,
+        sets: isTimelineScan ? (1 + cursorPagesProbed) : 1,
+        examinedCount: totalExamined,
+        stopReason: stopReason ?? "terminal_cursor",
+        relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+      });
     } else {
       if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
         const found = new Set(sampleRows.map(rowKeyOf)).size;
         deps.log?.(`llm_planner_scout ${step.key} found=${found} requested=${step.count.total} exhausted=${found < step.count.total} sets=1 (one found item)`);
-        findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1, examinedCount: totalExamined, stopReason: stopReason ?? "target_reached" });
+        findings.push({
+          step,
+          requested: step.count.total,
+          found,
+          exhausted: found < step.count.total,
+          sets: 1,
+          examinedCount: totalExamined,
+          stopReason: stopReason ?? "target_reached",
+          relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+        });
       }
-      if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
+      if (isTimelineScan && judgeAffirmative && !judgeFailedInSample) {
+        const builtStep = built.get(step.key);
+        const effectiveRequested = step.count.total ?? DEFAULT_COUNT;
+        const neededFloor = Math.max(1, Math.ceil((step.count.total ?? THIN_PAGE_ROWS) * SCOUT_SHORT_SHARE));
+        const isShortTimeline = Boolean(builtStep?.timelineExhausted) && sampleRows.length < neededFloor;
+        if (sampleRows.length === 0 || isShortTimeline) {
+          deps.log?.(`llm_planner_scout ${step.key} timeline_shortfall found=${sampleRows.length} examined=${totalExamined} requested=${effectiveRequested}`);
+          findings.push({
+            step,
+            requested: effectiveRequested,
+            found: sampleRows.length,
+            exhausted: true,
+            sets: 1 + cursorPagesProbed,
+            examinedCount: totalExamined,
+            stopReason: stopReason ?? "terminal_cursor",
+            relatedAccounts: builtStep?.observedRelatedAccounts ?? [],
+          });
+        } else {
+          findings.push({
+            step,
+            requested: effectiveRequested,
+            found: sampleRows.length,
+            exhausted: false,
+            sets: 1 + cursorPagesProbed,
+            examinedCount: totalExamined,
+            stopReason: stopReason ?? "target_reached",
+            relatedAccounts: builtStep?.observedRelatedAccounts ?? [],
+          });
+        }
+      } else if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
         const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: isTimelineScan && stopReason ? false : got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total, initialMeasured: cursorPagesProbed,
           onSample: (params, rows, chargedUsd) => {
             const observed = pageSample(rows, params, chargedUsd);
@@ -1127,7 +1278,16 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           },
         }, deps);
         deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
-        findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets, examinedCount: totalExamined, stopReason: stopReason ?? "target_reached" });
+        findings.push({
+          step,
+          requested: step.count.total,
+          found: y.found,
+          exhausted: y.exhausted,
+          sets: y.sets,
+          examinedCount: totalExamined,
+          stopReason: stopReason ?? "target_reached",
+          relatedAccounts: built.get(step.key)?.observedRelatedAccounts ?? [],
+        });
       }
     }
   }
@@ -1233,7 +1393,7 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
 interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null; checkedParams: Record<string, unknown>; chargedUsd: number }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
-export async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }): Promise<Probed | null> {
+export async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, budget: { left: number }, trace?: { empties: number; failures: number; uncertain: boolean }, refusedEndpoints: Set<string> = new Set()): Promise<Probed | null> {
   const callIds: string[] = [];
 
   const tryProbeParams = async (
@@ -1245,7 +1405,7 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
   ): Promise<Probed | null> => {
     const reviewed = missionPageOf(option.endpoint.id);
     budget.left -= 1;
-    const r = await deps.probe(option.endpoint.id, params);
+    const r = await callProbeWithTimeout(deps.probe, option.endpoint.id, params, deps.probeTimeoutMs ?? PLANNER_PROBE_TIMEOUT_MS);
     const rAny = r as { call_ids?: string[] };
     if (Array.isArray(rAny.call_ids) && rAny.call_ids.length > 0) {
       for (const cid of rAny.call_ids) callIds.push(cid);
@@ -1255,7 +1415,8 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
     if (!r.ok) {
       deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
       if (trace) { trace.failures += 1; if (reviewed) trace.uncertain = true; }
-      if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) {
+      const statusNum = "http_status" in r ? Number((r as any).http_status) : 0;
+      if ("refused" in r || statusNum === 0 || [401, 402, 403, 500, 502, 503, 504].includes(statusNum)) {
         refusedEndpoints?.add(option.endpoint.id);
       }
       // 400 Bad Request / bad_input from provider: rewrite query with provider error feedback once
@@ -1284,7 +1445,7 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
           if (rewrittenParams && Object.keys(rewrittenParams).length > 0 && JSON.stringify(rewrittenParams) !== JSON.stringify(params)) {
             deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} retry_rewritten: ${JSON.stringify(rewrittenParams)}`);
             budget.left -= 1;
-            const rRewritten = await deps.probe(option.endpoint.id, rewrittenParams);
+            const rRewritten = await callProbeWithTimeout(deps.probe, option.endpoint.id, rewrittenParams, deps.probeTimeoutMs ?? PLANNER_PROBE_TIMEOUT_MS);
             callIds.push(rRewritten.call_id);
             if (rRewritten.ok && (reviewed || rRewritten.rows_in_page > 0)) {
               const pageRewritten = await deps.readPage(rRewritten.call_id);
@@ -1311,6 +1472,7 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
           }
         } catch { /* proceed to next */ }
       }
+      refusedEndpoints?.add(option.endpoint.id);
       return null;
     }
     if (!reviewed && r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; return null; }
@@ -1356,7 +1518,7 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
         if (budget.left <= 0) break;
         let params = { ...sets[a.set] };
         if (option.parent) params = { ...params, [option.parent.param]: a.parentValue };
-        const got = await tryProbeParams(option, params, a.set, sets);
+        const got = await tryProbeParams(option, params, a.set, sets, refusedEndpoints);
         if (got) return got;
       }
       if (budget.left <= 0) break;
@@ -1364,7 +1526,6 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
     return null;
   }
 
-  const refusedEndpoints = new Set<string>();
   if (Boolean(step.source)) {
     // When source is known: breadth-first across DISTINCT endpoints with simplest / primary query or account inputs
     for (const option of options) {
@@ -1398,8 +1559,9 @@ export async function probeStep(step: UnderstoodStep, options: ToolOption[], par
   }
 
   // Pass 3: Broader parameter variant if budget remains
-  if (budget.left > 0 && options[0]) {
-    const option = options[0];
+  const nonRefusedOption = options.find((o) => !refusedEndpoints.has(o.endpoint.id));
+  if (budget.left > 0 && nonRefusedOption && (trace?.empties ?? 0) > 0) {
+    const option = nonRefusedOption;
     const reviewed = missionPageOf(option.endpoint.id);
     try {
       const answer = await deps.model({
@@ -1471,6 +1633,7 @@ export interface ScoutFinding {
   sets: number;
   examinedCount?: number;
   stopReason?: StopReason | null;
+  relatedAccounts?: RelatedAccountCandidate[];
 }
 
 const rowKeyOf = (row: Record<string, unknown>): string => {
@@ -1721,23 +1884,99 @@ export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: Readonl
   };
 }
 
+export interface CatalogWideningOptionFact {
+  kind: string;
+  label_ar: string;
+  addable_rows: number;
+  max_price_points: number;
+}
+
+export function buildCatalogWideningFacts(
+  weak: ReadonlyArray<ScoutFinding>,
+  catalog: TregCatalog | undefined,
+  access: AccountAccess | null,
+  pricingSettings?: unknown,
+  webTools?: ReadonlyArray<CatalogEndpoint>,
+): CatalogWideningOptionFact[] {
+  const first = weak[0];
+  if (!first) return [];
+  const settings = normalizeMissionPricingSettings(pricingSettings);
+  const priceForRows = (rows: number, costPerRowUsd = 0.0005): number => {
+    try {
+      const p = priceMissionByCode(
+        [{ rows: Math.max(1, rows), costPerRowUsd, deliver: true, yield: 1, reviewShare: 0 }],
+        { settings },
+      );
+      return p.maxChargePoints;
+    } catch {
+      return 200; // minimum fallback points
+    }
+  };
+  const out: CatalogWideningOptionFact[] = [];
+  const foundCount = Math.max(0, first.found);
+  const takeRows = Math.max(1, foundCount);
+  const takePts = foundCount > 0 ? priceForRows(takeRows) : 0;
+  out.push({
+    kind: "take_found",
+    label_ar: foundCount > 0
+      ? `سلّمني الموجود فقط (${toArabicDigits(foundCount)}، بحد أقصى ${toArabicDigits(takePts)} نقطة)`
+      : "سلّمني الموجود فقط",
+    addable_rows: foundCount,
+    max_price_points: takePts,
+  });
+  const addRows = DEFAULT_COUNT;
+  const addPts = priceForRows(addRows);
+  const platformName = platformAr(first.step.platform, first.step.capability);
+  const hasPlatformSearch = catalog
+    ? candidatesFor(catalog, access, first.step.platform, `${first.step.platform}.search.posts`, 4).length > 0
+    : true;
+  if (hasPlatformSearch) {
+    out.push({
+      kind: "platform_search",
+      label_ar: `ابحث عن الموضوع في كل ${platformName} (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
+      addable_rows: addRows,
+      max_price_points: addPts,
+    });
+  }
+  if ((first.relatedAccounts?.length ?? 0) > 0 || first.step.source?.value) {
+    out.push({
+      kind: "related_accounts",
+      label_ar: `أضف الحسابات المرتبطة التي ظهرت في الفحص على ${platformName} (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
+      addable_rows: addRows,
+      max_price_points: addPts,
+    });
+  }
+  const hasWebOrMulti = (webTools && webTools.length > 0) || multiProviderEndpoints().length > 0 || Boolean(catalog);
+  if (hasWebOrMulti) {
+    out.push({
+      kind: "web_news",
+      label_ar: `أضف الأخبار وصفحات الويب العامة (يضيف نحو ${toArabicDigits(addRows)} بحد أقصى ${toArabicDigits(addPts)} نقطة)`,
+      addable_rows: addRows,
+      max_price_points: addPts,
+    });
+  }
+  return out;
+}
+
 /** The question the customer reads when the search found less than they asked for: the model writes it from the facts (code allows only the numbers it was given); code's own sentence when the model's cannot be shown. */
 export async function scoutQuestion(
   u: Understanding,
   weak: ReadonlyArray<ScoutFinding>,
   input: LlmPlannerInput,
-  deps: Pick<LlmPlannerDeps, "model" | "log"> & { catalog?: TregCatalog; access?: AccountAccess | null },
+  deps: Pick<LlmPlannerDeps, "model" | "log"> & { catalog?: TregCatalog; access?: AccountAccess | null; pricingSettings?: unknown; webTools?: ReadonlyArray<CatalogEndpoint> },
   cost: { usd: number }
 ): Promise<{ question_ar: string; options_ar: string[] }> {
   const index = deps.catalog ? platformIndex(deps.catalog, deps.access ?? null) : "";
   const customerText = customerSaidOf(input).join(" ");
   const customerNumbers = numbersWritten(customerText);
   const customerHasCount = weak.some((f) => (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total)));
+  const wideningFacts = buildCatalogWideningFacts(weak, deps.catalog, deps.access ?? null, deps.pricingSettings, deps.webTools);
 
   const facts = {
     customer_words: input.words.slice(-4),
     understanding: u.understanding_ar,
     catalog_index: index || undefined,
+    widening_options: wideningFacts,
     searches: weak.map((f) => ({
       items: f.step.title_ar,
       platform: platformAr(f.step.platform, f.step.capability, customerSaidOf(input)),
@@ -1751,6 +1990,8 @@ export async function scoutQuestion(
       examined: f.examinedCount ?? null,
       stop_reason: f.stopReason ?? null,
       different_searches_tried: f.sets,
+      observed_related_accounts_count: f.relatedAccounts?.length ?? 0,
+      observed_related_accounts: (f.relatedAccounts ?? []).map((a) => ({ role: a.role, rationale_ar: a.rationale })),
     })),
   };
   const fallback = scoutFallbackAr(weak, customerSaidOf(input));
@@ -1783,6 +2024,7 @@ export async function scoutQuestion(
       String(f.found),
       String(f.sets),
       ...(f.examinedCount ? [String(f.examinedCount)] : []),
+      ...(f.relatedAccounts?.length ? [String(f.relatedAccounts.length)] : []),
     ]),
   ]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
@@ -1934,8 +2176,15 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       const total = s.count?.total ?? null;
       if (total !== null) {
         planned = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : total;
+      } else if (b.timelineAcceptedCount !== undefined) {
+        const pagesScanned = Math.max(1, b.callIds.length);
+        const onTopicPerPage = Math.floor(b.timelineAcceptedCount / pagesScanned);
+        const honestRemaining = (!b.timelineExhausted && b.hasMore && onTopicPerPage > 0) ? onTopicPerPage : 0;
+        const reachable = Math.max(1, Math.min(b.timelineAcceptedCount + honestRemaining, DEFAULT_COUNT));
+        planned = Math.max(1, Math.min(MAX_STEP_ITEMS, reachable));
+        assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ما يمكن تسليمه فعليًا بحسب العينة المتاحة: نحو ${toArabicDigits(planned)}؛ يمكنك تعديله قبل الموافقة.`);
       } else {
-        const sampleCount = (b.timelineExhausted && b.timelineAcceptedCount !== undefined) ? b.timelineAcceptedCount : b.sampleRows.length;
+        const sampleCount = b.sampleRows.length;
         const reachable = b.hasMore ? Math.max(1, Math.min(b.rowsPerPage * 2, 20)) : Math.max(1, sampleCount);
         planned = Math.max(1, Math.min(MAX_STEP_ITEMS, reachable));
         assumptions.push(`لم تحدد عدد ${s.title_ar}، فاخترنا ما يمكن تسليمه فعليًا بحسب العينة المتاحة: نحو ${toArabicDigits(planned)}؛ يمكنك تعديله قبل الموافقة.`);
@@ -1962,7 +2211,13 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       topic: s.topic ?? "",
       brief: u.understanding_ar ?? "",
     };
-    const relevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], criterionObj) ?? undefined) : undefined;
+    const baseRelevance = askTopic ? (researchRelevanceOf(askTopic, textCols.length > 0 ? textCols : ["text"], criterionObj) ?? undefined) : undefined;
+    const relevance = baseRelevance
+      ? {
+          ...baseRelevance,
+          ...(b.acceptedIds && b.acceptedIds.length > 0 ? { accepted_ids: [...b.acceptedIds] } : {}),
+        }
+      : undefined;
     const alternatives = isTotalOnlyChild
       ? []
       : [
