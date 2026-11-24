@@ -352,6 +352,8 @@ async function runSingleIteration(
     const store = createMemoryStore();
     const catalog = loadTregCatalog();
     const missionId = `${config.missionId}_run${runIndex + 1}_${Date.now()}`;
+    // Shared call counter across planning and execution mirroring production runMission.ts:686/1278
+    const callCounter = { seq: 0 };
 
     // Standard test account access NOT_ADMIN (isAdmin: false, verifiedBusiness: false)
     const access = { isAdmin: false, verifiedBusiness: false } as const;
@@ -380,7 +382,7 @@ async function runSingleIteration(
         recorder: inMemoryRecorder,
         token: providerToken,
         defaultPurpose: config.prompt,
-        counter: { seq: 0 },
+        counter: callCounter,
         commit: async () => true, // ZERO database / ledger / wallet writes
         call: liveCallWrapper,
       });
@@ -530,12 +532,19 @@ async function runSingleIteration(
           spentUsd: 0,
         });
 
+        // Mirror production runMission.ts:1278-1279:
+        // Execution gateway gets its own jobId (${missionId}_job) and call counter continuing from planning calls,
+        // so no execution Idempotency-Key repeats a planning key.
+        const calls = await store.listCalls(missionId).catch(() => []);
+        const lastSeq = calls.reduce((n: number, c: { id: string }) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
+        callCounter.seq = Math.max(callCounter.seq, lastSeq);
+
         const executionGateway = createGateway({
           store,
           client: null,
           missionId,
           userId: "usr_e2e_runner",
-          jobId: null,
+          jobId: `${missionId}_job`,
           phase: "execution",
           access,
           catalog,
@@ -543,7 +552,7 @@ async function runSingleIteration(
           recorder: inMemoryRecorder,
           token: providerToken,
           defaultPurpose: config.prompt,
-          counter: { seq: 0 },
+          counter: callCounter,
           commit: async () => true, // ZERO database / ledger / wallet writes
           call: liveCallWrapper,
         });
@@ -951,9 +960,160 @@ async function runSingleIteration(
   }
 }
 
+/**
+ * Self-test verifying that two consecutive gateways (planning then execution) for the same mission
+ * produce strictly distinct Idempotency-Keys and do not collide, mirroring the production key scheme.
+ */
+export async function selfTestDistinctGatewayKeys(): Promise<{
+  ok: boolean;
+  planningKeys: string[];
+  executionKeys: string[];
+  planningJobIds: string[];
+  executionJobIds: string[];
+  error?: string;
+}> {
+  const store = createMemoryStore();
+  const catalog = loadTregCatalog();
+  const testMissionId = `msn_selftest_${Date.now()}`;
+  const access = { isAdmin: false, verifiedBusiness: false } as const;
+  const inMemoryRecorder: CallRecorder = {
+    reserve: async () => ({ allowed: true, costId: 1 }),
+    commit: async () => {},
+  };
+
+  const capturedPlanningKeys: string[] = [];
+  const capturedExecutionKeys: string[] = [];
+  const capturedPlanningJobIds: string[] = [];
+  const capturedExecutionJobIds: string[] = [];
+  const callCounter = { seq: 0 };
+
+  const mockPlanningCall = async (options: TregCallOptions): Promise<TregCallResult> => {
+    if (options.idempotencyKey) capturedPlanningKeys.push(options.idempotencyKey);
+    if (options.jobId) capturedPlanningJobIds.push(options.jobId);
+    return {
+      ok: true,
+      httpStatus: 200,
+      data: { data: [{ id: "1", text: "probe tweet" }] },
+      costMicro: 100,
+    };
+  };
+
+  const mockExecutionCall = async (options: TregCallOptions): Promise<TregCallResult> => {
+    if (options.idempotencyKey) capturedExecutionKeys.push(options.idempotencyKey);
+    if (options.jobId) capturedExecutionJobIds.push(options.jobId);
+    return {
+      ok: true,
+      httpStatus: 200,
+      data: { data: [{ id: "2", text: "timeline tweet" }] },
+      costMicro: 100,
+    };
+  };
+
+  // 1. Planning Gateway (jobId: null, phase: "planning")
+  const planningGateway = createGateway({
+    store,
+    client: null,
+    missionId: testMissionId,
+    userId: "usr_selftest",
+    jobId: null,
+    phase: "planning",
+    access,
+    catalog,
+    budget: createJobCallBudget({ ceilingUsd: 0.20, spentUsd: 0 }),
+    recorder: inMemoryRecorder,
+    counter: callCounter,
+    commit: async () => true,
+    call: mockPlanningCall,
+  });
+
+  // Make 2 planning calls
+  await planningGateway.tregCall({ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } });
+  await planningGateway.tregCall({ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } });
+
+  // 2. Execution Gateway (jobId: `${testMissionId}_job`, phase: "execution", shared counter mirroring runMission.ts:1278)
+  const calls = await store.listCalls(testMissionId).catch(() => []);
+  const lastSeq = calls.reduce((n: number, c: { id: string }) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
+  callCounter.seq = Math.max(callCounter.seq, lastSeq);
+
+  const executionGateway = createGateway({
+    store,
+    client: null,
+    missionId: testMissionId,
+    userId: "usr_selftest",
+    jobId: `${testMissionId}_job`,
+    phase: "execution",
+    access,
+    catalog,
+    budget: createJobCallBudget({ ceilingUsd: 0.50, spentUsd: 0 }),
+    recorder: inMemoryRecorder,
+    counter: callCounter,
+    commit: async () => true,
+    call: mockExecutionCall,
+  });
+
+  // Make 2 execution calls
+  await executionGateway.tregCall({ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } });
+  await executionGateway.tregCall({ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } });
+
+  // Assertions:
+  // (a) All keys are distinct and never repeat
+  const allKeys = [...capturedPlanningKeys, ...capturedExecutionKeys];
+  const uniqueKeys = new Set(allKeys);
+  const distinct = uniqueKeys.size === allKeys.length;
+  const noIntersection = capturedPlanningKeys.every((pk) => !capturedExecutionKeys.includes(pk));
+
+  // (b) Execution gateway used its own jobId (${testMissionId}_job)
+  const executionHasOwnJobId =
+    capturedExecutionJobIds.length > 0 && capturedExecutionJobIds.every((j) => j === `${testMissionId}_job`);
+
+  if (!distinct || !noIntersection) {
+    return {
+      ok: false,
+      planningKeys: capturedPlanningKeys,
+      executionKeys: capturedExecutionKeys,
+      planningJobIds: capturedPlanningJobIds,
+      executionJobIds: capturedExecutionJobIds,
+      error: `Key collision detected between planning and execution: ${allKeys.join(", ")}`,
+    };
+  }
+
+  if (!executionHasOwnJobId) {
+    return {
+      ok: false,
+      planningKeys: capturedPlanningKeys,
+      executionKeys: capturedExecutionKeys,
+      planningJobIds: capturedPlanningJobIds,
+      executionJobIds: capturedExecutionJobIds,
+      error: `Execution gateway did not receive expected jobId ${testMissionId}_job (got: ${capturedExecutionJobIds.join(", ")})`,
+    };
+  }
+
+  return {
+    ok: true,
+    planningKeys: capturedPlanningKeys,
+    executionKeys: capturedExecutionKeys,
+    planningJobIds: capturedPlanningJobIds,
+    executionJobIds: capturedExecutionJobIds,
+  };
+}
+
 async function main(): Promise<void> {
   const config = parseCliArgs();
   const fixture = loadRecordedRows(config);
+
+  // Standalone self-test check
+  if (process.argv.includes("--self-test")) {
+    console.log("Running self-test: verifying consecutive gateway Idempotency-Keys...");
+    const keyTest = await selfTestDistinctGatewayKeys();
+    if (!keyTest.ok) {
+      console.error(`FAIL: ${keyTest.error}`);
+      process.exit(1);
+    }
+    console.log(`PASS: All gateway keys distinct and non-colliding.`);
+    console.log(`  Planning keys:  ${keyTest.planningKeys.join(", ")} (job: ${keyTest.planningJobIds[0]})`);
+    console.log(`  Execution keys: ${keyTest.executionKeys.join(", ")} (job: ${keyTest.executionJobIds[0]})`);
+    process.exit(0);
+  }
 
   console.log("================================================================================");
   console.log("DIGER E2E FULL-FLOW REPLAY RUNNER (D-0202)");
@@ -968,9 +1128,15 @@ async function main(): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey || apiKey.trim() === "") {
+    const keyTest = await selfTestDistinctGatewayKeys();
+    if (!keyTest.ok) {
+      console.error(`\n[Pre-flight Gateway Key Check Failed] ${keyTest.error}`);
+      process.exit(1);
+    }
     console.log("\n[Clean Exit: Environment Pre-flight]");
     console.log("✓ Fixture source and parameters loaded successfully.");
     console.log("✓ Memory store and gateway architecture configured.");
+    console.log(`✓ Gateway key scheme verified: distinct keys across gateways (${keyTest.planningKeys[0]} -> ${keyTest.executionKeys[0]}).`);
     console.log("✓ Replay runner reached LLM invocation boundary cleanly.");
     console.log("\nError: Missing ANTHROPIC_API_KEY environment variable.");
     console.log("To execute the full flow with live Anthropic planning and review, run:");
