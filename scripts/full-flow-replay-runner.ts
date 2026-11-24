@@ -7,10 +7,10 @@
  *             (or generates plan directly if found >= needed)
  *   - Turn 2: option click (take_found text passed as mission.answer_text) generates plan card
  *   - Execution:
- *       --providers=live: runs plan deliver stage through production runEngine execution path
+ *       --providers=recorded (default): ingests fixture.executionRows for free smoke check
+ *       --providers=live (opt-in): runs plan deliver stage through production runEngine execution path
  *                         (gateway phase "execution", stage endpoint/params, sandbox mapping,
  *                         paging, review ceiling, in-memory ItemStore)
- *       --providers=recorded: ingests fixture.executionRows for free smoke check
  *
  * Multi-Run & Summary:
  *   --runs N: executes N iterations, prints a one-line summary per run + detailed output:
@@ -48,7 +48,8 @@ import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/gateway";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
-import { executeTregCall, type TregCallOptions, type TregCallResult } from "../src/functions/shared/tregClient";
+type TregCallOptions = Parameters<NonNullable<Parameters<typeof createGateway>[0]["call"]>>[0];
+type TregCallResult = Awaited<ReturnType<NonNullable<Parameters<typeof createGateway>[0]["call"]>>>;
 import type { CallRecorder } from "../src/lib/server/multiProvider/adapterTypes";
 import { AGENT_PLANNING_BUDGET_CAP_USD } from "../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../src/lib/agentMission/price";
@@ -153,7 +154,7 @@ export function formatErrorWithStack(err: unknown): string {
 
 function parseCliArgs(): RunnerConfig {
   const args = process.argv.slice(2);
-  let providers: ProviderMode = "live";
+  let providers: ProviderMode = "recorded";
   let missionId = "msn_f91f7e220bbf60fd7c9c";
   let runs = 1;
   let maxUsd = 0.50;
@@ -168,10 +169,10 @@ function parseCliArgs(): RunnerConfig {
       process.exit(0);
     } else if (arg === "--providers" && args[i + 1]) {
       const mode = args[++i].toLowerCase();
-      providers = mode === "recorded" ? "recorded" : "live";
+      providers = mode === "live" ? "live" : "recorded";
     } else if (arg.startsWith("--providers=")) {
       const mode = arg.split("=")[1].toLowerCase();
-      providers = mode === "recorded" ? "recorded" : "live";
+      providers = mode === "live" ? "live" : "recorded";
     } else if (arg === "--mission" && args[i + 1]) {
       missionId = args[++i];
     } else if (arg.startsWith("--mission=")) {
@@ -206,8 +207,8 @@ Usage:
   ANTHROPIC_API_KEY=<key> npx tsx scripts/full-flow-replay-runner.ts [options]
 
 Modes:
-  --providers=live       (Default/Main) Use real catalog gateway with live provider keys
-  --providers=recorded   Feed recorded QA judged_rows as page rows (free smoke check)
+  --providers=recorded   (Default) Feed recorded QA judged_rows as page rows (free smoke check)
+  --providers=live       (Opt-in) Use real catalog gateway with live provider keys
 
 Options:
   --runs <n>             Number of full customer flow runs to execute (default: 1)
@@ -334,6 +335,7 @@ async function runSingleIteration(
     if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
       throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
     }
+    const { executeTregCall } = await import("../src/functions/shared/tregClient");
     const res = await executeTregCall(options);
     // TregCallResult carries costMicro (micro-USD); convert to USD
     const cost = typeof res.costMicro === "number" ? res.costMicro / 1e6 : (typeof (res as any).costUsd === "number" ? (res as any).costUsd : 0);
