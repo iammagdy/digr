@@ -3185,4 +3185,364 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     });
   });
   // ─── end r11 ───────────────────────────────────────────────────────────────
+
+  describe("DT-20261124-account-early-stop: No early stop after 21-row sample & honest stop on empty/short accounts", () => {
+    const customerPromptEarlyStop =
+      "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
+
+    const offTopicSearchRow = {
+      id: "1795486173152113063",
+      text: "أخطاء شائعة عند علاج الإدمان، تعرف عليها",
+      url: "https://x.com/SaudiMOH/status/1795486173152113063",
+      authorUsername: "SaudiMOH",
+    };
+
+    const makeOffTopicTimelineRows = (pageNum: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `211000${pageNum}0000000${(i + 1).toString().padStart(2, "0")}`,
+        text: `نصائح صحية يومية ومواعيد المراكز الصحية صفحة ${pageNum} رقم ${i + 1}`,
+        url: `https://x.com/SaudiMOH/status/211000${pageNum}0000000${(i + 1).toString().padStart(2, "0")}`,
+        authorUsername: "SaudiMOH",
+      }));
+
+    const onTopicPage3Tweet = {
+      id: "2111754500776030669",
+      text: "[2111754500776030669] رصدت وزارة الصحة مقطعًا متداولًا يُظهر إعداد الطعام باستخدام جهاز طهي كهربائي داخل غرفة مريض بمنشأة صحية خاصة بالرياض؛ واتخذت الإجراءات النظامية بحق المنشأة.",
+      url: "https://x.com/SaudiMOH/status/2111754500776030669",
+      authorUsername: "SaudiMOH",
+    };
+
+    it("Must-Pass 1 (Runs 3 & 4 Replay): when options[0] is a 1-row exhausted search and options[1] is the paginated account timeline, planner follows second's cursor across pages 2-4 (79 rows) and finds the match instead of stopping at 21 rows", async () => {
+      let timelinePagesFetched = 0;
+      const mockProbe = vi.fn().mockImplementation(async (endpointId: string, params: Record<string, unknown>) => {
+        if (endpointId === "anyapi.x.search.posts") {
+          return { ok: true, rows_in_page: 1, call_id: "c_search_1", has_more: false, next_cursor: null, charge_usd: 0.00098 };
+        }
+        if (endpointId === "anyapi.x.user.posts") {
+          timelinePagesFetched += 1;
+          const hasMore = timelinePagesFetched < 4;
+          const rowsCount = timelinePagesFetched <= 2 ? 20 : 19;
+          return {
+            ok: true,
+            rows_in_page: rowsCount,
+            call_id: `c_tl_${timelinePagesFetched}`,
+            has_more: hasMore,
+            next_cursor: hasMore ? `cur_tl_${timelinePagesFetched + 1}` : null,
+            charge_usd: 0.00049,
+          };
+        }
+        return { ok: false, rows_in_page: 0, call_id: "c_other", http_status: 400 };
+      });
+
+      const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+        if (callId === "c_search_1") return { output: { data: { tweets: [offTopicSearchRow] } } };
+        if (callId === "c_tl_1") return { output: { data: { tweets: makeOffTopicTimelineRows(1, 20) } } };
+        if (callId === "c_tl_2") return { output: { data: { tweets: makeOffTopicTimelineRows(2, 20) } } };
+        if (callId === "c_tl_3") return { output: { data: { tweets: [onTopicPage3Tweet, ...makeOffTopicTimelineRows(3, 18)] } } };
+        if (callId === "c_tl_4") return { output: { data: { tweets: makeOffTopicTimelineRows(4, 19) } } };
+        return { output: { data: { tweets: [] } } };
+      });
+
+      const mockModel = vi.fn().mockImplementation(async ({ tool, user }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع تغريدات وزارة الصحة السعودية @SaudiMOH عن الشائعات ومكافحتها",
+              accepts_available: false,
+              people_of_companies: { asked: false, title_ar: "", per_company: 0, per_company_text: "", companies_text: "", contact_kinds: [] },
+              missing: [],
+              steps: [
+                {
+                  key: "moh_rumors",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات ومكافحتها",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                  search_terms: ["نفي شائعة"],
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          // Exact ordering from Run 3 & Run 4 of /tmp/e2e-670-live5d.log: search first, user.posts second
+          return {
+            input: {
+              options: [
+                { endpoint_id: "anyapi.x.search.posts", params_json: JSON.stringify({ query: 'from:SaudiMOH "نفي شائعة"' }), cursor_input: "cursor" },
+                { endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          const uStr = String(user ?? "");
+          if (uStr.includes("2111754500776030669")) {
+            return { input: { matching_indices: [0] } };
+          }
+          return { input: { matching_indices: [] } };
+        }
+        if (tool?.name === "scout_report") {
+          return {
+            input: {
+              message_ar: "دورت في حساب وزارة الصحة السعودية على إكس وفحصت ٧٩ تغريدة، ولقيت تغريدة واحدة بس مطابقة. أنصحك تبحث عن الموضوع في كل إكس. تحب نعمل إيه؟",
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const res = await planWithLlm(
+        { words: [customerPromptEarlyStop], request: customerPromptEarlyStop, scoutAllowed: true },
+        { model: mockModel, catalog, access, today: "2026-11-24", probe: mockProbe, readPage: mockReadPage }
+      );
+
+      // Must NOT stop after 1 timeline page (21 rows)! Must scan all 4 timeline pages (1 + 20 + 20 + 19 + 19 = 79 rows)
+      expect(timelinePagesFetched).toBe(4);
+      expect(res.kind).toBe("question");
+      if (res.kind !== "question") throw new Error("Expected scout question");
+      expect(res.scoutSnapshot).toBeDefined();
+      expect(res.scoutSnapshot![0].found).toBe(1);
+      expect(res.scoutSnapshot![0].examinedCount).toBe(79);
+      expect(res.scoutSnapshot![0].acceptedIds).toEqual(["2111754500776030669"]);
+      expect(res.scoutSnapshot![0].endpointId).toBe("anyapi.x.user.posts");
+    });
+
+    it("Must-Pass 2: earlier empty/failed probe calls in probeStep do not starve the 4-page timeline cursor scan", async () => {
+      let timelinePagesFetched = 0;
+      const mockProbe = vi.fn().mockImplementation(async (endpointId: string) => {
+        if (endpointId === "anyapi.x.search.posts" || endpointId === "tikhub.x.user.posts") {
+          // 2 earlier options return empty in probeStep before anyapi.x.user.posts succeeds
+          return { ok: true, rows_in_page: 0, call_id: `c_empty_${endpointId}`, has_more: false, next_cursor: null, charge_usd: 0.0005 };
+        }
+        timelinePagesFetched += 1;
+        const hasMore = timelinePagesFetched < 4;
+        return {
+          ok: true,
+          rows_in_page: 20,
+          call_id: `c_tl_${timelinePagesFetched}`,
+          has_more: hasMore,
+          next_cursor: hasMore ? `cur_tl_${timelinePagesFetched + 1}` : null,
+          charge_usd: 0.00049,
+        };
+      });
+
+      const mockReadPage = vi.fn().mockImplementation(async (callId: string) => {
+        if (callId === "c_tl_4") {
+          return { output: { data: { tweets: [onTopicPage3Tweet, ...makeOffTopicTimelineRows(4, 19)] } } };
+        }
+        if (callId.startsWith("c_tl_")) {
+          return { output: { data: { tweets: makeOffTopicTimelineRows(1, 20) } } };
+        }
+        return { output: { data: { tweets: [] } } };
+      });
+
+      const mockModel = vi.fn().mockImplementation(async ({ tool, user }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "جمع تغريدات وزارة الصحة عن الشائعات",
+              accepts_available: false,
+              people_of_companies: { asked: false, title_ar: "", per_company: 0, per_company_text: "", companies_text: "", contact_kinds: [] },
+              missing: [],
+              steps: [
+                {
+                  key: "moh_rumors",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                  search_terms: ["نفي شائعة"],
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [
+                { endpoint_id: "anyapi.x.search.posts", params_json: JSON.stringify({ query: "from:SaudiMOH شائعة" }), cursor_input: "cursor" },
+                { endpoint_id: "tikhub.x.user.posts", params_json: JSON.stringify({ screen_name: "SaudiMOH" }), cursor_input: "cursor" },
+                { endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          const uStr = String(user ?? "");
+          return { input: { matching_indices: uStr.includes("2111754500776030669") ? [0] : [] } };
+        }
+        if (tool?.name === "scout_report") {
+          return {
+            input: {
+              message_ar: "فحصت ٨٠ تغريدة ولقيت تغريدة واحدة مطابقة. تحب نعمل إيه؟",
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const res = await planWithLlm(
+        { words: [customerPromptEarlyStop], request: customerPromptEarlyStop, scoutAllowed: true },
+        { model: mockModel, catalog, access, today: "2026-11-24", probe: mockProbe, readPage: mockReadPage }
+      );
+
+      // Even though 2 earlier probes were empty in probeStep, the timeline endpoint still gets its full 4 pages
+      expect(timelinePagesFetched).toBe(4);
+      expect(res.kind).toBe("question");
+      if (res.kind === "question") {
+        expect(res.scoutSnapshot![0].found).toBe(1);
+        expect(res.scoutSnapshot![0].acceptedIds).toEqual(["2111754500776030669"]);
+      }
+    });
+
+    it("Counter-Cases: truly empty account, single-page account, and repeated cursor stop honestly with zero endless paging or extra spend", async () => {
+      const { TOOL_CHOICE_SYSTEM } = await import("../agent/src/llmPlanner/prompts");
+      expect(TOOL_CHOICE_SYSTEM).toContain("Except when a named source/account is combined with a topic");
+
+      const baseModel = (options: any[]) =>
+        vi.fn().mockImplementation(async ({ tool }) => {
+          if (tool?.name === "request_plan") {
+            return {
+              input: {
+                decision: "plan",
+                understanding_ar: "جمع تغريدات الحساب عن الشائعات",
+                accepts_available: false,
+                people_of_companies: { asked: false, title_ar: "", per_company: 0, per_company_text: "", companies_text: "", contact_kinds: [] },
+                missing: [],
+                steps: [
+                  {
+                    key: "acc_posts",
+                    title_ar: "تغريدات الحساب",
+                    platform: "x",
+                    capability: "x.user.posts",
+                    topic: "الشائعات",
+                    source: { kind: "account", value: "EmptyAccount" },
+                    deliver: true,
+                    count: { total: null, per_parent: null, all: false },
+                    search_terms: ["نفي شائعة"],
+                  },
+                ],
+              },
+            };
+          }
+          if (tool?.name === "tool_choice") return { input: { options } };
+          if (tool?.name === "field_map") return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+          if (tool?.name === "judge_sample") return { input: { matching_indices: [] } };
+          if (tool?.name === "scout_report") {
+            return {
+              input: {
+                message_ar: "ملقيتش نتائج مطابقة في الحساب. أنصحك نوسّع البحث. تحب نعمل إيه؟",
+                options: [{ kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" }],
+              },
+            };
+          }
+          return null;
+        });
+
+      // Counter-Case 1: Truly empty account (0 rows returned) -> stops immediately after initial probe with 0 cursor calls
+      let emptyProbeCalls = 0;
+      const emptyProbe = vi.fn().mockImplementation(async () => {
+        emptyProbeCalls += 1;
+        return { ok: true, rows_in_page: 0, call_id: `empty_${emptyProbeCalls}`, has_more: false, next_cursor: null, charge_usd: 0 };
+      });
+      await planWithLlm(
+        { words: [customerPromptEarlyStop], request: customerPromptEarlyStop, scoutAllowed: true },
+        {
+          model: baseModel([{ endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "EmptyAccount" }), cursor_input: "cursor" }]),
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: emptyProbe,
+          readPage: vi.fn().mockResolvedValue({ output: { data: { tweets: [] } } }),
+        }
+      );
+      // 1 initial probe + at most 1 broader variant = <= 2 calls, zero cursor loop calls
+      expect(emptyProbeCalls).toBeLessThanOrEqual(2);
+
+      // Counter-Case 2: Single-page account (hasMore: false, nextCursor: null on second) -> 0 cursor follow calls on second
+      let singlePageTimelineCalls = 0;
+      const singlePageProbe = vi.fn().mockImplementation(async (endpointId: string) => {
+        if (endpointId === "anyapi.x.search.posts") {
+          return { ok: true, rows_in_page: 1, call_id: "c_s1", has_more: false, next_cursor: null, charge_usd: 0.0005 };
+        }
+        singlePageTimelineCalls += 1;
+        return { ok: true, rows_in_page: 5, call_id: "c_tl_single", has_more: false, next_cursor: null, charge_usd: 0.0005 };
+      });
+      const resSingle = await planWithLlm(
+        { words: [customerPromptEarlyStop], request: customerPromptEarlyStop, scoutAllowed: true },
+        {
+          model: baseModel([
+            { endpoint_id: "anyapi.x.search.posts", params_json: JSON.stringify({ query: "from:EmptyAccount شائعة" }), cursor_input: "cursor" },
+            { endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "EmptyAccount" }), cursor_input: "cursor" },
+          ]),
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: singlePageProbe,
+          readPage: vi.fn().mockImplementation(async (cid: string) =>
+            cid === "c_s1"
+              ? { output: { data: { tweets: [offTopicSearchRow] } } }
+              : { output: { data: { tweets: makeOffTopicTimelineRows(1, 5) } } }
+          ),
+        }
+      );
+      expect(singlePageTimelineCalls).toBe(1); // Zero extra cursor calls!
+      expect(resSingle.kind).toBe("question");
+      if (resSingle.kind === "question") {
+        expect(resSingle.scoutSnapshot![0].examinedCount).toBe(6); // 1 + 5
+        expect(resSingle.scoutSnapshot![0].found).toBe(0);
+      }
+
+      // Counter-Case 3: Repeated cursor on second page 2 -> stops immediately after page 2 with no endless paging
+      let repeatedCursorCalls = 0;
+      const repeatedCursorProbe = vi.fn().mockImplementation(async (endpointId: string) => {
+        if (endpointId === "anyapi.x.search.posts") {
+          return { ok: true, rows_in_page: 1, call_id: "c_s1", has_more: false, next_cursor: null, charge_usd: 0.0005 };
+        }
+        repeatedCursorCalls += 1;
+        // Always returns the exact same cursor "dup_cur"
+        return { ok: true, rows_in_page: 10, call_id: `c_tl_dup_${repeatedCursorCalls}`, has_more: true, next_cursor: "dup_cur", charge_usd: 0.0005 };
+      });
+      await planWithLlm(
+        { words: [customerPromptEarlyStop], request: customerPromptEarlyStop, scoutAllowed: true },
+        {
+          model: baseModel([
+            { endpoint_id: "anyapi.x.search.posts", params_json: JSON.stringify({ query: "from:EmptyAccount شائعة" }), cursor_input: "cursor" },
+            { endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "EmptyAccount" }), cursor_input: "cursor" },
+          ]),
+          catalog,
+          access,
+          today: "2026-11-24",
+          probe: repeatedCursorProbe,
+          readPage: vi.fn().mockResolvedValue({ output: { data: { tweets: makeOffTopicTimelineRows(1, 10) } } }),
+        }
+      );
+      // Page 1 returns "dup_cur", Page 2 sees "dup_cur" is already visited and stops immediately (2 calls total, never 4)
+      expect(repeatedCursorCalls).toBe(2);
+    });
+  });
 });
