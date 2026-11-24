@@ -63,7 +63,8 @@ export const CONTACT_ITEM_NOUN: ItemNoun = N("جهة تواصل", "جهتا تو
  */
 export function itemNounFromCapability(capability?: string | null, platform?: string | null): ItemNoun | null {
   const cap = String(capability ?? "").trim().toLowerCase();
-  if (!cap) return null;
+  const plat = String(platform ?? "").trim().toLowerCase();
+  if (!cap && !plat) return null;
   if (cap === "companies.emails.list" || cap === "companies.emails.role" || cap === "b2b_contact") return CONTACT_ITEM_NOUN;
   if (cap === "companies.search" || cap === "companies.businesses.search") return knownItemNoun("شركة");
   if (/(?:^|\.)(?:employees|founders|organization_contacts|people)(?:\.|$)/.test(cap)) return knownItemNoun("شخص");
@@ -73,8 +74,10 @@ export function itemNounFromCapability(capability?: string | null, platform?: st
   if (/(?:^|\.)(?:reels|shorts)(?:\.|$)/.test(cap)) return knownItemNoun("ريل");
   if (/(?:^|\.)videos(?:\.|$)/.test(cap)) return knownItemNoun("فيديو");
   if (/(?:^|\.)tweets(?:\.|$)/.test(cap)) return knownItemNoun("تغريدة");
-  if (/(?:^|\.)(?:posts|articles|notes|feed|dynamics)(?:\.|$)/.test(cap)) {
-    const plat = String(platform ?? "").trim().toLowerCase();
+  if (/(?:^|\.)(?:news)(?:\.|$)/.test(cap) || plat === "google_news" || plat === "news") return knownItemNoun("خبر");
+  if (/(?:^|\.)articles(?:\.|$)/.test(cap)) return plat === "twitter" ? knownItemNoun("تغريدة") : knownItemNoun("مقال");
+  if (/(?:^|\.)(?:web|serp)(?:\.|$)/.test(cap) || plat === "web") return knownItemNoun("مقال");
+  if (/(?:^|\.)(?:posts|notes|feed|dynamics)(?:\.|$)/.test(cap)) {
     return plat === "twitter" ? knownItemNoun("تغريدة") : knownItemNoun("منشور");
   }
   return null;

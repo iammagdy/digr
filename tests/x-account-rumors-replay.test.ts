@@ -32,6 +32,8 @@ import { ItemStore } from "../agent/src/items/itemStore";
 import { ingestRows } from "../agent/src/items/ingest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { customerMissionView } from "../src/lib/agentMission/customerView";
+import { runLlmPlanning } from "../agent/src/llmPlanner/run";
+import { RAW_PATH } from "../agent/src/gateway";
 
 const catalog = loadTregCatalog();
 const access = null;
@@ -2522,6 +2524,9 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(searchOpt.label_ar).toContain("يضيف حتى");
       expect(relOpt.label_ar).toContain("يضيف حتى");
       expect(webOpt.label_ar).toContain("يضيف حتى");
+      expect(webOpt.label_ar).not.toContain("تغريدة");
+      expect(webOpt.label_ar).not.toContain("تغريدات");
+      expect(webOpt.label_ar).toContain("مقالات");
       expect(new Set([searchOpt.addable_rows, relOpt.addable_rows, webOpt.addable_rows]).size).toBe(3);
 
       // Measured routes use "measured" ("يضيف نحو")
@@ -2531,7 +2536,370 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         access,
       );
       expect(factsMeasured.find((f) => f.kind === "platform_search")!.label_ar).toContain("يضيف نحو ١٤ تغريدة");
-      expect(factsMeasured.find((f) => f.kind === "web_news")!.label_ar).toContain("يضيف نحو ٨");
+      expect(factsMeasured.find((f) => f.kind === "web_news")!.label_ar).toContain("يضيف نحو ٨ مقالات");
+    });
+  });
+
+  describe("DT-20261123-x-account-rumors r10: Live Replay (Question 2 -> Click take_found -> Card 2, Free-Text Answer & Catalog Noun)", () => {
+    const customerPrompt =
+      "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
+
+    const post1 = { id: "101", text: "تغريدة وزارة الصحة للتوعية ضد الشائعات ونفي الأخبار المغلوطة", url: "https://x.com/SaudiMOH/status/101" };
+    const post2 = { id: "102", text: "تغريدة ثانية رسمية عن نفي الشائعات الطبية المتداولة", url: "https://x.com/SaudiMOH/status/102" };
+    const post3 = { id: "103", text: "موضوع غير مطابق إطلاقاً عن التغذية السليمة للأطفال", url: "https://x.com/SaudiMOH/status/103" };
+
+    const mockRawData = {
+      output: {
+        data: {
+          tweets: [post1, post2, post3],
+        },
+      },
+    };
+
+    const makeTurn1Model = () =>
+      vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "تغريدات وزارة الصحة السعودية @SaudiMOH عن الشائعات",
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: 20, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return {
+            input: {
+              options: [{ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } }],
+            },
+          };
+        }
+        if (tool?.name === "field_map") {
+          return {
+            input: {
+              fields: { id: ["id"], text: ["text"], url: ["url"] },
+              extra: [],
+            },
+          };
+        }
+        if (tool?.name === "judge_sample") {
+          // indices 0 and 1 match the topic -> found = 2
+          return { input: { matching_indices: [0, 1] } };
+        }
+        if (tool?.name === "scout_report") {
+          return {
+            input: {
+              message_ar: "دورت في حساب وزارة الصحة على إكس ولقيت تغريدتين بس مطابقين لموضوع الشائعات. تحب أسلّمك الموجود ولا نوسّع؟",
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+                { kind: "web_news", stem_ar: "أضف الأخبار وصفحات الويب العامة" },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+    it("Must-Pass: Question says 2 -> Click take_found -> Card says 2, card max == option price == hold (200 pts), snapshot cleared", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_live_rumors_r10";
+      await store.putFile(missionId, RAW_PATH("call_r10_1"), JSON.stringify(mockRawData), "application/json");
+
+      const probeTurn1 = vi.fn().mockResolvedValue({
+        ok: true,
+        call_id: "call_r10_1",
+        http_status: 200,
+        rows_in_page: 3,
+        has_more: false,
+        next_cursor: null,
+        shape: null,
+        first_rows: [],
+        warnings: [],
+        saved: "call_r10_1",
+      });
+      const gatewayTurn1 = { tregCall: probeTurn1 } as never;
+
+      // --- Turn 1: Planning with model judge -> asks scout question stating 2 found ---
+      const missionTurn1 = { id: missionId, request_text: customerPrompt, answer_text: null };
+      const r1 = await runLlmPlanning({
+        mission: missionTurn1 as never,
+        store,
+        gateway: gatewayTurn1,
+        catalog,
+        access: null,
+        model: makeTurn1Model(),
+        words: { current: [customerPrompt], earlier: [] } as never,
+        now: Date.now(),
+        log: console.log,
+      });
+
+      expect(r1.kind).toBe("question");
+      if (r1.kind !== "question") throw new Error("Expected question in Turn 1");
+      expect(r1.scout).toBe(true);
+      expect(r1.question_ar).toContain("تغريدتين");
+      // take_found option contains count (2 / تغريدتين) and 200 minimum fee
+      expect(r1.options_ar[0]).toContain("سلّمني الموجود فقط (تغريدتين، والحد الأدنى للطلب ٢٠٠ نقطة)");
+      // Web widening option must use news/article noun ("مقالات"), never tweets ("تغريدات")
+      expect(r1.options_ar[2]).toContain("مقالات");
+      expect(r1.options_ar[2]).not.toContain("تغريدة");
+      expect(r1.options_ar[2]).not.toContain("تغريدات");
+
+      // Verify store state has scout snapshot saved
+      const stateTurn1 = JSON.parse((await store.getFile(missionId, "state/llm_planner.json"))!);
+      expect(stateTurn1.scoutSnapshot).toBeDefined();
+      expect(stateTurn1.scoutSnapshot[0].found).toBe(2);
+
+      // --- Turn 2: Customer clicks option button: "سلّمني الموجود فقط (تغريدتين، والحد الأدنى للطلب ٢٠٠ نقطة)" ---
+      const clickedOptionText = r1.options_ar[0];
+      const missionTurn2 = {
+        id: missionId,
+        request_text: customerPrompt,
+        answer_text: clickedOptionText,
+      };
+
+      const turn2Model = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "العميل وافق على تسليم الموجود فقط (تغريدتان) دون توسيع البحث",
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      // Probe must NOT be called in Turn 2 because snapshot is reused
+      const probeTurn2 = vi.fn().mockImplementation(() => {
+        throw new Error("Turn 2 must NOT probe when snapshot is reused!");
+      });
+      const gatewayTurn2 = { tregCall: probeTurn2 } as never;
+
+      const r2 = await runLlmPlanning({
+        mission: missionTurn2 as never,
+        store,
+        gateway: gatewayTurn2,
+        catalog,
+        access: null,
+        model: turn2Model,
+        // In the real chat UI, words.current carries the clicked option text
+        words: { current: [clickedOptionText], earlier: [customerPrompt] } as never,
+        now: Date.now(),
+      });
+
+      expect(r2.kind).toBe("plan");
+      if (r2.kind !== "plan") throw new Error("Expected plan in Turn 2");
+
+      // CARD COUNT == 2 (matches question count and option count, exactly 2 tweets!)
+      expect(r2.plan.stages[0].expected_rows).toBe(2);
+      expect(r2.plan.stages[0].planned_rows).toBe(2);
+
+      // CARD MAX == OPTION PRICE == HOLD == 200 PTS
+      expect(r2.plan.price.maxChargePoints).toBe(200);
+      expect(r2.plan.price.reservePoints).toBe(200);
+
+      // Snapshot is used ONCE and then cleared from store
+      const stateTurn2 = JSON.parse((await store.getFile(missionId, "state/llm_planner.json"))!);
+      expect(stateTurn2.scoutSnapshot).toBeUndefined();
+    });
+
+    it("Counter-case 1: Free-text answer («خد اللي لقيته») also reuses snapshot -> card count == 2", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_freetext_r10";
+      await store.putFile(missionId, RAW_PATH("call_r10_free"), JSON.stringify(mockRawData), "application/json");
+
+      const probeTurn1 = vi.fn().mockResolvedValue({
+        ok: true,
+        call_id: "call_r10_free",
+        http_status: 200,
+        rows_in_page: 3,
+        has_more: false,
+        next_cursor: null,
+        shape: null,
+        first_rows: [],
+        warnings: [],
+        saved: "call_r10_free",
+      });
+
+      const missionTurn1 = { id: missionId, request_text: customerPrompt, answer_text: null };
+      await runLlmPlanning({
+        mission: missionTurn1 as never,
+        store,
+        gateway: { tregCall: probeTurn1 } as never,
+        catalog,
+        access: null,
+        model: makeTurn1Model(),
+        words: { current: [customerPrompt], earlier: [] } as never,
+        now: Date.now(),
+      });
+
+      // Customer types free text
+      const freeTextAnswer = "خد اللي لقيته";
+      const missionTurn2 = { id: missionId, request_text: customerPrompt, answer_text: freeTextAnswer };
+
+      const turn2Model = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "العميل وافق على تسليم الموجود فقط دون توسيع البحث",
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "الشائعات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      const probeTurn2 = vi.fn().mockImplementation(() => {
+        throw new Error("Turn 2 must NOT probe when snapshot is reused for free-text answer!");
+      });
+
+      const r2 = await runLlmPlanning({
+        mission: missionTurn2 as never,
+        store,
+        gateway: { tregCall: probeTurn2 } as never,
+        catalog,
+        access: null,
+        model: turn2Model,
+        words: { current: [freeTextAnswer], earlier: [customerPrompt] } as never,
+        now: Date.now(),
+      });
+
+      expect(r2.kind).toBe("plan");
+      if (r2.kind !== "plan") throw new Error("Expected plan");
+      expect(r2.plan.stages[0].expected_rows).toBe(2);
+    });
+
+    it("Counter-case 2: New request without answer clears snapshot and plans fresh", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_newreq_r10";
+      await store.putFile(missionId, RAW_PATH("call_r10_new1"), JSON.stringify(mockRawData), "application/json");
+      await store.putFile(missionId, RAW_PATH("call_r10_new2"), JSON.stringify(mockRawData), "application/json");
+
+      let probeCalls = 0;
+      const probeFn = vi.fn().mockImplementation(async () => {
+        probeCalls += 1;
+        return {
+          ok: true,
+          call_id: `call_r10_new${probeCalls}`,
+          http_status: 200,
+          rows_in_page: 3,
+          has_more: false,
+          next_cursor: null,
+          shape: null,
+          first_rows: [],
+          warnings: [],
+          saved: `call_r10_new${probeCalls}`,
+        };
+      });
+
+      const missionTurn1 = { id: missionId, request_text: customerPrompt, answer_text: null };
+      await runLlmPlanning({
+        mission: missionTurn1 as never,
+        store,
+        gateway: { tregCall: probeFn } as never,
+        catalog,
+        access: null,
+        model: makeTurn1Model(),
+        words: { current: [customerPrompt], earlier: [] } as never,
+        now: Date.now(),
+      });
+
+      expect(probeCalls).toBe(1);
+
+      // Customer sends a new / edited request without answering the scout question
+      const newPrompt = "عايز بيانات تانية خالص عن اللقاحات";
+      const missionTurn2 = { id: missionId, request_text: newPrompt, answer_text: null };
+
+      const turn2NewModel = vi.fn().mockImplementation(async ({ tool }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "بيانات اللقاحات",
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات اللقاحات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: "اللقاحات",
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: 3, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return { input: { options: [{ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } }] } };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          // All 3 match -> found = 3 = requested 3 -> no shortfall, plans card directly
+          return { input: { matching_indices: [0, 1, 2] } };
+        }
+        return null;
+      });
+
+      const r2New = await runLlmPlanning({
+        mission: missionTurn2 as never,
+        store,
+        gateway: { tregCall: probeFn } as never,
+        catalog,
+        access: null,
+        model: turn2NewModel,
+        words: { current: [newPrompt], earlier: [] } as never,
+        now: Date.now(),
+      });
+
+      // Fresh planning occurred: probe was called again!
+      expect(probeCalls).toBe(2);
+      expect(r2New.kind).toBe("plan");
+
+      // Snapshot was cleared from store
+      const state = JSON.parse((await store.getFile(missionId, "state/llm_planner.json"))!);
+      expect(state.scoutSnapshot).toBeUndefined();
     });
   });
 });

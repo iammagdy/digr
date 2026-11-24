@@ -22,7 +22,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countAr, itemNounOf, itemNounFromCapability, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
+import { countAr, itemNounOf, itemNounFromCapability, knownItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
@@ -2329,7 +2329,7 @@ export function buildCatalogWideningFacts(
       access,
       pricingSettings,
     });
-    const webNoun = itemNounFromCapability("google_news.search", "google_news") ?? noun;
+    const webNoun = itemNounFromCapability(webStep.capability, webStep.platform) ?? knownItemNoun("خبر") ?? knownItemNoun("مقال") ?? GENERIC_ITEM_NOUN;
     const webKind: "measured" | "up_to" = measuredWeb ? "measured" : "up_to";
     const webVerb = webKind === "measured" ? "يضيف نحو" : "يضيف حتى";
     const webStem = "أضف الأخبار وصفحات الويب العامة";
