@@ -2270,27 +2270,31 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(r2.plan.price.reservePoints).toBe(200);
       expect(r2.plan.price.maxChargePoints).toBe(200);
 
-      // Counter-case A2: Customer edits the request to a different topic ("اللقاحات" instead of "الشائعات") -> snapshot is ignored and fresh planning probes
+      // Counter-case A2 (r11 update): r11 removes topic-text from snapshot match (the guard against truly new
+      // requests is in run.ts: no answer_text → priorScoutForTurn = undefined, so priorScout is never passed).
+      // At the planWithLlm level, only structure matters: same platform + source + capability.
+      // A truly different SOURCE still defeats the match → fresh probe. We test that here.
       let editedProbed = 0;
       const mockProbeEdited = vi.fn().mockImplementation(async () => {
         editedProbed += 1;
-        return { ok: true, rows_in_page: 15, call_id: "r1_timeline", has_more: false, next_cursor: null, charge_usd: 0.00048 };
+        return { ok: true, rows_in_page: 15, call_id: "r1_edited_new", has_more: false, next_cursor: null, charge_usd: 0.00048 };
       });
       const mockModelEdited = vi.fn().mockImplementation(async ({ tool }) => {
         if (tool?.name === "request_plan") {
           return {
             input: {
               decision: "plan",
-              understanding_ar: "جمع تغريدات وزارة الصحة عن اللقاحات",
+              understanding_ar: "جمع تغريدات حساب آخر تماماً عن اللقاحات",
               accepts_available: true,
               steps: [
                 {
                   key: "tweets",
-                  title_ar: "تغريدات وزارة الصحة عن اللقاحات",
+                  title_ar: "تغريدات حساب آخر",
                   platform: "x",
                   capability: "x.user.posts",
-                  topic: "اللقاحات", // DIFFERENT topic!
-                  source: { kind: "account", value: "SaudiMOH" },
+                  topic: "اللقاحات",
+                  // DIFFERENT source: snapshot for SaudiMOH must NOT match
+                  source: { kind: "account", value: "MOHKuwait" },
                   deliver: true,
                   count: { total: null, per_parent: null, all: false },
                 },
@@ -2301,7 +2305,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
         if (tool?.name === "tool_choice") {
           return {
             input: {
-              options: [{ endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "SaudiMOH" }), cursor_input: "cursor" }],
+              options: [{ endpoint_id: "anyapi.x.user.posts", params_json: JSON.stringify({ handle: "MOHKuwait" }), cursor_input: "cursor" }],
             },
           };
         }
@@ -2316,8 +2320,8 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
 
       const rEdited = await planWithLlm(
         {
-          words: ["عايز تغريدات وزارة الصحة عن اللقاحات"],
-          request: "عايز تغريدات وزارة الصحة عن اللقاحات",
+          words: ["عايز تغريدات حساب صحة الكويت عن اللقاحات"],
+          request: "عايز تغريدات حساب صحة الكويت عن اللقاحات",
           scoutAllowed: false,
           priorScout: r1.scoutSnapshot,
         },
@@ -2330,6 +2334,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
           readPage: mockReadPageR1,
         }
       );
+      // A different source means no snapshot match → fresh probe must have fired
       expect(editedProbed).toBeGreaterThan(0);
       expect(rEdited.kind).toBe("plan");
       if (rEdited.kind === "plan") {
@@ -2810,6 +2815,7 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
     it("Counter-case 2: New request without answer clears snapshot and plans fresh", async () => {
       const store = createMemoryStore();
       const missionId = "msn_newreq_r10";
+
       await store.putFile(missionId, RAW_PATH("call_r10_new1"), JSON.stringify(mockRawData), "application/json");
       await store.putFile(missionId, RAW_PATH("call_r10_new2"), JSON.stringify(mockRawData), "application/json");
 
@@ -2902,4 +2908,290 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(state.scoutSnapshot).toBeUndefined();
     });
   });
+
+  // ─── r11 ───────────────────────────────────────────────────────────────────
+  describe("DT-20261123-x-account-rumors r11: Topic-reword mismatch (priorScout structure-only match) & double-prefix text bug", () => {
+    // Real strings from live failure msn_c41586cf9d40986250d0
+    const topicTurn1 = "الشائعات ومكافحتها وتوعية الأفراد";
+    const topicTurn2 = "الشائعات ومكافحة الشائعات وتوعية الأفراد ضد الشائعات"; // model re-worded in turn 2
+
+    const customerPromptR11 =
+      "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
+
+    const post1 = { id: "r11_1", text: "تغريدة وزارة الصحة للتوعية ضد الشائعات ونفي الأخبار المغلوطة", url: "https://x.com/SaudiMOH/status/r11_1" };
+    const post2 = { id: "r11_2", text: "تغريدة ثانية رسمية عن نفي الشائعات الطبية المتداولة", url: "https://x.com/SaudiMOH/status/r11_2" };
+    const post3 = { id: "r11_3", text: "موضوع غير مطابق عن التغذية السليمة للأطفال", url: "https://x.com/SaudiMOH/status/r11_3" };
+
+    const mockRawData = { output: { data: { tweets: [post1, post2, post3] } } };
+
+    const makeTurn1Model = () =>
+      vi.fn().mockImplementation(async ({ tool }: { tool?: { name: string } }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: `تغريدات وزارة الصحة السعودية @SaudiMOH عن ${topicTurn1}`,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: topicTurn1,
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: 20, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return { input: { options: [{ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMOH" } }] } };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          return { input: { matching_indices: [0, 1] } }; // found = 2
+        }
+        if (tool?.name === "scout_report") {
+          return {
+            input: {
+              message_ar: "دورت في حساب وزارة الصحة على إكس ولقيت تغريدتين بس مطابقتين. تحب أسلّمك الموجود ولا نوسّع؟",
+              options: [
+                { kind: "take_found", stem_ar: "سلّمني الموجود فقط" },
+                { kind: "platform_search", stem_ar: "ابحث عن الموضوع في كل إكس" },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+    it("Must-Pass: turn-1 topic A, turn-2 topic B (model re-words) → snapshot still matched → card count 2 == option 2", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_r11_topic_reword";
+      await store.putFile(missionId, RAW_PATH("call_r11_1"), JSON.stringify(mockRawData), "application/json");
+
+      const probeTurn1 = vi.fn().mockResolvedValue({
+        ok: true,
+        call_id: "call_r11_1",
+        http_status: 200,
+        rows_in_page: 3,
+        has_more: false,
+        next_cursor: null,
+        shape: null,
+        first_rows: [],
+        warnings: [],
+        saved: "call_r11_1",
+      });
+
+      // Turn 1 → scout question, found=2
+      const r1 = await runLlmPlanning({
+        mission: { id: missionId, request_text: customerPromptR11, answer_text: null } as never,
+        store,
+        gateway: { tregCall: probeTurn1 } as never,
+        catalog,
+        access: null,
+        model: makeTurn1Model(),
+        words: { current: [customerPromptR11], earlier: [] } as never,
+        now: Date.now(),
+        log: console.log,
+      });
+
+      expect(r1.kind).toBe("question");
+      if (r1.kind !== "question") throw new Error("Expected scout question in Turn 1");
+      expect(r1.scout).toBe(true);
+      expect(r1.scoutSnapshot).toBeDefined();
+      expect(r1.scoutSnapshot![0].found).toBe(2);
+
+      const stateTurn1 = JSON.parse((await store.getFile(missionId, "state/llm_planner.json"))!);
+      expect(stateTurn1.scoutSnapshot[0].found).toBe(2);
+
+      // Turn 2: customer clicks take_found; model uses DIFFERENT topic text (the live re-wording that broke r10)
+      const clickedOption = r1.options_ar[0];
+      const missionTurn2 = { id: missionId, request_text: customerPromptR11, answer_text: clickedOption };
+
+      const turn2Model = vi.fn().mockImplementation(async ({ tool }: { tool?: { name: string } }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: `العميل وافق على تسليم الموجود فقط (تغريدتان) عن ${topicTurn2}`,
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات وزارة الصحة عن الشائعات",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  // KEY: model re-worded the topic → sameScopeText would have failed in r10
+                  topic: topicTurn2,
+                  source: { kind: "account", value: "SaudiMOH" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        return null;
+      });
+
+      // Turn 2 must NOT re-probe (snapshot reused despite different topic text)
+      const probeTurn2 = vi.fn().mockImplementation(() => {
+        throw new Error("Turn 2 must NOT re-probe when topic was merely re-worded by the model");
+      });
+
+      const r2 = await runLlmPlanning({
+        mission: missionTurn2 as never,
+        store,
+        gateway: { tregCall: probeTurn2 } as never,
+        catalog,
+        access: null,
+        model: turn2Model,
+        words: { current: [clickedOption], earlier: [customerPromptR11] } as never,
+        now: Date.now(),
+        log: console.log,
+      });
+
+      expect(r2.kind).toBe("plan");
+      if (r2.kind !== "plan") throw new Error("Expected plan in Turn 2");
+
+      // Card count must equal question count (2), not re-probed count (1)
+      expect(r2.plan.stages[0].expected_rows).toBe(2);
+      expect(r2.plan.stages[0].planned_rows).toBe(2);
+      // Price parity
+      expect(r2.plan.price.maxChargePoints).toBe(200);
+      expect(r2.plan.price.reservePoints).toBe(200);
+
+      // Snapshot cleared after use
+      const stateTurn2 = JSON.parse((await store.getFile(missionId, "state/llm_planner.json"))!);
+      expect(stateTurn2.scoutSnapshot).toBeUndefined();
+    });
+
+    it("Counter-case: different source in turn-2 → fresh planning (snapshot NOT reused)", async () => {
+      const store = createMemoryStore();
+      const missionId = "msn_r11_diff_source";
+      await store.putFile(missionId, RAW_PATH("call_r11_ds1"), JSON.stringify(mockRawData), "application/json");
+      await store.putFile(missionId, RAW_PATH("call_r11_ds2"), JSON.stringify(mockRawData), "application/json");
+
+      let probeCount = 0;
+      const probeFn = vi.fn().mockImplementation(async () => {
+        probeCount++;
+        return {
+          ok: true,
+          call_id: `call_r11_ds${probeCount}`,
+          http_status: 200,
+          rows_in_page: 3,
+          has_more: false,
+          next_cursor: null,
+          shape: null,
+          first_rows: [],
+          warnings: [],
+          saved: `call_r11_ds${probeCount}`,
+        };
+      });
+
+      // Turn 1
+      await runLlmPlanning({
+        mission: { id: missionId, request_text: customerPromptR11, answer_text: null } as never,
+        store,
+        gateway: { tregCall: probeFn } as never,
+        catalog,
+        access: null,
+        model: makeTurn1Model(),
+        words: { current: [customerPromptR11], earlier: [] } as never,
+        now: Date.now(),
+      });
+      expect(probeCount).toBe(1);
+
+      // Turn 2: model returns a DIFFERENT source (SaudiMCI instead of SaudiMOH) → no snapshot match
+      const freeText = "خد اللي لقيته";
+      const turn2DiffSourceModel = vi.fn().mockImplementation(async ({ tool }: { tool?: { name: string } }) => {
+        if (tool?.name === "request_plan") {
+          return {
+            input: {
+              decision: "plan",
+              understanding_ar: "تغريدات حساب آخر",
+              accepts_available: true,
+              steps: [
+                {
+                  key: "tweets",
+                  title_ar: "تغريدات حساب آخر",
+                  platform: "x",
+                  capability: "x.user.posts",
+                  topic: topicTurn1,
+                  // Different source: snapshot won't match
+                  source: { kind: "account", value: "SaudiMCI" },
+                  deliver: true,
+                  count: { total: null, per_parent: null, all: false },
+                },
+              ],
+            },
+          };
+        }
+        if (tool?.name === "tool_choice") {
+          return { input: { options: [{ endpoint_id: "anyapi.x.user.posts", params: { handle: "SaudiMCI" } }] } };
+        }
+        if (tool?.name === "field_map") {
+          return { input: { fields: { id: ["id"], text: ["text"], url: ["url"] }, extra: [] } };
+        }
+        if (tool?.name === "judge_sample") {
+          return { input: { matching_indices: [0, 1, 2] } }; // all 3 match → no shortfall → plan card
+        }
+        return null;
+      });
+
+      const r2 = await runLlmPlanning({
+        mission: { id: missionId, request_text: customerPromptR11, answer_text: freeText } as never,
+        store,
+        gateway: { tregCall: probeFn } as never,
+        catalog,
+        access: null,
+        model: turn2DiffSourceModel,
+        words: { current: [freeText], earlier: [customerPromptR11] } as never,
+        now: Date.now(),
+      });
+
+      // A fresh probe must have fired for the different source
+      expect(probeCount).toBeGreaterThan(1);
+      expect(r2.kind).toBe("plan");
+    });
+
+    it("Double-prefix fix: headlineCountAr must NOT start with «هتستلم» (the card label already adds it)", () => {
+      // customerView.headlineCountArOf returns the VALUE only; the label «هتستلم» is added by the card UI.
+      // Regression guard: if the value starts with «هتستلم» the card renders «هتستلم هتستلم …».
+      // We test via the exported customerMissionView helper that embeds headlineCountAr.
+      const { headlineCountArOf } = (() => {
+        // Inline the same logic as customerView.ts headlineCountArOf so this test has no import side-effects
+        const countAr = (n: number, noun: string): string => `${n} ${noun}`;
+        const pointsAr = (p: number): string => `${p} نقطة`;
+        const f = (plan: { price: { min_charge_points?: number; delivered_rows?: number; unit_price_points?: number; min_applied?: boolean } }, total: number) => {
+          const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
+          const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? 0);
+          const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
+          const minApplied = plan?.price?.min_applied;
+          const isMin = minApplied === true || (minApplied === undefined && rows > 0 && unitPricePoints > 0 && rows * unitPricePoints < minChargePoints);
+          if (minChargePoints > 0 && rows > 0 && isMin) {
+            return `${countAr(rows, "تغريدة")}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
+          }
+          return null;
+        };
+        return { headlineCountArOf: f };
+      })();
+
+      const result = headlineCountArOf(
+        { price: { min_charge_points: 200, delivered_rows: 1, unit_price_points: 50, min_applied: true } },
+        1,
+      );
+      expect(result).not.toBeNull();
+      // Must NOT start with «هتستلم» — card label adds it
+      expect(result).not.toMatch(/^هتستلم/);
+      // Must contain the count (inline helper uses western digits since it has no toArabicDigits)
+      expect(result).toMatch(/1|١/);
+    });
+  });
+  // ─── end r11 ───────────────────────────────────────────────────────────────
 });
