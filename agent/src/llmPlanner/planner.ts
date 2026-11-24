@@ -904,14 +904,18 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const parent = step.parent ? built.get(step.parent) ?? null : null;
     if (step.parent && !parent) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة الخطوة التي تسبقها، فلن تُضاف هذه الخطوة ولن تُحسب في السعر." }); continue; }
     if (u.accepts_available && !step.parent && input.priorScout && input.priorScout.length > 0) {
+      // r11 fix: match on structure only — platform, normalised source, and stepKey/capability/single-step.
+      // Do NOT compare topic text: the model may rephrase the topic between turns (live msn_c41586cf).
       const snap = input.priorScout.find((s) =>
         s.found > 0
         && s.platform === step.platform
-        && (s.topic === undefined || sameScopeText(s.topic, step.topic))
         && (s.sourceValue === undefined || sameScopeText(s.sourceValue, step.source?.value))
         && (s.stepKey === step.key || s.capability === step.capability || u.steps.length === 1)
       );
       const snapEndpoint = snap ? deps.catalog.byId.get(snap.endpointId) : undefined;
+      if (u.accepts_available && !snap && input.priorScout.length > 0) {
+        deps.log?.(`llm_planner_scout_no_match step=${step.key} platform=${step.platform} source=${step.source?.value ?? ""} snapshots=${input.priorScout.map((s) => `${s.platform}/${s.sourceValue ?? ""}`).join(",")}`);
+      }
       if (snap && snapEndpoint) {
         step.title_ar = customerSafe(step.title_ar || snap.title_ar, 60, said) ?? "العناصر";
         const restoredOption: ToolOption = {
