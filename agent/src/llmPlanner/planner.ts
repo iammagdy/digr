@@ -2263,13 +2263,12 @@ export function scoutFallbackAr(
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
     const requestedByCustomer = (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total));
-    const hasExamined = (f.examinedCount ?? 0) > 0 && !(!requestedByCustomer && f.examinedCount === f.requested && f.requested >= 200);
-    const sourceClause = f.step.source?.value ? ` من ${f.step.source.value}` : "";
+    const hasExamined = (f.examinedCount ?? 0) >= f.found && (f.examinedCount ?? 0) > 0 && !(!requestedByCustomer && f.examinedCount === f.requested && f.requested >= 200);
     const examinedClause = hasExamined ? ` وفحصنا ${countAr(f.examinedCount!, noun)}` : "";
     if (!requestedByCustomer) {
-      return `جرّبنا البحث عن ${f.step.title_ar}${sourceClause} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }
-    return `جرّبنا البحث عن ${f.step.title_ar}${sourceClause} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+    return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
   });
   const resolvedFacts = wideningFacts ?? buildCatalogWideningFacts(weak, undefined, null);
   const recOption = resolvedFacts.find((w) => w.kind !== "take_found");

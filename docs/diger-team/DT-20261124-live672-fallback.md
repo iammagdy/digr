@@ -32,7 +32,7 @@ During live full-flow runs of PR #672 on the `@SaudiMOH` rumors request:
 - **Catalog-Only Same-Feed Detection:** Added `sourceParamValueOf` and `isSameSourceFeed(a, b, step)` to check matching `platform`, `capability`, and normalized source parameter value (e.g. handle) strictly using catalog metadata, with zero provider or endpoint name checks.
 - **Candidate Filtering:** Filtered redundant same-feed options in `nextCandidates` while preserving fallback behavior when the first provider fails/empties/refuses, and allowing complementary capabilities (e.g. `x.search.posts`).
 - **Unique Examined Deduplication:** Deduplicated `totalExamined` via `examinedKeys = new Set(sampleRows.map(rowKeyOf))` across primary and secondary pages.
-- **Honest Fallback (`scoutFallbackAr`):** Updated fallback to include the unique examined count, source when known, and ONE recommendation built from the first non-`take_found` widening fact (`label_ar`).
+- **Honest Fallback (`scoutFallbackAr`):** Updated fallback to include the unique examined count, source when known (`found === 0`), and ONE recommendation built from the first non-`take_found` widening fact (`label_ar`). Guarded `examinedClause` to print only when `examinedCount >= found`.
 - **Amended Number Guard:** Allowed customer numbers, search findings (found, examined, sets, related-accounts), and widening facts' `addable_rows`. Rejected prices and foreign numbers from the message.
 
 ### 3. `tests/x-account-rumors-replay.test.ts` (Phase 3)
@@ -40,16 +40,24 @@ During live full-flow runs of PR #672 on the `@SaudiMOH` rumors request:
   - **Must-Pass 1:** Catalog metadata decides same-feed; skips 2nd provider after 4 pages (78 examined, never 156).
   - **Counter-Cases 1A & 1B:** When 1st provider fails, 2nd provider is tried; complementary search capability is allowed with deduplication.
   - **Must-Pass 2 & Counter-Case 2:** Guard allows `addable_rows` and actual search numbers, while rejecting prices (200) and foreign numbers (256).
-  - **Must-Pass 3:** `scoutFallbackAr` states unique examined count and recommendation from widening facts.
+  - **Must-Pass 3 & 3b:** `scoutFallbackAr` states unique examined count and recommendation from widening facts, and omits examined clause when `examinedCount < found`.
 
 ---
 
 ## 3. Verification & Evidence
 
 - Targeted suites:
-  - `tests/x-account-rumors-replay.test.ts`: 53/53 passed.
+  - `tests/x-account-rumors-replay.test.ts`: 54/54 passed.
+  - `tests/llm-first-planner.test.ts`: 36/36 passed.
   - `tests/retrieval-state-machine.test.ts`: 41/41 passed.
   - `tests/timeline-scan-acceptance.test.ts`: 4/4 passed.
   - `tests/dt09-leaks.test.ts`: 14/14 passed.
   - `tests/design-guards.test.ts`: 7/7 passed.
 - Typecheck: `agent:typecheck` and `tsc --noEmit` clean (0 errors).
+- D-0202 E2E Replay Gate (5/5 live runs on Anthropic):
+  - 5/5 PASSED.
+  - Count Parity: PASS.
+  - Price & Hold Parity: PASS.
+  - Code-Stamped Option Numbers: PASS.
+  - Zero fallback lines / zero `llm_planner_scout_numbers`.
+  - Log saved to `/tmp/e2e-674-live5.log`.

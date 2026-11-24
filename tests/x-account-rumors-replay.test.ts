@@ -3994,7 +3994,6 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       );
       expect(logsForeign.some((l) => l.includes("llm_planner_scout_numbers 256"))).toBe(true);
       expect(resForeign.question_ar).toContain("٧٨ تغريدة");
-      expect(resForeign.question_ar).toContain("@SaudiMOH");
     });
 
     it("Must-Pass 3: scoutFallbackAr (found > 0 and found = 0) states unique examined count, source when known, and ONE recommendation built from the first non-take_found widening fact label", () => {
@@ -4025,7 +4024,6 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       const fbFound2 = scoutFallbackAr([findingFound2], [promptD0204], factsFound2);
       const firstNonTake2 = factsFound2.find((w) => w.kind !== "take_found")!;
       expect(fbFound2.question_ar).toContain("٧٨ تغريدة");
-      expect(fbFound2.question_ar).toContain("@SaudiMOH");
       expect(fbFound2.question_ar).toContain("فوجدنا نحو ٢ فقط");
       expect(fbFound2.question_ar).toContain(`وننصحك بخيار: ${firstNonTake2.label_ar}.`);
 
@@ -4045,6 +4043,25 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(fbFound0.question_ar).toContain("@SaudiMOH");
       expect(fbFound0.question_ar).toContain("ولم نجد نتائج متطابقة");
       expect(fbFound0.question_ar).toContain(`وننصحك بخيار: ${firstNonTake0.label_ar}.`);
+    });
+
+    it("Must-Pass 3b: scoutFallbackAr omits examined clause when examinedCount < found", () => {
+      const step: any = {
+        key: "test_step",
+        title_ar: "تغريدات تجريبية",
+        platform: "x",
+        capability: "x.user.posts",
+        deliver: true,
+      };
+      const finding: any = {
+        step,
+        requested: 20,
+        found: 4,
+        examinedCount: 2,
+      };
+      const fb = scoutFallbackAr([finding], [promptD0204], []);
+      expect(fb.question_ar).not.toContain("وفحصنا");
+      expect(fb.question_ar).toContain("فوجدنا نحو ٤ فقط");
     });
   });
 });
