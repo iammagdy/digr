@@ -998,11 +998,16 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const canTryChildAlternate = configuredChild && (parent?.lookup || step.count.per_parent !== null);
     const nextCandidates = (canTryChildAlternate || (!step.parent && step.topic))
       ? options.filter((o) => o.endpoint.id !== got.option.endpoint.id && Boolean(o.parent) === Boolean(parent)
-        && (!configuredChild || (o.endpoint.capability === step.capability && parent?.sampleRows.some((row) => filled(row[o.parent!.from])))))
+        && (configuredChild
+          ? (o.endpoint.capability === step.capability && parent?.sampleRows.some((row) => filled(row[o.parent!.from])))
+          : !isSameSourceFeed(got.option, o, step)))
       : [];
     let altBudgetLeft = configuredChild ? MAX_PROBES_PER_STEP - got.callIds.length : MAX_PROBES_PER_STEP;
     for (const next of nextCandidates) {
       if (altBudgetLeft <= 0) break;
+      if (!configuredChild && [got.option, ...(second ? [second.option] : []), ...alternates.map((a) => a.option)].some((p) => isSameSourceFeed(p, next, step))) {
+        continue;
+      }
       const got2 = configuredChild
         ? await probeStep(step, [next], parent, deps, { left: Math.min(altBudgetLeft, 2) })
         : await probeStep(step, [next], null, deps, { left: Math.min(altBudgetLeft, 2) });
@@ -1105,6 +1110,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     let judgeFailedInSample = false;
     let judgeAffirmative = false;
     const allExaminedRows: Array<Record<string, unknown>> = [...sampleRows];
+    const examinedKeys = new Set<string>(sampleRows.map(rowKeyOf));
     const stepAcceptedIds = new Set<string>();
 
     if (step.topic && sampleRows.length > 0) {
@@ -1154,7 +1160,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const thinThreshold = Math.min(THIN_PAGE_ROWS, target);
     const pagingThreshold = (isTimelineScan && judgeAffirmative) ? target : thinThreshold;
     let cursorPagesProbed = 0;
-    let totalExamined = got.items.length;
+    let totalExamined = examinedKeys.size > 0 ? examinedKeys.size : got.items.length;
     let stopReason: StopReason | null = null;
 
     // Freeze time window once using customer timezone
@@ -1212,8 +1218,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
           }
 
           allExaminedRows.push(...nextRows);
-          totalExamined += nextRows.length;
-
+          for (const r of nextRows) examinedKeys.add(rowKeyOf(r));
+          totalExamined = examinedKeys.size;
           // Check chronological cutoff (Point 3.1 & 3.3)
           const rowDates: (Date | string | number)[] = nextRows
             .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
@@ -1308,7 +1314,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       const primaryWasEmpty = sampleRows.length === 0;
       const existingKeys = new Set(sampleRows.map(rowKeyOf));
       allExaminedRows.push(...secondRows);
-      totalExamined += secondRows.length;
+      for (const r of secondRows) examinedKeys.add(rowKeyOf(r));
+      totalExamined = examinedKeys.size;
       const secondMatches = await judgeSampleRows(secondRows, step, u, said, ask, isTimelineScan, deps.log, "second");
       if (secondMatches !== null) {
         if (isTimelineScan) judgeAffirmative = true;
@@ -1368,7 +1375,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
             }
 
             allExaminedRows.push(...nextRows);
-            totalExamined += nextRows.length;
+            for (const r of nextRows) examinedKeys.add(rowKeyOf(r));
+            totalExamined = examinedKeys.size;
 
             const rowDates: (Date | string | number)[] = nextRows
               .map((r) => (r.published_at ?? r.created_at ?? r.date ?? r.time ?? r.timestamp) as any)
@@ -1977,13 +1985,61 @@ const rowKeyOf = (row: Record<string, unknown>): string => {
   }
   const link = canonicalUrlKey(row.canonical_url ?? row.link ?? row.url ?? row.article_url ?? row.post_url);
   if (link) return `link:${link}`;
-  const rawTitle = row.title ?? row.headline;
+  const rawTitle = row.title ?? row.headline ?? row.text ?? row.full_text ?? row.content ?? row.body;
   if (typeof rawTitle === "string") {
     const textKey = titleDedupeKey(rawTitle) ?? textDedupeKey(rawTitle);
     if (textKey) return `title:${textKey}`;
   }
   return String(row.id ?? JSON.stringify(row));
 };
+
+const normFeedScope = (v: unknown): string => String(v ?? "").trim().toLowerCase().replace(/^@/, "");
+const isSearchFeedCapability = (cap: string | null | undefined): boolean =>
+  /(^|\\.)(search|serp|news|organic|articles?)(\\.|$)/i.test(String(cap ?? ""));
+
+export function sourceParamValueOf(opt: ToolOption, step?: Pick<UnderstoodStep, "source"> | null): string | null {
+  const paginationKeys = new Set<string>([
+    ...(opt.cursor ? [opt.cursor] : []),
+    ...(Array.isArray(opt.endpoint.pagination) ? opt.endpoint.pagination : []),
+  ]);
+  const stringEntries: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(opt.params ?? {})) {
+    if (paginationKeys.has(k)) continue;
+    if (typeof v !== "string" || !v.trim()) continue;
+    const inp = opt.endpoint.inputs?.find((i) => i.name === k);
+    if (inp && (inp.type === "integer" || inp.type === "number" || inp.type === "boolean")) continue;
+    const norm = normFeedScope(v);
+    if (norm) stringEntries.push([k, norm]);
+  }
+  const stepSrc = normFeedScope(step?.source?.value);
+  if (stepSrc) {
+    const exact = stringEntries.find(([, v]) => v === stepSrc);
+    if (exact) return exact[1];
+  }
+  if (!isSearchFeedCapability(opt.endpoint.capability) && stringEntries.length > 0) {
+    const reqInput = opt.endpoint.inputs?.find((i) => i.required && stringEntries.some(([k]) => k === i.name));
+    if (reqInput) {
+      const found = stringEntries.find(([k]) => k === reqInput.name);
+      if (found) return found[1];
+    }
+    return stringEntries[0][1];
+  }
+  return null;
+}
+
+/**
+ * Decides from catalog metadata only (platform + capability + source parameter value) whether two options read the exact same source feed.
+ * Never checks provider or endpoint names.
+ */
+export function isSameSourceFeed(a: ToolOption, b: ToolOption, step?: Pick<UnderstoodStep, "source"> | null): boolean {
+  if (a.endpoint.platform !== b.endpoint.platform) return false;
+  const capA = (a.endpoint.capability ?? "").trim().toLowerCase();
+  const capB = (b.endpoint.capability ?? "").trim().toLowerCase();
+  if (!capA || !capB || capA !== capB) return false;
+  const srcA = sourceParamValueOf(a, step);
+  const srcB = sourceParamValueOf(b, step);
+  return srcA !== null && srcB !== null && srcA === srcB;
+}
 
 function pageSample(rows: ReadonlyArray<Record<string, unknown>>, checkedParams: Record<string, unknown>, chargedUsd: number): PageSample {
   return {
@@ -2181,32 +2237,45 @@ export function numbersWritten(text: string): Set<string> {
 }
 
 
-/** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
-export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>, said: ReadonlyArray<string>): { question_ar: string; options_ar: string[] } {
+/** The sentence the customer reads when the model's own cannot be used: what was found, the unique examined count and source when known, and ONE recommendation built from the widening facts. */
+export function scoutFallbackAr(
+  weak: ReadonlyArray<ScoutFinding>,
+  said: ReadonlyArray<string>,
+  wideningFacts?: ReadonlyArray<CatalogWideningOptionFact>,
+): { question_ar: string; options_ar: string[] } {
   const customerText = said.join(" ");
   const customerNumbers = numbersWritten(customerText);
   const lines = weak.map((f) => {
     const platformName = platformAr(f.step.platform, f.step.capability, said);
+    const byTitle = itemNounOf(f.step.title_ar);
+    const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
+      ? byTitle
+      : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
     if (f.found === 0) {
       if (f.step.source?.value && (f.examinedCount ?? 0) > 0) {
-        const byTitle = itemNounOf(f.step.title_ar);
-        const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
-          ? byTitle
-          : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
         const countText = countAr(f.examinedCount!, noun);
         return `جرّبنا البحث في ${countText} من ${f.step.source.value} على ${platformName} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
+      }
+      if ((f.examinedCount ?? 0) > 0) {
+        const countText = countAr(f.examinedCount!, noun);
+        return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} وفحصنا ${countText} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
       }
       return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
     const requestedByCustomer = (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total));
+    const hasExamined = (f.examinedCount ?? 0) > 0 && !(!requestedByCustomer && f.examinedCount === f.requested && f.requested >= 200);
+    const sourceClause = f.step.source?.value ? ` من ${f.step.source.value}` : "";
+    const examinedClause = hasExamined ? ` وفحصنا ${countAr(f.examinedCount!, noun)}` : "";
     if (!requestedByCustomer) {
-      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+      return `جرّبنا البحث عن ${f.step.title_ar}${sourceClause} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }
-    return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+    return `جرّبنا البحث عن ${f.step.title_ar}${sourceClause} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
   });
-  const firstFound = weak[0]?.found ?? 0;
+  const resolvedFacts = wideningFacts ?? buildCatalogWideningFacts(weak, undefined, null);
+  const recOption = resolvedFacts.find((w) => w.kind !== "take_found");
+  const recClause = recOption ? ` وننصحك بخيار: ${recOption.label_ar}.` : "";
   return {
-    question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`,
+    question_ar: `${lines.join(" ")}${recClause} تحب نسلّمك الموجود، ولا نوسّع البحث؟`,
     options_ar: [
       "سلّمني الموجود فقط",
       "وسّع البحث إلى منصات ومصادر أخرى في الكتالوج",
@@ -2300,7 +2369,7 @@ export function priceStageForOption(arg: {
     measured_cost_per_row_usd: costPerRow,
     yield_share: 1,
     review_share: 0,
-    ...(listed?.stageKey === b.step.key ? { listed_rate: listed.rate } : {}),
+    ...(listed && listed.stageKey === b.step.key ? { listed_rate: listed.rate } : {}),
   } as unknown as PricedStage;
   const price = priceMissionByCode(stagePriceInputs([stage]), {
     settings: listed?.settings ?? (arg.pricingSettings as MissionPricingSettings | undefined),
@@ -2372,7 +2441,7 @@ export function buildCatalogWideningFacts(
     const epLimitMax = searchEp?.inputs.find((i) => /^(limit|count|max_results|page_size)$/i.test(i.name))?.maximum;
     const searchRows = measuredSearch
       ? first.probedPlatformSearchRows!
-      : (typeof epLimitMax === "number" && epLimitMax > 0 ? Math.min(remainingNeeded, epLimitMax) : remainingNeeded);
+      : (typeof epLimitMax === "number" && epLimitMax > 0 ? Math.min(remainingNeeded, epLimitMax) : Math.min(remainingNeeded, THIN_PAGE_ROWS));
     const searchStep: UnderstoodStep = { ...first.step, capability: searchEp?.capability ?? searchCap, source: null };
     const searchQuote = priceStageForOption({
       endpoint: searchEp,
@@ -2551,7 +2620,7 @@ export async function scoutQuestion(
     })),
   };
   const hasFound = weak.some((f) => f.found > 0);
-  const baseFallback = scoutFallbackAr(weak, said);
+  const baseFallback = scoutFallbackAr(weak, said, wideningFacts);
   const fallbackOptions = wideningFacts.length > 0
     ? wideningFacts.map((w) => w.label_ar)
     : (hasFound ? baseFallback.options_ar : baseFallback.options_ar.slice(1));
@@ -2610,7 +2679,9 @@ export async function scoutQuestion(
   const message = customerSafe(str(answer.message_ar), 700, said);
   if (!message) return fallback;
 
-  // Only numbers appearing in customer messages or actual search results (found, examined, sets) are allowed
+  // Only numbers appearing in customer messages, actual search results (found, examined, sets, relatedAccounts),
+  // or widening facts' addable_rows are allowed; prices (max_price_points, min_charge_points) must NOT appear
+  // in the scout message — they are code-stamped on the option labels; model is told this in SCOUT_SYSTEM.
   const allowed = new Set<string>([
     ...customerNumbers,
     ...weak.flatMap((f) => [
@@ -2619,6 +2690,7 @@ export async function scoutQuestion(
       ...(f.examinedCount ? [String(f.examinedCount)] : []),
       ...(f.relatedAccounts?.length ? [String(f.relatedAccounts.length)] : []),
     ]),
+    ...wideningFacts.map((w) => String(w.addable_rows)),
   ]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
   if (foreign.length > 0) {
