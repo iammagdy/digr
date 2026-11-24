@@ -11,6 +11,7 @@ import { WEB_SOURCES } from "../../../src/lib/agentMission/sources";
 import type { WebAvailability } from "../../../src/lib/agentMission/webAvailability";
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 import { getCircuitBreaker, type EndpointCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
+import { getMultiProviderContracts, type MultiProviderContract } from "../../../src/lib/multiProvider/catalog";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
 const PROVEN: ReadonlySet<string> = new Set(((productionEligible as { ids?: unknown }).ids as string[] | undefined) ?? []);
@@ -173,16 +174,119 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
   })) as unknown as CatalogEndpoint[];
 }
 
+let multiEndpointsCache: CatalogEndpoint[] | null = null;
+export function multiProviderEndpoints(): CatalogEndpoint[] {
+  if (multiEndpointsCache) return multiEndpointsCache;
+  const contracts = getMultiProviderContracts();
+  multiEndpointsCache = contracts.map((c) => {
+    const inputs: any[] = [];
+    if (c.inputs_schema && (c.inputs_schema as any).properties) {
+      for (const [name, prop] of Object.entries((c.inputs_schema as any).properties)) {
+        inputs.push({
+          name,
+          in: (prop as any).in ?? "body",
+          type: (prop as any).type ?? "string",
+          required: Boolean((Array.isArray((c.inputs_schema as any)?.required) && (c.inputs_schema as any).required.includes(name)) || (prop as any).required),
+          enum: null,
+          minimum: (prop as any).minimum ?? null,
+          maximum: (prop as any).maximum ?? null,
+          default: (prop as any).default ?? null,
+          example: null,
+          note: (prop as any).note ?? null,
+        });
+      }
+    }
+    return {
+      id: c.endpoint_id,
+      provider: c.provider,
+      platform: c.platform,
+      category: c.category ?? null,
+      capability: c.capability,
+      name: c.endpoint_id,
+      summary: c.category ?? c.endpoint_id,
+      method: "POST",
+      path: "",
+      kind: "direct",
+      tier: "core",
+      async: null,
+      async_config: null,
+      inputs,
+      pagination: c.pagination?.page_size_param ? [c.pagination.page_size_param] : [],
+      cost: {
+        unit: c.cost?.unit ?? "call",
+        usd: c.cost?.usd ?? 0,
+        type: null,
+        currency: c.cost?.currency ?? "USD",
+        value: null,
+        per: null,
+        billing_note: null,
+        failed_or_empty_billed: null,
+      },
+      observed: c.observed ?? { ok_rate: 0.98, hit_rate: 0.95, samples: 100 },
+      scope: "public",
+      cost_confidence: null,
+      siblings: [],
+      test_request: null,
+      list_path: c.outputs_schema?.list_path ?? null,
+      cursor_path: c.outputs_schema?.cursor_path ?? null,
+      item_fields: (c.outputs_schema?.item_fields as Record<string, any>) ?? null,
+      example_response_trimmed: c.outputs_schema?.example_response_trimmed ?? null,
+      adapter_contract: c as unknown as any,
+      capability_tags: c.capability_tags ?? [],
+    } as unknown as CatalogEndpoint;
+  });
+  return multiEndpointsCache;
+}
+
+export function capabilityTagsOf(e: CatalogEndpoint): string[] {
+  const set = new Set<string>();
+  if (e.capability) set.add(e.capability.toLowerCase().trim());
+  const tags = (e as any).capability_tags ?? (e.adapter_contract as any)?.capability_tags;
+  if (Array.isArray(tags)) {
+    for (const t of tags) {
+      if (typeof t === "string" && t.trim() !== "") set.add(t.toLowerCase().trim());
+    }
+  }
+  return Array.from(set);
+}
+
 export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint>; circuitBreaker?: EndpointCircuitBreaker } = {}): CatalogEndpoint[] {
   const cb = options.circuitBreaker ?? getCircuitBreaker();
-  const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
-  if (!isSearchKind(capability)) return base;
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
-  const kind = kindOf(capability);
-  const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
-  const web = [...(options.web ?? [])];
-  const extra = [...others, ...web];
-  return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra];
+  const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
+
+  const normCap = capability.toLowerCase().trim();
+  const mpEndpoints = multiProviderEndpoints().filter(
+    (e) => cb.isAvailable(e.id) && capabilityTagsOf(e).some((t) => t === normCap || t.endsWith(`.${normCap}`) || normCap.endsWith(`.${t}`))
+  );
+
+  if (isSearchKind(capability)) {
+    const kind = kindOf(capability);
+    const others = catalog.endpoints.filter((e) => e.platform !== platform && (SEARCH_ENGINE_PLATFORMS.has(e.platform) || isSearchKind(capabilityOf(e))) && !base.includes(e) && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
+    const web = [...(options.web ?? [])];
+    const mpSearch = mpEndpoints.filter((e) => !base.some((b) => b.id === e.id) && !web.some((w) => w.id === e.id));
+    const extra = [...others, ...mpSearch];
+    return [...base.slice(0, Math.max(3, max + 2 - (extra.length + web.length))), ...extra, ...web];
+  }
+
+  // Cross-provider capability tag matching: include matching endpoints across all 3 providers
+  const combined = [...base];
+  for (const mp of mpEndpoints) {
+    if (!combined.some((c) => c.id === mp.id)) {
+      combined.push(mp);
+    }
+  }
+
+  // For entity or company research, or when shortfall/alsoSearch: allow multi-provider site.map / page.read / people.search
+  if (platform === "entity" || platform === "company" || options.alsoSearch || options.hasSource || combined.length === 0) {
+    for (const mp of mpEndpoints) {
+      if (!combined.some((c) => c.id === mp.id)) {
+        combined.push(mp);
+      }
+    }
+  }
+
+  return combined.sort(rank).slice(0, max);
 }
 
 let registryFallbackGroups: Map<string, string> | null = null;

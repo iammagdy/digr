@@ -9,7 +9,12 @@ import {
 } from "../src/lib/multiProvider/catalog";
 import { recordCostFor } from "../src/lib/recordPricing";
 import { AdapterContractSchema, loadAdapterContracts } from "../scripts/treg/refresh-catalog-contracts";
-import { EndpointCircuitBreaker } from "../src/lib/treg/circuitBreaker";
+import { EndpointCircuitBreaker, getCircuitBreaker } from "../src/lib/treg/circuitBreaker";
+import { candidatesFor } from "../agent/src/llmPlanner/catalogView";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { createWebGateway } from "../agent/src/webGateway";
+import { createMemoryStore } from "../agent/src/memoryStore";
+import { createJobCallBudget } from "../src/lib/server/callBudget";
 
 /** The capability registry: prices come from the official documentation, nothing is invented, an unverified price is never sold. */
 describe("capability registry prices (read from the official docs on 2026-10-22)", () => {
@@ -324,6 +329,267 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
     });
   });
 
+  describe("Point 6.2: Universal Catalog Presentation & Cross-Provider Data-Driven Selection", () => {
+    it("candidatesFor returns multi-provider endpoints for entity research steps (site.map & page.read)", () => {
+      const catalog = loadTregCatalog();
+      const mapCandidates = candidatesFor(catalog, null, "entity", "site.map");
+      const mapIds = mapCandidates.map((c) => c.id);
+
+      expect(mapIds).toContain("firecrawl.map");
+      expect(mapIds).toContain("contextdev.map");
+
+      const scrapeCandidates = candidatesFor(catalog, null, "entity", "page.read");
+      const scrapeIds = scrapeCandidates.map((c) => c.id);
+
+      expect(scrapeIds).toContain("firecrawl.scrape");
+      expect(scrapeIds).toContain("contextdev.scrape");
+    });
+
+    it("Must-Pass 2: TREG chosen when well-covered (x.user.posts selects TREG social endpoints including anyapi with 0 web scrapes)", () => {
+      const catalog = loadTregCatalog();
+      const candidates = candidatesFor(catalog, null, "x", "x.user.posts");
+
+      expect(candidates.length).toBeGreaterThan(0);
+      const ids = candidates.map((c) => c.id);
+      expect(ids).toContain("anyapi.x.user.posts");
+      // All top candidates are TREG social platform endpoints
+      expect(candidates[0].platform).toBe("x");
+      // No web scrape in X user posts candidates
+      expect(ids).not.toContain("firecrawl.scrape");
+      expect(ids).not.toContain("contextdev.scrape");
+    });
+
+    it("tripping 402 on one provider immediately routes subsequent candidates to the other provider without failure", () => {
+      const catalog = loadTregCatalog();
+      const cb = new EndpointCircuitBreaker();
+
+      // Healthy: both candidates present
+      const healthy = candidatesFor(catalog, null, "entity", "site.map", 8, { circuitBreaker: cb });
+      expect(healthy.map((c) => c.id)).toContain("firecrawl.map");
+      expect(healthy.map((c) => c.id)).toContain("contextdev.map");
+
+      // Firecrawl runs out of credits (HTTP 402)
+      cb.recordFailure("firecrawl.map", 402);
+
+      // Now firecrawl.map is filtered out, contextdev.map remains available
+      const failover = candidatesFor(catalog, null, "entity", "site.map", 8, { circuitBreaker: cb });
+      const failoverIds = failover.map((c) => c.id);
+      expect(failoverIds).not.toContain("firecrawl.map");
+      expect(failoverIds).toContain("contextdev.map");
+    });
+  });
+
+  describe("Point 6.4: Gateway Budget Enforcement & Strict Spend Caps", () => {
+    const createMockFetch = () =>
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, links: [{ url: "https://example.com/item" }], urls: ["https://example.com/item"], data: { web: [] } }),
+        clone: () => ({ json: async () => ({ success: true, links: [], urls: [] }) }),
+      });
+
+    it("(a) planning gateway refuses the 25th call (over_budget) and step cap refuses 5th step call", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_planning_caps",
+        jobId: "job_test",
+        phase: "planning",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // 1. Step cap (4 calls maximum per step in planning)
+      const stepKey = "step_entity_site";
+      for (let i = 0; i < 4; i++) {
+        const r = await gw.siteMap({ url: "https://www.example.com", stepKey });
+        expect(r.ok).toBe(true);
+      }
+      const fifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey });
+      expect(fifthCall.ok).toBe(false);
+      expect((fifthCall as any).refused).toBe("over_budget");
+
+      // 2. Job cap: makes remaining calls up to 24 calls total across different steps
+      for (let i = 0; i < 20; i++) {
+        const r = await gw.siteMap({ url: "https://www.example.com", stepKey: `step_${i}` });
+        expect(r.ok).toBe(true);
+      }
+
+      // The 25th call across planning is refused with over_budget
+      const twentyFifthCall = await gw.siteMap({ url: "https://www.example.com", stepKey: "step_another" });
+      expect(twentyFifthCall.ok).toBe(false);
+      expect((twentyFifthCall as any).refused).toBe("over_budget");
+    });
+
+    it("(b) an execution gateway makes 30 calls with budget available and all go out", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 20.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_exec_calls",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // Execution phase makes 30 calls cleanly (no 24-call cap and no 4-call step cap in execution)
+      const stepKey = "step_execution_site";
+      for (let i = 0; i < 30; i++) {
+        const res = await gw.siteMap({ url: "https://www.example.com", stepKey });
+        expect(res.ok).toBe(true);
+      }
+      expect(counter.seq).toBe(30);
+    });
+
+    it("(c) execution still refuses on budget/spend gate/daily cap as before (Must-Pass 3)", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 0.010, spentUsd: 0 }); // only 0.010 USD ceiling
+      const counter = { seq: 0 };
+      const fetchFn = createMockFetch();
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_exec_budget",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // Attempt stealth scrape in execution (bound is 5 credits = $0.025)
+      const res = await gw.webScrape({ provider: "firecrawl", url: "https://www.example.com" });
+
+      expect(res.ok).toBe(false);
+      expect((res as any).refused).toBe("over_budget");
+    });
+
+    it("(d) breaker 402 per provider trips and blocks calls in execution as well as planning", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+      const fetchFn = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        json: async () => ({ success: false, error: "Payment Required" }),
+        clone: () => ({ json: async () => ({ success: false }) }),
+      });
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_breaker_exec",
+        jobId: "job_test",
+        phase: "execution",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      const res = await gw.siteMap({ provider: "firecrawl", url: "https://www.example.com" });
+      expect(res.ok).toBe(false);
+      expect((res as any).refused).toBe("source_unavailable");
+
+      // Subsequent call is immediately refused without fetch
+      fetchFn.mockClear();
+      const subRes = await gw.siteMap({ provider: "firecrawl", url: "https://www.example.com" });
+      expect(subRes.ok).toBe(false);
+      expect((subRes as any).refused).toBe("source_unavailable");
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it("(e) siteMap provider picking and fallback: provider A 402 -> call goes to B; both tripped -> refused source_unavailable", async () => {
+      const store = createMemoryStore();
+      const budget = createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 });
+      const counter = { seq: 0 };
+
+      // Reset circuit breaker for clean state
+      const cb = getCircuitBreaker();
+      cb.resetProvider("firecrawl");
+      cb.resetProvider("contextdev");
+
+      // Mock fetch: firecrawl answers 402, contextdev answers 200
+      const fetchFn = vi.fn().mockImplementation(async (input: unknown) => {
+        const urlStr = String(input);
+        if (urlStr.includes("firecrawl") || urlStr.includes("api.firecrawl.dev")) {
+          return {
+            ok: false,
+            status: 402,
+            json: async () => ({ success: false, error: "Payment Required" }),
+            clone: () => ({ json: async () => ({ success: false }) }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, links: [{ url: "https://example.com/b" }], urls: ["https://example.com/b"] }),
+          clone: () => ({ json: async () => ({ success: true, links: [], urls: [] }) }),
+        };
+      });
+
+      const gw = createWebGateway({
+        store,
+        missionId: "msn_test_fallback",
+        jobId: "job_test",
+        phase: "planning",
+        budget,
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter,
+        fetchFn,
+      });
+
+      // 1. Caller provides no provider. Provider A (firecrawl) answers 402 -> fallback tries B (contextdev) and succeeds
+      const res = await gw.siteMap({ url: "https://www.example.com" });
+      expect(res.ok).toBe(true);
+
+      // 2. Both tripped: trip contextdev as well
+      const fetchFnBothTrip = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        json: async () => ({ success: false, error: "Payment Required" }),
+        clone: () => ({ json: async () => ({ success: false }) }),
+      });
+
+      const gw2 = createWebGateway({
+        store,
+        missionId: "msn_test_both_tripped",
+        jobId: "job_test",
+        phase: "planning",
+        budget: createJobCallBudget({ ceilingUsd: 10.0, spentUsd: 0 }),
+        recorder: { reserve: async () => ({ allowed: true, costId: 1 }), commit: async () => {} },
+        providerKey: async () => "dummy_key",
+        counter: { seq: 0 },
+        fetchFn: fetchFnBothTrip,
+      });
+
+      // Contextdev is explicitly called and trips 402
+      await gw2.siteMap({ provider: "contextdev", url: "https://www.example.com" });
+
+      // Now both firecrawl.map and contextdev.map are tripped -> refused source_unavailable
+      const resBothTripped = await gw2.siteMap({ url: "https://www.example.com" });
+      expect(resBothTripped.ok).toBe(false);
+      expect((resBothTripped as any).refused).toBe("source_unavailable");
+    });
+  });
+
   describe("Invariants & Governance Scanner", () => {
     it("AST / regex scanner verifies circuitBreaker.ts contains 0 hardcoded provider brand names in logic", () => {
       const filePath = path.join(process.cwd(), "src", "lib", "treg", "circuitBreaker.ts");
@@ -346,6 +612,30 @@ describe("Phase 6: Multi-Provider Unification & Catalog Adapter Contracts (DT-20
       for (const name of providerNames) {
         const regex = new RegExp(`(===|!==|==|!=|case|in)\\s*["'\`]${name}["'\`]|["'\`]${name}["'\`]\\s*(===|!==|==|!=)`, "i");
         expect(regex.test(codeOnly), `Hardcoded provider brand name check '${name}' found in circuitBreaker.ts logic`).toBe(false);
+      }
+    });
+
+    it("Must-Pass 4: AST scanner verifies agent/src/llmPlanner/catalogView.ts contains 0 hardcoded provider brand names in logic", () => {
+      const filePath = path.join(process.cwd(), "agent", "src", "llmPlanner", "catalogView.ts");
+      const content = readFileSync(filePath, "utf-8");
+      // Strip comments
+      const codeOnly = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+
+      const providerNames = [
+        "firecrawl",
+        "contextdev",
+        "treg",
+        "anyapi",
+        "tikhub",
+        "scrapecreators",
+        "crawl4ai",
+        "fetchinio",
+        "serper",
+      ];
+
+      for (const name of providerNames) {
+        const regex = new RegExp(`(===|!==|==|!=|case|in)\\s*["'\`]${name}["'\`]|["'\`]${name}["'\`]\\s*(===|!==|==|!=)`, "i");
+        expect(regex.test(codeOnly), `Hardcoded provider brand name check '${name}' found in catalogView.ts logic`).toBe(false);
       }
     });
   });

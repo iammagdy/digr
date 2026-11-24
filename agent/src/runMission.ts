@@ -699,7 +699,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // (round 53) the same two booleans for the ADMIN, in the database: production had 71 web calls refused «no key» on Oct 29-30 and none offered since, although the keys are stored; whether the deployed worker can
   // reach Firecrawl and Context.dev is now provable per mission (never a key, never shown to the customer)
   if (deps.providerKey) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمشرف: توفر مصادر الويب لهذا التخطيط.", counts: { adm_web_firecrawl: webAvailable.firecrawl ? 1 : 0, adm_web_contextdev: webAvailable.contextdev ? 1 : 0 } }).catch(() => undefined);
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, ...spendGateOf(deps, mission.id) }) : undefined;
+  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, webAvailable, fetchFn: deps.fetchFn, counter, ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // LLM-FIRST PLANNER (owner direction, 15 Nov 2026; agent/src/llmPlanner): the planning model reads the customer's own words, chooses the catalog's tools and writes their inputs; code checks them against the catalog,
@@ -1278,7 +1278,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const counter = { seq: lastSeq(calls) };
   const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, ...spendGateOf(deps, mission.id) });
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items), ...spendGateOf(deps, mission.id) }) : undefined;
+  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, webAvailable, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items), ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
