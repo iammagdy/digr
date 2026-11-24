@@ -132,10 +132,12 @@ export function chargeForDelivered(deliveredUnits: number, unitPricePoints: numb
   return Number((micro + scale - BigInt(1)) / scale);
 }
 
-/** What settle_job_atomic charges: ceil(delivered x the job's unit price), never above the reserve, never above the cap; nothing for zero rows. */
-export function settlementCharge(input: { deliveredUnits: number; unitPricePoints: number; reservedPoints: number; capPoints?: number }): { chargedPoints: number; releasedPoints: number } {
-  const charged = settlementChargeFor(input.deliveredUnits, { jobUnitPoints: input.unitPricePoints, reservePoints: Math.max(0, input.reservedPoints) }, input.capPoints ?? AGENT_JOB_POINTS_CAP);
-  return { chargedPoints: charged, releasedPoints: Math.max(0, input.reservedPoints - charged) };
+/** What settle_job_atomic charges: ceil(delivered x the job's unit price), never above the reserve, never above the card max (when provided), never above the cap; nothing for zero rows. */
+export function settlementCharge(input: { deliveredUnits: number; unitPricePoints: number; reservedPoints: number; maxChargePoints?: number; capPoints?: number }): { chargedPoints: number; releasedPoints: number } {
+  const reserved = Math.max(0, input.reservedPoints);
+  const ceiling = input.maxChargePoints !== undefined ? Math.min(reserved, Math.max(0, input.maxChargePoints)) : reserved;
+  const charged = settlementChargeFor(input.deliveredUnits, { jobUnitPoints: input.unitPricePoints, reservePoints: ceiling }, input.capPoints ?? AGENT_JOB_POINTS_CAP);
+  return { chargedPoints: charged, releasedPoints: Math.max(0, reserved - charged) };
 }
 
 /** The model's estimated cost of a mission, USD: one planning, one execution per stage, and the review of the rows the code is unsure about (all estimates: see the constants). */
@@ -243,14 +245,18 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
     ? Math.min(Math.floor(options.capPoints ?? AGENT_JOB_POINTS_CAP), effectiveJobPointsCap())
     : options.capPoints ?? AGENT_JOB_POINTS_CAP;
   const rule = priceByRule({ volume: delivered, costPerRowUsd: costPerFinal, settings, capPoints, listedUnitPoints: listedRate?.unitPoints });
-  const funding = listedRate ? fundingReservePoints(stages, capPoints) : 0;
-  const reservePoints = Math.max(rule.reservePoints, funding ?? capPoints + 1);
+  const needsChildFunding = Boolean(
+    listedRate && stages.some((s) => s.parentKey !== null && Boolean(s.executionFunding?.length)),
+  );
+  const funding = needsChildFunding ? fundingReservePoints(stages, capPoints) : null;
+  const baseReserve = listedRate && !needsChildFunding ? rule.chargeAtFullPoints : rule.reservePoints;
+  const reservePoints = needsChildFunding ? Math.max(baseReserve, funding ?? capPoints + 1) : baseReserve;
   return {
     rule: 2, ...(options.pricedUnder === undefined ? { pricedUnder: CATALOG_PRICE_REV } : options.pricedUnder === null ? {} : { pricedUnder: options.pricedUnder }), totalCostUsd: provider, providerCostUsd: provider, modelCostUsd: model, deliveredRows: delivered, costPerFinalRowUsd: costPerFinal,
     ruleUnitPoints: rule.unitPoints, unitPricePoints: rule.jobUnitPoints, reservePoints, maxChargePoints: rule.chargeAtFullPoints,
-    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: rule.overCap || funding === null,
+    minChargePoints: settings.minChargePoints, minApplied: rule.minApplied, settings, overCap: baseReserve > capPoints || (needsChildFunding && funding === null),
     ...(listedRate ? { listedRate: { ...listedRate, unitPoints: rule.unitPoints } } : {}),
-    ...(funding !== null && funding > rule.reservePoints ? { executionFundingApplied: true } : {}),
+    ...(needsChildFunding && funding !== null && funding > baseReserve ? { executionFundingApplied: true } : {}),
     reviewBudgetUsd: reviewBudgetUsdFor(rule.chargeAtFullPoints),
   };
 }
