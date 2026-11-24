@@ -218,8 +218,7 @@ function headlineCountArOf(plan: any, total?: number): string | null {
   const minApplied = plan?.price?.min_applied ?? plan?.price?.minApplied;
   const isMin = minApplied === true || (minApplied === undefined && rows > 0 && unitPricePoints > 0 && rows * unitPricePoints < minChargePoints);
   if (minChargePoints > 0 && rows > 0 && isMin) {
-    // r11 fix: do NOT include «هتستلم» prefix — the card label already adds it; returning just the count avoids «هتستلم هتستلم …».
-    return `${countAr(rows, itemNounOfPlan(plan))}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
+    return `هتستلم ${countAr(rows, itemNounOfPlan(plan))}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
   }
   const entity = entityBreakdownOf(entityStagesOfPublic(plan));
   return entity ? countAr(entity.root.rows, entity.root.noun) : null;

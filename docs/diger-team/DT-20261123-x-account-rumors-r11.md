@@ -48,10 +48,10 @@ This string became the `valueAr` for a plan fact whose `labelAr` is already `"ه
      `llm_planner_scout_no_match step=… platform=… source=… snapshots=…`
    - Topic text is never compared; the guard against genuinely new requests lives in `run.ts` (no `answer_text` → `priorScoutForTurn = undefined`).
 
-2. **`src/lib/agentMission/customerView.ts`:**
-   - Removed the `هتستلم` prefix from `headlineCountArOf()` return value.
-   - Now returns: `${countAr(rows, noun)}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`.
-   - The card label `"هتستلم"` (in `AgentMissionCard.tsx`) supplies the prefix — no double-prefix.
+2. **`src/components/mission/AgentMissionCard.tsx`:**
+   - Fixed the double prefix in `planFacts`: `v.headlineCountAr` carries `«هتستلم …»` for the card headline, but in `planFacts` the fact cell's `labelAr` is already `"هتستلم"`.
+   - In `AgentMissionCard.tsx`, strips the leading `«هتستلم »` from `deliverableValue` when present (`deliverableText.startsWith("هتستلم ") ? deliverableText.slice("هتستلم ".length) : deliverableText`).
+   - Keeps `src/lib/agentMission/customerView.ts` byte-identical to `origin/main` so `plan-card-minimum-charge` and `flags-off-byte-identical` digests remain untouched and 100% green.
 
 3. **`tests/x-account-rumors-replay.test.ts`:**
    - Updated r9 counter-case A2: previously tested topic-text mismatch (now irrelevant); updated to test a genuinely different **source** (`MOHKuwait` vs `SaudiMOH`), which still correctly defeats the snapshot match and fires a fresh probe.

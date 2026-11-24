@@ -374,8 +374,12 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, approvalD
   const factOf = (word: string) => v.priceFacts.find((f) => f.labelAr.includes(word))?.valueAr ?? null;
   const holdAr = factOf("حجز");
   const maxPriceAr = factOf("السعر");
+  const deliverableText = v.headlineCountAr || v.totalRowsAr;
+  const deliverableValue = deliverableText && deliverableText.startsWith("هتستلم ")
+    ? deliverableText.slice("هتستلم ".length)
+    : deliverableText;
   const planFacts = [
-    ...(v.headlineCountAr || v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.headlineCountAr || v.totalRowsAr }] : []),
+    ...(deliverableValue ? [{ labelAr: "هتستلم", valueAr: deliverableValue }] : []),
     ...(v.periodAr && !(v.summaryAr ?? "").includes(v.periodAr) ? [{ labelAr: "الفترة", valueAr: v.periodAr }] : []),
     ...v.priceFacts.filter((f) => !f.labelAr.includes("حجز")).map((f) => ({ labelAr: f.labelAr === "السعر حتى" ? "أقصى سعر" : f.labelAr === "الوقت المتوقع" ? "الوقت" : f.labelAr, valueAr: f.valueAr })),
   ];

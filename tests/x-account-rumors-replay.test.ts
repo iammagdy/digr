@@ -32,6 +32,9 @@ import { ItemStore } from "../agent/src/items/itemStore";
 import { ingestRows } from "../agent/src/items/ingest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { customerMissionView } from "../src/lib/agentMission/customerView";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
 import { runLlmPlanning } from "../agent/src/llmPlanner/run";
 import { RAW_PATH } from "../agent/src/gateway";
 
@@ -3160,37 +3163,25 @@ describe("DT-20261123-x-account-rumors: @SaudiMOH Replay & Fixes Verification", 
       expect(r2.kind).toBe("plan");
     });
 
-    it("Double-prefix fix: headlineCountAr must NOT start with «هتستلم» (the card label already adds it)", () => {
-      // customerView.headlineCountArOf returns the VALUE only; the label «هتستلم» is added by the card UI.
-      // Regression guard: if the value starts with «هتستلم» the card renders «هتستلم هتستلم …».
-      // We test via the exported customerMissionView helper that embeds headlineCountAr.
-      const { headlineCountArOf } = (() => {
-        // Inline the same logic as customerView.ts headlineCountArOf so this test has no import side-effects
-        const countAr = (n: number, noun: string): string => `${n} ${noun}`;
-        const pointsAr = (p: number): string => `${p} نقطة`;
-        const f = (plan: { price: { min_charge_points?: number; delivered_rows?: number; unit_price_points?: number; min_applied?: boolean } }, total: number) => {
-          const minChargePoints = Number(plan?.price?.min_charge_points ?? 0);
-          const rows = typeof total === "number" && total > 0 ? total : Number(plan?.price?.delivered_rows ?? 0);
-          const unitPricePoints = Number(plan?.price?.unit_price_points ?? 0);
-          const minApplied = plan?.price?.min_applied;
-          const isMin = minApplied === true || (minApplied === undefined && rows > 0 && unitPricePoints > 0 && rows * unitPricePoints < minChargePoints);
-          if (minChargePoints > 0 && rows > 0 && isMin) {
-            return `${countAr(rows, "تغريدة")}، والحد الأدنى للطلب ${pointsAr(minChargePoints)}`;
-          }
-          return null;
-        };
-        return { headlineCountArOf: f };
-      })();
-
-      const result = headlineCountArOf(
-        { price: { min_charge_points: 200, delivered_rows: 1, unit_price_points: 50, min_applied: true } },
-        1,
-      );
-      expect(result).not.toBeNull();
-      // Must NOT start with «هتستلم» — card label adds it
-      expect(result).not.toMatch(/^هتستلم/);
-      // Must contain the count (inline helper uses western digits since it has no toArabicDigits)
-      expect(result).toMatch(/1|١/);
+    it("Double-prefix fix: the plan card deliverable cell must NOT double «هتستلم»", () => {
+      // In AgentMissionCard, f.labelAr is «هتستلم». If valueAr also retains «هتستلم»,
+      // the deliverable cell rendered «هتستلم هتستلم …». The fix strips the leading «هتستلم»
+      // from valueAr so the deliverable cell has exactly one «هتستلم».
+      const mission: any = {
+        id: "msn_double_prefix",
+        status: "plan_ready",
+        request_text: "تغريدات عن الشائعات",
+        created_at: new Date().toISOString(),
+        plan_public: {
+          summary_ar: "تغريدات عن الشائعات",
+          stages: [{ key: "tweets", title_ar: "تغريدات", deliver: true, expected_rows: 1, columns: [{ key: "text", title_ar: "نص" }] }],
+          price: { unit_price_points: 10, delivered_rows: 1, min_charge_points: 200, max_charge_points: 200, reserve_points: 200, min_applied: true },
+        },
+      };
+      const view = customerMissionView({ mission, events: [] });
+      const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view, isGuest: false }));
+      expect(html).not.toContain("هتستلم هتستلم");
+      expect(html).toContain("هتستلم");
     });
   });
   // ─── end r11 ───────────────────────────────────────────────────────────────
