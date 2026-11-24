@@ -10,7 +10,7 @@ import type { AgentStore, MissionRecord } from "../types";
 import type { StoredCustomerWords } from "../../../src/lib/agentMission/customerWords";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
-import { planWithLlm, type LlmPlanResult, type PlannerModel, type Understanding } from "./planner";
+import { planWithLlm, type LlmPlanResult, type PlannerModel, type Understanding, type PriorScoutStepSnapshot } from "./planner";
 
 /**
  * THE LLM PLANNER INSIDE THE WORKER: the model, the customer's words and the question it asked, and which requests it plans. The switch is `llm_planner_v1` (src/lib/agentMission/llmPlannerFlag.ts).
@@ -34,14 +34,18 @@ export function acceptOf(catalog: TregCatalog, access: AccountAccess | null): (u
   return (u) => !handsOverToB2B(u, catalogHasPeople);
 }
 
-interface PlannerState { asked: Array<{ question_ar: string; answer: string | null; scout?: boolean }> }
+interface PlannerState {
+  asked: Array<{ question_ar: string; answer: string | null; scout?: boolean }>;
+  scoutSnapshot?: PriorScoutStepSnapshot[];
+}
 
 export async function readPlannerState(store: AgentStore, missionId: string): Promise<PlannerState> {
   try {
     const text = await store.getFile(missionId, LLM_PLANNER_STATE_FILE);
-    const v = text ? (JSON.parse(text) as { asked?: unknown }) : null;
+    const v = text ? (JSON.parse(text) as { asked?: unknown; scoutSnapshot?: unknown }) : null;
     const asked = Array.isArray(v?.asked) ? (v!.asked as Array<{ question_ar?: unknown; answer?: unknown; scout?: unknown }>).filter((a) => typeof a?.question_ar === "string").map((a) => ({ question_ar: String(a.question_ar), answer: typeof a.answer === "string" ? a.answer : null, ...(a.scout === true ? { scout: true as const } : {}) })) : [];
-    return { asked };
+    const scoutSnapshot = Array.isArray(v?.scoutSnapshot) ? (v!.scoutSnapshot as PriorScoutStepSnapshot[]) : undefined;
+    return { asked, ...(scoutSnapshot ? { scoutSnapshot } : {}) };
   } catch { return { asked: [] }; }
 }
 export async function writePlannerState(store: AgentStore, missionId: string, state: PlannerState): Promise<void> {
@@ -79,8 +83,31 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
   // the customer's answer to the planner's last question is kept with it (a later run reads every question and answer)
   const last = state.asked[state.asked.length - 1];
   const answer = typeof mission.answer_text === "string" && mission.answer_text.trim() !== "" ? mission.answer_text.trim() : null;
-  if (last && last.answer === null && answer) { last.answer = answer; await writePlannerState(store, mission.id, state); }
   const words = input.words && input.words.current.length > 0 ? input.words.current : [mission.request_text];
+  // Amendment A2: PriorScoutStepSnapshot is used ONLY when the customer's reply answers the LAST scout question of this same mission, and only once.
+  // Clear it immediately after use, and when the customer sends a new or changed request instead of answering.
+  const latestRequestWord = words[words.length - 1] ?? mission.request_text;
+  const answeredLastScoutThisTurn = Boolean(
+    last
+    && last.scout === true
+    && last.answer === null
+    && answer !== null
+    && state.scoutSnapshot
+    && state.scoutSnapshot.every((s) => !s.requestText || s.requestText === latestRequestWord || s.requestText === mission.request_text)
+  );
+  const priorScoutForTurn = answeredLastScoutThisTurn ? state.scoutSnapshot : undefined;
+  let stateDirty = false;
+  if (last && last.answer === null && answer) {
+    last.answer = answer;
+    stateDirty = true;
+  }
+  if (state.scoutSnapshot !== undefined) {
+    delete state.scoutSnapshot;
+    stateDirty = true;
+  }
+  if (stateDirty) {
+    await writePlannerState(store, mission.id, state);
+  }
   const qa = state.asked.filter((a) => a.answer !== null);
   const result = await planWithLlm(
     {
@@ -91,6 +118,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       answer: qa.length > 0 ? qa.map((a) => a.answer).join(" | ") : answer,
       exchanges: qa.map((a) => ({ question: a.question_ar, answer: String(a.answer) })),
       scoutAllowed: state.asked.filter((a) => a.scout).length < MAX_SCOUT_QUESTIONS,
+      ...(priorScoutForTurn ? { priorScout: priorScoutForTurn } : {}),
     },
     {
       model: input.model,
@@ -111,6 +139,9 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
     // a question beyond the limit is not asked: the planner is told to plan with sensible assumptions (one more understanding call)
     if (!result.scout && state.asked.filter((a) => !a.scout).length >= MAX_PLANNER_QUESTIONS) return { kind: "cannot", reason_ar: "", understanding: result.understanding, costUsd: result.costUsd, detail: "too_many_questions", asked: state.asked.length };
     state.asked.push({ question_ar: result.question_ar, answer: null, ...(result.scout ? { scout: true as const } : {}) });
+    if (result.scout && result.scoutSnapshot && result.scoutSnapshot.length > 0) {
+      state.scoutSnapshot = result.scoutSnapshot;
+    }
     await writePlannerState(store, mission.id, state);
   }
   return { ...result, asked: state.asked.length };
