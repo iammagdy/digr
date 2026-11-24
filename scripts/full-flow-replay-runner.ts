@@ -39,7 +39,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createMemoryStore } from "../agent/src/memoryStore";
-import { runLlmPlanning, LLM_PLANNER_MODEL } from "../agent/src/llmPlanner/run";
+import { runLlmPlanning, LLM_PLANNER_MODEL, LLM_PLANNER_MAX_SAMPLES_PER_SOURCE } from "../agent/src/llmPlanner/run";
 import { anthropicPlannerModel } from "../agent/src/llmPlanner/model";
 import { anthropicReviewCall, createReviewer } from "../agent/src/review";
 import { ItemStore } from "../agent/src/items/itemStore";
@@ -49,6 +49,9 @@ import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/ga
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { executeTregCall, type TregCallOptions, type TregCallResult } from "../src/functions/shared/tregClient";
 import type { CallRecorder } from "../src/lib/server/multiProvider/adapterTypes";
+import { AGENT_PLANNING_BUDGET_CAP_USD } from "../src/lib/agentMission/constants";
+import { reviewBudgetUsdFor, reviewCeilingUsdFor } from "../src/lib/agentMission/price";
+import { executionSpecFor, readJudged } from "../agent/src/researchSpec";
 
 // Verbatim customer prompt from live mission msn_f91f7e220bbf60fd7c9c & msn_c41586cf9d40986250d0
 const DEFAULT_CUSTOMER_PROMPT =
@@ -101,6 +104,9 @@ export interface ReplayRows {
 
 export interface RunIterationResult {
   runIndex: number;
+  turn1Kind: string;
+  examinedCount: number;
+  acceptedCount: number;
   questionCount: number;
   options: string[];
   cardCount: number;
@@ -118,6 +124,29 @@ export interface RunIterationResult {
   failureReason?: string;
   questionText?: string;
   notes?: string;
+}
+
+export function formatErrorWithStack(err: unknown): string {
+  if (!err) return "Unknown error (falsy value)";
+  if (err instanceof Error) {
+    const stackLines = err.stack
+      ? err.stack
+          .split("\n")
+          .slice(0, 5)
+          .map((l) => l.trim())
+          .join("\n    ")
+      : "";
+    return `${err.message || err.name}${stackLines ? `\n    ${stackLines}` : ""}`;
+  }
+  if (typeof err === "object") {
+    try {
+      const json = JSON.stringify(err);
+      return json !== "{}" ? json : Object.prototype.toString.call(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
 }
 
 function parseCliArgs(): RunnerConfig {
@@ -293,18 +322,22 @@ async function runSingleIteration(
   spentSoFar: number,
 ): Promise<RunIterationResult> {
   let iterationProviderCostUsd = 0;
+  let turn1Kind = "unknown";
+  let examinedCount = 0;
+  let acceptedCount = 0;
+
   try {
     const store = createMemoryStore();
     const catalog = loadTregCatalog();
     const missionId = `${config.missionId}_run${runIndex + 1}_${Date.now()}`;
 
-    // Valid access object for sensitive access checks and data policy
-    const access = { isAdmin: false, tier: "starter", limits: {} } as any;
+    // Standard test account access NOT_ADMIN (isAdmin: false, verifiedBusiness: false)
+    const access = { isAdmin: false, verifiedBusiness: false } as const;
 
     let gateway: { tregCall: (input: any) => Promise<GatewayCallResult> };
 
     if (config.providers === "live") {
-      // --- MODE A: LIVE CATALOG GATEWAY ---
+      // --- MODE A: LIVE CATALOG GATEWAY (Mirroring runMission.ts:721) ---
       const inMemoryRecorder: CallRecorder = {
         reserve: async () => ({ allowed: true, costId: 1 }),
         commit: async () => {},
@@ -312,6 +345,7 @@ async function runSingleIteration(
 
       const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
       const liveGateway = createGateway({
+        maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, // 12 (agent/src/llmPlanner/run.ts:60)
         store,
         client: null,
         missionId,
@@ -320,13 +354,14 @@ async function runSingleIteration(
         phase: "planning",
         access,
         catalog,
-        budget: createJobCallBudget({ ceilingUsd: config.maxUsd, spentUsd: spentSoFar }),
+        budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: 0 }), // 0.20 USD planning cap
         recorder: inMemoryRecorder,
         token: providerToken,
         defaultPurpose: config.prompt,
         counter: { seq: 0 },
         commit: async () => true, // ZERO database / ledger / wallet writes
         call: async (options: TregCallOptions): Promise<TregCallResult> => {
+          // Outer guard: stop if cumulative spend passes config.maxUsd
           if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
             throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
           }
@@ -402,6 +437,20 @@ async function runSingleIteration(
       answer_text: null,
     };
 
+    const planningLogHandler = (line: string) => {
+      if (config.verbose) console.log(`[runLlmPlanning-T1] ${line}`);
+      const scanMatch = line.match(/llm_planner_timeline_scan\s+\S+\s+stopped.*?examined=(\d+)\s+accepted=(\d+)/);
+      if (scanMatch) {
+        examinedCount = parseInt(scanMatch[1], 10);
+        acceptedCount = parseInt(scanMatch[2], 10);
+      }
+      const scoutMatch = line.match(/llm_planner_scout\s+\S+\s+timeline_shortfall\s+found=(\d+)\s+examined=(\d+)/);
+      if (scoutMatch) {
+        acceptedCount = parseInt(scoutMatch[1], 10);
+        examinedCount = parseInt(scoutMatch[2], 10);
+      }
+    };
+
     const r1 = await runLlmPlanning({
       mission: missionTurn1 as never,
       store,
@@ -411,15 +460,82 @@ async function runSingleIteration(
       model: plannerModel,
       words: { current: [config.prompt], earlier: [] } as never,
       now: Date.now(),
-      log: config.verbose ? (line: string) => console.log(`[runLlmPlanning-T1] ${line}`) : undefined,
+      log: planningLogHandler,
     });
+
+    turn1Kind = r1.kind;
+
+    // Fallbacks if scan metrics not found in logs
+    if (r1.kind === "question" && r1.scoutSnapshot?.[0]) {
+      if (examinedCount === 0 && typeof r1.scoutSnapshot[0].examinedCount === "number") {
+        examinedCount = r1.scoutSnapshot[0].examinedCount;
+      }
+      if (acceptedCount === 0 && typeof r1.scoutSnapshot[0].found === "number") {
+        acceptedCount = r1.scoutSnapshot[0].found;
+      }
+    }
+    if (examinedCount === 0) {
+      examinedCount = fixture.probeRows.length;
+    }
+
+    // Execution review & ingest helper mirroring runMission.ts:1279
+    const executePlanReviewAndIngest = async (plan: any, answerText: string | null) => {
+      const items = await ItemStore.open(store, missionId, {
+        legacyStages: plan.stages.map((s: any) => s.key),
+      });
+
+      const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
+      const reviewCeilingUsd = reviewCeilingUsdFor(plan.price.reservePoints);
+
+      // Load research spec and planning verdicts (P0: ONE VERDICT PER ROW PER SPEC)
+      const researchSpec = await executionSpecFor(
+        store,
+        { id: missionId, request_text: config.prompt, answer_text: answerText },
+        null
+      ).catch(() => null);
+
+      const known = researchSpec
+        ? await readJudged(store, missionId, researchSpec.sig).catch(() => new Map<string, boolean>())
+        : undefined;
+
+      const reviewer = createReviewer({
+        call: reviewCall,
+        store,
+        missionId,
+        requestText: answerText ? `${config.prompt} — ${answerText}` : config.prompt,
+        ...(researchSpec ? { spec: researchSpec, answer: answerText, known } : {}),
+        budgetUsd: reviewBudgetUsd,
+        ceilingUsd: reviewCeilingUsd,
+        log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
+      });
+
+      for (const stage of plan.stages) {
+        await ingestRows(
+          { items, plan, reviewer, addEvent: async () => {} },
+          stage,
+          fixture.executionRows,
+          { idField: "id" }
+        );
+      }
+
+      const deliverStage = plan.stages.find((s: any) => s.deliver) ?? plan.stages[0];
+      const stageCounts = items.counts(deliverStage.key);
+      const deliveredCount = stageCounts.accepted;
+      const deliveredRows = items.acceptedRows(deliverStage.key);
+      const deliveredIds = deliveredRows.map((r) => String(r.id));
+
+      return { items, deliveredCount, deliveredIds };
+    };
 
     // PATH 1: Legitimate direct plan (found >= needed -> no shortfall question)
     if (r1.kind === "plan") {
-      const primaryStage = r1.plan.stages[0];
-      if (!primaryStage) {
+      const deliverStage = r1.plan.stages.find((s) => s.deliver) ?? r1.plan.stages[0];
+      if (!deliverStage) {
         return {
           runIndex,
+          turn1Kind,
+          examinedCount,
+          acceptedCount,
           questionCount: 0,
           options: [],
           cardCount: 0,
@@ -439,7 +555,7 @@ async function runSingleIteration(
         };
       }
 
-      const cardCount = primaryStage.planned_rows ?? primaryStage.expected_rows;
+      const cardCount = deliverStage.planned_rows ?? deliverStage.expected_rows;
       const maxPoints = r1.plan.price.maxChargePoints;
       const holdAmount = r1.plan.price.reservePoints;
 
@@ -448,41 +564,27 @@ async function runSingleIteration(
         console.log(`\n--- Starting Execution: ItemStore & Reviewer ---`);
       }
 
-      const items = await ItemStore.open(store, missionId, {
-        legacyStages: r1.plan.stages.map((s) => s.key),
-      });
+      const { deliveredCount, deliveredIds } = await executePlanReviewAndIngest(r1.plan, null);
 
-      const reviewBudgetUsd = r1.plan.price.reviewBudgetUsd ?? 0.05;
-      const reviewer = createReviewer({
-        call: reviewCall,
-        store,
-        missionId,
-        requestText: config.prompt,
-        budgetUsd: reviewBudgetUsd,
-        ceilingUsd: reviewBudgetUsd * 2,
-        log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
-      });
-
-      await ingestRows(
-        { items, plan: r1.plan, reviewer, addEvent: async () => {} },
-        primaryStage,
-        fixture.executionRows,
-      );
-
-      const stageCounts = items.counts(primaryStage.key);
-      const deliveredCount = stageCounts.accepted;
-      const deliveredRows = items.acceptedRows(primaryStage.key);
-      const deliveredIds = deliveredRows.map((r) => String(r.id));
+      if (acceptedCount === 0) acceptedCount = deliveredCount;
 
       // Direct plan parity checks: delivered == card count and max == hold. Question/option criteria are N/A.
       const crit1Pass = cardCount === deliveredCount;
       const crit2Pass = maxPoints === holdAmount;
-      const crit3Pass = "N/A";
-      const crit4Pass = "N/A";
+      const crit3Pass = "N/A" as const;
+      const crit4Pass = "N/A" as const;
       const passed = crit1Pass && crit2Pass;
+
+      const failures: string[] = [];
+      if (!crit1Pass) failures.push(`crit1(cardCount=${cardCount} vs deliveredCount=${deliveredCount})`);
+      if (!crit2Pass) failures.push(`crit2(maxPoints=${maxPoints} vs holdAmount=${holdAmount})`);
+      const failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
 
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount: cardCount,
         options: [],
         cardCount,
@@ -497,14 +599,19 @@ async function runSingleIteration(
         crit3Pass,
         crit4Pass,
         passed,
+        failureReason,
         notes: "no question (found enough)",
       };
     }
 
     // PATH 2: Turn 1 returned neither question nor plan
     if (r1.kind !== "question") {
+      const errDetail = (r1 as any).reason_ar ?? (r1 as any).detail ?? "none";
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount: 0,
         options: [],
         cardCount: 0,
@@ -519,13 +626,14 @@ async function runSingleIteration(
         crit3Pass: false,
         crit4Pass: false,
         passed: false,
-        failureReason: `Turn 1 expected scout question or plan, got kind="${r1.kind}" (reason: ${(r1 as any).reason_ar ?? (r1 as any).detail ?? "none"})`,
+        failureReason: `Turn 1 expected scout question or plan, got kind="${r1.kind}" (reason: ${errDetail})`,
         questionText: (r1 as any).question_ar ?? (r1 as any).message ?? "",
       };
     }
 
     // PATH 3: Turn 1 returned question (shortfall)
     const questionCount = typeof r1.scoutSnapshot?.[0]?.found === "number" ? r1.scoutSnapshot[0].found : 0;
+    if (acceptedCount === 0) acceptedCount = questionCount;
     const options = r1.options_ar ?? [];
 
     if (config.verbose) {
@@ -540,9 +648,17 @@ async function runSingleIteration(
       const hasTakeFound = options.some((opt) => opt.includes("الموجود") || opt.includes("سلّمني"));
       const crit3Pass = options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt));
       const crit4Pass = !hasTakeFound;
+      const passed = crit3Pass && crit4Pass;
+      const failures: string[] = [];
+      if (!crit3Pass) failures.push("crit3(options code-stamped numbers)");
+      if (!crit4Pass) failures.push("crit4(take_found present when found=0)");
+      const failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
 
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount: 0,
         options,
         cardCount: 0,
@@ -556,7 +672,8 @@ async function runSingleIteration(
         crit2Pass: "N/A",
         crit3Pass,
         crit4Pass,
-        passed: crit3Pass && crit4Pass,
+        passed,
+        failureReason,
         questionText: r1.question_ar,
         notes: "found=0, take_found absent: PASS for A1",
       };
@@ -568,6 +685,9 @@ async function runSingleIteration(
     if (!takeFoundOption) {
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount,
         options: [],
         cardCount: 0,
@@ -615,6 +735,9 @@ async function runSingleIteration(
     if (r2.kind !== "plan") {
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount,
         options,
         cardCount: 0,
@@ -634,10 +757,13 @@ async function runSingleIteration(
       };
     }
 
-    const primaryStage = r2.plan.stages[0];
-    if (!primaryStage) {
+    const deliverStage = r2.plan.stages.find((s) => s.deliver) ?? r2.plan.stages[0];
+    if (!deliverStage) {
       return {
         runIndex,
+        turn1Kind,
+        examinedCount,
+        acceptedCount,
         questionCount,
         options,
         cardCount: 0,
@@ -657,44 +783,16 @@ async function runSingleIteration(
       };
     }
 
-    const cardCount = primaryStage.planned_rows ?? primaryStage.expected_rows;
+    const cardCount = deliverStage.planned_rows ?? deliverStage.expected_rows;
     const maxPoints = r2.plan.price.maxChargePoints;
     const holdAmount = r2.plan.price.reservePoints;
 
     if (config.verbose) {
       console.log(`[Turn 2 Output] cardCount: ${cardCount}, maxChargePoints: ${maxPoints}, reservePoints: ${holdAmount}`);
-    }
-
-    // --- Execution: createReviewer & ingestRows (in-memory only, no wallet charge) ---
-    if (config.verbose) {
       console.log(`\n--- Starting Execution: ItemStore & Reviewer ---`);
     }
 
-    const items = await ItemStore.open(store, missionId, {
-      legacyStages: r2.plan.stages.map((s) => s.key),
-    });
-
-    const reviewBudgetUsd = r2.plan.price.reviewBudgetUsd ?? 0.05;
-    const reviewer = createReviewer({
-      call: reviewCall,
-      store,
-      missionId,
-      requestText: `${config.prompt} — ${takeFoundOption}`,
-      budgetUsd: reviewBudgetUsd,
-      ceilingUsd: reviewBudgetUsd * 2,
-      log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
-    });
-
-    await ingestRows(
-      { items, plan: r2.plan, reviewer, addEvent: async () => {} },
-      primaryStage,
-      fixture.executionRows,
-    );
-
-    const stageCounts = items.counts(primaryStage.key);
-    const deliveredCount = stageCounts.accepted;
-    const deliveredRows = items.acceptedRows(primaryStage.key);
-    const deliveredIds = deliveredRows.map((r) => String(r.id));
+    const { deliveredCount, deliveredIds } = await executePlanReviewAndIngest(r2.plan, takeFoundOption);
 
     // Evaluate D-0202 Criteria for this run
     const crit1Pass = questionCount === cardCount && cardCount === deliveredCount;
@@ -703,8 +801,18 @@ async function runSingleIteration(
     const crit4Pass = questionCount === 0 ? !options.some((opt) => opt.includes("الموجود") || opt.includes("سلّمني")) : true;
     const passed = crit1Pass && crit2Pass && crit3Pass && crit4Pass;
 
+    const failures: string[] = [];
+    if (!crit1Pass) failures.push(`crit1(qCount=${questionCount} cardCount=${cardCount} deliveredCount=${deliveredCount})`);
+    if (!crit2Pass) failures.push(`crit2(maxPoints=${maxPoints} holdAmount=${holdAmount} optionPrice=${optionPrice})`);
+    if (!crit3Pass) failures.push(`crit3(options code-stamped numbers)`);
+    if (!crit4Pass) failures.push(`crit4(take_found on found=0)`);
+    const failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
+
     return {
       runIndex,
+      turn1Kind,
+      examinedCount,
+      acceptedCount,
       questionCount,
       options,
       cardCount,
@@ -719,12 +827,15 @@ async function runSingleIteration(
       crit3Pass,
       crit4Pass,
       passed,
+      failureReason,
       questionText: r1.question_ar,
     };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
     return {
       runIndex,
+      turn1Kind,
+      examinedCount,
+      acceptedCount,
       questionCount: 0,
       options: [],
       cardCount: 0,
@@ -739,7 +850,7 @@ async function runSingleIteration(
       crit3Pass: false,
       crit4Pass: false,
       passed: false,
-      failureReason: `Exception: ${msg}`,
+      failureReason: `Exception: ${formatErrorWithStack(err)}`,
       questionText: "",
     };
   }
@@ -792,6 +903,9 @@ async function main(): Promise<void> {
       console.warn(`[Cap Stopped] Total provider spend $${totalProviderCost.toFixed(6)} reached max cap $${config.maxUsd.toFixed(4)}. Halting further runs.`);
       const capRes: RunIterationResult = {
         runIndex: i,
+        turn1Kind: "cap_stopped",
+        examinedCount: 0,
+        acceptedCount: 0,
         questionCount: 0,
         options: [],
         cardCount: 0,
@@ -818,49 +932,51 @@ async function main(): Promise<void> {
       results.push(res);
       totalProviderCost += res.providerCostUsd;
 
-      // Single concise summary line per run
+      // Summary line per run
       if (!res.passed) {
         console.log(
-          `Run ${i + 1}: FAIL | reason: ${res.failureReason} | question: "${res.questionText || "(none)"}" | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: FAIL | kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | reason: ${res.failureReason} | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       } else if (res.notes) {
-        const optionsSummary = res.options.length > 0 ? `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]` : "(none)";
         console.log(
-          `Run ${i + 1}: ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       } else {
         const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
         console.log(
-          `Run ${i + 1}: question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       }
 
       // Detailed output block
       console.log(`\n--- Run ${i + 1}/${config.runs} Detailed Breakdown ---`);
+      console.log(`Status: ${res.passed ? "PASSED" : "FAILED"}${res.notes ? ` (${res.notes})` : ""}`);
+      console.log(`Turn 1 Kind: ${res.turn1Kind}`);
+      console.log(`Scan Metrics: examined=${res.examinedCount}, accepted=${res.acceptedCount}`);
       if (!res.passed) {
-        console.log(`Status: FAILED`);
         console.log(`Failure Reason: ${res.failureReason}`);
         if (res.questionText) console.log(`Question Text: ${res.questionText}`);
-      } else {
-        console.log(`Status: PASSED ${res.notes ? `(${res.notes})` : ""}`);
-        console.log(`1. Question count: ${res.options.length > 0 ? res.questionCount : "N/A (direct plan)"}`);
-        console.log("2. Option strings:");
-        if (res.options.length > 0) {
-          res.options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
-        } else {
-          console.log("   (none - direct plan)");
-        }
-        console.log(`3. Card count: ${res.cardCount}`);
-        console.log(`4. Max points / hold amount: ${res.maxPoints} pts / ${res.holdAmount} pts`);
-        console.log(`5. Delivered count: ${res.deliveredCount}`);
-        console.log(`6. Delivered row IDs: ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
       }
+      console.log(`1. Question count: ${res.options.length > 0 ? res.questionCount : "N/A (direct plan)"}`);
+      console.log("2. Option strings:");
+      if (res.options.length > 0) {
+        res.options.forEach((opt, idx) => console.log(`   [${idx + 1}] ${opt}`));
+      } else {
+        console.log("   (none - direct plan)");
+      }
+      console.log(`3. Card count: ${res.cardCount}`);
+      console.log(`4. Max points / hold amount: ${res.maxPoints} pts / ${res.holdAmount} pts`);
+      console.log(`5. Delivered count: ${res.deliveredCount}`);
+      console.log(`6. Delivered row IDs: ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
       console.log(`7. Provider cost: $${res.providerCostUsd.toFixed(6)}`);
       console.log(`----------------------------------------------------\n`);
     } catch (unexpectedErr: unknown) {
-      const msg = unexpectedErr instanceof Error ? unexpectedErr.message : String(unexpectedErr);
+      const formatted = formatErrorWithStack(unexpectedErr);
       const failRes: RunIterationResult = {
         runIndex: i,
+        turn1Kind: "error",
+        examinedCount: 0,
+        acceptedCount: 0,
         questionCount: 0,
         options: [],
         cardCount: 0,
@@ -875,11 +991,11 @@ async function main(): Promise<void> {
         crit3Pass: false,
         crit4Pass: false,
         passed: false,
-        failureReason: `Unexpected error in run: ${msg}`,
+        failureReason: `Unexpected error in run: ${formatted}`,
         questionText: "",
       };
       results.push(failRes);
-      console.log(`Run ${i + 1}: FAIL | unexpected error: ${msg}`);
+      console.log(`Run ${i + 1}: FAIL | unexpected error: ${formatted}`);
     }
   }
 
@@ -911,7 +1027,7 @@ async function main(): Promise<void> {
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("full-flow-replay-runner.ts")) {
   main().catch((err) => {
-    console.error("\n[FATAL ERROR in full-flow-replay-runner]:", err instanceof Error ? err.stack ?? err.message : err);
+    console.error("\n[FATAL ERROR in full-flow-replay-runner]:", formatErrorWithStack(err));
     process.exit(2);
   });
 }
