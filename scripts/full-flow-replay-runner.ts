@@ -6,13 +6,11 @@
  *   - Turn 1: runLlmPlanning evaluates account probe and asks shortfall question
  *             (or generates plan directly if found >= needed)
  *   - Turn 2: option click (take_found text passed as mission.answer_text) generates plan card
- *   - Execution: createReviewer (real LLM review) and ingestRows execute review and ingestion
- *
- * Two Provider Modes:
- *   (a) --providers=live (default/main): uses real catalog gateway with provider keys from env.
- *       Tracks provider cost via TregCallResult.costMicro and stops if cost passes --max-usd (default 0.50).
- *   (b) --providers=recorded: feeds judged_rows from /srv/diger-team/qa/work/e2e-fixtures/
- *       for a fast, free smoke check.
+ *   - Execution:
+ *       --providers=live: runs plan deliver stage through production runEngine execution path
+ *                         (gateway phase "execution", stage endpoint/params, sandbox mapping,
+ *                         paging, review ceiling, in-memory ItemStore)
+ *       --providers=recorded: ingests fixture.executionRows for free smoke check
  *
  * Multi-Run & Summary:
  *   --runs N: executes N iterations, prints a one-line summary per run + detailed output:
@@ -21,7 +19,7 @@
  *     3. Card count
  *     4. Max points / hold amount
  *     5. Delivered count
- *     6. Delivered row IDs
+ *     6. Planning accepted row IDs & Delivered row IDs
  *     7. Provider cost
  *   Followed by a summary PASS/FAIL per criterion:
  *     Criterion 1: question count == card count == delivered count (or card == delivered on direct plan)
@@ -44,13 +42,16 @@ import { anthropicPlannerModel } from "../agent/src/llmPlanner/model";
 import { anthropicReviewCall, createReviewer } from "../agent/src/review";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { ingestRows } from "../agent/src/items/ingest";
+import { runEngine } from "../agent/src/engine/run";
+import { runInSandbox } from "../agent/src/sandbox";
+import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/gateway";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { executeTregCall, type TregCallOptions, type TregCallResult } from "../src/functions/shared/tregClient";
 import type { CallRecorder } from "../src/lib/server/multiProvider/adapterTypes";
 import { AGENT_PLANNING_BUDGET_CAP_USD } from "../src/lib/agentMission/constants";
-import { reviewBudgetUsdFor, reviewCeilingUsdFor } from "../src/lib/agentMission/price";
+import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../src/lib/agentMission/price";
 import { executionSpecFor, readJudged } from "../agent/src/researchSpec";
 
 // Verbatim customer prompt from live mission msn_f91f7e220bbf60fd7c9c & msn_c41586cf9d40986250d0
@@ -113,6 +114,7 @@ export interface RunIterationResult {
   maxPoints: number;
   holdAmount: number;
   deliveredCount: number;
+  planningAcceptedIds: string[];
   deliveredIds: string[];
   providerCostUsd: number;
   optionPrice: number | null;
@@ -325,6 +327,26 @@ async function runSingleIteration(
   let turn1Kind = "unknown";
   let examinedCount = 0;
   let acceptedCount = 0;
+  const planningAcceptedIds: string[] = [];
+
+  // Live provider call wrapper with outer --max-usd spend cap guard (shared by planning and execution)
+  const liveCallWrapper = async (options: TregCallOptions): Promise<TregCallResult> => {
+    if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
+      throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
+    }
+    const res = await executeTregCall(options);
+    // TregCallResult carries costMicro (micro-USD); convert to USD
+    const cost = typeof res.costMicro === "number" ? res.costMicro / 1e6 : (typeof (res as any).costUsd === "number" ? (res as any).costUsd : 0);
+    iterationProviderCostUsd += cost;
+    const rowsReturned = extractRowCountFromTregData(res.data);
+    if (config.verbose) {
+      console.log(`[live-treg] ${options.endpointId} httpStatus=${res.httpStatus} rows=${rowsReturned} cost=$${cost.toFixed(6)} (spent: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)})`);
+    }
+    if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
+      throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
+    }
+    return res;
+  };
 
   try {
     const store = createMemoryStore();
@@ -360,24 +382,7 @@ async function runSingleIteration(
         defaultPurpose: config.prompt,
         counter: { seq: 0 },
         commit: async () => true, // ZERO database / ledger / wallet writes
-        call: async (options: TregCallOptions): Promise<TregCallResult> => {
-          // Outer guard: stop if cumulative spend passes config.maxUsd
-          if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
-            throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
-          }
-          const res = await executeTregCall(options);
-          // TregCallResult carries costMicro (micro-USD); convert to USD
-          const cost = typeof res.costMicro === "number" ? res.costMicro / 1e6 : (typeof (res as any).costUsd === "number" ? (res as any).costUsd : 0);
-          iterationProviderCostUsd += cost;
-          const rowsReturned = extractRowCountFromTregData(res.data);
-          if (config.verbose) {
-            console.log(`[live-treg] ${options.endpointId} httpStatus=${res.httpStatus} rows=${rowsReturned} cost=$${cost.toFixed(6)} (spent: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)})`);
-          }
-          if (spentSoFar + iterationProviderCostUsd >= config.maxUsd) {
-            throw new Error(`Provider spend cap reached: $${(spentSoFar + iterationProviderCostUsd).toFixed(6)} >= $${config.maxUsd.toFixed(4)}`);
-          }
-          return res;
-        },
+        call: liveCallWrapper,
       });
       gateway = liveGateway;
     } else {
@@ -473,6 +478,10 @@ async function runSingleIteration(
       if (acceptedCount === 0 && typeof r1.scoutSnapshot[0].found === "number") {
         acceptedCount = r1.scoutSnapshot[0].found;
       }
+      const snapIds = r1.scoutSnapshot[0].acceptedIds;
+      if (Array.isArray(snapIds) && snapIds.length > 0) {
+        planningAcceptedIds.push(...snapIds.map((id) => String(id)));
+      }
     }
     if (examinedCount === 0) {
       examinedCount = fixture.probeRows.length;
@@ -509,13 +518,62 @@ async function runSingleIteration(
         log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
       });
 
-      for (const stage of plan.stages) {
-        await ingestRows(
-          { items, plan, reviewer, addEvent: async () => {} },
-          stage,
-          fixture.executionRows,
-          { idField: "id" }
-        );
+      if (config.providers === "live" && plan.stages.every((s: any) => s.engine !== undefined)) {
+        // --- LIVE MODE: run deliver stage through production runEngine execution path ---
+        const inMemoryRecorder: CallRecorder = {
+          reserve: async () => ({ allowed: true, costId: 1 }),
+          commit: async () => {},
+        };
+        const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+        const executionBudget = createJobCallBudget({
+          ceilingUsd: executionBudgetUsd(plan.price.reservePoints),
+          spentUsd: 0,
+        });
+
+        const executionGateway = createGateway({
+          store,
+          client: null,
+          missionId,
+          userId: "usr_e2e_runner",
+          jobId: null,
+          phase: "execution",
+          access,
+          catalog,
+          budget: executionBudget,
+          recorder: inMemoryRecorder,
+          token: providerToken,
+          defaultPurpose: config.prompt,
+          counter: { seq: 0 },
+          commit: async () => true, // ZERO database / ledger / wallet writes
+          call: liveCallWrapper,
+        });
+
+        if (config.verbose) {
+          console.log(`[execution] starting runEngine for mission ${missionId}...`);
+        }
+
+        await runEngine({
+          items,
+          store,
+          plan: withPromiseCaps(plan),
+          missionId,
+          gateway: executionGateway,
+          sandbox: (code, inputs) => runInSandbox(code, inputs),
+          reviewer,
+          addEvent: async () => {},
+          deadlineMs: Date.now() + 120_000,
+          log: config.verbose ? (line: string) => console.log(`[engine] ${line}`) : undefined,
+        });
+      } else {
+        // --- RECORDED MODE: ingest fixture.executionRows into in-memory ItemStore ---
+        for (const stage of plan.stages) {
+          await ingestRows(
+            { items, plan, reviewer, addEvent: async () => {} },
+            stage,
+            fixture.executionRows,
+            { idField: "id" }
+          );
+        }
       }
 
       const deliverStage = plan.stages.find((s: any) => s.deliver) ?? plan.stages[0];
@@ -542,6 +600,7 @@ async function runSingleIteration(
           maxPoints: 0,
           holdAmount: 0,
           deliveredCount: 0,
+          planningAcceptedIds: [],
           deliveredIds: [],
           providerCostUsd: iterationProviderCostUsd,
           optionPrice: null,
@@ -559,6 +618,14 @@ async function runSingleIteration(
       const maxPoints = r1.plan.price.maxChargePoints;
       const holdAmount = r1.plan.price.reservePoints;
 
+      // Extract planning accepted IDs from direct plan relevance or sample rows
+      const directRelIds = (deliverStage.relevance as any)?.accepted_ids;
+      if (Array.isArray(directRelIds) && directRelIds.length > 0) {
+        planningAcceptedIds.push(...directRelIds.map((id) => String(id)));
+      } else if (Array.isArray(deliverStage.sample_rows) && deliverStage.sample_rows.length > 0) {
+        planningAcceptedIds.push(...deliverStage.sample_rows.map((r: any) => String(r.id ?? "")).filter(Boolean));
+      }
+
       if (config.verbose) {
         console.log(`[Turn 1 Direct Plan] cardCount: ${cardCount}, maxChargePoints: ${maxPoints}, reservePoints: ${holdAmount}`);
         console.log(`\n--- Starting Execution: ItemStore & Reviewer ---`);
@@ -567,6 +634,11 @@ async function runSingleIteration(
       const { deliveredCount, deliveredIds } = await executePlanReviewAndIngest(r1.plan, null);
 
       if (acceptedCount === 0) acceptedCount = deliveredCount;
+
+      // In recorded mode fallback, populate planningAcceptedIds if empty
+      if (planningAcceptedIds.length === 0 && deliveredIds.length > 0) {
+        planningAcceptedIds.push(...deliveredIds);
+      }
 
       // Direct plan parity checks: delivered == card count and max == hold. Question/option criteria are N/A.
       const crit1Pass = cardCount === deliveredCount;
@@ -591,6 +663,7 @@ async function runSingleIteration(
         maxPoints,
         holdAmount,
         deliveredCount,
+        planningAcceptedIds,
         deliveredIds,
         providerCostUsd: iterationProviderCostUsd,
         optionPrice: null,
@@ -618,6 +691,7 @@ async function runSingleIteration(
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds: [],
         deliveredIds: [],
         providerCostUsd: iterationProviderCostUsd,
         optionPrice: null,
@@ -665,6 +739,7 @@ async function runSingleIteration(
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds,
         deliveredIds: [],
         providerCostUsd: iterationProviderCostUsd,
         optionPrice: null,
@@ -694,6 +769,7 @@ async function runSingleIteration(
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds,
         deliveredIds: [],
         providerCostUsd: iterationProviderCostUsd,
         optionPrice: null,
@@ -744,6 +820,7 @@ async function runSingleIteration(
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds,
         deliveredIds: [],
         providerCostUsd: iterationProviderCostUsd,
         optionPrice,
@@ -770,6 +847,7 @@ async function runSingleIteration(
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds,
         deliveredIds: [],
         providerCostUsd: iterationProviderCostUsd,
         optionPrice,
@@ -783,6 +861,16 @@ async function runSingleIteration(
       };
     }
 
+    // Extract planning accepted IDs if not yet captured
+    if (planningAcceptedIds.length === 0) {
+      const relIds = (deliverStage.relevance as any)?.accepted_ids;
+      if (Array.isArray(relIds) && relIds.length > 0) {
+        planningAcceptedIds.push(...relIds.map((id) => String(id)));
+      } else if (Array.isArray(deliverStage.sample_rows) && deliverStage.sample_rows.length > 0) {
+        planningAcceptedIds.push(...deliverStage.sample_rows.map((r: any) => String(r.id ?? "")).filter(Boolean));
+      }
+    }
+
     const cardCount = deliverStage.planned_rows ?? deliverStage.expected_rows;
     const maxPoints = r2.plan.price.maxChargePoints;
     const holdAmount = r2.plan.price.reservePoints;
@@ -793,6 +881,11 @@ async function runSingleIteration(
     }
 
     const { deliveredCount, deliveredIds } = await executePlanReviewAndIngest(r2.plan, takeFoundOption);
+
+    // In recorded mode fallback, populate planningAcceptedIds if empty
+    if (planningAcceptedIds.length === 0 && deliveredIds.length > 0) {
+      planningAcceptedIds.push(...deliveredIds);
+    }
 
     // Evaluate D-0202 Criteria for this run
     const crit1Pass = questionCount === cardCount && cardCount === deliveredCount;
@@ -819,6 +912,7 @@ async function runSingleIteration(
       maxPoints,
       holdAmount,
       deliveredCount,
+      planningAcceptedIds,
       deliveredIds,
       providerCostUsd: iterationProviderCostUsd,
       optionPrice,
@@ -842,6 +936,7 @@ async function runSingleIteration(
       maxPoints: 0,
       holdAmount: 0,
       deliveredCount: 0,
+      planningAcceptedIds: [],
       deliveredIds: [],
       providerCostUsd: iterationProviderCostUsd,
       optionPrice: null,
@@ -912,6 +1007,7 @@ async function main(): Promise<void> {
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds: [],
         deliveredIds: [],
         providerCostUsd: 0,
         optionPrice: null,
@@ -932,19 +1028,22 @@ async function main(): Promise<void> {
       results.push(res);
       totalProviderCost += res.providerCostUsd;
 
+      const acceptedIdsStr = res.planningAcceptedIds.length > 0 ? `[${res.planningAcceptedIds.join(", ")}]` : "[]";
+      const deliveredIdsStr = res.deliveredIds.length > 0 ? `[${res.deliveredIds.join(", ")}]` : "[]";
+
       // Summary line per run
       if (!res.passed) {
         console.log(
-          `Run ${i + 1}: FAIL | kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | reason: ${res.failureReason} | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: FAIL | kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | reason: ${res.failureReason} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       } else if (res.notes) {
         console.log(
-          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       } else {
         const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
         console.log(
-          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | rows=[${res.deliveredIds.join(", ")}] | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
         );
       }
 
@@ -967,8 +1066,9 @@ async function main(): Promise<void> {
       console.log(`3. Card count: ${res.cardCount}`);
       console.log(`4. Max points / hold amount: ${res.maxPoints} pts / ${res.holdAmount} pts`);
       console.log(`5. Delivered count: ${res.deliveredCount}`);
-      console.log(`6. Delivered row IDs: ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
-      console.log(`7. Provider cost: $${res.providerCostUsd.toFixed(6)}`);
+      console.log(`6. Planning accepted IDs: ${res.planningAcceptedIds.length > 0 ? res.planningAcceptedIds.join(", ") : "(none)"}`);
+      console.log(`7. Delivered row IDs:     ${res.deliveredIds.length > 0 ? res.deliveredIds.join(", ") : "(none)"}`);
+      console.log(`8. Provider cost: $${res.providerCostUsd.toFixed(6)}`);
       console.log(`----------------------------------------------------\n`);
     } catch (unexpectedErr: unknown) {
       const formatted = formatErrorWithStack(unexpectedErr);
@@ -983,6 +1083,7 @@ async function main(): Promise<void> {
         maxPoints: 0,
         holdAmount: 0,
         deliveredCount: 0,
+        planningAcceptedIds: [],
         deliveredIds: [],
         providerCostUsd: 0,
         optionPrice: null,
