@@ -320,7 +320,7 @@ describe("LIVE ACCEPTANCE 4 (continuation msn_5abbc68352f31fa31d56): context, th
     await r.review({ subject: "محتوى يتحدث فعلًا عن: الشائعات الصحية وتصحيح الشائعات وجهود الوزارة", rows: [{ id: "1", text: "#الصحة_في_أسبوع: معالي وزير الصحة يتفقد مستشفيات مكة المكرمة" }] });
     // CHANGED (P0, research spec): the judge reads the customer's OWN words as authoritative (not the summary), and the organization's general news is named as not qualifying
     expect(sys[0]).toMatch(/When the criterion and the customer's own words disagree, the customer's words win/);
-    expect(sys[0]).toMatch(/the general activity or news of the organization or person that is not about the subject/);
+    expect(sys[0]).toMatch(/the general routine activity or announcements of the requested organization or account that do not address the requested subject/);
     expect(sys[0]).toMatch(/being about ANY ONE of them \(with its qualifier\) is enough/);
     expect(reviewPrompt({ requestText: FOLLOW.request_text, subject: "x", rows: [{ text: "t" }] })).toContain("في مكافحة المعلومات المضللة");
   });

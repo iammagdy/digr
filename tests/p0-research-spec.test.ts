@@ -334,9 +334,9 @@ describe("live msn_ab60f5eb5c1bedcaffc7: a reaction to a circulating clip is not
     const sys: string[] = [];
     const call = (async (i: { system: string }) => { sys.push(i.system); return { text: "[0]", usage: { input_tokens: 1, output_tokens: 1 } }; }) as unknown as ReviewCall;
     await createReviewer({ call, store: createMemoryStore(), missionId: "m5", requestText: "r", budgetUsd: 1 }).review({ subject: "s", rows: [{ id: "2111754500776030669", text: "رصدت وزارة الصحة مقطعًا متداولًا يُظهر إعداد الطعام باستخدام جهاز طهي كهربائي داخل غرفة مريض بمنشأة صحية خاصة بالرياض؛ واتخذت الإجراءات النظامية بحق المنشأة" }] });
-    expect(sys[0]).toContain("The row's OWN words must address the subject");
-    expect(sys[0]).toContain("even when it reacts to something circulating, viral or trending");
-    expect(sys[0]).toContain("the text must say that a claim is false, misleading, unconfirmed or a rumor");
+    expect(sys[0]).toContain("the row's full text");
+    expect(sys[0]).toContain("never accept a row just because it shares a word in another sense");
+    expect(sys[0]).toContain("responses to circulating content");
   });
 });
 
