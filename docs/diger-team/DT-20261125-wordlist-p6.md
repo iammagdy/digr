@@ -5,7 +5,7 @@
 - **Branch:** `team/DT-20261125-wordlist-p6-chat-turn`
 - **Base Commit:** `origin/main` `4df9ffa9` (PR #687 Phase 5B)
 - **Preceding PR Links:** [PR #686](https://github.com/iammagdy/digr/pull/686) (Phase 4) and [PR #687](https://github.com/iammagdy/digr/pull/687) (Phase 5B)
-- **Current PR Link:** *Pending Draft PR Creation*
+- **Current PR Link:** [PR #689](https://github.com/iammagdy/digr/pull/689) (Draft)
 
 ## 2. Scope & Implementation Points
 
