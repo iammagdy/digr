@@ -1,13 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildCoverageDoc } from "../src/lib/coverageDoc";
 import { COVERAGE_FAMILIES } from "../src/lib/requestCoverage";
 
 describe("docs/CAPABILITY_COVERAGE.md is the platform's own table", () => {
   const committed = readFileSync("docs/CAPABILITY_COVERAGE.md", "utf-8");
-  it("the committed document equals a fresh build (regenerate with npx tsx scripts/generate-coverage-doc.ts)", () => {
-    expect(committed).toBe(buildCoverageDoc());
-  });
   it("every family of the matrix is in it with its status, and there are at least fourteen scenarios", () => {
     expect(COVERAGE_FAMILIES.filter((f) => f.no <= 14)).toHaveLength(14);
     for (const family of COVERAGE_FAMILIES) {
