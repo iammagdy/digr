@@ -43,3 +43,17 @@
 ## ٤. التراجع (`Rollback`)
 
 - عكس طلب الدمج عبر `git revert <merge-sha>`؛ لا توجد أي تغييرات على قاعدة البيانات أو مفاتيح التشغيل.
+
+---
+
+## ٥. Fix (D-0215) — قراءة `output` للنقاط الموجّهة وحفظ معرّف استدعاء TREG
+
+- **السبب الجذري (من التشغيل الحيّ `real-shape.md`):** استجابة `treg.people.enrich` (`kind: "routed"`, `list_path: null`) تعود في مغلّف `{ output, raw, _treg }`؛ وكان `readShape` (`src/lib/treg/shapeReader.ts`) يلتقط قائمة `_treg.tried` في خطوة الاستدلال قبل الوصول إلى `output`، فتظهر المحاولة المدفوعة كأنها `no_data` رغم وجود الشخص داخل `output`. كما لم يكن حقل `output.location` النصي يُقرأ في `country` ولا كان معرّف استدعاء TREG (`x-treg-call-id`) يُسجّل في سجل التدقيق.
+- **التغييرات المنفّذة (`P1`–`P5`):**
+  1. **`src/lib/treg/shapeReader.ts`:** إضافة خيار اختياري `routedOutputOnly?: boolean` (مغلق افتراضيًا) لقراءة النتيجة من `body.output` فقط دون لمس `raw` أو `_treg`، مع بقاء `hintsOf(endpoint)` وكل مستدعي مسار العملاء دون تغيير.
+  2. **`src/lib/server/sensitiveAccess.ts`:** السماح بتمرير `jobId?: string | null` اختياريًا عند إتمام صف التدقيق `sensitive_lookup_audit` (دون أي تغيير لصفوف المستدعين الذين لا يعيدون `jobId`).
+  3. **`src/lib/server/adminLookup.ts`:** تفعيل `routedOutputOnly: true` تلقائيًا عند `endpoint.kind === "routed"` فقط (وفق بيانات الكتالوج)، وقراءة `output.location` في `extractIdentity`، وتمرير `${jobId}:${tregCallId}` إلى `sensitive_lookup_audit.job_id` دون أي ترحيل SQL، وإرفاق `tregCallId` الاختياري على `LookupAttempt`.
+  4. **`src/lib/server/adminLookupHistory.ts` و`src/app/admin/reverse-lookup/page.tsx`:** حفظ وعرض `tregCallId` الاختياري في صفوف المحاولات.
+  5. **الاختبارات (`T1`–`T6` + `K1`–`K3`):** تغطية بنية `real-shape.md` بقيم اصطناعية، ومنع التسرب من `raw`/`_treg`، وثبات حساب الإنفاق اليومي ومسار العملاء، وإضافة اختبار `K1` لعدم تأثر مستدعي البوابة.
+- **ملاحظة مسار العملاء (للتقرير فقط — خارج هذا الإصلاح وفق `D-0202`):** استدعاءات `readShape(..., hintsOf(endpoint))` في `src/lib/modelPlanner/digest.ts` و`src/lib/modelPlanner/reader.ts` و`agent/src/llmPlanner/planner.ts` و`agent/src/asyncTreg.ts` قد تتأثر بنفس التقاط `_treg.tried` على النقاط الموجّهة التي يكون `list_path` لها فارغًا، وبقيت دون أي تعديل في هذا الإصلاح.
+- **التراجع (`Rollback`):** عكس طلب الدمج عبر `git revert <merge-sha>`؛ لا توجد أي هجرات أو تعديلات على قاعدة البيانات.

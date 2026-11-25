@@ -59,6 +59,8 @@ export interface ShapeHints {
   rootObjectIsRow?: boolean;
   /** Offline replay or catalog fixture mode: placeholder strings like «<omitted: ...>» are not flagged as malformed live cursors. */
   isReplay?: boolean;
+  /** Opt-in (OFF by default): when `body` is a TREG routed envelope (`output` / `raw` / `_treg`), read rows ONLY from `body.output`; never fall back to `raw` or `_treg`. */
+  routedOutputOnly?: boolean;
 }
 
 export interface ShapeReading {
@@ -246,6 +248,55 @@ function evaluateReviewedPage(body: unknown, mp: MissionPageMetadata, rawList: u
   return { hasMore, explicitNoMore, parsedNext, malformedNext, isTerminalWrapper, isTerminalCursor };
 }
 
+const hasOwn = (o: Obj, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+const ROUTED_RECORD_KEYS = new Set([
+  "full_name", "first_name", "last_name", "name", "display_name", "person_name",
+  "title", "job_title", "headline", "company", "company_name", "company_domain",
+  "domain", "brand_name", "employer", "linkedin", "linkedin_url", "profile_url",
+  "work_email", "personal_email", "email", "phone", "phone_number", "location",
+]);
+
+function readRoutedOutput(body: unknown, hints: ShapeHints, warnings: string[], asRows: (v: unknown) => Obj[] | null): { rows: Obj[]; path: string | null; strategy: ListStrategy; warnings: string[] } {
+  if (!isObj(body)) return { rows: [], path: null, strategy: "none", warnings };
+  if (!hasOwn(body, "output") && !hasOwn(body, "raw") && !hasOwn(body, "_treg")) {
+    return readListDefault(body, hints, warnings, asRows);
+  }
+  const output = body.output;
+  if (output === null || output === undefined) return { rows: [], path: null, strategy: "none", warnings };
+  if (Array.isArray(output)) {
+    const rows = asRows(output);
+    return rows ? { rows, path: "output", strategy: "list_path", warnings } : { rows: [], path: null, strategy: "none", warnings };
+  }
+  if (!isObj(output) || Object.keys(output).length === 0) return { rows: [], path: null, strategy: "none", warnings };
+  const hint = hints.listPath;
+  if (typeof hint === "string" && (hint === "output" || hint.startsWith("output."))) {
+    const rows = asRows(getPath(body, hint));
+    if (rows) return { rows, path: hint, strategy: "list_path", warnings };
+  }
+  const looksLikeEntity = Object.keys(output).some((k) => ROUTED_RECORD_KEYS.has(k.toLowerCase()));
+  if (!looksLikeEntity) {
+    for (const key of LIST_KEYS) {
+      const rows = asRows(output[key]);
+      if (rows) return { rows, path: `output.${key}`, strategy: "common_keys", warnings };
+    }
+    for (const env of ["data", "result", "response"]) {
+      const inner = output[env];
+      if (!isObj(inner)) continue;
+      for (const key of LIST_KEYS) {
+        const rows = asRows(inner[key]);
+        if (rows) return { rows, path: `output.${env}.${key}`, strategy: "common_keys", warnings };
+      }
+    }
+    const candidates = findListPaths(output).filter((p) => !p.path.split(".").some((k) => ECHO_KEYS.has(k.toLowerCase())));
+    const chosen = chooseResultList(candidates);
+    if (chosen) {
+      const rows = asRows(getPath(output, chosen));
+      if (rows && rows.length > 0) return { rows, path: `output.${chosen}`, strategy: "inferred_list", warnings };
+    }
+  }
+  return { rows: [output], path: "output", strategy: "single_object", warnings };
+}
+
 function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string | null; strategy: ListStrategy; warnings: string[] } {
   const warnings: string[] = [];
   const asRows = (v: unknown): Obj[] | null => (isObjectList(v) ? v : Array.isArray(v) && v.length === 0 ? [] : null);
@@ -269,6 +320,13 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
     return { rows: [], path: mp.listPath, strategy: "declared_missing", warnings: [`declared list_path «${mp.listPath}» is absent or malformed`] };
   }
 
+  if (hints.routedOutputOnly) {
+    return readRoutedOutput(body, hints, warnings, asRows);
+  }
+  return readListDefault(body, hints, warnings, asRows);
+}
+
+function readListDefault(body: unknown, hints: ShapeHints, warnings: string[], asRows: (v: unknown) => Obj[] | null): { rows: Obj[]; path: string | null; strategy: ListStrategy; warnings: string[] } {
   // 1. the catalog's own list path
   const hint = hints.listPath;
   if (typeof hint === "string" && !NO_LIST_PATH.has(hint)) {

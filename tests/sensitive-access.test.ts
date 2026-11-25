@@ -192,3 +192,42 @@ describe("raw capture masking", () => {
     expect(uploads[1].body.body.rows[0]).toEqual({ text: "hello", likes: 5 });
   });
 });
+
+describe("D-0215 K1: runSensitiveCall additive jobId leaves callers without jobId byte-identical", () => {
+  it("callers returning { result, costUsd, ok } without jobId write the exact same audit row (requireAudit on and off)", async () => {
+    const db = createMemoryDb();
+    const out = await runSensitiveCall({
+      client: db,
+      account: { userId: "acct-1", access: admin },
+      endpointId: SENSITIVE_PHONE,
+      params: { phone: "+201001234567" },
+      purpose: "التواصل مع عميل محتمل",
+      jobId: "job_gateway_1",
+      requireAudit: true,
+      call: async () => ({ result: "ok", costUsd: 0.02, ok: true }),
+    });
+    expect(out.ok).toBe(true);
+    expect(db.rows("sensitive_lookup_audit")).toHaveLength(1);
+    expect(db.rows("sensitive_lookup_audit")[0]).toMatchObject({
+      job_id: "job_gateway_1",
+      cost_usd: 0.02,
+      outcome: "called",
+    });
+
+    const outNullJob = await runSensitiveCall({
+      client: db,
+      account: { userId: "acct-2", access: admin },
+      endpointId: SENSITIVE_PHONE,
+      params: { phone: "+201001234567" },
+      purpose: "التواصل مع عميل محتمل",
+      requireAudit: true,
+      call: async () => ({ result: "ok", costUsd: 0.03, ok: true }),
+    });
+    expect(outNullJob.ok).toBe(true);
+    expect(db.rows("sensitive_lookup_audit")[1]).toMatchObject({
+      job_id: null,
+      cost_usd: 0.03,
+      outcome: "called",
+    });
+  });
+});

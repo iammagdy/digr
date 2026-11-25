@@ -9,7 +9,7 @@ vi.mock("../src/lib/server/adminAuth", () => ({
 }));
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => state.client, createServerSideClient: vi.fn() }));
 
-import { ADMIN_LOOKUP_DAILY_CAP_USD, ADMIN_LOOKUP_PURPOSE, classifyLookupInput, extractIdentity, lookupCandidates, lookupPlan, phoneCountry, resetAdminLookupMemoryForTesting, runAdminLookup, runLookupAttempt } from "../src/lib/server/adminLookup";
+import { ADMIN_LOOKUP_DAILY_CAP_USD, ADMIN_LOOKUP_PURPOSE, classifyLookupInput, extractIdentity, lookupCandidates, lookupPlan, phoneCountry, readAdminLookupSpendToday, resetAdminLookupMemoryForTesting, runAdminLookup, runLookupAttempt } from "../src/lib/server/adminLookup";
 import { policyRuleOf } from "../src/lib/treg/dataPolicy";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { EMAIL_REVERSE_ORDER, PHONE_REVERSE_ORDER, applyReverseOrder, isCompanyDomainEmail } from "../src/lib/treg/reverseOrder";
@@ -416,5 +416,173 @@ describe("DT-20261125-people-search-admin: admin-only treg.people.enrich & socia
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, kind: "social_url", plan: [{ id: "treg.people.enrich", paramName: "linkedin_url", usd: 0.28, paid: true, state: "confirm" }] });
     expect((await post({ action: "plan", input: "https://www.linkedin.com/company/acme" })).status).toBe(400);
+  });
+});
+
+describe("DT-20261125-people-search-admin Fix (D-0215): T1-T4 + K2", () => {
+  const tregPeopleEnrichHit = {
+    output: {
+      full_name: "Lina Mansour",
+      first_name: "Lina",
+      last_name: "Mansour",
+      title: "VP Product",
+      company: "Nile Labs",
+      company_domain: "nilelabs.example",
+      linkedin_url: "https://www.linkedin.com/in/lina-mansour-demo",
+      location: "Cairo, Egypt",
+    },
+    raw: {
+      data: {
+        company: { domain: "wrong-raw.example", industry: "Software", name: "Wrong Raw Co" },
+        first_name: "Wrong",
+        id: "p_01",
+        insight: {
+          decision_role: "exec",
+          department: "product",
+          location: "Wrong Raw City",
+          seniority: "vp",
+          summary: "Synthetic",
+          topics: ["a", "b", "c"],
+        },
+        last_name: "Raw",
+        linkedin: "wrong",
+        linkedin_url: "https://www.linkedin.com/in/wrong-raw",
+        emails: [{ email: "leak@raw.example", type: "work" }],
+        phones: [{ phone: "+201099999999" }],
+        location: { city: "Alex", country_code: "ZZ" },
+        name: "Wrong Raw",
+        title: "Wrong Raw Title",
+      },
+      meta: { took_ms: 42 },
+    },
+    _treg: {
+      served_by: "crawl4ai.people.enrich",
+      provider: "crawl4ai",
+      tier: "core",
+      outcome: "hit",
+      tried: [{ endpoint_id: "crawl4ai.people.enrich", provider: "crawl4ai", outcome: "hit", status: 200, charged_micro: 950 }],
+      charged_micro: 950,
+      dropped: [{ endpoint_id: "p1", why: "cap" }, { endpoint_id: "p2", why: "missing" }],
+    },
+  };
+
+  it("T1: reads routed treg.people.enrich answer strictly from output (including output.location) and never leaks raw or _treg", async () => {
+    const out = await runLookupAttempt({
+      client: state.client,
+      adminId: "adm-1",
+      text: "https://www.linkedin.com/in/lina-mansour-demo",
+      endpointId: "treg.people.enrich",
+      confirmedUsd: 0.28,
+      call: async () => ({ ok: true, httpStatus: 200, tregCallId: "treg_call_01", costMicro: 950, latencyMs: 120, data: tregPeopleEnrichHit, isRouteMaxCost: false, isPlatformBalanceLow: false }) as any,
+    });
+    expect(out).toMatchObject({
+      ok: true,
+      found: true,
+      attempt: { endpointId: "treg.people.enrich", outcome: "found", costUsd: 0.00095, tregCallId: "treg_call_01" },
+      fields: {
+        name: { value: "Lina Mansour", source: "treg.people.enrich" },
+        company: { value: "Nile Labs", source: "treg.people.enrich" },
+        title: { value: "VP Product", source: "treg.people.enrich" },
+        profileUrl: { value: "https://www.linkedin.com/in/lina-mansour-demo", source: "treg.people.enrich" },
+        country: { value: "Cairo, Egypt", source: "treg.people.enrich" },
+      },
+    });
+    if (out.ok) {
+      expect(out.fields.workEmail).toBeUndefined();
+      expect(out.fields.personalEmail).toBeUndefined();
+      expect(out.fields.phone).toBeUndefined();
+    }
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain("Wrong Raw");
+    expect(serialized).not.toContain("leak@raw.example");
+    expect(serialized).not.toContain("+201099999999");
+    expect(serialized).not.toContain("crawl4ai");
+  });
+
+  it("T2: routed null/empty output returns no_data even when raw and _treg.tried are populated, and preserves reported cost or $0.28 timeout reservation", async () => {
+    const nullFieldsEnvelope = {
+      output: { full_name: null, first_name: null, last_name: null, title: null, company: null, company_domain: null, linkedin_url: null, location: null },
+      raw: tregPeopleEnrichHit.raw,
+      _treg: { ...tregPeopleEnrichHit._treg, outcome: "miss" },
+    };
+    const out1 = await runLookupAttempt({
+      client: state.client,
+      adminId: "adm-1",
+      text: "https://www.linkedin.com/in/missing-demo",
+      endpointId: "treg.people.enrich",
+      confirmedUsd: 0.28,
+      call: async () => ({ ok: true, httpStatus: 200, tregCallId: "treg_call_02", costMicro: 950, latencyMs: 80, data: nullFieldsEnvelope, isRouteMaxCost: false, isPlatformBalanceLow: false }) as any,
+    });
+    expect(out1).toMatchObject({ ok: true, found: false, attempt: { outcome: "no_data", costUsd: 0.00095, tregCallId: "treg_call_02" } });
+
+    const nullOutputEnvelope = { output: null, raw: tregPeopleEnrichHit.raw, _treg: tregPeopleEnrichHit._treg };
+    const out2 = await runLookupAttempt({
+      client: state.client,
+      adminId: "adm-1",
+      text: "https://www.linkedin.com/in/missing-demo-2",
+      endpointId: "treg.people.enrich",
+      confirmedUsd: 0.28,
+      call: async () => ({ ok: true, httpStatus: 200, tregCallId: "treg_call_03", costMicro: 950, latencyMs: 80, data: nullOutputEnvelope, isRouteMaxCost: false, isPlatformBalanceLow: false }) as any,
+    });
+    expect(out2).toMatchObject({ ok: true, found: false, attempt: { outcome: "no_data", costUsd: 0.00095, tregCallId: "treg_call_03" } });
+
+    const outTimeout = await runLookupAttempt({
+      client: state.client,
+      adminId: "adm-1",
+      text: "https://www.linkedin.com/in/timeout-demo",
+      endpointId: "treg.people.enrich",
+      confirmedUsd: 0.28,
+      call: async () => ({ ok: false, httpStatus: 503, tregCallId: "err_503", costMicro: 0, latencyMs: 15000, data: null, timedOut: true, error: "timeout", isRouteMaxCost: false, isPlatformBalanceLow: false }) as any,
+    });
+    expect(outTimeout).toMatchObject({ ok: true, found: false, attempt: { outcome: "failed", costUsd: 0.28 } });
+    expect(outTimeout.ok && outTimeout.attempt.tregCallId).toBeUndefined();
+  });
+
+  it("T3 & K2: stores tregCallId in sensitive_lookup_audit.job_id, keeps admin daily spend sum unchanged, preserves tregCallId in sanitizeEntry, and renders it in page.tsx", async () => {
+    const now = new Date("2026-11-25T12:00:00Z");
+    const spendBefore = await readAdminLookupSpendToday(state.client, now);
+    expect(spendBefore).toBe(0);
+
+    const out = await runLookupAttempt({
+      client: state.client,
+      adminId: "adm-1",
+      text: "https://www.linkedin.com/in/lina-mansour-demo",
+      endpointId: "treg.people.enrich",
+      confirmedUsd: 0.28,
+      now,
+      call: async () => ({ ok: true, httpStatus: 200, tregCallId: "treg_call_01", costMicro: 950, latencyMs: 100, data: tregPeopleEnrichHit, isRouteMaxCost: false, isPlatformBalanceLow: false }) as any,
+    });
+    expect(out.ok).toBe(true);
+    const rows = state.client.rows("sensitive_lookup_audit");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].job_id).toMatch(/^adminlookup_[a-f0-9]+:treg_call_01$/);
+    expect(rows[0].purpose).toBe(ADMIN_LOOKUP_PURPOSE);
+    expect(rows[0].cost_usd).toBe(0.00095);
+
+    const spendAfter = await readAdminLookupSpendToday(state.client, now);
+    expect(spendAfter).toBeCloseTo(0.00095, 6);
+
+    const clean = sanitizeEntry({ fields: out.ok ? out.fields : {}, attempts: out.ok ? [out.attempt] : [] }, "https://www.linkedin.com/in/lina-mansour-demo");
+    expect(clean?.attempts[0]).toMatchObject({ endpointId: "treg.people.enrich", tregCallId: "treg_call_01" });
+
+    const pageSrc = readFileSync("src/app/admin/reverse-lookup/page.tsx", "utf-8");
+    expect(pageSrc).toContain('data-testid="lookup-attempt-call-id"');
+    expect(pageSrc).toContain("a.tregCallId");
+  });
+
+  it("T4: non-routed direct endpoint reads identically to before without routedOutputOnly", async () => {
+    const directEndpoint = catalog.byId.get("quickenrich.people.enrich")!;
+    expect(directEndpoint.kind).not.toBe("routed");
+    const directPayload = { data: { items: [{ full_name: "Dina Adel", work_email: "dina@co.example" }] } };
+    const { call } = fakeCall({ "quickenrich.people.enrich": directPayload }, () => 20_000);
+    const out = await runLookupAttempt({ client: state.client, adminId: "adm-1", text: "dina@co.example", endpointId: "quickenrich.people.enrich", call });
+    expect(out).toMatchObject({
+      ok: true,
+      found: true,
+      fields: {
+        name: { value: "Dina Adel", source: "quickenrich.people.enrich" },
+        workEmail: { value: "dina@co.example", source: "quickenrich.people.enrich" },
+      },
+    });
   });
 });
