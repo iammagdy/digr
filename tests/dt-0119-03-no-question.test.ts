@@ -159,18 +159,24 @@ describe("through runPlanning (Gate 1 P1-2, P1-3, P1-4): the customer's mission 
   it("P1-2: a model that keeps asking (`ask_refused`) is NOT shown as a question and does NOT reach an old path that may ask: the old path runs with the planner's understanding and its ask is refused", async () => {
     const r = await run([askAnswer(), askAnswer()], LIVE1);
     noQuestion(r);
-    expect(r.driver.results.find((x) => x.tool === "ask_question")?.result).toMatchObject({ ok: false });
+    expect(r.mission.status).toBe("unserved");
+    expect(r.mission.summary_ar).toContain("لم يُخصم منك شيء");
+    expect(r.driver.results.find((x) => x.tool === "ask_question")).toBeUndefined();
   });
   it("P1-3: a bad first answer then an ask-without-missing second answer: still no question (the planner ran, so the old path may not ask)", async () => {
     const r = await run([{ decision: "plan", understanding_ar: "x", steps: [], missing: [] }, askAnswer()], LIVE1);
     noQuestion(r);
-    expect(r.driver.results.find((x) => x.tool === "ask_question")?.result).toMatchObject({ ok: false });
+    expect(r.mission.status).toBe("unserved");
+    expect(r.mission.summary_ar).toContain("لم يُخصم منك شيء");
+    expect(r.driver.results.find((x) => x.tool === "ask_question")).toBeUndefined();
   });
   it("the planner RAN but could not be read at all (two unusable answers, no understanding): the old path is still not allowed to ask (`plannerRan`)", async () => {
     const unreadable = { decision: "plan", understanding_ar: "x", steps: [], missing: [] };
     const r = await run([unreadable, unreadable], LIVE1);
     noQuestion(r);
-    expect(r.driver.results.find((x) => x.tool === "ask_question")?.result).toMatchObject({ ok: false });
+    expect(r.mission.status).toBe("unserved");
+    expect(r.mission.summary_ar).toContain("لم يُخصم منك شيء");
+    expect(r.driver.results.find((x) => x.tool === "ask_question")).toBeUndefined();
   });
   it("the control: a genuinely ambiguous request is shown as ONE question (needs_input), as before", async () => {
     const r = await run([askAnswer({ people_of_companies: peopleAsk(false), missing: ["items", "place"], question_ar: "أي نوع شركات وفي أي مكان؟", options_ar: ["مقاولات", "برمجة"] })], "عايز شركات");

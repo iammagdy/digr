@@ -723,51 +723,57 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }
-    if (r) {
-      const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
-      deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
-      plannerRan = true;
-      if (r.understanding) {
-        plannerUnderstanding = r.understanding;
-        understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
-        peopleRoleTitleAr = r.understanding.people_of_companies?.title_ar ?? null;
-        const compStep = r.understanding.steps.find((s) => !s.parent);
-        if (compStep) {
-          understoodCompanies = {
-            title_ar: compStep.title_ar,
-            topic: compStep.topic ?? null,
-            search_terms: compStep.search_terms ?? [],
-            country: compStep.country ?? null,
-            expected_rows: (compStep.count && !compStep.count.all ? compStep.count.total : null) ?? r.understanding.companies_count ?? null,
-          };
-        }
-      }
-      if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
-      if (r.kind === "plan") {
-        let plan = r.plan;
-        plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
-        const priorDelivery = await priorDeliveryForPlanning({ mission, store, ...(deps.readPriorDeliveryCard ? { readCard: deps.readPriorDeliveryCard } : {}), ...(deps.readDeliveredMissions ? { readMissions: deps.readDeliveredMissions } : {}) }).catch(() => null);
-        plan = await withPriorDelivery(plan, mission.id, store, priorDelivery);
-        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
-        await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
-        deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
-        return;
-      }
-      if (r.kind === "question") {
-        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "needs_input", question_ar: r.question_ar, plan_public: { question_options: r.options_ar } as any });
-        await store.addEvent(mission.id, { kind: "question", message_ar: r.question_ar });
-        return;
-      }
-      if (r.detail === "model_cannot" || r.detail === "no_step_served") {
-        const sentence = `${r.reason_ar.trim() !== "" ? r.reason_ar.trim().replace(/[.،\s]*$/u, ".") : "لم نجد مصدرًا متاحًا الآن يعطي ما طلبته."} لم يُخصم منك شيء.`;
-        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "unserved", summary_ar: sentence });
-        await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
-        await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
-        return;
-      }
-      // handed over (company or people research), the model could not be read, or too many questions: the earlier path plans, with this cost already counted
-      await store.updateMission(mission.id, { planning_llm_usd: llmUsd }).catch(() => undefined);
+    if (!r) {
+      const customerText = "تعذّر تجهيز الخطة الآن ولم يُخصم منك شيء. ابعت طلبك تاني بعد شوية.";
+      await store.updateMission(mission.id, { planning_llm_usd: llmBefore, ...clear, status: "unserved", summary_ar: customerText });
+      await store.addEvent(mission.id, { kind: "result", message_ar: customerText });
+      await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+      return;
     }
+    const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
+    deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
+    plannerRan = true;
+    if (r.understanding) {
+      plannerUnderstanding = r.understanding;
+      understoodPeople = understoodPeopleOf(r.understanding.steps, r.understanding.people_of_companies, r.understanding.companies_count);
+      peopleRoleTitleAr = r.understanding.people_of_companies?.title_ar ?? null;
+      const compStep = r.understanding.steps.find((s) => !s.parent);
+      if (compStep) {
+        understoodCompanies = {
+          title_ar: compStep.title_ar,
+          topic: compStep.topic ?? null,
+          search_terms: compStep.search_terms ?? [],
+          country: compStep.country ?? null,
+          expected_rows: (compStep.count && !compStep.count.all ? compStep.count.total : null) ?? r.understanding.companies_count ?? null,
+        };
+      }
+    }
+    if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
+    if (r.kind === "plan") {
+      let plan = r.plan;
+      plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
+      const priorDelivery = await priorDeliveryForPlanning({ mission, store, ...(deps.readPriorDeliveryCard ? { readCard: deps.readPriorDeliveryCard } : {}), ...(deps.readDeliveredMissions ? { readMissions: deps.readDeliveredMissions } : {}) }).catch(() => null);
+      plan = await withPriorDelivery(plan, mission.id, store, priorDelivery);
+      await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
+      await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
+      deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
+      return;
+    }
+    if (r.kind === "question") {
+      await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "needs_input", question_ar: r.question_ar, plan_public: { question_options: r.options_ar } as any });
+      await store.addEvent(mission.id, { kind: "question", message_ar: r.question_ar });
+      return;
+    }
+    if (r.detail !== "handed_over") {
+      const customerText = "تعذّر تجهيز الخطة الآن ولم يُخصم منك شيء. ابعت طلبك تاني بعد شوية.";
+      const sentence = r.reason_ar && r.reason_ar.trim() !== "" ? `${r.reason_ar.trim().replace(/[.،\s]*$/u, ".")} لم يُخصم منك شيء.` : customerText;
+      await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "unserved", summary_ar: sentence });
+      await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
+      await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+      return;
+    }
+    // handed over to B2B company/people path: proceeds with planning cost recorded
+    await store.updateMission(mission.id, { planning_llm_usd: llmUsd }).catch(() => undefined);
   }
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text, { semantic }).platform };
