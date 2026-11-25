@@ -5,6 +5,7 @@
 - **Branch:** `team/DT-20261125-wordlist-p5b-provider-labels`
 - **Base Commit:** `origin/main` `fec6de75` (including Phase 3 `77fb5bc1` and Phase 4 `fec6de75`)
 - **Phase 4 Preceding PR Link (Waived from Phase 4):** [PR #686](https://github.com/iammagdy/digr/pull/686)
+- **Phase 5B PR Link:** [PR #687](https://github.com/iammagdy/digr/pull/687)
 
 ## 2. Scope & Implementation Points
 
