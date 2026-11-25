@@ -2245,30 +2245,36 @@ export function scoutFallbackAr(
 ): { question_ar: string; options_ar: string[] } {
   const customerText = said.join(" ");
   const customerNumbers = numbersWritten(customerText);
+  const written = writtenLatinWords(said);
+  // A model-written value is shown only as the customer wrote it: no Latin word they did not write; a source name only when the customer wrote it. Never translated, never guessed (no lists).
+  const noForeignLatin = (v: string | null | undefined): string | null => { const t = String(v ?? "").trim(); return t && foreignLatinIn(t, written).length === 0 ? t : null; };
+  const sourceAsWritten = (v: string | null | undefined): string | null => { const t = noForeignLatin(v); return t && labelWrittenBy(t, said) ? t : null; };
   const lines = weak.map((f) => {
     const platformName = platformAr(f.step.platform, f.step.capability, said);
     const byTitle = itemNounOf(f.step.title_ar);
     const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
       ? byTitle
       : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
+    const title = noForeignLatin(f.step.title_ar) ?? noun.plural;
     if (f.found === 0) {
       if (f.step.source?.value && (f.examinedCount ?? 0) > 0) {
         const countText = countAr(f.examinedCount!, noun);
-        return `جرّبنا البحث في ${countText} من ${f.step.source.value} على ${platformName} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
+        const from = sourceAsWritten(f.step.source.value) ?? `${SOURCE_LABEL_FALLBACK_AR} المطلوب`;
+        return `جرّبنا البحث في ${countText} من ${from} على ${platformName} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
       }
       if ((f.examinedCount ?? 0) > 0) {
         const countText = countAr(f.examinedCount!, noun);
-        return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} وفحصنا ${countText} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
+        return `جرّبنا البحث عن ${title} في ${platformName} وفحصنا ${countText} بالشروط التي كتبتها ولم نجد نتائج متطابقة.`;
       }
-      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
+      return `جرّبنا البحث عن ${title} في ${platformName} بالشروط التي كتبتها ولم نجد نتائج.`;
     }
     const requestedByCustomer = (f.step.count?.total ?? null) !== null && customerNumbers.has(String(f.step.count?.total));
     const hasExamined = (f.examinedCount ?? 0) >= f.found && (f.examinedCount ?? 0) > 0 && !(!requestedByCustomer && f.examinedCount === f.requested && f.requested >= 200);
     const examinedClause = hasExamined ? ` وفحصنا ${countAr(f.examinedCount!, noun)}` : "";
     if (!requestedByCustomer) {
-      return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+      return `جرّبنا البحث عن ${title} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
     }
-    return `جرّبنا البحث عن ${f.step.title_ar} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
+    return `جرّبنا البحث عن ${title} في ${platformName}${examinedClause} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`;
   });
   const resolvedFacts = wideningFacts ?? buildCatalogWideningFacts(weak, undefined, null);
   const recOption = resolvedFacts.find((w) => w.kind !== "take_found");
