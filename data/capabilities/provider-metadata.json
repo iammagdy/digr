@@ -21564,13 +21564,5 @@
    },
    "changelog_latest": "2026-11-12"
   }
- },
- "multiProvider": {
-  "singleRouteId": "single:treg-companies",
-  "websiteShare": {
-   "treg.companies.search": 0.7,
-   "firecrawl.search": 0.5,
-   "contextdev.search": 0.5
-  }
  }
 }
