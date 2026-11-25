@@ -122,6 +122,8 @@ export interface StepFacts {
   entity?: "company" | "person" | null;
   /** The answer is ONE record read as the answer itself (a profile, a company detail): the sample read it so, and the worker reads it the same way. */
   rootObjectIsRow?: boolean;
+  /** Set when the catalog endpoint has kind === "routed": readStepRows isolates body.output and ignores raw/_treg. */
+  routedOutputOnly?: boolean;
   /** Siblings of the endpoint (same capability, another provider) the worker may call when this endpoint's call fails or answers nothing. Each costs no more per call than the approved ceiling. */
   alternates?: StepAlternate[];
 }
@@ -138,6 +140,8 @@ export interface StepAlternate {
   limitName: string | null;
   limitMax: number | null;
   callEstimateUsd: number;
+  /** Set when the catalog endpoint has kind === "routed": readStepRows isolates body.output and ignores raw/_treg. */
+  routedOutputOnly?: boolean;
 }
 
 /** The approved plan as stored on the quote item (params._modelStep) and run by the interpreter. */
