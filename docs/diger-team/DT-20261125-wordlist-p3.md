@@ -18,14 +18,16 @@
    - دالة `coerceItemNoun` تتحقق من وجود جميع الصيغ العربية الخمس وكون `feminine` قيمة منطقية، وترفض أي حروف لاتينية دون استدعاء جدول `KNOWN`.
    - بقاء `itemNoun.ts` آمناً للـ browser bundle (صفر استيراد لـ `fs` أو ملفات الكتالوج).
 
-4. **تكامل المخطط وعرض الكتالوج (`catalogView.ts`, `planner.ts`, `plan.ts`):**
+4. **تكامل المخطط وعرض الكتالوج وتصحيح FIX-2 (`catalogView.ts`, `planner.ts`, `plan.ts`, `runMission.ts`):**
    - تزويد نقاط الويب والـ multi-provider بالاسم العربي `item_noun_ar` من الـ overlay.
    - إزالة الفولباك الصلب لـ `خبر/مقال` والاعتماد على `GENERIC_ITEM_NOUN` مع توفير الأسماء الصحيحة للويب.
-   - ربط `item_noun_ar` في مراحل الخطة المسعرة بـ `plan.ts` مع ثبات وحيادية الأسعار تماماً.
+   - عدم تخزين `item_noun_ar` نهائياً داخل مراحل الخطة المخزنة (`mission.plan.stages`) حمايةً لثبات حراس الأموال (`dt09-money-unchanged`) وهاشات المرحلة 3، وإضافته حصرياً لنسخة العميل (`plan_public`) داخل `customerPlanView` من الـ overlay عبر `endpoint_id`.
+   - قراءة اسم العنصر للإشعارات في `runMission.ts` عبر `deps.catalog.byId.get(stage.endpoint_id)?.item_noun_ar`.
 
 ## الاختبارات (Tests)
 - `tests/item-noun-wave2.test.ts`: اختبارات شاملة للتحقق من صحة `coerceItemNoun`، تطابق المفاتيح (Key Parity) مع `knownItemNoun`، تطابق نصوص الإعادة للعينات المسجلة بدون أي «عنصر»، وحيادية التسعير التامة (`stagePriceInputs`).
 - `tests/dt-0120-emails.test.ts`: تحديث استدعاءات الاختبار لتمرير كائنات الأسماء العربية مع الحفاظ على كافة التأكيدات دون تغيير.
+- حراس الأموال واختبارات التطابق البايتي: اجتياز كامل 100% لكافة الحزم الـ 26 (بما فيها `dt09-money-unchanged`، `stage3-flags-off`، `flags-off-byte-identical`، `round11-tiktok-x-invariance`).
 - `tests/x-account-rumors-replay.test.ts` و `tests/treg-catalog-data.test.ts`: اجتياز كامل 100%.
 
 ## القرارات والروابط

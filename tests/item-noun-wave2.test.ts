@@ -158,10 +158,10 @@ describe("DT-20261125-wordlist-wave2 Phase 3: Item Noun Catalog Overlay & Browse
       measured_from_calls: ["call_0001"],
     };
 
-    const stageWithNoun: PricedStage = {
+    const stageWithNoun = {
       ...baseStage,
       item_noun_ar: tweetNoun,
-    };
+    } as unknown as PricedStage;
 
     const inputsWithout = stagePriceInputs([baseStage]);
     const inputsWith = stagePriceInputs([stageWithNoun]);

@@ -102,14 +102,6 @@ export interface ProposedStage {
   children_cap_per_parent?: number;
   /** The catalog capability of the stage's tool, stored by code in the redesigned mode (rule 9 of the consolidation: a stage's type is read from its structure, never from the words of its title). Absent in the old pipeline. */
   capability?: string;
-  item_noun_ar?: {
-    singular: string;
-    dual: string;
-    dual_gen: string;
-    plural: string;
-    tamyiz: string;
-    feminine: boolean;
-  };
   expected_rows: number;
   parent_key: string | null;
   /** Rows taken from each parent row (required for a stage with a parent). */
@@ -909,10 +901,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
     // A PEOPLE STAGE IS KNOWN BY ITS TOOL, NOT BY ITS TITLE (rule 9; D-0086): a stage whose catalog capability is a people-of-company capability carries it, so the contact steps and the contact check never depend on the model's wording of the title
     const peopleCapability = parentKey !== null ? (lookup.endpointCapability?.(endpointId) ?? null) : null;
-    const epNoun = (endpointMetadataOverlay as Record<string, any>)[endpointId]?.item_noun_ar;
     priced.push({
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
-      ...(epNoun ? { item_noun_ar: epNoun } : (raw as any).item_noun_ar ? { item_noun_ar: (raw as any).item_noun_ar } : {}),
       ...(peopleCapability !== null && stageKindByCapability(peopleCapability) === "people" && !isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(raw.role_preference ? { role_preference: true } : {}) }) ? { capability: peopleCapability } : {}),
       ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
       ...(roleOf ? { role_preference: { role: roleOf.key } } : {}),
@@ -1305,13 +1295,14 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
     ...(plan.unserved_steps && plan.unserved_steps.length > 0 ? { unserved_ar: plan.unserved_steps.map(unservedStepLineAr) } : {}),
     stages: plan.stages.map((s) => {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
+      const epNoun = (endpointMetadataOverlay as Record<string, any>)[s.endpoint_id]?.item_noun_ar;
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
         // NOV 7 2026: a link is never cut (a cut permalink opened nothing); every other cell keeps its limit. `links_whole` marks a stage written under that rule (sampleLinks.ts)
         sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? sampleCellText(s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? ""), SAMPLE_CELL_CHARS)]))),
         links_whole: true,
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
-        ...(s.item_noun_ar ? { item_noun_ar: s.item_noun_ar } : {}),
+        ...(epNoun ? { item_noun_ar: epNoun } : (s as any).item_noun_ar ? { item_noun_ar: (s as any).item_noun_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
         ...(s.children_open && !s.per_parent_asked ? { children_open: true } : {}),

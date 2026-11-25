@@ -1722,7 +1722,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     .filter((s) => s.deliver && s.replies_of === undefined)
     .map((s) => {
       const ep = deps.catalog.byId.get(s.endpoint_id);
-      const epNoun = s.item_noun_ar ?? ep?.item_noun_ar;
+      const epNoun = ep?.item_noun_ar;
       const epCap = ep?.capability ?? "";
       const people = isPeopleStage(s) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap);
       const contacts = !people && (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(s.endpoint_id));
