@@ -152,7 +152,7 @@ function extractLegacyArrayEnvelope(
 /** What a REAL answer looks like, read with the shape reader and the catalog's own hints: for the model's field map and for the code's check of it. */
 export function buildShapeDigest(
   body: unknown,
-  endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string },
+  endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string; kind?: CatalogEndpoint["kind"] | null },
   options?: BuildShapeDigestOptions,
 ): { digest: ShapeDigest; reading: ShapeReading } {
   const missionPage = endpoint.id ? missionPageOf(endpoint.id) : undefined;
@@ -213,7 +213,7 @@ export function buildShapeDigest(
 }
 
 /** The same digest made from the catalog's trimmed EXAMPLE answer, for an endpoint nobody sampled (a recipe, a sensitive endpoint that is never sampled). */
-export function digestFromCatalogExample(endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields">): { digest: ShapeDigest; reading: ShapeReading } | null {
+export function digestFromCatalogExample(endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string; kind?: CatalogEndpoint["kind"] | null }): { digest: ShapeDigest; reading: ShapeReading } | null {
   if (endpoint.example_response_trimmed === undefined || endpoint.example_response_trimmed === null) return null;
   return buildShapeDigest(endpoint.example_response_trimmed, endpoint, { isReplay: true });
 }

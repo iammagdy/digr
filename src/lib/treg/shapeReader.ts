@@ -80,12 +80,13 @@ export interface ShapeReading {
   warnings: string[];
 }
 
-export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string }): ShapeHints => ({
+export const hintsOf = (endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields"> & { id?: string; kind?: CatalogEndpoint["kind"] | null }): ShapeHints => ({
   id: endpoint.id,
   listPath: endpoint.list_path,
   cursorPath: endpoint.cursor_path,
   example: endpoint.example_response_trimmed,
   itemFields: endpoint.item_fields,
+  ...(endpoint.kind === "routed" ? { routedOutputOnly: true } : {}),
 });
 
 type Obj = Record<string, unknown>;
@@ -248,6 +249,59 @@ function evaluateReviewedPage(body: unknown, mp: MissionPageMetadata, rawList: u
   return { hasMore, explicitNoMore, parsedNext, malformedNext, isTerminalWrapper, isTerminalCursor };
 }
 
+const PAGINATION_CONTAINER_KEYS = ["pagination", "meta", "paging"] as const;
+const PAGINATION_CONTAINER_KEYS_SET = new Set<string>(PAGINATION_CONTAINER_KEYS);
+
+const CURSOR_KEYS_LOWER = new Set(CURSOR_KEYS.map((k) => k.toLowerCase()));
+const HAS_MORE_KEYS_LOWER = new Set(HAS_MORE_KEYS.map((k) => k.toLowerCase()));
+const LIST_KEYS_LOWER = new Set(LIST_KEYS.map((k) => k.toLowerCase()));
+
+function hasNonEmptyValue(v: unknown, depth = 0): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "boolean") return true;
+  if (depth >= 3) return false;
+  if (Array.isArray(v)) {
+    return v.length > 0 && v.some((item) => hasNonEmptyValue(item, depth + 1));
+  }
+  if (isObj(v)) {
+    return Object.values(v).some((child) => hasNonEmptyValue(child, depth + 1));
+  }
+  return false;
+}
+
+function isEmptyOrErrorRoutedObject(output: Obj, looksLikeEntity: boolean): boolean {
+  if (output.ok === false || output.success === false) return true;
+  const hasError = ["error", "errors"].some((k) => output[k] !== undefined && output[k] !== null && output[k] !== false && output[k] !== "");
+  if (hasError) return true;
+
+  let payloadFields = 0;
+  let hasNullListKey = false;
+  for (const [k, v] of Object.entries(output)) {
+    const lower = k.toLowerCase();
+    if (LIST_KEYS_LOWER.has(lower) && (v === null || v === undefined)) {
+      hasNullListKey = true;
+    }
+    if (
+      WRAPPER_KEYS.has(lower) ||
+      CURSOR_KEYS_LOWER.has(lower) ||
+      HAS_MORE_KEYS_LOWER.has(lower) ||
+      ECHO_KEYS.has(lower) ||
+      PAGINATION_CONTAINER_KEYS_SET.has(lower)
+    ) {
+      continue;
+    }
+    if (hasNonEmptyValue(v)) {
+      payloadFields += 1;
+    }
+  }
+
+  if (payloadFields === 0) return true;
+  if (hasNullListKey && !looksLikeEntity && !looksLikeOneRecord(output)) return true;
+  return false;
+}
+
 const hasOwn = (o: Obj, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 const ROUTED_RECORD_KEYS = new Set([
   "full_name", "first_name", "last_name", "name", "display_name", "person_name",
@@ -293,6 +347,9 @@ function readRoutedOutput(body: unknown, hints: ShapeHints, warnings: string[], 
       const rows = asRows(getPath(output, chosen));
       if (rows && rows.length > 0) return { rows, path: `output.${chosen}`, strategy: "inferred_list", warnings };
     }
+  }
+  if (isEmptyOrErrorRoutedObject(output, looksLikeEntity)) {
+    return { rows: [], path: null, strategy: "none", warnings };
   }
   return { rows: [output], path: "output", strategy: "single_object", warnings };
 }
@@ -424,7 +481,7 @@ function cursorAtCommonKeys(value: unknown, path: string, depth: number): Cursor
     const found = cursorAt(value, key);
     if (found) return { ...found, path: here };
   }
-  for (const key of ["pagination", "meta", "paging", ...ENVELOPE_KEYS]) {
+  for (const key of [...PAGINATION_CONTAINER_KEYS, ...ENVELOPE_KEYS]) {
     const found = cursorAtCommonKeys(value[key], path ? `${path}.${key}` : key, depth + 1);
     if (found) return found;
   }
@@ -443,6 +500,39 @@ function readCursor(body: unknown, hints: ShapeHints): { found: CursorFound | nu
       strategy: "cursor_path",
       hasMore: ev.hasMore,
     };
+  }
+
+  const routedEnvelope = Boolean(hints.routedOutputOnly) && isObj(body) && (hasOwn(body, "output") || hasOwn(body, "raw") || hasOwn(body, "_treg"));
+  if (routedEnvelope) {
+    const output = (body as Obj).output;
+    if (!isObj(output)) return { found: null, strategy: "none", hasMore: null };
+    let found: CursorFound | null = null;
+    let strategy: CursorStrategy = "none";
+    const hint = hints.cursorPath;
+    const routedHint = typeof hint === "string" && (hint === "output" || hint.startsWith("output.")) ? hint : null;
+    if (routedHint) {
+      found = cursorAt(body, routedHint);
+      if (found) strategy = "cursor_path";
+    }
+    if (!found && hints.example !== undefined && hints.example !== null) {
+      for (const p of findCursorPaths(hints.example)) {
+        if (p === routedHint || !p.startsWith("output.")) continue;
+        found = cursorAt(body, p);
+        if (found) { strategy = "example"; break; }
+      }
+    }
+    if (!found) {
+      found = cursorAtCommonKeys(output, "output", 1);
+      if (found) strategy = "common_keys";
+    }
+    const container = found ? found.path.split(".").slice(0, -1).join(".") : "output";
+    let hasMore = hasMoreAt(body, container);
+    if (hasMore === null && routedHint && /has_?more/i.test(routedHint)) {
+      const flag = toBool(getPath(body, routedHint));
+      if (flag !== undefined) hasMore = flag;
+    }
+    if (found && hasMore === false) return { found: null, strategy: "none", hasMore };
+    return { found, strategy: found ? strategy : "none", hasMore };
   }
 
   let found: CursorFound | null = null;

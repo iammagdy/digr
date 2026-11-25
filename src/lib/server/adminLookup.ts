@@ -436,7 +436,7 @@ export async function runLookupAttempt(input: {
     const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : unknownCharge ? "no answer: the charge is unknown and is counted at its cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}`, ...(tregCallId ? { tregCallId } : {}) };
     return { ok: true, attempt, identity: extractIdentity(undefined), fields: input.previous ?? {}, found: false, spentTodayUsd: spentAfter, capUsd };
   }
-  const reading = readShape(result.data, { ...hintsOf(endpoint), ...(endpoint.kind === "routed" ? { routedOutputOnly: true } : {}) });
+  const reading = readShape(result.data, hintsOf(endpoint));
   const identity = extractIdentity(reading.rows[0], entry.id);
   const found = isUsefulIdentity(identity);
   const people = distinctPeopleIn(reading.rows, entry.id);

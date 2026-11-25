@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
-import { chooseResultList, coerceRow, findCursorPaths, findListPaths, getPath, hintsOf, readShape } from "../src/lib/treg/shapeReader";
+import { chooseResultList, coerceRow, findCursorPaths, findListPaths, getPath, hintsOf, missionPageOf, readShape } from "../src/lib/treg/shapeReader";
+import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
 import { extractAndFlattenRows } from "../src/functions/shared/multiStepWorker";
 import { findProviderNextCursor } from "../src/lib/server/providerRows";
 import { rowIdentity } from "../src/lib/server/retryReuse";
@@ -340,54 +341,55 @@ describe("the whole snapshot: every example answer is read without an error, and
   });
 });
 
+const routedEnvelope = {
+  output: {
+    full_name: "Lina Mansour",
+    first_name: "Lina",
+    last_name: "Mansour",
+    title: "VP Product",
+    company: "Nile Labs",
+    company_domain: "nilelabs.example",
+    linkedin_url: "https://www.linkedin.com/in/lina-mansour-demo",
+    location: "Cairo, Egypt",
+  },
+  raw: {
+    data: {
+      company: { domain: "wrong-raw.example", industry: "Software", name: "Wrong Raw Co" },
+      first_name: "Wrong",
+      id: "p_01",
+      insight: { decision_role: "exec", department: "product", location: "Wrong Raw City", seniority: "vp", summary: "Synthetic", topics: ["a", "b", "c"] },
+      last_name: "Raw",
+      linkedin: "wrong",
+      linkedin_url: "https://www.linkedin.com/in/wrong-raw",
+      location: { city: "Alex", country_code: "ZZ" },
+      name: "Wrong Raw",
+      title: "Wrong Raw Title",
+    },
+    meta: { took_ms: 42 },
+  },
+  _treg: {
+    served_by: "crawl4ai.people.enrich",
+    provider: "crawl4ai",
+    tier: "core",
+    outcome: "hit",
+    tried: [{ endpoint_id: "crawl4ai.people.enrich", provider: "crawl4ai", outcome: "hit", status: 200, charged_micro: 950 }],
+    charged_micro: 950,
+    dropped: [{ endpoint_id: "p1", why: "cap" }],
+  },
+};
+
 describe("routedOutputOnly (D-0215 R2 opt-in & K3 isolation)", () => {
-  const routedEnvelope = {
-    output: {
-      full_name: "Lina Mansour",
-      first_name: "Lina",
-      last_name: "Mansour",
-      title: "VP Product",
-      company: "Nile Labs",
-      company_domain: "nilelabs.example",
-      linkedin_url: "https://www.linkedin.com/in/lina-mansour-demo",
-      location: "Cairo, Egypt",
-    },
-    raw: {
-      data: {
-        company: { domain: "wrong-raw.example", industry: "Software", name: "Wrong Raw Co" },
-        first_name: "Wrong",
-        id: "p_01",
-        insight: { decision_role: "exec", department: "product", location: "Wrong Raw City", seniority: "vp", summary: "Synthetic", topics: ["a", "b", "c"] },
-        last_name: "Raw",
-        linkedin: "wrong",
-        linkedin_url: "https://www.linkedin.com/in/wrong-raw",
-        location: { city: "Alex", country_code: "ZZ" },
-        name: "Wrong Raw",
-        title: "Wrong Raw Title",
-      },
-      meta: { took_ms: 42 },
-    },
-    _treg: {
-      served_by: "crawl4ai.people.enrich",
-      provider: "crawl4ai",
-      tier: "core",
-      outcome: "hit",
-      tried: [{ endpoint_id: "crawl4ai.people.enrich", provider: "crawl4ai", outcome: "hit", status: 200, charged_micro: 950 }],
-      charged_micro: 950,
-      dropped: [{ endpoint_id: "p1", why: "cap" }],
-    },
-  };
 
   it("T5 & K3: default hintsOf leaves customer/default reading unchanged; routedOutputOnly reads strictly from output and ignores raw/_treg", () => {
     const endpoint = catalog.byId.get("treg.people.enrich")!;
-    const defaultRead = readShape(routedEnvelope, hintsOf(endpoint));
-    expect(defaultRead.listPath).toBe("_treg.tried");
-    expect(defaultRead.listStrategy).toBe("inferred_list");
+    const explicitFalseRead = readShape(routedEnvelope, { ...hintsOf(endpoint), routedOutputOnly: false });
+    expect(explicitFalseRead.listPath).toBe("_treg.tried");
+    expect(explicitFalseRead.listStrategy).toBe("inferred_list");
 
-    const routedRead = readShape(routedEnvelope, { ...hintsOf(endpoint), routedOutputOnly: true });
-    expect(routedRead.listPath).toBe("output");
-    expect(routedRead.listStrategy).toBe("single_object");
-    expect(routedRead.rows).toEqual([routedEnvelope.output]);
+    const defaultRead = readShape(routedEnvelope, hintsOf(endpoint));
+    expect(defaultRead.listPath).toBe("output");
+    expect(defaultRead.listStrategy).toBe("single_object");
+    expect(defaultRead.rows).toEqual([routedEnvelope.output]);
 
     const withRawContacts = {
       ...routedEnvelope,
@@ -409,5 +411,264 @@ describe("routedOutputOnly (D-0215 R2 opt-in & K3 isolation)", () => {
     expect(arrayOutput.listPath).toBe("output");
     expect(arrayOutput.listStrategy).toBe("list_path");
     expect(arrayOutput.rows).toEqual([{ full_name: "Lina Mansour" }]);
+  });
+});
+
+describe("DT-20261125-customer-treg-reader: shared routed rule (M1–M7, K1–K3, D5)", () => {
+  const routedCommentsEp = catalog.byId.get("treg.youtube.video.comments")!;
+  const routedPostsEp = catalog.byId.get("treg.x.search.posts")!;
+  const routedFbPostsEp = catalog.byId.get("treg.facebook.user.posts")!;
+  const routedFbCommentsEp = catalog.byId.get("treg.facebook.post.comments")!;
+  const routedAmazonEp = catalog.byId.get("treg.amazon.search.products")!;
+  const routedYoutubeSearchEp = catalog.byId.get("treg.youtube.search.videos")!;
+  const directEp = catalog.endpoints.find((e) => e.kind === "direct")!;
+
+  const shapeA = {
+    output: { comments: null, next_cursor: null },
+    raw: null,
+    _treg: {
+      served_by: null,
+      outcome: "empty",
+      tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "empty", status: 200, charged_micro: 100 }],
+      charged_micro: 100,
+      dropped: [{ endpoint_id: "ep_b", why: "cap" }, { endpoint_id: "ep_c", why: "policy" }],
+    },
+  };
+
+  const shapeAWithMeta = {
+    output: { video_id: "v_1", comments: null, next_cursor: null },
+    raw: null,
+    _treg: shapeA._treg,
+  };
+
+  const shapeB = {
+    output: { posts: null, next_cursor: null },
+    raw: null,
+    _treg: {
+      served_by: null,
+      outcome: "empty",
+      tried: [1, 2, 3].map((n) => ({ endpoint_id: `ep_${n}`, provider: `prov_${n}`, outcome: "empty", status: 200, charged_micro: 50 })),
+      charged_micro: 150,
+      dropped: [{ endpoint_id: "ep_d", why: "cap" }],
+    },
+  };
+
+  const shapeC = {
+    output: { comments: [], next_cursor: null },
+    raw: null,
+    _treg: {
+      served_by: null,
+      outcome: "empty",
+      tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "empty", status: 200, charged_micro: 0 }],
+      charged_micro: 0,
+      dropped: [{ endpoint_id: "ep_b", why: "cap" }],
+    },
+  };
+
+  const shapeD = (n: number, nextCursor: string | null) => ({
+    output: {
+      posts: Array.from({ length: n }, (_, i) => ({ id: `p_${i + 1}`, text: `Synthetic post ${i + 1}`, author: `user_${i + 1}` })),
+      next_cursor: nextCursor,
+    },
+    raw: {
+      output: { data: { posts: [{ id: "raw_only" }] }, found: true },
+      provider: "prov_a",
+      costUsd: 0.001,
+      items: n,
+      replayed: false,
+      source: { id: "s1", name: "src", kind: "social", artworkKey: "k1" },
+      resultId: "r1",
+    },
+    _treg: {
+      served_by: "ep_a",
+      provider: "prov_a",
+      tier: "core",
+      outcome: "hit",
+      tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "hit", status: 200, charged_micro: 750 }],
+      charged_micro: 750,
+    },
+  });
+
+  const shapeE = (n: number) => ({
+    output: {
+      products: Array.from({ length: n }, (_, i) => ({ asin: `ASIN_${i + 1}`, title: `Product ${i + 1}`, price: 10 + i })),
+      count: n,
+    },
+    raw: {
+      code: 200,
+      data: {
+        total_products: n,
+        country: "US",
+        domain: "example.com",
+        products: Array.from({ length: n }, (_, i) => ({ asin: `RAW_${i + 1}` })),
+      },
+      message: null,
+      recordTime: "2026-11-25T00:00:00Z",
+      requestId: "req_1",
+      requestParams: { query: { q: "desk" }, body: null },
+    },
+    _treg: {
+      served_by: "ep_a",
+      provider: "prov_a",
+      tier: "core",
+      outcome: "hit",
+      tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "hit", status: 200, charged_micro: 1476 }],
+      charged_micro: 1476,
+    },
+  });
+
+  const shapeF = { detail: "upstream timeout" };
+
+  it("M1: Shape A & Shape A with meta yield 0 rows and none strategy under hintsOf and buildShapeDigest", () => {
+    const readA = readShape(shapeA, hintsOf(routedCommentsEp));
+    expect(readA.rows).toEqual([]);
+    expect(readA.nextCursor).toBeNull();
+    expect(readA.listStrategy).toBe("none");
+    const digestA = buildShapeDigest(shapeA, routedCommentsEp).reading;
+    expect(digestA.rows).toEqual([]);
+    expect(digestA.nextCursor).toBeNull();
+    expect(digestA.listStrategy).toBe("none");
+
+    const readAMeta = readShape(shapeAWithMeta, hintsOf(routedCommentsEp));
+    expect(readAMeta.rows).toEqual([]);
+    expect(readAMeta.nextCursor).toBeNull();
+    expect(readAMeta.listStrategy).toBe("none");
+    const digestAMeta = buildShapeDigest(shapeAWithMeta, routedCommentsEp).reading;
+    expect(digestAMeta.rows).toEqual([]);
+    expect(digestAMeta.nextCursor).toBeNull();
+    expect(digestAMeta.listStrategy).toBe("none");
+  });
+
+  it("M2: Shape B yields 0 rows and none strategy under hintsOf and buildShapeDigest", () => {
+    const readB = readShape(shapeB, hintsOf(routedFbPostsEp));
+    expect(readB.rows).toEqual([]);
+    expect(readB.listStrategy).toBe("none");
+    const digestB = buildShapeDigest(shapeB, routedFbPostsEp).reading;
+    expect(digestB.rows).toEqual([]);
+    expect(digestB.listStrategy).toBe("none");
+  });
+
+  it("M3: Shape C yields empty rows array under output.comments with null nextCursor", () => {
+    const readC = readShape(shapeC, hintsOf(routedFbCommentsEp));
+    expect(readC.rows).toEqual([]);
+    expect(readC.listPath).toBe("output.comments");
+    expect(readC.nextCursor).toBeNull();
+  });
+
+  it("M4: Shape D matches output-only reading for n=1 and n=9", () => {
+    for (const n of [1, 9]) {
+      const sD = shapeD(n, "cur_next");
+      const readD = readShape(sD, hintsOf(routedPostsEp));
+      const expected = readShape({ output: sD.output }, {});
+      expect(readD.rows).toEqual(expected.rows);
+      expect(readD.listPath).toBe("output.posts");
+      expect(readD.nextCursor).toBe("cur_next");
+      expect(readD.cursorPath).toBe("output.next_cursor");
+    }
+  });
+
+  it("M5: Shape E returns output products for n=16 and n=48", () => {
+    for (const n of [16, 48]) {
+      const sE = shapeE(n);
+      const readE = readShape(sE, hintsOf(routedAmazonEp));
+      expect(readE.rows).toEqual(sE.output.products);
+      expect(readE.listPath).toBe("output.products");
+    }
+  });
+
+  it("M6: treg.people.enrich returns output only without raw/_treg leakage", () => {
+    const readM6 = readShape(routedEnvelope, hintsOf(catalog.byId.get("treg.people.enrich")!));
+    expect(readM6.rows).toEqual([routedEnvelope.output]);
+    for (const key of ["raw", "_treg", "tried", "dropped"]) {
+      expect(readM6.rows[0]).not.toHaveProperty(key);
+    }
+  });
+
+  it("M7: Shape F behaviour matches between routed and unrouted", () => {
+    const readF = readShape(shapeF, hintsOf(routedYoutubeSearchEp));
+    const unroutedF = readShape(shapeF, { ...hintsOf(routedYoutubeSearchEp), routedOutputOnly: false });
+    expect(readF.rows).toEqual([]);
+    expect(readF.listStrategy).toBe("none");
+    expect(readF).toEqual(unroutedF);
+
+    const digestF = buildShapeDigest(shapeF, routedYoutubeSearchEp).reading;
+    const rootRowF = readShape(shapeF, { ...hintsOf(routedYoutubeSearchEp), routedOutputOnly: false, rootObjectIsRow: true });
+    expect(digestF.rows).toEqual([shapeF]);
+    expect(digestF.listPath).toBe("root");
+    expect(digestF.listStrategy).toBe("root_object");
+    expect(digestF).toEqual(rootRowF);
+  });
+
+  it("K1: direct endpoint behaviour is identical with hintsOf and manual hints", () => {
+    const directBody = {
+      output: { items: [{ id: "1" }] },
+      data: { rows: [{ id: "2" }] },
+    };
+    const directTopLevel = [{ id: "3" }];
+    const directHints = hintsOf(directEp);
+    const manualHints = {
+      listPath: directEp.list_path,
+      cursorPath: directEp.cursor_path,
+      example: directEp.example_response_trimmed,
+      itemFields: directEp.item_fields,
+    };
+    expect(readShape(directBody, directHints).rows).toEqual(readShape(directBody, manualHints).rows);
+    expect(readShape(directBody, directHints).listPath).toEqual(readShape(directBody, manualHints).listPath);
+    expect(readShape(directBody, directHints).nextCursor).toEqual(readShape(directBody, manualHints).nextCursor);
+    expect(readShape(directTopLevel, directHints).rows).toEqual(readShape(directTopLevel, manualHints).rows);
+  });
+
+  it("K2: missionPage declared listPath wins over routedOutputOnly", () => {
+    const mp = missionPageOf("anyapi.facebook.user.posts")!;
+    const body = { output: { data: { posts: [{ id: "p1" }] } } };
+    const readK2 = readShape(body, { ...hintsOf(routedPostsEp), missionPage: mp });
+    expect(readK2.listPath).toBe(mp.listPath);
+    expect(readK2.rows).toEqual([{ id: "p1" }]);
+  });
+
+  it("K3: routed hit reads output list; routed empty object returns 0 rows", () => {
+    const k3Hit = {
+      output: { mentions: [{ id: "m1", text: "hi" }] },
+      raw: { items: [{ id: "r1" }] },
+      _treg: { tried: [{ endpoint_id: "ep_a" }] },
+    };
+    const readK3Hit = readShape(k3Hit, hintsOf(routedPostsEp));
+    expect(readK3Hit.listPath).toBe("output.mentions");
+    expect(readK3Hit.rows).toEqual([{ id: "m1", text: "hi" }]);
+
+    const k3Empty = {
+      output: { ok: true },
+      raw: { items: [{ id: "r1" }] },
+      _treg: { tried: [{ endpoint_id: "ep_a" }] },
+    };
+    const readK3Empty = readShape(k3Empty, hintsOf(routedPostsEp));
+    expect(readK3Empty.rows).toEqual([]);
+    expect(readK3Empty.listStrategy).toBe("none");
+  });
+
+  it("D5: cursor is read from output only; raw and _treg cursor leaks are ignored", () => {
+    const d5Envelope = {
+      output: { posts: [{ id: "1" }], next_cursor: null },
+      raw: { next_cursor: "raw_leak", pagination: { next: "https://raw.example/2" } },
+      _treg: { cursor: "treg_leak" },
+    };
+    const readD5 = readShape(d5Envelope, hintsOf(routedPostsEp));
+    expect(readD5.nextCursor).toBeNull();
+    expect(readD5.cursorPath).toBeNull();
+    expect(readD5.cursorStrategy).toBe("none");
+  });
+
+  it("C1: isEmptyOrErrorRoutedObject counts payload fields only when non-empty", () => {
+    const c1NullMentions = readShape({ output: { mentions: null, next_cursor: null } }, hintsOf(routedPostsEp));
+    expect(c1NullMentions.rows).toEqual([]);
+    expect(c1NullMentions.listStrategy).toBe("none");
+
+    const c1Email = readShape({ output: { email: "a@b.com" } }, hintsOf(catalog.byId.get("treg.people.enrich")!));
+    expect(c1Email.rows).toEqual([{ email: "a@b.com" }]);
+    expect(c1Email.listStrategy).toBe("single_object");
+
+    const c1NullFields = readShape({ output: { full_name: null, title: null } }, hintsOf(catalog.byId.get("treg.people.enrich")!));
+    expect(c1NullFields.rows).toEqual([]);
+    expect(c1NullFields.listStrategy).toBe("none");
   });
 });

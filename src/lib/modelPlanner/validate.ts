@@ -322,13 +322,24 @@ function factsOf(v: ValidatedStep, ctx: ValidateContext, index: number): StepFac
     callEstimateUsd: v.callEstimateUsd,
     entity: entityOfEndpoint(v.endpoint),
     ...(oneRecord || (sample === undefined && listPath === null) ? { rootObjectIsRow: true } : {}),
+    ...(v.endpoint.kind === "routed" ? { routedOutputOnly: true } : {}),
   };
   // an EDIT of an approved plan has no new sample: the step keeps the way the approved step was read (where its list sits, that it is one record, its cursor and types)
   const approved = ctx.approved?.steps[index];
   const kept: StepFacts = approved && approved.endpointId === v.step.endpointId
-    ? { ...facts, listPath: approved.facts.listPath, cursorPath: approved.facts.cursorPath, itemFields: approved.facts.itemFields, rootObjectIsRow: approved.facts.rootObjectIsRow, limitName: approved.facts.limitName, limitMax: approved.facts.limitMax }
+    ? {
+        ...facts,
+        listPath: approved.facts.listPath,
+        cursorPath: approved.facts.cursorPath,
+        itemFields: approved.facts.itemFields,
+        rootObjectIsRow: approved.facts.rootObjectIsRow,
+        limitName: approved.facts.limitName,
+        limitMax: approved.facts.limitMax,
+        ...(approved.facts.routedOutputOnly ? { routedOutputOnly: true } : {}),
+      }
     : facts;
   if (kept.rootObjectIsRow === undefined) delete kept.rootObjectIsRow;
+  if (kept.routedOutputOnly === undefined) delete kept.routedOutputOnly;
   const alternates = alternatesOf(v, ctx);
   return alternates.length > 0 ? { ...kept, alternates } : kept;
 }
@@ -348,6 +359,7 @@ function alternatesOf(v: ValidatedStep, ctx: ValidateContext): NonNullable<StepF
       listPath: e.list_path && e.list_path !== "NOT FOUND" ? e.list_path : null, cursorPath: e.cursor_path ?? null,
       itemFields: e.item_fields ? Object.fromEntries(Object.entries(e.item_fields).filter(([, f]) => f.type && f.type !== "null").slice(0, 60).map(([k, f]) => [k, { type: f.type }])) : null,
       limitName: limitInput?.name ?? null, limitMax: limitInput?.maximum ?? null, callEstimateUsd: choice.estimateUsd,
+      ...(e.kind === "routed" ? { routedOutputOnly: true } : {}),
     });
   }
   return out;
