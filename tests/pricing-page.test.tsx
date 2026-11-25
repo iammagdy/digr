@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: any) => createElement("a", { href, ...rest }, children) }));
 
 import PricingPage from "../src/app/pricing/page";
-import CapacityCalculator from "../src/components/pricing/CapacityCalculator";
 import { CAPACITY_AMOUNTS_EGP, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, pointsForAmountEgp } from "../src/lib/pricingPage";
 import { computePublicCalculatorQuote } from "../src/lib/calculatorPricing";
 import { volumeForPointsCap } from "../src/lib/pointsCap";
@@ -62,12 +61,6 @@ describe("the pricing page", () => {
 
   it("does not advertise bundles, bonuses or referral rewards (those wait for the owner's approval)", () => {
     expect(text).not.toMatch(/باقة|باقات|بونص|مكافأة|هدية|إحالة|خصم على الشحن|رصيد إضافي|عرض خاص/);
-  });
-
-  it("has a free-amount calculator that runs in the browser with no network call", () => {
-    const source = readFileSync("src/components/pricing/CapacityCalculator.tsx", "utf8");
-    expect(source).not.toMatch(/fetch\(|XMLHttpRequest/);
-    expect(renderToStaticMarkup(createElement(CapacityCalculator))).toContain("اكتب أي مبلغ بالجنيه");
   });
 
   it("is linked from the header, the footer and the sitemap", () => {

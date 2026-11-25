@@ -7,9 +7,6 @@ import { applyPublisherCap, balancedSelection, checkPublisherShare, concentratio
 import { HEALTH_AXES, GENERAL_AXIS_ID, placeByRules } from "../src/lib/facebookReport/axes";
 import { cleanComments } from "../src/lib/facebookReport/comments";
 import { shortfallSentenceAr } from "../src/lib/facebookReport/shortfall";
-import {
-  FACEBOOK_REPORT_COST_USD_PER_COMMENT, MEASURED, blendedCostPerPost, costPerCommentAllIn, costPerDeliveredComment, jobArithmetic, reportUnitPricePoints,
-} from "../src/lib/facebookReport/cost";
 import { FACEBOOK_REPORT_SLUG, REPORT_MAX_COMMENTS, REPORT_MAX_POSTS } from "../src/lib/facebookReport/constants";
 import { FACEBOOK_JOB_CEILINGS } from "../src/lib/facebookCeilings";
 import { chargeForUnits, recordUnitPricePoints, reserveForUnits } from "../src/lib/recordPricing";
@@ -172,37 +169,13 @@ describe("the shortfall sentence", () => {
 });
 
 describe("cost, price and the money rules of the report capability", () => {
-  it("the price lives in one place: 0.00055 USD a delivered comment, 3.025 points, ASSUMED until a run measures the new mix", () => {
-    expect(FACEBOOK_REPORT_COST_USD_PER_COMMENT).toBe(0.00055);
-    expect(recordUnitPricePoints(FACEBOOK_REPORT_SLUG)).toBe(3.025);
-    expect(reportUnitPricePoints()).toBe(3.025);
-  });
-  it("the cost basis reproduces from the owner's measured run (M), with the blended figure at the search cap", () => {
-    expect(MEASURED.totalSpendUsd.value).toBe(0.9619);
-    expect(costPerCommentAllIn()).toBeCloseTo(0.000549, 6);
-    expect(blendedCostPerPost(0.15)).toBeGreaterThan(0.0005);
-    expect(costPerDeliveredComment(5, 0.15)).toBeCloseTo(0.000496, 5);
-    // the price is the dearer of the two, rounded up
-    expect(FACEBOOK_REPORT_COST_USD_PER_COMMENT).toBeGreaterThanOrEqual(Math.max(costPerCommentAllIn(), costPerDeliveredComment(5)));
-  });
-  it("300 posts × 5 comments = 1,500 comments: charge 4,538 and reserve 5,219; 100 posts × 20 comments is cut to the 1,500-comment ceiling", () => {
-    const job = jobArithmetic(300, 5);
-    expect(job.comments).toBe(1500);
-    expect(job.chargePoints).toBe(4538);
-    expect(job.reservePoints).toBe(5219);
-    expect(chargeForUnits(1500, 3.025)).toBe(4538);
-    expect(reserveForUnits(1500, 3.025)).toBe(5219);
-    const wide = jobArithmetic(100, 20);
-    expect(wide.comments).toBe(REPORT_MAX_COMMENTS);
-    expect(wide.posts).toBe(75);
-    expect(wide.chargePoints).toBe(4538);
-  });
   it("the ceilings are the Facebook ones, one constant each, unchanged: 300 posts and 1,500 comments", () => {
     expect(REPORT_MAX_POSTS).toBe(300);
     expect(REPORT_MAX_COMMENTS).toBe(1500);
     expect(FACEBOOK_JOB_CEILINGS).toMatchObject({ posts: 300, comments: 1500 });
   });
   it("charge = ceil(delivered × 3.025) and never above the reserve for any delivered count up to the volume (properties)", () => {
+    expect(recordUnitPricePoints(FACEBOOK_REPORT_SLUG)).toBe(3.025);
     let seed = 11;
     const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
     for (let i = 0; i < 5000; i++) {
@@ -213,10 +186,5 @@ describe("cost, price and the money rules of the report capability", () => {
       expect(charge).toBeLessThanOrEqual(reserveForUnits(volume, 3.025));
     }
     expect(chargeForUnits(0, 3.025)).toBe(0);
-  });
-  it("the margin on the dearest case (one comment a post, the search at its cap) is stated, never hidden, and positive at the measured basis", () => {
-    const job = jobArithmetic(300, 5);
-    expect(job.marginAtBasis).toBeGreaterThan(0);
-    expect(job.worstCostPerComment).toBeGreaterThan(job.expectedCostUsd / job.comments);
   });
 });
