@@ -15,5 +15,6 @@
   - `tests/coverage-doc.test.ts` (3 passed): الإبقاء على فحوصات الجداول وحذف مقارنة البناء التوليدي.
 - **Allow-List Shrink**:
   - انخفاض بمقدار `-64 arabic_regex` و`-5 treg_tokens` (إجمالي `-69` مدخلاً).
-  - سيتم تحديث `ALLOW_LIST_CEILING` بعد دمج Phase 0 (أو في PR مسودة مستقل).
-- **Draft PR**: TBD
+  - تم تحديث `ALLOW_LIST_CEILING` ليصبح: `{ arabic_regex: 1406, treg_tokens: 607, srv_paths: 0, fallback_lists: 2 }`.
+- **Draft PR**: https://github.com/iammagdy/digr/pull/679
+- **Phase 0**: https://github.com/iammagdy/digr/pull/677

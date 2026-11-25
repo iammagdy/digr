@@ -593,134 +593,6 @@
       "pattern": "/(?:هجهز|هجهزلك|هجهز لك|هعمل لك|هعملك|هعد لك|هعد|سأجهز|سأعد|سأقوم بإعداد|سأقوم بتجهيز|أجهز لك|اجهز لك|أعد لك|اعد لك|جارٍ تجهيز|جاري تجهيز|جارٍ إعداد|جاري إعداد|لحظات وأجهز|ثواني وأجهز|دقيقة وأجهز)/"
     },
     {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/[؟?!.,،:;]+/g"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/[أإآ]/g"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/@[-\\w.]+|youtube\\.com\\/(?:@|channel\\/)|tiktok\\.com\\/@|(?:قناة|صفحة|حساب)\\s+(?!يوتيوب|تيك\\s*توك|فيسبوك|فيس\\s*بوك|على|دي|ده)(?:اسم\\s+)?[\\p{L}\\p{N}_.-]{2,}/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/\\b(?:global|worldwide)\\b|عالمي|العالم/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/^(?:السلام عليكم|سلام عليكم|اهلا|مرحبا|ازيك|ازيكم|صباح الخير|مساء الخير|هاي|hello|hi)[!.؟? ]*$/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/^(?:عايز|عاوزه|محتاج|ممكن|هات|اجمع|جيب|وريني|اعرض|اريد|ابغى|please|want|need|تعليقات?|كومنتس?|كومنتات?|كمنتس?|ردود|فيديوهات?|بوستات?|منشورات?|تويتات?|تغريدات?|يوتيوب|youtube|تيك\\s*توك|tiktok|فيسبوك|facebook|منصة|x|اكس|إكس|تويتر|\\d+|و|على|من|عن|في|ال|\\s)*$/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/أخبار|اخبار|ورقة علمية|مقال أكاديمي|كرة القدم|كرة السلة/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/بوست|منشور|post|تغريدة|تويتة|تويتات|تغريدات|tweet/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/ترند|تريند|ترندينج|رائج|trending|viral/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تعليق|كومنت|كمنت|comment|ردود/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تعليقات?|كومنتات?|كومنت|كومنتس|ردود/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تغريدات?|تويتات?|tweets?/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تويت|تغريد|tweets?/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تويتر|twitter|منصة\\s*x/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تويتر|تغريد|منصة\\s*x|\\bx\\.com\\b|twitter/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/تيك\\s*توك|tiktok/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/خبر|اخبار|أخبار|اكاديمي|أكاديمي|ورقة|دراسات|بحث عن|اجمع|مصادر|football|basketball|كورة|كرة|موضوع|news|academic|research/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/شركات|شركة|مؤسسات|مصانع/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع|شركات\\s+في/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/صناع\\s*(?:ال)?قرار|صانعي\\s*(?:ال)?قرار|مدير(?:ين|ون)?|مدراء|رئيس(?:ين)?|مسؤول(?:ين)?|تنفيذي(?:ين)?|مؤسس(?:ين)?|ceos?|ctos?|decision makers?|executives?/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/عايز بيانات|اجمع بيانات|بحث عن شيء|موضوع معين/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/في\\s+شركات|في شركة|at\\s+\\w/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/فيديو|مقطع|مقاطع|شورت|ريلز|video|shorts/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/فيسبوك|facebook/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/فيسبوك|فيس\\s*بوك|facebook|\\bfb\\b/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/قناة|فيديوهات?|مقاطع/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/كهرب|ميكاني|الكتر|برمج|سوفت|تقني|طبي|مطاعم|عقار|تعليم|طاقة|سيارات|غذائ|زراع|مقاول|contract|software|it\\b|solar|sports|football|basketball|news|أخبار|بحث|اكاديمي|أكاديمي|جامعي/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/مدير|مدراء|رئيس|مسؤول|تنفيذي|مؤسس|مالك|قرار|ceo|cto|director|manager|executive|founder/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/من قناة|بتاعة|بتاع|من حساب/iu"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/ى/g"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "pattern": "/يوتيوب|youtube/iu"
-    },
-    {
       "file": "src/lib/activityCounts.ts",
       "pattern": "/^\\s*الصفحة\\s+\\d+/"
     },
@@ -4129,34 +4001,6 @@
       "pattern": "/team|leadership|management|الفريق|الإدارة/i"
     },
     {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/(?:رسميه|الحكوميه|القوميه|الحكومي|القومي|الدوله)/u"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/[،,؛;\\n]|\\sو(?=\\S)|\\sو\\s|\\+|\\sأو\\s|\\sاو\\s/u"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/^(?:جريده|جريدة|موقع|صحيفه|بوابه)\\s+/u"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/^(?:كلها|الكل|كلهم|نعم|ايوه|أيوه|اه|آه|هذه|دي|دول|هذه المصادر|تمام|موافق)$/u"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/^(?:و|ثم|مع|فقط|بس|لا|نعم)$/u"
-    },
-    {
-      "file": "src/lib/newsSources.ts",
-      "pattern": "/^و/u"
-    },
-    {
       "file": "src/lib/notificationText.ts",
       "pattern": "/[\\s:،.\\-–—]+$/u"
     },
@@ -4745,90 +4589,6 @@
       "pattern": "/ى/g"
     },
     {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/(?:افضل|أفضل|اهم|أهم|اشهر|أشهر|اكبر|أكبر)\\s+(?:ال)?(?:قنوات|حسابات|صفحات)/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/(?:الاهرام|الأهرام|اليوم السابع|المصري اليوم|الشروق|الوطن|مصراوي|الدستور|صدي البلد|صدى البلد|القاهره 24|القاهرة 24|الجمهوريه|الجمهورية|اخبار اليوم|أخبار اليوم|العربيه|العربية|الاخبار|الأخبار)/gu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/(?:بميزانيه|ميزانيتي|ميزانيه|بحد اقصي|لا تزيد عن|لا تزيد علي|مش اكتر من|مش اكثر من)\\s*(?:حوالي\\s*)?([0-9]+)\\s*نقط/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/(?:جرايد|جرائد|صحف|صحيفه|صحيفة|جريده|جريدة|مواقع اخباريه|مواقع إخبارية|مواقع صحفيه|وكالات انباء)/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/(?:قنوات|قناه|قناة|حسابات|صفحات)/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/\\bcsv\\b|سي اس في/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/\\bpdf\\b|بي دي اف|بي دي إف/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/اسم الشركه|اسم الشركة|اسماء الشركات|أسماء الشركات/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/اكسل|إكسل|excel|xlsx/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/الاعجاب|إعجاب|لايك|likes?/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/بالانجليزي|بالإنجليزي|بالانجليزيه|بالإنجليزية|english only|بالانكليزي/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/بالعربي|بالعربيه|بالعربية|عربي فقط|arabic only/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/بريد|ايميل|إيميل|email/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/تاريخ/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/تغير|فرق عن|نسبه التغير|نسبة التغير/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/رابط|لينك|link/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/عنوان(?!\\s*(?:سكن|منزل))|headline/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/مشاهد/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/مقتطف|ملخص قصير|نبذه|نبذة/u"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/منصب|مسمي|مسمى|وظيفه|وظيفة|title/iu"
-    },
-    {
-      "file": "src/lib/requestUnderstanding.ts",
-      "pattern": "/هاتف|تليفون|موبايل|رقم/u"
-    },
-    {
       "file": "src/lib/researchPlaceholders.ts",
       "pattern": "/(?:اسم\\s*الحساب|اسم_الحساب|اسم المستخدم|اسم_المستخدم|الوسم|الهاشتاج|الهاشتاغ|الموضوع|موضوع البحث|المجال|القطاع|رابط\\s*(?:ال)?(?:فيديو|صفحة|منشور|قناة|حساب)|الدولة|المدينة|الفترة|عدد|اكتب|أدخل|حدد|(?:[٠-٩0-9]+)\\s*(?:شهر|شهور|أشهر|سنة|سنوات|أسبوع|أسابيع|يوم|أيام)|your[_ ]?(?:username|handle|topic|country|industry|count|date)|account[_ ]?name|username|handle|hashtag|keyword|topic|industry|country|city|time[_ ]?range|count)/iu"
     },
@@ -5085,10 +4845,6 @@
       "pattern": "/صفحات?\\s+(?:ال)?فريق|صفحة\\s+(?:ال)?إدارة|مواقع\\s+(?:ال)?شركات|المنشور(?:ة|ين)?\\s+(?:على|في)\\s+(?:مواقع|المواقع)|team\\s+pages?|public\\s+team/i"
     },
     {
-      "file": "src/lib/server/multiStepOrchestrator.ts",
-      "pattern": "/^خطة بحث:\\s*/"
-    },
-    {
       "file": "src/lib/server/negativeListEngine.ts",
       "pattern": "/[إأآٱ]/g"
     },
@@ -5139,18 +4895,6 @@
     {
       "file": "src/lib/server/providerLimits.ts",
       "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/server/queryExpansion.ts",
-      "pattern": "/(عقارات|تطوير عقاري|العاصمة الإدارية|التجمع|الشيخ زايد|شقق|فيلات)/i"
-    },
-    {
-      "file": "src/lib/server/queryExpansion.ts",
-      "pattern": "/(كهروميكانيكا|كهروميكانيكية|mep|إلكتروميكانيكال|الكتروميكانيكال|تكييف وتبريد|إنذار حريق)/i"
-    },
-    {
-      "file": "src/lib/server/queryExpansion.ts",
-      "pattern": "/(منتخب مصر|الفراعنة|كأس العالم|مباراة مصر|بلجيكا|أهداف مصر|تشكيل المنتخب)/i"
     },
     {
       "file": "src/lib/server/rejectedRowSample.ts",
@@ -6187,10 +5931,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/functions/shared/exampleTemplates.ts",
-      "token": "x"
-    },
-    {
       "file": "src/functions/shared/fileGenerators.ts",
       "token": "youtube"
     },
@@ -6321,14 +6061,6 @@
     {
       "file": "src/functions/shared/tregClient.ts",
       "token": "treg"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/functions/shared/understandingRequests.ts",
-      "token": "youtube"
     },
     {
       "file": "src/lib/agentMission/capabilities/artifact.ts",
@@ -7375,10 +7107,6 @@
       "token": "x"
     },
     {
-      "file": "src/lib/coverageDoc.ts",
-      "token": "crawl4ai"
-    },
-    {
       "file": "src/lib/customerFacingRequestLabels.ts",
       "token": "youtube"
     },
@@ -7797,10 +7525,6 @@
     {
       "file": "src/lib/server/multiProvider/providerCaps.ts",
       "token": "treg"
-    },
-    {
-      "file": "src/lib/server/multiStepOrchestrator.ts",
-      "token": "youtube"
     },
     {
       "file": "src/lib/server/normalizationPipeline.ts",
