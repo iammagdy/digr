@@ -268,9 +268,12 @@ export interface RecordedRowMappingOptions {
 
 /**
  * Pure function mapping raw fixture rows to runner recorded rows.
- * E1: A row keeps its fixture url ONLY if that url is present and no other row of the same fixture has the same url.
- * Otherwise the row gets NO url field (identified by its own id, which ingest already dedupes on).
- * E2: No marker-word checks, no platform/account/provider names. Hard-coded handle fallback url removed.
+ * F1: A row whose fixture url is duplicated in the fixture gets a DISTINCT url built generically from that same url:
+ *     parse it with new URL(), replace ONLY its last path segment with encodeURIComponent(row id), keep scheme/host/other segments.
+ *     Unique urls stay byte-for-byte. A missing or unparsable url -> no url field.
+ * F2: Author default = the first path segment of the row's fixture url when the row has no author field
+ *     (generic URL parsing, no literal); if none, leave the field out.
+ *     createdUtc: keep the fixture value; if absent, leave the field out.
  */
 export function mapFixtureRowsToRecordedRows(
   fixtureRows: Array<Record<string, any>>,
@@ -293,29 +296,66 @@ export function mapFixtureRowsToRecordedRows(
 
   return fixtureRows.map((r: any, idx: number) => {
     const isMatch = r.verdict === 1 || r.reason === "match";
-    const id = isMatch && options?.deliveredId
+    const parsedNumericId = (typeof r.url === "string" && r.url.includes("status/"))
+      ? r.url.split("status/")[1].replace(/[^0-9]/g, "")
+      : "";
+    const id = (isMatch && options?.deliveredId)
       ? options.deliveredId
-      : (r.id ?? (r.url && typeof r.url === "string" && r.url.includes("status/") ? r.url.split("status/")[1].replace(/[^0-9]/g, "") : null) ?? `${prefix}_${idx + 1}`);
+      : (r.id ? String(r.id) : (parsedNumericId.length > 0 ? parsedNumericId : `${prefix}_${idx + 1}`));
 
     const text = r.text ?? r.title ?? "";
     const title = r.title ?? r.text ?? "";
-    const authorUsername = r.authorUsername ?? "SaudiMOH";
-    const createdUtc = r.createdUtc ?? "2026-10-18T12:00:00Z";
 
     const row: Record<string, any> = {
       id: String(id),
       text,
       title,
-      authorUsername,
-      createdUtc,
     };
 
-    // E1: Keep fixture url ONLY if present and unique in this fixture.
-    // E2: Remove hard-coded handle fallback url; rows without usable url get no url property.
+    let parsedUrl: URL | null = null;
     if (typeof r.url === "string") {
       const trimmed = r.url.trim();
-      if (trimmed.length > 0 && urlCounts.get(trimmed) === 1) {
+      if (trimmed.length > 0) {
+        try {
+          parsedUrl = new URL(trimmed);
+        } catch {
+          parsedUrl = null;
+        }
+      }
+    }
+
+    // F2: Author default = first path segment of the row's fixture url when row has no author field
+    let author = r.authorUsername ?? r.author ?? r.author_username;
+    if (!author && parsedUrl) {
+      const pathSegments = parsedUrl.pathname.split("/").filter(Boolean);
+      if (pathSegments.length > 0 && pathSegments[0]) {
+        author = pathSegments[0];
+      }
+    }
+    if (author) {
+      row.authorUsername = String(author);
+    }
+
+    // F2: createdUtc: keep the fixture value; if absent, leave the field out
+    const createdUtc = r.createdUtc ?? r.created_utc ?? r.createdAt ?? r.created_at;
+    if (createdUtc) {
+      row.createdUtc = createdUtc;
+    }
+
+    // F1: Unique urls stay byte-for-byte. Duplicated url gets a DISTINCT url built generically from that same url:
+    // parse with new URL(), replace ONLY its last path segment with encodeURIComponent(row id), keep scheme/host/other segments.
+    // Missing or unparsable url -> no url field.
+    if (parsedUrl && typeof r.url === "string") {
+      const trimmed = r.url.trim();
+      const count = urlCounts.get(trimmed) ?? 1;
+      if (count === 1) {
         row.url = r.url;
+      } else {
+        const trimmedPath = parsedUrl.pathname.replace(/\/+$/, "");
+        const segments = trimmedPath ? trimmedPath.split("/") : ["", ""];
+        segments[segments.length - 1] = encodeURIComponent(String(id));
+        parsedUrl.pathname = segments.join("/");
+        row.url = parsedUrl.toString();
       }
     }
 

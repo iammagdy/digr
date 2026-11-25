@@ -18,35 +18,53 @@ describe("DT-20261125-delivery-parity: Runner fixture URL mapping & delivery par
     columns: [
       { key: "text", title_ar: "النص" },
       { key: "url", title_ar: "الرابط" },
+      { key: "authorUsername", title_ar: "المؤلف" },
     ],
   };
   const dummyPlan = { stages: [dummyStage] };
 
-  it("M3: 3 rows sharing one url + 2 rows with distinct urls -> 5 recorded rows; 3 have no url; 2 keep theirs; ingestRows keeps all 5 distinct ids (no duplicates_ignored)", async () => {
+  it("M3': duplicated urls -> distinct urls with row id; unique urls unchanged; unparsable/missing -> no url; author derived from url path; ingest keeps distinct items", async () => {
     const fixtureRows = [
-      { id: "row_shared_1", text: "Post 1 with shared masked url", url: "https://x.com/SaudiMOH/status/masked" },
-      { id: "row_shared_2", text: "Post 2 with shared masked url", url: "https://x.com/SaudiMOH/status/masked" },
-      { id: "row_shared_3", text: "Post 3 with shared masked url", url: "https://x.com/SaudiMOH/status/masked" },
-      { id: "row_distinct_4", text: "Post 4 with distinct url", url: "https://x.com/SaudiMOH/status/distinct_1" },
-      { id: "row_distinct_5", text: "Post 5 with distinct url", url: "https://x.com/SaudiMOH/status/distinct_2" },
+      { id: "row_shared_1", text: "Post 1 with shared masked url", url: "https://example.com/authorone/status/masked" },
+      { id: "row_shared_2", text: "Post 2 with shared masked url", url: "https://example.com/authorone/status/masked" },
+      { id: "row_shared_3", text: "Post 3 with shared masked url", url: "https://example.com/authorone/status/masked" },
+      { id: "row_distinct_4", text: "Post 4 with distinct url", url: "https://example.com/authortwo/status/distinct_1" },
+      { id: "row_distinct_5", text: "Post 5 with distinct url", url: "https://example.com/authortwo/status/distinct_2" },
+      { id: "row_bad_6", text: "Post 6 with unparsable url", url: "not-a-valid-url" },
+      { id: "row_missing_7", text: "Post 7 with missing url" },
     ];
 
     const recorded = mapFixtureRowsToRecordedRows(fixtureRows);
-    expect(recorded).toHaveLength(5);
+    expect(recorded).toHaveLength(7);
 
-    // The 3 sharing one url must have NO url field
-    expect(recorded[0].url).toBeUndefined();
-    expect("url" in recorded[0]).toBe(false);
-    expect(recorded[1].url).toBeUndefined();
-    expect("url" in recorded[1]).toBe(false);
-    expect(recorded[2].url).toBeUndefined();
-    expect("url" in recorded[2]).toBe(false);
+    // Duplicated urls -> distinct urls with the same host and the row id as last segment
+    expect(recorded[0].url).toBe("https://example.com/authorone/status/row_shared_1");
+    expect(recorded[1].url).toBe("https://example.com/authorone/status/row_shared_2");
+    expect(recorded[2].url).toBe("https://example.com/authorone/status/row_shared_3");
 
-    // The 2 with distinct urls keep theirs byte-for-byte
-    expect(recorded[3].url).toBe("https://x.com/SaudiMOH/status/distinct_1");
-    expect(recorded[4].url).toBe("https://x.com/SaudiMOH/status/distinct_2");
+    // Author derived from the first path segment of the row's fixture url (authorone)
+    expect(recorded[0].authorUsername).toBe("authorone");
+    expect(recorded[1].authorUsername).toBe("authorone");
+    expect(recorded[2].authorUsername).toBe("authorone");
 
-    // Feeding to ingestRows keeps all 5 distinct ids with no duplicates_ignored
+    // Unique urls stay byte-for-byte
+    expect(recorded[3].url).toBe("https://example.com/authortwo/status/distinct_1");
+    expect(recorded[4].url).toBe("https://example.com/authortwo/status/distinct_2");
+    expect(recorded[3].authorUsername).toBe("authortwo");
+    expect(recorded[4].authorUsername).toBe("authortwo");
+
+    // Unparsable / missing url -> no url field and no author derived
+    expect(recorded[5].url).toBeUndefined();
+    expect("url" in recorded[5]).toBe(false);
+    expect(recorded[5].authorUsername).toBeUndefined();
+    expect("authorUsername" in recorded[5]).toBe(false);
+
+    expect(recorded[6].url).toBeUndefined();
+    expect("url" in recorded[6]).toBe(false);
+    expect(recorded[6].authorUsername).toBeUndefined();
+    expect("authorUsername" in recorded[6]).toBe(false);
+
+    // Feeding to ingestRows keeps all distinct items (no duplicates_ignored among distinct rows)
     const store = createMemoryStore();
     const items = await ItemStore.open(store, "test_m3");
     const tally = await ingestRows(
@@ -57,13 +75,15 @@ describe("DT-20261125-delivery-parity: Runner fixture URL mapping & delivery par
     );
 
     expect(tally.duplicates_ignored).toBe(0);
-    expect(tally.saved_now).toBe(5);
+    expect(tally.saved_now).toBe(7);
     const storedRows = items.acceptedRows("tweets");
-    expect(storedRows).toHaveLength(5);
+    expect(storedRows).toHaveLength(7);
     const storedIds = storedRows.map((r) => r.id).sort();
     expect(storedIds).toEqual([
+      "row_bad_6",
       "row_distinct_4",
       "row_distinct_5",
+      "row_missing_7",
       "row_shared_1",
       "row_shared_2",
       "row_shared_3",
@@ -72,8 +92,8 @@ describe("DT-20261125-delivery-parity: Runner fixture URL mapping & delivery par
 
   it("C1: Two fixture rows with the SAME id stay one item after ingest (a real duplicate is still a duplicate)", async () => {
     const fixtureRows = [
-      { id: "real_duplicate_id", text: "First copy of tweet", url: "https://x.com/SaudiMOH/status/url_a" },
-      { id: "real_duplicate_id", text: "Second copy of same tweet", url: "https://x.com/SaudiMOH/status/url_b" },
+      { id: "real_duplicate_id", text: "First copy of tweet", url: "https://example.com/author/status/url_a" },
+      { id: "real_duplicate_id", text: "Second copy of same tweet", url: "https://example.com/author/status/url_b" },
     ];
 
     const recorded = mapFixtureRowsToRecordedRows(fixtureRows);
@@ -97,16 +117,16 @@ describe("DT-20261125-delivery-parity: Runner fixture URL mapping & delivery par
 
   it("C2: Rows whose urls are all distinct keep them byte-for-byte", () => {
     const fixtureRows = [
-      { id: "id_101", text: "Text 101", url: "https://x.com/SaudiMOH/status/101" },
-      { id: "id_102", text: "Text 102", url: "https://x.com/SaudiMOH/status/102" },
-      { id: "id_103", text: "Text 103", url: "https://x.com/SaudiMOH/status/103" },
+      { id: "id_101", text: "Text 101", url: "https://example.com/author1/status/101" },
+      { id: "id_102", text: "Text 102", url: "https://example.com/author2/status/102" },
+      { id: "id_103", text: "Text 103", url: "https://example.com/author3/status/103" },
     ];
 
     const recorded = mapFixtureRowsToRecordedRows(fixtureRows);
     expect(recorded).toHaveLength(3);
-    expect(recorded[0].url).toBe("https://x.com/SaudiMOH/status/101");
-    expect(recorded[1].url).toBe("https://x.com/SaudiMOH/status/102");
-    expect(recorded[2].url).toBe("https://x.com/SaudiMOH/status/103");
+    expect(recorded[0].url).toBe("https://example.com/author1/status/101");
+    expect(recorded[1].url).toBe("https://example.com/author2/status/102");
+    expect(recorded[2].url).toBe("https://example.com/author3/status/103");
   });
 
   it("C3: Built-in fixture path (mission without a QA fixture file) gives the same result as on main", () => {
