@@ -197,6 +197,9 @@ describe("the contents", () => {
     expect(platformOfEndpoint("justoneapi.x.facebook-search-post-v1")).toBe("فيسبوك");
     expect(platformOfEndpoint("contextdev.parse.tiktok-feed")).toBe("تيك توك");
     expect(platformOfEndpoint("crawl4ai.youtube.channel")).toBe("يوتيوب");
+    expect(platformOfEndpoint("contextdev.parse.instagram-profile")).toBe("إنستجرام");
+    expect(platformOfEndpoint("anyapi.linkedin.company")).toBe("لينكدإن");
+    expect(platformOfEndpoint("contextdev.parse.google-maps")).toBe("خرائط جوجل");
     expect(platformOfEndpoint("contextdev.parse.emails")).toBeNull();
     expect(platformOfEndpoint("e")).toBeNull();
   });
