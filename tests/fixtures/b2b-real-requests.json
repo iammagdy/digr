@@ -1,0 +1,14 @@
+{
+  "source": "production missions table, read-only query by COMMANDER 2026-11-25 (request texts only, test accounts, no contact data)",
+  "use": "Phase 4 real-model 5/5 check of understanding: companies_count / per_company / people_of_companies and B2B handover. No provider calls needed before handover.",
+  "requests": [
+    {"mission": "msn_a762247711a7d0333415", "status": "completed", "text": "عايز ٣ شركات برمجيات في المعادي، ومع كل شركة مدير وإيميله وتليفونه", "expect": {"companies_count": 3, "per_company": 1}},
+    {"mission": "msn_fc87dd3df16b49430677", "status": "completed", "text": "عايز ٥ شركات تسويق في القاهرة ومع كل شركة ٤ من المديرين أو العاملين", "expect": {"companies_count": 5, "per_company": 4}},
+    {"mission": "msn_eb6c787647ddbebd5702", "status": "completed", "text": "مدير تسويق من كل شركة من ٣ شركات برمجيات في القاهرة", "expect": {"companies_count": 3, "per_company": 1}},
+    {"mission": "msn_75e523700fe6726c5c76", "status": "completed", "text": "٣ مديرين في شركات عقارات في القاهرة بالإيميل ورقم التليفون", "expect": {"companies_count": "not given (0) — 3 is people, never copied to companies", "per_company": "see plan counter-case 1"}},
+    {"mission": "msn_b712e0220f73d7279a5e", "status": "completed", "text": "عايز 3 شركات عقارات في القاهرة ومدير كل شركة بالإيميل والتليفون", "expect": {"companies_count": 3, "per_company": 1}},
+    {"mission": "msn_d2112108420bfaf68860", "status": "completed", "text": "عايز 3 شركات تسويق في القاهرة ومدير كل شركة", "expect": {"companies_count": 3, "per_company": 1}},
+    {"mission": "msn_d68384e27800bed8fef4", "status": "cancelled", "text": "عايز إيميلات وتليفونات مديري شركات التسويق في القاهرة", "expect": {"companies_count": 0}},
+    {"mission": "msn_161d90c167b6ef647e91", "status": "completed", "text": "عايز قائمة بأهم ٥ شركات عقارات في التجمع الخامس بالقاهرة مع مواقعهم الإلكترونية وأرقام تليفوناتهم", "expect": {"people_of_companies.asked": false, "note": "companies only, no people"}}
+  ]
+}

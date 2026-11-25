@@ -20,10 +20,9 @@ import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import { SOURCE_LABEL_FALLBACK_AR, foreignLatinIn, labelWrittenBy, writtenLatinWords } from "../../../src/lib/agentMission/shownWords";
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
-import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
-import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
+import { isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
-import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
+import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, normalizeWords, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf, multiProviderEndpoints } from "./catalogView";
@@ -718,20 +717,27 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
   const peopleStep = u.steps.find((s) => s.parent !== null && isPeopleOfCompanyStep(s));
   if (ask?.asked !== true && !peopleStep) return u;
   const cited = ask?.companies_text ?? "";
+  const perText = ask?.per_company_text ?? "";
   const title = ask?.title_ar || peopleStep?.title_ar || "";
   if (cited === "" || title === "") return u;
   const message = said.join("\n");
   const n = countWrittenIn(message, cited);
   if (n === null || n < 1) return u;
-  const citedNouns = tokensOf(cited).filter((t) => /^\p{L}{4,}$/u.test(t) && wordNumbersIn(t, 1).length === 0);
-  // the cited noun names the ROOT ENTITY (FIX2/FIX3: this, not the model's per-company field, decides: the same cite copied into both fields binds when it is the companies' noun and never when it is a people noun): never a people noun (isPeopleNoun, the structural helper the plan check already uses)
-  if (citedNouns.length === 0 || citedNouns.some((c) => isPeopleNoun(c))) return u;
-  // the cited noun must be the COMPANIES' own noun: it matches a word of the companies step's title (or of the fixed label of the parent), never only «not the people's title» (a generic people title let «مديرين» or «مهندسين» through)
-  // ...and matches the HEAD noun of the root step's title (the first word of its own words: «شركات الكهروميكانيكا وبيانات المديرين» has the head «شركات», not «المديرين»), or the fixed label of the parent
-  const rootHead = ownTitleWords(u.steps.find((s) => s.parent === null)?.title_ar ?? "")[0] ?? "";
-  const heads = [rootHead, COMPANIES_LABEL_AR];
-  if (!citedNouns.some((c) => heads.some((h) => h !== "" && sameNounStem(h, c)))) return u;
+
+  // (1) companies_text must match countWrittenIn
+  const cNorm = normalizeWords(cited);
+  const pNorm = normalizeWords(perText);
+
+  // (2) companies_text is not the same span as per_company_text and neither contains the other
+  if (pNorm !== "" && (cNorm === pNorm || cNorm.includes(pNorm) || pNorm.includes(cNorm))) return u;
+
+  // (3) when companies_count === per_company, the number must be written twice (writtenElsewhere)
+  const perCount = ask?.per_company ?? null;
+  if (perCount !== null && n === perCount && !writtenElsewhere(message, cited, n)) return u;
+
+  // Preserve isCountOfOtherNoun (pure grammar check on people title)
   if (!isCountOfOtherNoun(message, cited, n, title)) return u;
+
   return { ...u, companies_count: n };
 }
 
