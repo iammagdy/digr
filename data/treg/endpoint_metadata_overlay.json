@@ -16137,6 +16137,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 2,
+      "diger_hits": 0
     }
   },
   "aviato.people.email.find": {
@@ -16157,6 +16161,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 42,
+      "diger_hits": 9
     }
   },
   "companyenrich.people.email": {
@@ -16177,6 +16185,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 1,
+      "diger_hits": 1
     }
   },
   "enrichlayer.person.work-email": {
@@ -16217,6 +16229,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 2,
+      "diger_hits": 0
     }
   },
   "icypeas.people.email.find": {
@@ -16317,6 +16333,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 14,
+      "diger_hits": 0
     }
   },
   "tomba.people.email.find": {
@@ -16327,6 +16347,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 1,
+      "diger_hits": 0
     }
   },
   "tomba.people.email.find.author": {
@@ -16347,6 +16371,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 4,
+      "diger_hits": 1
     }
   },
   "trykitt.people.email.find": {
@@ -16357,6 +16385,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 1,
+      "diger_hits": 0
     }
   },
   "wiza.people.email.find": {
@@ -16387,6 +16419,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 5,
+      "diger_hits": 5
     }
   },
   "contactout.people.contact.work": {
@@ -17547,6 +17583,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 3,
+      "diger_hits": 1
     }
   },
   "aviato.people.phone.find": {
@@ -17567,6 +17607,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 21,
+      "diger_hits": 2
     }
   },
   "dropleads.people.phone.find": {
@@ -17577,6 +17621,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 1,
+      "diger_hits": 0
     }
   },
   "getleadsio.people.phone.lookup": {
@@ -17667,6 +17715,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 11,
+      "diger_hits": 0
     }
   },
   "tomba.people.phone.find": {
@@ -17677,6 +17729,10 @@
       "plural": "أشخاص",
       "tamyiz": "شخصًا",
       "feminine": false
+    },
+    "observed": {
+      "diger_calls": 2,
+      "diger_hits": 1
     }
   },
   "wiza.people.phone.find": {
