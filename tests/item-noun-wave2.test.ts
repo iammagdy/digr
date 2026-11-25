@@ -14,6 +14,9 @@ import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { buildCatalogWideningFacts } from "../agent/src/llmPlanner/planner";
 import { directWebEndpoints } from "../agent/src/llmPlanner/catalogView";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { stagesView } from "../src/lib/agentMission/customerView";
+import { scoutFallbackAr, type ScoutFinding } from "../agent/src/llmPlanner/planner";
+import { buildMissionNotice } from "../src/lib/agentMission/notices";
 import endpointMetadataOverlay from "../data/treg/endpoint_metadata_overlay.json";
 
 describe("DT-20261125-wordlist-wave2 Phase 3: Item Noun Catalog Overlay & Browser Safety (C1, C2, C3, C6, K3)", () => {
@@ -200,5 +203,127 @@ describe("DT-20261125-wordlist-wave2 Phase 3: Item Noun Catalog Overlay & Browse
       singular: "تغريدة (tweet)",
     };
     expect(coerceItemNoun(partialLatin)).toBeNull();
+  });
+
+  it("7. F5 regression: generic title («نتائج البحث») on videos endpoint shows «فيديو/فيديوهات» on card, shortfall, and notice; no overlay shows «عنصر»", () => {
+    const videoNoun = overlayMap["treg.bilibili.search.videos"]?.item_noun_ar;
+    expect(videoNoun).toBeDefined();
+    expect(videoNoun.singular).toBe("فيديو");
+    expect(videoNoun.plural).toBe("فيديوهات");
+
+    // 1) Card (stagesView)
+    const cardWithVideo = stagesView({
+      stages: [
+        {
+          expected_rows: 5,
+          title_ar: "نتائج البحث",
+          item_noun_ar: videoNoun,
+          deliver: true,
+        },
+      ],
+    });
+    expect(cardWithVideo.stages[0].rowsAr).toBe("٥ فيديوهات");
+    expect(cardWithVideo.stages[0].rowsAr).not.toContain("عنصر");
+
+    const cardNoOverlay = stagesView({
+      stages: [
+        {
+          expected_rows: 5,
+          title_ar: "نتائج البحث",
+          deliver: true,
+        },
+      ],
+    });
+    expect(cardNoOverlay.stages[0].rowsAr).toBe("٥ عناصر");
+
+    // 2) Shortfall question (scoutFallbackAr)
+    const findingWithVideo: ScoutFinding = {
+      step: {
+        key: "s1",
+        title_ar: "نتائج البحث",
+        platform: "bilibili",
+        capability: "search.videos",
+        count: { total: 50, per_parent: null, all: false },
+      } as any,
+      requested: 50,
+      found: 0,
+      exhausted: true,
+      sets: 1,
+      examinedCount: 50,
+      builtStep: {
+        option: {
+          endpoint: {
+            id: "treg.bilibili.search.videos",
+            platform: "bilibili",
+            capability: "search.videos",
+            item_noun_ar: videoNoun,
+          } as any,
+        } as any,
+      } as any,
+    };
+    const fbVideo = scoutFallbackAr([findingWithVideo], ["نتائج البحث", "موضوع"]);
+    expect(fbVideo.question_ar).toContain("فحصنا ٥٠ فيديو");
+    expect(fbVideo.question_ar).not.toContain("عنصر");
+    const factsVideo = buildCatalogWideningFacts([findingWithVideo], undefined, null);
+    expect(factsVideo.length).toBeGreaterThan(0);
+    expect(factsVideo[0].label_ar).toContain("فيديو");
+    expect(factsVideo[0].label_ar).not.toContain("عنصر");
+
+    const findingNoOverlay: ScoutFinding = {
+      step: {
+        key: "s2",
+        title_ar: "نتائج البحث",
+        platform: "custom",
+        capability: "search.items",
+        count: { total: 50, per_parent: null, all: false },
+      } as any,
+      requested: 50,
+      found: 0,
+      exhausted: true,
+      sets: 1,
+      examinedCount: 50,
+    };
+    const fbNoOverlay = scoutFallbackAr([findingNoOverlay], ["نتائج البحث", "موضوع"]);
+    expect(fbNoOverlay.question_ar).toContain("فحصنا ٥٠ عنصرًا");
+    const factsNoOverlay = buildCatalogWideningFacts([findingNoOverlay], undefined, null);
+    expect(factsNoOverlay.length).toBeGreaterThan(0);
+    expect(factsNoOverlay[0].label_ar).toContain("عنصر");
+
+    // 3) Notice (buildMissionNotice)
+    const noticeVideo = buildMissionNotice("completed", {
+      delivered: 5,
+      planned: 5,
+      chargedPoints: 50,
+      releasedPoints: 0,
+      reservedPoints: 50,
+      hasJob: true,
+      stages: [
+        {
+          titleAr: "نتائج البحث",
+          delivered: 5,
+          planned: 5,
+          item_noun_ar: videoNoun,
+        },
+      ],
+    });
+    expect(noticeVideo.body).toContain("٥ فيديوهات");
+    expect(noticeVideo.body).not.toContain("عنصر");
+
+    const noticeNoOverlay = buildMissionNotice("completed", {
+      delivered: 5,
+      planned: 5,
+      chargedPoints: 50,
+      releasedPoints: 0,
+      reservedPoints: 50,
+      hasJob: true,
+      stages: [
+        {
+          titleAr: "نتائج البحث",
+          delivered: 5,
+          planned: 5,
+        },
+      ],
+    });
+    expect(noticeNoOverlay.body).toContain("٥ عناصر");
   });
 });

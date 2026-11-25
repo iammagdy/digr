@@ -1311,6 +1311,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? sampleCellText(s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? ""), SAMPLE_CELL_CHARS)]))),
         links_whole: true,
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
+        ...(s.item_noun_ar ? { item_noun_ar: s.item_noun_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
         ...(s.children_open && !s.per_parent_asked ? { children_open: true } : {}),

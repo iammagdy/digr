@@ -172,7 +172,7 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
     observed: { ok_rate: 0.97, hit_rate: 0.95, samples: 200 },
     scope: "public",
     item_fields: { title: { type: "string", example: "" }, url: { type: "string", example: "" }, description: { type: "string", example: "" } },
-    item_noun_ar: ((endpointMetadataOverlay as Record<string, any>)[s.id]?.item_noun_ar ?? (endpointMetadataOverlay as Record<string, any>)["treg.web.search"]?.item_noun_ar),
+    item_noun_ar: (endpointMetadataOverlay as Record<string, any>)[s.id]?.item_noun_ar,
   })) as unknown as CatalogEndpoint[];
 }
 
