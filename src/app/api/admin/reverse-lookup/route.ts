@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ capUsd: ADMIN_LOOKUP_DAILY_CAP_USD, spentTodayUsd: spent ?? 0, spendKnown: spent !== null, historyAvailable: history.available, history: history.rows });
 }
 
-const bad = () => NextResponse.json({ ok: false, reason: "bad_input", message: "اكتب رقم هاتف أو بريدًا إلكترونيًا صحيحًا." }, { status: 400 });
+const bad = () => NextResponse.json({ ok: false, reason: "bad_input", message: "اكتب رقم هاتف أو بريدًا إلكترونيًا أو رابط ملف شخصي على لينكدإن صحيحًا." }, { status: 400 });
 
 /**
  * Admin only. No customer points are used; every lookup is written to the sensitive-lookup audit log. Body:

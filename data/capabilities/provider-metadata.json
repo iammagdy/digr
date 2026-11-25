@@ -21355,6 +21355,30 @@
     "slug": "social-youtube-videos",
     "nounAr": "فيديو"
    }
+  },
+  "reverseLookup": {
+   "adminOnly": [
+    {
+     "id": "treg.people.enrich",
+     "inputs": {
+      "email": {
+       "param": "email"
+      },
+      "social_url": {
+       "param": "linkedin_url",
+       "hosts": [
+        "linkedin.com",
+        "www.linkedin.com"
+       ],
+       "pathPrefixes": [
+        "/in/"
+       ]
+      }
+     },
+     "maxUsdPerCall": 0.28,
+     "waterfall": true
+    }
+   ]
   }
  },
  "web": {

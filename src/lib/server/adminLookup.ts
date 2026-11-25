@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
+import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 import { executeTregCall, maxTregAttempts, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
 import { callMoney, createJobCallBudget } from "./callBudget";
 import { classifyTregCharge } from "./tregCharge";
 import { runSensitiveCall } from "./sensitiveAccess";
+import { blockedEndpointReason } from "../treg/blockList";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyRuleOf } from "../treg/dataPolicy";
 import { hintsOf, readShape } from "../treg/shapeReader";
 import { callEstimateUsd, unitCost } from "../modelPlanner/pricing";
 import { COMPANY_DOMAIN_ONLY_ENDPOINTS, EMAIL_REVERSE_ORDER, NO_WATERFALL_ENDPOINTS, PHONE_REVERSE_ORDER, US_ONLY_PHONE_ENDPOINTS, isCompanyDomainEmail } from "../treg/reverseOrder";
-import { isUsefulIdentity, mergeFields, type LookupFields } from "../adminLookupResult";
+import { emptyIdentity, isUsefulIdentity, mergeFields, type LookupFields, type LookupIdentity } from "../adminLookupResult";
 
 /**
  * The ADMIN REVERSE LOOKUP: the admin types a phone number or an email address. The order of the endpoints comes from live evidence (src/lib/treg/reverseOrder.ts): an e-mail goes through
@@ -23,17 +25,56 @@ export const ADMIN_LOOKUP_JOB_PREFIX = "adminlookup_";
 /** The purpose every admin lookup carries in the audit log (the day's admin spend is read back from the rows that carry it). */
 export const ADMIN_LOOKUP_PURPOSE = "admin reverse lookup";
 
-export type LookupKind = "phone" | "email";
+export type LookupKind = "phone" | "email" | "social_url";
+
+interface AdminOnlyInputSpec {
+  param: string;
+  hosts?: string[];
+  pathPrefixes?: string[];
+}
+
+interface AdminOnlyLookupSpec {
+  id: string;
+  inputs: Partial<Record<LookupKind, AdminOnlyInputSpec>>;
+  maxUsdPerCall: number;
+  waterfall?: boolean;
+}
+
+function readAdminOnlySpecs(): AdminOnlyLookupSpec[] {
+  const block = (providerMetadata as { treg?: { reverseLookup?: { adminOnly?: AdminOnlyLookupSpec[] } } })?.treg?.reverseLookup?.adminOnly;
+  return Array.isArray(block) ? block : [];
+}
+
+function socialUrlMatchesSpec(rawUrl: string, spec: AdminOnlyInputSpec | undefined): string | null {
+  if (!spec?.hosts?.length || !spec.pathPrefixes?.length) return null;
+  let u: URL;
+  try { u = new URL(rawUrl.trim()); } catch { return null; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase();
+  const allowedHosts = new Set(spec.hosts.map((h) => h.toLowerCase()));
+  if (!allowedHosts.has(host)) return null;
+  const pathname = u.pathname.replace(/\/+$/, "");
+  const matched = spec.pathPrefixes.find((p) => {
+    const clean = p.endsWith("/") ? p : `${p}/`;
+    return pathname.toLowerCase().startsWith(clean.toLowerCase()) && pathname.length > clean.length;
+  });
+  if (!matched) return null;
+  return `https://${host}${pathname}`;
+}
 
 export function classifyLookupInput(raw: unknown): { kind: LookupKind; value: string } | null {
   const text = String(raw ?? "").trim();
   if (/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(text)) return { kind: "email", value: text.toLowerCase() };
   const digits = text.replace(/[^\d]/g, "");
   if (/^[+\d\s().-]{7,20}$/.test(text) && digits.length >= 7 && digits.length <= 15) return { kind: "phone", value: `${text.startsWith("+") ? "+" : ""}${digits}` };
+  for (const spec of readAdminOnlySpecs()) {
+    const normalized = socialUrlMatchesSpec(text, spec.inputs.social_url);
+    if (normalized) return { kind: "social_url", value: normalized };
+  }
   return null;
 }
 
-export interface LookupCandidate { id: string; paramName: string; costUsd: number; estimateUsd: number; okRate: number | null; /** The countries the catalog's own text limits this endpoint to (["US"] for «a US phone number»), or null when it states none. */ countries: string[] | null; /** Costs money (a free endpoint costs nothing and may run without a confirmation). */ paid: boolean }
+export interface LookupCandidate { id: string; paramName: string; costUsd: number; estimateUsd: number; okRate: number | null; /** The countries the catalog's own text limits this endpoint to (["US"] for «a US phone number»), or null when it states none. */ countries: string[] | null; /** Costs money (a free endpoint costs nothing and may run without a confirmation). */ paid: boolean; confirm?: boolean; waterfall?: boolean; hosts?: string[]; pathPrefixes?: string[] }
 
 /** Calling codes of the countries the admin is likely to look up (longest match first); «US» covers +1. */
 const CALLING_CODES: Array<[string, string]> = [["971", "AE"], ["966", "SA"], ["962", "JO"], ["965", "KW"], ["974", "QA"], ["973", "BH"], ["968", "OM"], ["961", "LB"], ["964", "IQ"], ["963", "SY"], ["967", "YE"], ["970", "PS"], ["212", "MA"], ["213", "DZ"], ["216", "TN"], ["218", "LY"], ["249", "SD"], ["20", "EG"], ["44", "GB"], ["33", "FR"], ["49", "DE"], ["91", "IN"], ["90", "TR"], ["39", "IT"], ["34", "ES"], ["1", "US"]];
@@ -94,12 +135,42 @@ export function lookupCandidates(kind: LookupKind, catalog: TregCatalog = loadTr
     const ok = (e.observed as { ok_rate?: number } | null)?.ok_rate;
     return { id: e.id, paramName: param, costUsd: cost.usd, estimateUsd: free ? 0 : callEstimateUsd(cost, 1), okRate: typeof ok === "number" ? ok : null, countries: kind === "phone" ? endpointCountries(e) : null, paid: cost.usd > 0 };
   };
-  const listed = kind === "phone" ? PHONE_REVERSE_ORDER : EMAIL_REVERSE_ORDER;
+  const listed = kind === "phone" ? PHONE_REVERSE_ORDER : kind === "email" ? EMAIL_REVERSE_ORDER : [];
   const out: LookupCandidate[] = [];
   for (const id of listed) { const e = catalog.byId.get(id); const c = e ? build(e) : null; if (c) out.push(c); }
+
+  const adminOnly: LookupCandidate[] = [];
+  const adminOnlyIds = new Set<string>();
+  for (const spec of readAdminOnlySpecs()) {
+    const inSpec = spec.inputs[kind];
+    if (!inSpec?.param || listed.includes(spec.id) || adminOnlyIds.has(spec.id)) continue;
+    const e = catalog.byId.get(spec.id);
+    if (!e || blockedEndpointReason(e.id, e.scope ?? null)) continue;
+    if (!e.inputs.some((i) => i.name === inSpec.param)) continue;
+    if (e.inputs.some((i) => i.required && i.name !== inSpec.param)) continue;
+    const costUsd = Number(spec.maxUsdPerCall);
+    if (!Number.isFinite(costUsd) || !(costUsd > 0)) continue;
+    const ok = (e.observed as { ok_rate?: number } | null)?.ok_rate;
+    adminOnlyIds.add(spec.id);
+    adminOnly.push({
+      id: e.id,
+      paramName: inSpec.param,
+      costUsd,
+      estimateUsd: costUsd,
+      okRate: typeof ok === "number" ? ok : null,
+      countries: null,
+      paid: true,
+      confirm: true,
+      waterfall: spec.waterfall ?? true,
+      ...(inSpec.hosts ? { hosts: inSpec.hosts } : {}),
+      ...(inSpec.pathPrefixes ? { pathPrefixes: inSpec.pathPrefixes } : {}),
+    });
+  }
+  if (kind === "social_url") return adminOnly;
+
   const others: LookupCandidate[] = [];
   for (const e of catalog.endpoints) {
-    if (listed.includes(e.id) || categoryOf(e.id) !== "sensitive") continue;
+    if (listed.includes(e.id) || adminOnlyIds.has(e.id) || categoryOf(e.id) !== "sensitive") continue;
     const rule = policyRule(e.id);
     if (!rule || !REVERSE_RULES.has(rule)) continue;
     const phoneEndpoint = /phone|mobile/i.test(e.id);
@@ -108,7 +179,7 @@ export function lookupCandidates(kind: LookupKind, catalog: TregCatalog = loadTr
     if (c) others.push(c);
   }
   others.sort((a, b) => a.costUsd - b.costUsd || (b.okRate ?? 0) - (a.okRate ?? 0) || a.id.localeCompare(b.id));
-  return [...out, ...others];
+  return [...out, ...adminOnly, ...others];
 }
 
 /** What the screen shows for one candidate before anything runs. */
@@ -122,13 +193,18 @@ export interface LookupPlanEntry {
   warningAr?: string;
 }
 
-/** The plan for one input: every candidate in order with its state. A free-mailbox address skips the company-only endpoint; a paid phone endpoint waits for the admin's confirmation; the US-only one is never automatic. */
+/** The plan for one input: every candidate in order with its state. A free-mailbox address skips the company-only endpoint; a paid phone or admin-only endpoint waits for the admin's confirmation; the US-only one is never automatic. */
 export function lookupPlan(kind: LookupKind, value: string, catalog: TregCatalog = loadTregCatalog(), policyRule: (id: string) => string | null = policyRuleOf): LookupPlanEntry[] {
   const country = kind === "phone" ? phoneCountry(value) : null;
-  return lookupCandidates(kind, catalog, policyRule).map((c): LookupPlanEntry => {
+  const candidates = kind === "social_url"
+    ? lookupCandidates(kind, catalog, policyRule).filter((c) => socialUrlMatchesSpec(value, { param: c.paramName, hosts: c.hosts, pathPrefixes: c.pathPrefixes }) !== null)
+    : lookupCandidates(kind, catalog, policyRule);
+  return candidates.map((c): LookupPlanEntry => {
     const base = { id: c.id, paramName: c.paramName, usd: c.estimateUsd, paid: c.paid };
+    if (kind === "social_url") return { ...base, state: "confirm" };
     if (kind === "email") {
       if (COMPANY_DOMAIN_ONLY_ENDPOINTS.includes(c.id) && !isCompanyDomainEmail(value)) return { ...base, state: "skipped", skipReasonAr: "يجيب عن الشركات فقط، وهذا بريد على نطاق عام (outlook وgmail وأمثالهما)" };
+      if (c.confirm) return { ...base, state: "confirm" };
       return { ...base, state: "auto" };
     }
     if (!coversCountry(c.countries, country)) return { ...base, state: "skipped", skipReasonAr: `هذه الخدمة محدودة بحسب كتالوجها بأرقام ${c.countries?.join("/")}` };
@@ -155,19 +231,70 @@ const pick = (row: Record<string, unknown>, re: RegExp, valid: (v: unknown) => b
 };
 const isText = (v: unknown) => typeof v === "string" && v.trim().length > 0;
 const isLink = (v: unknown) => typeof v === "string" && /^https?:\/\//i.test(v.trim());
+const isEmailText = (v: unknown) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
+const isPhoneText = (v: unknown) => typeof v === "string" && /^[+\d][\d\s().-]{5,24}$/.test(v.trim()) && v.replace(/\D/g, "").length >= 7;
 
-/** Name, company, title, profile link and country read from the first row of an answer (admin screen only). A brand record (branddev) is about the COMPANY: its title is the company's name, never a job title. */
-export function extractIdentity(row: Record<string, unknown> | undefined, endpointId = ""): { name: string; company: string; title: string; profileUrl: string; country: string } {
-  if (!row) return { name: "", company: "", title: "", profileUrl: "", country: "" };
+function extractContacts(row: Record<string, unknown>): { workEmail: string; personalEmail: string; phone: string } {
+  let workEmail = pick(row, /^(work_?e-?mail|business_?e-?mail|corporate_?e-?mail|professional_?e-?mail|company_?e-?mail)$/i, isEmailText).trim().toLowerCase();
+  let personalEmail = pick(row, /^(personal_?e-?mail|private_?e-?mail|home_?e-?mail)$/i, isEmailText).trim().toLowerCase();
+  const assignEmail = (raw: string, hintType = "") => {
+    const clean = raw.trim().toLowerCase();
+    if (!isEmailText(clean)) return;
+    if (/personal|private|home/i.test(hintType)) { if (!personalEmail) personalEmail = clean; return; }
+    if (/work|business|corporate|professional/i.test(hintType)) { if (!workEmail) workEmail = clean; return; }
+    if (isCompanyDomainEmail(clean)) { if (!workEmail) workEmail = clean; }
+    else if (!personalEmail) personalEmail = clean;
+  };
+  let phone = pick(row, /^(phone|phone_?number|mobile|mobile_?number|direct_?phone|work_?phone|cell)$/i, isPhoneText).trim();
+  const scan = (node: unknown, depth: number) => {
+    if (depth > 3 || !node || typeof node !== "object") return;
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (/^e-?mails?$/i.test(k)) {
+        if (typeof v === "string") assignEmail(v);
+        else if (Array.isArray(v)) {
+          for (const item of v) {
+            if (typeof item === "string") assignEmail(item);
+            else if (item && typeof item === "object") {
+              const rec = item as Record<string, unknown>;
+              const addr = [rec.email, rec.value, rec.address].find(isEmailText);
+              if (typeof addr === "string") assignEmail(addr, String(rec.type ?? rec.kind ?? ""));
+            }
+          }
+        }
+      } else if (/^phones?$/i.test(k) && !phone && Array.isArray(v)) {
+        for (const item of v) {
+          if (isPhoneText(item)) { phone = String(item).trim().slice(0, 160); break; }
+          if (item && typeof item === "object") {
+            const rec = item as Record<string, unknown>;
+            const num = [rec.phone, rec.number, rec.phone_number, rec.value].find(isPhoneText);
+            if (typeof num === "string") { phone = num.trim().slice(0, 160); break; }
+          }
+        }
+      } else if (v && typeof v === "object") scan(v, depth + 1);
+    }
+  };
+  scan(row, 0);
+  if (!workEmail || !personalEmail) {
+    const generic = pick(row, /^(e-?mail|e-?mail_?address|primary_?e-?mail)$/i, isEmailText);
+    if (generic) assignEmail(generic);
+  }
+  return { workEmail: workEmail.slice(0, 160), personalEmail: personalEmail.slice(0, 160), phone: phone.slice(0, 160) };
+}
+
+/** Name, company, title, contact fields, profile link and country read from the first row of an answer (admin screen only). A brand record (branddev) is about the COMPANY: its title is the company's name, never a job title. */
+export function extractIdentity(row: Record<string, unknown> | undefined, endpointId = ""): LookupIdentity {
+  if (!row) return emptyIdentity();
   const country = pick(row, /^(country|country_?name|country_?code|location_?country)$/i, isText);
   if (/^branddev\./.test(endpointId)) {
-    return { name: "", company: pick(row, /^(title|name|brand_?name|company_?name|company)$/i, isText), title: "", profileUrl: pick(row, /^(linkedin|linkedin_?url|url|domain)$/i, isLink), country };
+    return { ...emptyIdentity(), company: pick(row, /^(title|name|brand_?name|company_?name|company)$/i, isText), profileUrl: pick(row, /^(linkedin|linkedin_?url|url|domain)$/i, isLink), country };
   }
   const first = pick(row, /^(first_?name|given_?name)$/i, isText), last = pick(row, /^(last_?name|family_?name|surname)$/i, isText);
+  const contacts = extractContacts(row);
   return {
     name: pick(row, /^(full_?name|name|display_?name|person_?name)$/i, isText) || [first, last].filter(Boolean).join(" "),
     company: pick(row, /^(company|company_?name|employer|organi[sz]ation|current_?company)$/i, isText),
     title: pick(row, /^(title|job_?title|headline|position|current_?title|role)$/i, isText),
+    ...contacts,
     profileUrl: pick(row, /(linkedin|profile)_?(url|link)?$|^url$|^link$/i, isLink),
     country,
   };
@@ -244,7 +371,10 @@ export async function runLookupAttempt(input: {
   if (fromDb === null) return { ok: false, reason: "audit_unavailable", spentTodayUsd: 0, capUsd };
   const spent = fromDb;
   const catalog = input.catalog ?? loadTregCatalog();
-  const plan = lookupPlan(parsed.kind, parsed.value, catalog, input.policyRule ?? policyRuleOf);
+  const policyFn = input.policyRule ?? policyRuleOf;
+  const candidates = lookupCandidates(parsed.kind, catalog, policyFn);
+  const candidate = candidates.find((c) => c.id === input.endpointId);
+  const plan = lookupPlan(parsed.kind, parsed.value, catalog, policyFn);
   const entry = plan.find((p) => p.id === input.endpointId);
   const endpoint = catalog.byId.get(input.endpointId);
   if (!entry || !endpoint) return { ok: false, reason: "unknown_endpoint", spentTodayUsd: spent, capUsd };
@@ -280,7 +410,7 @@ export async function runLookupAttempt(input: {
     call: async () => {
       const r = await call({ endpointId: entry.id, method: endpoint.method === "GET" ? "GET" : "POST", params: { [entry.paramName]: value }, userId: input.adminId, jobId, stepId: "lookup", page: 1,
         routeMaxCostUsd: money.perRequestUsd, ...(money.attempts === 1 ? { singleAttempt: true } : {}), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: money.holdUsd, sensitiveAccess: { allowed: true },
-        ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) ? { routeWaterfall: false } : {}) });
+        ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) || candidate?.waterfall === false ? { routeWaterfall: false } : {}) });
       // A CUT OR UNREACHABLE CALL may have been billed after we stopped waiting: its charge is unknown and counts at the reservation, never 0
       // DT-20261119-11 F3: the shared reading of the charge (tregCharge.ts)
       const charge = classifyTregCharge(r);

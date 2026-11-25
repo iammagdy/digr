@@ -2,17 +2,36 @@
  * The result of an admin reverse lookup as the screen keeps it: each field with the endpoint that gave it (client-safe, no server imports), and the merge a «بحث أعمق» does.
  * An earlier answer is never overwritten: a later one only fills the fields that are still empty, and each field remembers its source.
  */
-export const FIELD_KEYS = ["name", "company", "title", "profileUrl", "country"] as const;
+export const FIELD_KEYS = ["name", "company", "title", "workEmail", "personalEmail", "phone", "profileUrl", "country"] as const;
 export type FieldKey = (typeof FIELD_KEYS)[number];
 export type LookupIdentity = Record<FieldKey, string>;
 export type LookupFields = Partial<Record<FieldKey, { value: string; source: string }>>;
 
-export const FIELD_LABEL_AR: Record<FieldKey, string> = { name: "الاسم", company: "الشركة", title: "المسمى", profileUrl: "رابط الملف", country: "الدولة" };
+export const FIELD_LABEL_AR: Record<FieldKey, string> = {
+  name: "الاسم",
+  company: "الشركة",
+  title: "المسمى",
+  workEmail: "البريد المهني",
+  personalEmail: "البريد الشخصي",
+  phone: "الهاتف",
+  profileUrl: "رابط الملف",
+  country: "الدولة",
+};
 
-export const emptyIdentity = (): LookupIdentity => ({ name: "", company: "", title: "", profileUrl: "", country: "" });
+export const emptyIdentity = (): LookupIdentity => ({
+  name: "",
+  company: "",
+  title: "",
+  workEmail: "",
+  personalEmail: "",
+  phone: "",
+  profileUrl: "",
+  country: "",
+});
 
-/** An answer is useful when it names the person or the company or links a profile (a country alone is not an answer). */
-export const isUsefulIdentity = (i: Partial<LookupIdentity> | undefined | null): boolean => Boolean(i && (i.name || i.company || i.title || i.profileUrl));
+/** An answer is useful when it names the person or the company or gives contact/profile details (a country alone is not an answer). */
+export const isUsefulIdentity = (i: Partial<LookupIdentity> | undefined | null): boolean =>
+  Boolean(i && (i.name || i.company || i.title || i.workEmail || i.personalEmail || i.phone || i.profileUrl));
 
 export function mergeFields(previous: LookupFields | undefined, source: string, identity: Partial<LookupIdentity>): LookupFields {
   const out: LookupFields = { ...(previous ?? {}) };
