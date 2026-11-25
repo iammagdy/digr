@@ -16,6 +16,8 @@ import { validateAndPricePlan, type PricedPlan, type RecordedCall, type SavedEnd
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
+import { validateInputShape } from "../../src/lib/treg/inputShape";
+export { validateInputShape };
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
@@ -194,34 +196,6 @@ export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
-
-/**
- * Generic schema-driven preflight for endpoint input shapes (c2): validates declared array and nested object-field array
- * expectations from catalog metadata before dispatching to the gateway, leaving valid arrays and string inputs untouched.
- */
-export function validateInputShape(endpoint: CatalogEndpoint | undefined, params: unknown): string | null {
-  if (!endpoint || !isObject(params)) return null;
-  for (const inp of endpoint.inputs) {
-    const val = params[inp.name];
-    if (val === undefined) continue;
-    if (inp.type && /^array(?:\[|$)/i.test(inp.type) && !Array.isArray(val)) {
-      return `invalid input shape for «${inp.name}»: expected ${inp.type} (an array), got ${val === null ? "null" : typeof val}${inp.example !== null && inp.example !== undefined ? ` (example: ${JSON.stringify(inp.example)})` : ""}. Pass an array and retry.`;
-    }
-    if (inp.fields && isObject(val)) {
-      for (const [subKey, spec] of Object.entries(inp.fields)) {
-        const subVal = val[subKey];
-        if (subVal === undefined || !/^array(?:\[|$)/i.test(spec.type)) continue;
-        if (!Array.isArray(subVal)) {
-          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (an array), got ${subVal === null ? "null" : typeof subVal}${spec.example !== undefined ? ` (example: ${JSON.stringify(spec.example)})` : ""}. Pass an array of strings and retry.`;
-        }
-        if (/^array\[string\]$/i.test(spec.type) && subVal.some((x) => typeof x !== "string" || x.trim() === "")) {
-          return `invalid input shape for «${inp.name}.${subKey}»: expected ${spec.type} (array of non-empty strings).`;
-        }
-      }
-    }
-  }
-  return null;
-}
 /** A refusal that is about the DATA (no sampled row matches the stage's own rule), not about the plan's form. */
 const DATA_REJECTION = /none of the \d+ rows of the sample matches your relevance rule/;
 const UNSERVED_PEOPLE_REPAIR_MAX = 1;
