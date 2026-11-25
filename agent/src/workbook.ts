@@ -68,9 +68,8 @@ export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row
  */
 const DIRECTION_MARKS = /[\u202a-\u202e\u200e\u200f\u2066-\u2069]/g;
 export const withoutDirectionMarks = (v: unknown): unknown => (typeof v === "string" ? v.replace(DIRECTION_MARKS, "") : v);
-const NAME_KEY = /(^|_)(name|full_?name|first_?name|last_?name|display_?name|author|author_?name|username|user_?name|parent_company|company|company_?name|channel|channel_?name|page|page_?name|owner|publisher|uploader|creator|poster|contact)$/i;
-const NAME_TITLE = /^(?:اسم(?:\s|$)|الاسم|الناشر|الكاتب|المعلّق|المعلق|كاتب|الشركة|القناة|الصفحة|المصدر|صاحب|اسم الشركة|اسم الموظف)/;
-const isNameColumn = (c: SheetColumn): boolean => (c.key !== undefined && NAME_KEY.test(c.key)) || NAME_TITLE.test(c.title.trim());
+const NAME_KEY = /(^|_)(name|full_?name|first_?name|last_?name|display_?name|person|person_?name|author|author_?name|username|user_?name|parent_company|company|company_?name|channel|channel_?name|page|page_?name|owner|publisher|uploader|creator|poster|contact)$/i;
+const isNameColumn = (c: SheetColumn): boolean => c.key !== undefined && NAME_KEY.test(c.key);
 
 const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isInternalColumn(c));
 
@@ -88,8 +87,9 @@ const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (t
 
 export const MISSING_LABELS: ReadonlySet<string> = new Set([COUNTER_UNAVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR]);
 
-export const isMetaColumnKey = (c: { availability?: boolean; key?: string }): boolean =>
+export const isMetaColumnKey = (c: { availability?: boolean; key?: string; kind?: string }): boolean =>
   c.availability === true ||
+  c.kind === "context" ||
   c.key === undefined ||
   c.key === "__row_number" ||
   c.key === VERIFICATION_NOTE_KEY ||
@@ -185,7 +185,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         if (twin && !rawSheet) continue;
         const title = titles.has(pc.title_ar) || own.some((c) => c.title_ar === pc.title_ar) ? `${pc.title_ar} (${parentInfo.s.title_ar})` : pc.title_ar;
         titles.add(title);
-        columns.push({ title, get, kind: "context", link: isUrl(values.find((v) => text(v)) ?? "") });
+        columns.push({ title, get, kind: "context", key: pc.key, link: isUrl(values.find((v) => text(v)) ?? "") });
       }
     }
     // 2. the stage's own readable columns, without a repeated title or a copy of another column
@@ -400,7 +400,7 @@ function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: R
   const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, a.repliesJudged);
   const publicPlan = customerPlanView(plan);
   const compiled = plan.compiled?.by === "compiler";
-  const chatLine = customerMissionView({ requestText: a.requestText ?? "", mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
+  const chatLine = customerMissionView({ requestText: a.requestText ?? "", mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => l.startsWith("تم تسليم")) ?? null;
   const chat = parseDeliveredLine(chatLine);
   // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
   const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true && !st.per_parent_asked).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;

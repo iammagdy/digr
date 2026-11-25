@@ -212,7 +212,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
   const govUnclear = new Set<string>();
   // A COMPANY ROW WHOSE OWN TEXT CONTRADICTS WHAT THE CARD PROMISES (a broken spreadsheet line as a name, a head office abroad, a law firm, a news site, a trade show) goes to the model check even when the sector rule accepts it (entityDoubts.ts)
-  const doubtInput: DoubtInput | null = spec?.entity ? { nameKeys: nameKeysOf(stage.columns), descriptionKeys: (spec.text_columns ?? []).filter((k) => /desc|about|summary|bio|overview|نبذ|وصف/i.test(`${k} ${stage.columns.find((c) => c.key === k)?.title_ar ?? ""}`)), wantedPlaces: promisedPlace?.places ?? [] } : null;
+  const doubtInput: DoubtInput | null = spec?.entity ? { nameKeys: nameKeysOf(stage.columns), descriptionKeys: (spec.text_columns ?? []).filter((k) => /desc|about|summary|bio|overview/i.test(k)), wantedPlaces: promisedPlace?.places ?? [] } : null;
   const doubts = new Map<string, string>();
   for (const raw0 of incoming) {
     if (!isObject(raw0)) { tally.rejected_not_object += 1; continue; }
@@ -327,7 +327,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (rawMode && !isChild && plan.compiled?.by === "compiler") {
       const hard = enabledFilters.filter((f) => (f.kind === "account" && f.exact === true) || (f.kind === "period" && plan.compiled?.period_gate === true));
       const why = hard.length > 0 ? filterVerdict(hard, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, cairoDays: true }) : null;
-      const xReply = plan.compiled.platform === "x" && (raw.is_reply === true || raw.is_reply === "true" || raw.is_reply === "True");
+      const xReply = raw.is_reply === true || raw.is_reply === "true" || raw.is_reply === "True";
       if (why || xReply) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why ?? "filter_reply", row }); continue; }
     }
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
