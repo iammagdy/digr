@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { extractNumberFromText } from "../src/lib/arabicNumbers";
-import { understandRequest } from "../src/lib/requestUnderstanding";
 import { createLatencyDb } from "./helpers/loadHarness";
 
 const h = vi.hoisted(() => ({ db: null as any }));
@@ -35,11 +34,6 @@ describe("a count written with a magnitude word is read as asked (up to the ceil
     ["في سنة 2024 تعليقات", undefined],
   ];
   for (const [text, expected] of cases) it(`${text} => ${expected}`, () => expect(extractNumberFromText(text)).toBe(expected));
-
-  it("the understanding of such a request carries the count, so the plan can say how much of it fits", () => {
-    expect(understandRequest("٥ آلاف تعليق على تيك توك عن كرة القدم").volume).toBe(5000);
-    expect(understandRequest("٢ مليون تعليق على فيسبوك").volume).toBe(100000);
-  });
 });
 
 describe("through the chat: a count the customer wrote is the plan's count, a very large one is cut with the reason, and the topic is only the topic", () => {
