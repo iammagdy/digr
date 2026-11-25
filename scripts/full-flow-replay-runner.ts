@@ -46,6 +46,7 @@ import { runEngine } from "../agent/src/engine/run";
 import { runInSandbox } from "../agent/src/sandbox";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { buildShapeDigest, digestValue } from "../src/lib/modelPlanner/digest";
 import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/gateway";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 type TregCallOptions = Parameters<NonNullable<Parameters<typeof createGateway>[0]["call"]>>[0];
@@ -98,11 +99,132 @@ export interface RunnerConfig {
   prompt: string;
 }
 
+export interface RoutedRecordedSpec {
+  endpointId: string;
+  probeEnvelopes: Array<Record<string, unknown>>;
+  executionEnvelopes: Array<Record<string, unknown>>;
+  forceRoutedEndpoint?: boolean;
+  defaultPrompt?: string;
+}
+
 export interface ReplayRows {
   probeRows: Record<string, unknown>[];
   executionRows: Record<string, unknown>[];
   sourceDescription: string;
+  routed?: RoutedRecordedSpec;
 }
+
+export const BUILTIN_ROUTED_REPLAYS: Record<string, RoutedRecordedSpec> = {
+  "msn_24fd8dc0470a2c990cc0": {
+    endpointId: "treg.x.search.posts",
+    forceRoutedEndpoint: true,
+    defaultPrompt: "ابحث في إكس عن 10 منشورات حول المدفوعات الرقمية في البنوك",
+    probeEnvelopes: [
+      {
+        output: {
+          posts: [
+            { id: "1001", text: "المدفوعات الرقمية والتحول الرقمي في البنوك أصبحت ركيزة أساسية لتسهيل المعاملات", author: "bank_user_1", url: "https://x.com/bank_user_1/status/1001" },
+            { id: "1002", text: "تطوير تطبيقات الخدمات المصرفية يدعم انتشار المدفوعات الرقمية في البنوك والشمول المالي", author: "fintech_user_2", url: "https://x.com/fintech_user_2/status/1002" },
+            { id: "1003", text: "مستقبل المدفوعات الرقمية في القطاع المصرفي يعتمد على سرعة التحويلات وأمن البيانات", author: "bank_expert_3", url: "https://x.com/bank_expert_3/status/1003" },
+            { id: "1004", text: "البنوك المركزية تضع أطر تشريعية لتعزيز حلول المدفوعات الرقمية وحماية العملاء", author: "finance_analyst_4", url: "https://x.com/finance_analyst_4/status/1004" },
+            { id: "1005", text: "اعتماد المستهلكين على المدفوعات الرقمية في البنوك يقلل الاعتماد على النقد الكاش", author: "digital_banking_5", url: "https://x.com/digital_banking_5/status/1005" },
+          ],
+          next_cursor: null,
+        },
+        raw: {
+          output: { data: { posts: [{ id: "raw_only" }] }, found: true },
+          provider: "prov_a",
+          costUsd: 0.001,
+          items: 5,
+          replayed: false,
+          source: { id: "s1", name: "src", kind: "social", artworkKey: "k1" },
+          resultId: "r1",
+        },
+        _treg: {
+          served_by: "ep_a",
+          provider: "prov_a",
+          tier: "core",
+          outcome: "hit",
+          tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "hit", status: 200, charged_micro: 750 }],
+          charged_micro: 750,
+        },
+      },
+    ],
+    executionEnvelopes: [
+      {
+        output: {
+          posts: [
+            { id: "1001", text: "المدفوعات الرقمية والتحول الرقمي في البنوك أصبحت ركيزة أساسية لتسهيل المعاملات", author: "bank_user_1", url: "https://x.com/bank_user_1/status/1001" },
+            { id: "1002", text: "تطوير تطبيقات الخدمات المصرفية يدعم انتشار المدفوعات الرقمية في البنوك والشمول المالي", author: "fintech_user_2", url: "https://x.com/fintech_user_2/status/1002" },
+            { id: "1003", text: "مستقبل المدفوعات الرقمية في القطاع المصرفي يعتمد على سرعة التحويلات وأمن البيانات", author: "bank_expert_3", url: "https://x.com/bank_expert_3/status/1003" },
+            { id: "1004", text: "البنوك المركزية تضع أطر تشريعية لتعزيز حلول المدفوعات الرقمية وحماية العملاء", author: "finance_analyst_4", url: "https://x.com/finance_analyst_4/status/1004" },
+            { id: "1005", text: "اعتماد المستهلكين على المدفوعات الرقمية في البنوك يقلل الاعتماد على النقد الكاش", author: "digital_banking_5", url: "https://x.com/digital_banking_5/status/1005" },
+          ],
+          next_cursor: null,
+        },
+        raw: {
+          output: { data: { posts: [{ id: "raw_only" }] }, found: true },
+          provider: "prov_a",
+          costUsd: 0.001,
+          items: 5,
+          replayed: false,
+          source: { id: "s1", name: "src", kind: "social", artworkKey: "k1" },
+          resultId: "r1",
+        },
+        _treg: {
+          served_by: "ep_a",
+          provider: "prov_a",
+          tier: "core",
+          outcome: "hit",
+          tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "hit", status: 200, charged_micro: 750 }],
+          charged_micro: 750,
+        },
+      },
+      {
+        output: { posts: null, next_cursor: null },
+        raw: null,
+        _treg: {
+          served_by: null,
+          outcome: "empty",
+          tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "empty", status: 200, charged_micro: 50 }],
+          charged_micro: 50,
+          dropped: [{ endpoint_id: "ep_b", why: "cap" }],
+        },
+      },
+    ],
+  },
+  "msn_2e341874060213f94110": {
+    endpointId: "treg.youtube.video.comments",
+    forceRoutedEndpoint: true,
+    defaultPrompt: "هات 10 تعليقات على فيديو اليوتيوب https://www.youtube.com/watch?v=demo0000001",
+    probeEnvelopes: [
+      {
+        output: { comments: null, next_cursor: null },
+        raw: null,
+        _treg: {
+          served_by: null,
+          outcome: "empty",
+          tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "empty", status: 200, charged_micro: 100 }],
+          charged_micro: 100,
+          dropped: [{ endpoint_id: "ep_b", why: "cap" }],
+        },
+      },
+    ],
+    executionEnvelopes: [
+      {
+        output: { comments: null, next_cursor: null },
+        raw: null,
+        _treg: {
+          served_by: null,
+          outcome: "empty",
+          tried: [{ endpoint_id: "ep_a", provider: "prov_a", outcome: "empty", status: 200, charged_micro: 100 }],
+          charged_micro: 100,
+          dropped: [{ endpoint_id: "ep_b", why: "cap" }],
+        },
+      },
+    ],
+  },
+};
 
 export interface RunIterationResult {
   runIndex: number;
@@ -160,6 +282,7 @@ function parseCliArgs(): RunnerConfig {
   let maxUsd = 0.50;
   let fixturePath: string | undefined;
   let verbose = false;
+  let promptPassed = false;
   let prompt = DEFAULT_CUSTOMER_PROMPT;
 
   for (let i = 0; i < args.length; i++) {
@@ -193,7 +316,15 @@ function parseCliArgs(): RunnerConfig {
       verbose = true;
     } else if (arg === "--prompt" && args[i + 1]) {
       prompt = args[++i];
+      promptPassed = true;
+    } else if (arg.startsWith("--prompt=")) {
+      prompt = arg.slice("--prompt=".length);
+      promptPassed = true;
     }
+  }
+
+  if (!promptPassed && BUILTIN_ROUTED_REPLAYS[missionId]?.defaultPrompt) {
+    prompt = BUILTIN_ROUTED_REPLAYS[missionId].defaultPrompt!;
   }
 
   return { providers, missionId, runs, maxUsd, fixturePath, verbose, prompt };
@@ -369,6 +500,29 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
     const fullPath = resolve(config.fixturePath);
     if (!existsSync(fullPath)) throw new Error(`Fixture file not found: ${fullPath}`);
     const parsed = JSON.parse(readFileSync(fullPath, "utf-8"));
+    if (parsed.routed) {
+      const catalog = loadTregCatalog();
+      const endpointId = parsed.routed.endpointId ?? parsed.routed.endpoint_id;
+      const capability = parsed.routed.capability;
+      const ep = (endpointId ? catalog.byId.get(endpointId) : undefined) ?? catalog.endpoints.find((e) => e.kind === "routed" && e.capability === capability);
+      if (!ep) throw new Error(`Routed endpoint not found for fixture: ${endpointId || capability}`);
+      const probeEnvelopes: Array<Record<string, unknown>> = parsed.routed.probeEnvelopes ?? parsed.routed.probe_envelopes ?? [];
+      const executionEnvelopes: Array<Record<string, unknown>> = parsed.routed.executionEnvelopes ?? parsed.routed.execution_envelopes ?? probeEnvelopes;
+      const probeRows = probeEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+      const executionRows = executionEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+      return {
+        probeRows,
+        executionRows,
+        sourceDescription: `CLI fixture file (routed): ${fullPath} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+        routed: {
+          endpointId: ep.id,
+          probeEnvelopes,
+          executionEnvelopes,
+          forceRoutedEndpoint: parsed.routed.forceRoutedEndpoint ?? parsed.routed.force_routed_endpoint ?? true,
+          defaultPrompt: parsed.routed.defaultPrompt ?? parsed.routed.default_prompt,
+        },
+      };
+    }
     const rawList = Array.isArray(parsed) ? parsed : parsed.judged_rows ?? parsed.rows ?? parsed.tweets ?? [];
     const rows = mapFixtureRowsToRecordedRows(rawList, { defaultPrefix: "row" });
     return {
@@ -382,6 +536,29 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
   const qaFixturePath = `/srv/diger-team/qa/work/e2e-fixtures/${config.missionId}.json`;
   if (existsSync(qaFixturePath)) {
     const parsed = JSON.parse(readFileSync(qaFixturePath, "utf-8"));
+    if (parsed.routed) {
+      const catalog = loadTregCatalog();
+      const endpointId = parsed.routed.endpointId ?? parsed.routed.endpoint_id;
+      const capability = parsed.routed.capability;
+      const ep = (endpointId ? catalog.byId.get(endpointId) : undefined) ?? catalog.endpoints.find((e) => e.kind === "routed" && e.capability === capability);
+      if (!ep) throw new Error(`Routed endpoint not found for QA fixture: ${endpointId || capability}`);
+      const probeEnvelopes: Array<Record<string, unknown>> = parsed.routed.probeEnvelopes ?? parsed.routed.probe_envelopes ?? [];
+      const executionEnvelopes: Array<Record<string, unknown>> = parsed.routed.executionEnvelopes ?? parsed.routed.execution_envelopes ?? probeEnvelopes;
+      const probeRows = probeEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+      const executionRows = executionEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+      return {
+        probeRows,
+        executionRows,
+        sourceDescription: `QA work fixture (routed): ${qaFixturePath} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+        routed: {
+          endpointId: ep.id,
+          probeEnvelopes,
+          executionEnvelopes,
+          forceRoutedEndpoint: parsed.routed.forceRoutedEndpoint ?? parsed.routed.force_routed_endpoint ?? true,
+          defaultPrompt: parsed.routed.defaultPrompt ?? parsed.routed.default_prompt,
+        },
+      };
+    }
     const rawList = parsed.judged_rows ?? parsed.rows ?? parsed.tweets ?? [];
     const deliveredId = parsed.delivered_rows?.[0]?.id ?? (config.missionId === "msn_c41586cf9d40986250d0" ? "2111754500776030669" : "1466135018154205187");
     const rows = mapFixtureRowsToRecordedRows(rawList, { deliveredId, defaultPrefix: "recorded_tweet" });
@@ -392,7 +569,23 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
     };
   }
 
-  // 3. Built-in recorded fallback
+  // 3. Built-in routed replay
+  if (config.missionId in BUILTIN_ROUTED_REPLAYS) {
+    const spec = BUILTIN_ROUTED_REPLAYS[config.missionId];
+    const catalog = loadTregCatalog();
+    const ep = catalog.byId.get(spec.endpointId);
+    if (!ep) throw new Error(`Routed endpoint not found: ${spec.endpointId}`);
+    const probeRows = spec.probeEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+    const executionRows = spec.executionEnvelopes.flatMap((env) => buildShapeDigest(env, ep).reading.rows) as Record<string, unknown>[];
+    return {
+      probeRows,
+      executionRows,
+      sourceDescription: `Built-in routed fixture for ${config.missionId} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+      routed: spec,
+    };
+  }
+
+  // 4. Built-in recorded fallback
   return {
     probeRows: BUILTIN_MSN_F91F_ROWS,
     executionRows: BUILTIN_MSN_F91F_ROWS,
@@ -435,7 +628,20 @@ async function runSingleIteration(
 
   try {
     const store = createMemoryStore();
-    const catalog = loadTregCatalog();
+    const rawCatalog = loadTregCatalog();
+    let catalog = rawCatalog;
+    if (fixture.routed?.forceRoutedEndpoint) {
+      const routedEp = rawCatalog.byId.get(fixture.routed.endpointId);
+      if (routedEp) {
+        const filteredEndpoints = rawCatalog.endpoints.filter((e) => e.capability !== routedEp.capability || e.id === routedEp.id);
+        const filteredById = new Map(filteredEndpoints.map((e) => [e.id, e]));
+        catalog = {
+          ...rawCatalog,
+          endpoints: filteredEndpoints,
+          byId: filteredById,
+        };
+      }
+    }
     const missionId = `${config.missionId}_run${runIndex + 1}_${Date.now()}`;
     // Shared call counter across planning and execution mirroring production runMission.ts:686/1278
     const callCounter = { seq: 0 };
@@ -479,6 +685,29 @@ async function runSingleIteration(
         tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
           callSeq += 1;
           const callId = `call_recorded_${callSeq}`;
+          if (fixture.routed) {
+            const ep = catalog.byId.get(endpoint_id) ?? catalog.byId.get(fixture.routed.endpointId);
+            if (!ep) throw new Error(`Endpoint not found in catalog: ${endpoint_id}`);
+            const envelope = fixture.routed.probeEnvelopes[(callSeq - 1) % fixture.routed.probeEnvelopes.length];
+            await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelope), "application/json");
+            const digest = buildShapeDigest(envelope, ep);
+            const r = digest.reading;
+            if (config.verbose) {
+              console.log(`[recorded-gateway:routed] probe ${endpoint_id} -> ${callId} (${r.rows.length} rows, has_more=${r.hasMore})`);
+            }
+            return {
+              ok: true,
+              call_id: callId,
+              http_status: 200,
+              rows_in_page: r.rows.length,
+              has_more: Boolean(r.hasMore),
+              next_cursor: r.nextCursor,
+              shape: digest.digest,
+              first_rows: r.rows.slice(0, 3) as never,
+              warnings: r.warnings,
+              saved: callId,
+            };
+          }
           const rows = fixture.probeRows;
           const pageData = {
             output: {
@@ -605,42 +834,75 @@ async function runSingleIteration(
         log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
       });
 
-      if (config.providers === "live" && plan.stages.every((s: any) => s.engine !== undefined)) {
-        // --- LIVE MODE: run deliver stage through production runEngine execution path ---
-        const inMemoryRecorder: CallRecorder = {
-          reserve: async () => ({ allowed: true, costId: 1 }),
-          commit: async () => {},
-        };
-        const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
-        const executionBudget = createJobCallBudget({
-          ceilingUsd: executionBudgetUsd(plan.price.reservePoints),
-          spentUsd: 0,
-        });
+      if ((config.providers === "live" || fixture.routed) && plan.stages.every((s: any) => s.engine !== undefined)) {
+        let executionGateway: any;
+        if (fixture.routed) {
+          let execSeq = 0;
+          executionGateway = {
+            tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
+              execSeq += 1;
+              const callId = `call_exec_recorded_${execSeq}`;
+              const ep = catalog.byId.get(endpoint_id) ?? catalog.byId.get(fixture.routed!.endpointId);
+              if (!ep) throw new Error(`Endpoint not found in catalog for execution: ${endpoint_id}`);
+              const envIndex = execSeq - 1;
+              const envelope = fixture.routed!.executionEnvelopes[envIndex < fixture.routed!.executionEnvelopes.length ? envIndex : fixture.routed!.executionEnvelopes.length - 1];
+              await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelope), "application/json");
+              const digest = buildShapeDigest(envelope, ep);
+              const r = digest.reading;
+              if (config.verbose) {
+                console.log(`[recorded-exec-gateway:routed] exec ${endpoint_id} -> ${callId} (${r.rows.length} rows, has_more=${r.hasMore})`);
+              }
+              return {
+                ok: true,
+                call_id: callId,
+                http_status: 200,
+                rows_in_page: r.rows.length,
+                has_more: Boolean(r.hasMore),
+                next_cursor: r.nextCursor,
+                shape: digest.digest,
+                first_rows: r.rows.slice(0, 3) as never,
+                warnings: r.warnings,
+                saved: callId,
+              };
+            },
+          };
+        } else {
+          // --- LIVE MODE: run deliver stage through production runEngine execution path ---
+          const inMemoryRecorder: CallRecorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async () => {},
+          };
+          const providerToken = process.env.PROVIDER_KEY || process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+          const executionBudget = createJobCallBudget({
+            ceilingUsd: executionBudgetUsd(plan.price.reservePoints),
+            spentUsd: 0,
+          });
 
-        // Mirror production runMission.ts:1278-1279:
-        // Execution gateway gets its own jobId (${missionId}_job) and call counter continuing from planning calls,
-        // so no execution Idempotency-Key repeats a planning key.
-        const calls = await store.listCalls(missionId).catch(() => []);
-        const lastSeq = calls.reduce((n: number, c: { id: string }) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
-        callCounter.seq = Math.max(callCounter.seq, lastSeq);
+          // Mirror production runMission.ts:1278-1279:
+          // Execution gateway gets its own jobId (${missionId}_job) and call counter continuing from planning calls,
+          // so no execution Idempotency-Key repeats a planning key.
+          const calls = await store.listCalls(missionId).catch(() => []);
+          const lastSeq = calls.reduce((n: number, c: { id: string }) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
+          callCounter.seq = Math.max(callCounter.seq, lastSeq);
 
-        const executionGateway = createGateway({
-          store,
-          client: null,
-          missionId,
-          userId: "usr_e2e_runner",
-          jobId: `${missionId}_job`,
-          phase: "execution",
-          access,
-          catalog,
-          budget: executionBudget,
-          recorder: inMemoryRecorder,
-          token: providerToken,
-          defaultPurpose: config.prompt,
-          counter: callCounter,
-          commit: async () => true, // ZERO database / ledger / wallet writes
-          call: liveCallWrapper,
-        });
+          executionGateway = createGateway({
+            store,
+            client: null,
+            missionId,
+            userId: "usr_e2e_runner",
+            jobId: `${missionId}_job`,
+            phase: "execution",
+            access,
+            catalog,
+            budget: executionBudget,
+            recorder: inMemoryRecorder,
+            token: providerToken,
+            defaultPurpose: config.prompt,
+            counter: callCounter,
+            commit: async () => true, // ZERO database / ledger / wallet writes
+            call: liveCallWrapper,
+          });
+        }
 
         if (config.verbose) {
           console.log(`[execution] starting runEngine for mission ${missionId}...`);
