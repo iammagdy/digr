@@ -7,32 +7,34 @@
 - **Preceding PR Links:** [PR #686](https://github.com/iammagdy/digr/pull/686) (Phase 4) and [PR #687](https://github.com/iammagdy/digr/pull/687) (Phase 5B)
 - **Current PR Link:** [PR #689](https://github.com/iammagdy/digr/pull/689) (Draft)
 
-## 2. Scope & Implementation Points
+## 2. Scope & Shrunk Implementation Points
 
-1. **Elimination of Wordlist Regexes (-29 `arabic_regex`):**
-   - `src/lib/agentMission/guardRules.ts`: Dropped 15 Arabic keyword regexes (`DATA_NOUN`, `CHANGE`, `NAME_OBJ`, `EMAIL_OBJ`, `PASSWORD_OBJ`, `DELETE_ASK`, `TOPUP_ASK`, `TOPUP_BARE`, `SHIPPING_CONTEXT`, `TRUST_BARE`, `TRUST_SELF`, `SUBJECT_OF`, `حسابات`, `تعليق|منشور`, `نسيت|ازاي`). Kept approved customer texts in `accountAnswerAr(topic)` and `TRUST_REPLY_AR`. Replaced keyword extractors with backwards-compatible stubs.
-   - `src/lib/agentMission/openPlanFacts.ts`: Dropped 12 Arabic keyword regexes (`KINDS` × 7, `isExplicitCancel` × 3, `refersToOpenRequest` × 1, and count qualifier regex). Retained `planFollowUpAnswerAr`, `openPlanFactsOf`, and `unsupportedClaimIssues`.
-   - `src/lib/agentMission/conversationModel.ts`: Dropped 2 regexes (`EDIT_START`, `TIME_OR_PERCENT`).
+1. **Shrunk Scope & Restoration of `openPlanFacts.ts`:**
+   - Following Commander's review and design check, `src/lib/agentMission/openPlanFacts.ts` was restored **verbatim to `origin/main`** (`git diff origin/main -- src/lib/agentMission/openPlanFacts.ts` is empty).
+   - The removal of `KINDS`, `isExplicitCancel`, and `refersToOpenRequest` readers is **deferred** to a dedicated future task (requires joint model intent + code-validated cancel flow to prevent customer cancellation loops).
+   - In `src/lib/agentMission/guardRules.ts`: eliminated `DATA_NOUN`, `CHANGE`, `NAME_OBJ`, `EMAIL_OBJ`, `PASSWORD_OBJ`, `DELETE_ASK`, `TOPUP_ASK`, `TOPUP_BARE`, `SHIPPING_CONTEXT`, `TRUST_BARE`, `TRUST_SELF`, `SUBJECT_OF`, `حسابات`, `تعليق|منشور`, `نسيت|ازاي` (-15 `arabic_regex`). Completely removed obsolete functions `accountTopicOf`, `isTrustQuestion`, and `preModelAnswer` (no empty stubs).
+   - In `src/lib/agentMission/conversationModel.ts`: removed `EDIT_START` and `TIME_OR_PERCENT` (-2 `arabic_regex`).
+   - Net elimination across Phase 6: **-17 `arabic_regex`**, **-0 `treg_tokens`**.
 
-2. **LLM-First Chat Turn & Commander Corrections (M1–M4):**
-   - **M1 (No Silent Defaults):** In `decideTurn`, if `account_topic` or `open_plan_question_kind` is absent or unknown, code strictly falls back to the model's guarded reply, else `OPEN_PLAN_FALLBACK_AR` / null. Never guesses `"name"` or `"price"`.
+2. **LLM-First Chat Turn & Commander Invariants (M1–M4):**
+   - **M1 (No Silent Defaults):** In `decideTurn`, if `account_topic` or `open_plan_question_kind` is absent or unknown, code strictly falls back to the model's guarded reply, else null. It never guesses `"name"` or `"price"`.
    - **M2 (Preserved Platform Tokens):** Tokens `"x"` and `"youtube"` remain intact in `conversationModel.ts:100` and `chatTurn.ts:835` (`-0 treg_tokens`).
-   - **M3 (Explicit Intent for Plan Modifications):** Open plan cancellations (`cancel_open_request`) and edits (`edit_of_open_request`) strictly require the model's structured validated intent. Model failure (`keywordDecision`) defaults to `open_request_question` with `OPEN_PLAN_FALLBACK_AR` and never cancels or modifies an open plan.
-   - **M4 (Pre-Model Keyword Filter Removed):** In `chatTurn.ts`, removed the pre-model keyword check (`preModelAnswer`), routing account and trust questions directly through `decideTurn` where canonical copy is served by code.
+   - **M3 (Explicit Intent & Model-Down Preservation):** Open plan cancellations (`cancel_open_request`) and edits (`edit_of_open_request`) strictly require the model's structured validated intent. Model failure (`keywordDecision`) returns `reply: null` without regex guessing, and in every open state the open plan is preserved with `OPEN_KEPT_AR` (or `PLAN_NOT_READY_AR`), never edited or cancelled.
+   - **M4 (Pre-Model Filter Removed):** In `chatTurn.ts`, removed `preModelAnswer` keyword pre-filter. Account and trust intents route through `decideTurn`, where canonical approved copy is served by code (`accountAnswerAr(topic)` and `TRUST_REPLY_AR`).
+   - **T4 Trade-off:** When the model is down and there is NO open plan, a message like «ممكن أغير اسمي في الحساب؟» falls back to `classifyMessage` (as main does); verified invariant: zero points held or charged.
 
 3. **Multi-Turn Real-Model Harness (`scripts/verify-chat-turns-real-model.ts`):**
-   - Implemented real-model CLI evaluation tool testing 8 verbatim turns over 5 runs (40 turns total):
-     1. Price facts question (`«طب التكلفة دي شاملة إيه بالظبط؟»`) -> PASS
-     2. Columns question (`«إيه الأعمدة اللي هتكون في الملف؟»`) -> PASS
-     3. Explicit cancel Arabic (`«طب لو سمحت كنسل الطلب ده خالص»`) -> PASS
-     4. Explicit cancel English (`«cancel this request please»`) -> PASS
-     5. Flight cancellation counter-case (`«عايز تغريدات عن إلغاء الرحلات الجوية وسعر التذاكر في السعودية»`) -> PASS (data_request)
-     6. Account password question (`«كيف أغير كلمة المرور؟»`) -> PASS (account_question)
-     7. Trust question (`«الموقع ده نصب ولا حقيقي وفلوسي مضمونة؟»`) -> PASS (trust_question)
-     8. MOH handle account counter-case (`«عايز تغريدات حساب وزارة الصحة»`) -> PASS (data_request)
-   - Evaluated on fixture `tests/fixtures/plan-ready-cfc0.json` copied from `/srv/diger-team/qa/work/e2e-fixtures/plan-ready-cfc0.json`.
-   - Full 5/5 run completed with 100% PASS rate. Log saved at `/srv/diger-team/fawaaly/work/DT-20261125-wordlist-p6-realmodel.log`.
+   - Implemented real-model CLI evaluation tool testing 38 verbatim turns across 5 runs (190 runs total):
+     - 8 baseline open-plan turns (price facts, columns question, explicit cancel in dialect and English, flight cancellation counter-case, account password, trust, MOH handle request).
+     - 14 additional account-topic turns (`name`, `email`, `password`, `delete`, `topup`).
+     - 10 additional trust-question turns.
+     - 6 research counter-cases from `tests/chat-prefilter-false-positives.test.ts`.
+   - Evaluated on fixture `tests/fixtures/plan-ready-cfc0.json`: 100% PASS (5/5, 38/38 turns green).
+   - Log recorded outside repository at `/srv/diger-team/fawaaly/work/DT-20261125-wordlist-p6-realmodel.log`.
 
-4. **Allow-List Policy Compliance:**
-   - Allow-list was NOT synced prior to PR creation per Commander's explicit instruction (`allow-list sync only on my word`).
-   - Design guards scan on current codebase passes without unexpected violations.
+4. **Allow-List Synchronization & Monotonic Ceiling:**
+   - Synced via `npx tsx scripts/sync-design-guards-allow.ts --files src/lib/agentMission/guardRules.ts src/lib/agentMission/conversationModel.ts`.
+   - `arabic_regex`: 1398 -> 1381 (-17)
+   - `treg_tokens`: 503 -> 503 (-0)
+   - Stale entries: 0
+   - Updated `ALLOW_LIST_CEILING.arabic_regex` in `tests/design-guards-allow-monotonic.test.ts` to 1381; suite passes 2/2.

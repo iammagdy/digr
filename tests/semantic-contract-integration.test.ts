@@ -4,7 +4,6 @@ import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { PLATFORM_QUESTION_AR } from "../src/lib/agentMission/platformQuestion";
 import { buildRequestContract, buildRequestContractWithReport } from "../src/lib/agentMission/requestContract";
-import { preModelAnswer } from "../src/lib/agentMission/guardRules";
 import { createCustomerMission } from "../src/lib/agentMission/customerActions";
 import { readSemanticNormalizationFlag, readSemanticNormalizationFlagFromClient } from "../src/lib/agentMission/semantic/flag";
 import { createMemoryDb } from "./helpers/memoryDb";
@@ -248,7 +247,6 @@ describe("privacy: refusals happen before and independently of the semantic read
   ] as const;
 
   it.each(MUST_REFUSE)("%s is allowed by the guard and by mission creation under FX-PRIV: «%s»", async (_name, text) => {
-    expect(preModelAnswer(text)).toBeNull();
     const db: any = createMemoryDb();
     db.seed("credit_ledger", [{ user_id: "u1", delta: 1000 }]);
     db.seed("missions", []);
@@ -261,7 +259,6 @@ describe("privacy: refusals happen before and independently of the semantic read
   });
 
   it.each(MUST_STAY_LEGITIMATE)("%s is accepted as public research: «%s»", async (_name, text) => {
-    expect(preModelAnswer(text)).toBeNull();
     const db: any = createMemoryDb();
     db.seed("credit_ledger", [{ user_id: "u1", delta: 1000 }]);
     db.seed("missions", []);
@@ -273,7 +270,6 @@ describe("privacy: refusals happen before and independently of the semantic read
   });
 
   it("the personal-contact ask is allowed under FX-PRIV", () => {
-    expect(preModelAnswer(CONTACT)).toBeNull();
     expect(buildRequestContract(CONTACT, undefined, ON).platform).toBe(buildRequestContract(CONTACT, undefined, OFF).platform);
   });
 

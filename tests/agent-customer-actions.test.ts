@@ -22,6 +22,8 @@ vi.mock("../src/lib/server/missionNotify", () => ({ sendMissionNotice: vi.fn(asy
 import { GET, POST } from "../src/app/api/missions/[id]/route";
 import { GET as fileGET } from "../src/app/api/missions/[id]/file/route";
 import { agentChatTurn, AGENT_PRESS_APPROVE_AR } from "../src/lib/agentMission/chatTurn";
+import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
+import { fakeChatModel } from "./helpers/fakeChatModel";
 import { answerForCustomer, approveForCustomer, cancelForCustomer, createCustomerMission, customerFileLink, editPlanForCustomer, loadCustomerMission, readQueue, SIGNUP_TO_APPROVE_AR } from "../src/lib/agentMission/customerActions";
 
 const ME = "u-1";
@@ -80,6 +82,7 @@ describe("a chat request becomes a mission", () => {
   });
 
   it("the chat turn replaces the unapproved plan above it, keeps the mission id on the assistant message, names the conversation", async () => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "data_request" }) }).call);
     const { client } = makeClient(db);
     db.seed("missions", [ready()]);
     db.seed("messages", [{ id: "a0", conversation_id: "c1", role: "assistant", plan: { agentMissionId: "msn_ready0001" }, created_at: "2026-10-28T10:00:00Z" }, { id: "u1", conversation_id: "c1", role: "user", request_status: "planning" }, { id: "a1", conversation_id: "c1", role: "assistant", content_ar: "جاري التفكير" }]);
@@ -108,6 +111,7 @@ describe("approval of the displayed plan (NEW-ISSUES #13)", () => {
 
   beforeEach(() => vi.stubEnv("JOB_MAX_POINTS_CAP", ""));
   afterEach(() => {
+    setChatModelForTesting(null);
     state.duringGate = undefined;
     vi.unstubAllEnvs();
   });

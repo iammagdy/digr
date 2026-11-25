@@ -8,7 +8,7 @@ import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { IDENTITY_ANSWER_AR, TECHNOLOGY_DEFLECTION_AR, identityQuestionKind } from "../src/lib/assistantIdentity";
 import { isGreetingOrGeneralQuestion } from "../src/functions/shared/briefManager";
 import { findUnresolvedResearchPlaceholder } from "../src/lib/researchPlaceholders";
-import { PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, TRUST_REPLY_AR, accountAnswerAr, accountTopicOf, isTrustQuestion, preModelAnswer, privateContactAsk } from "../src/lib/agentMission/guardRules";
+import { PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, TRUST_REPLY_AR, accountAnswerAr, privateContactAsk } from "../src/lib/agentMission/guardRules";
 import { understand } from "./helpers/semanticUnderstand";
 
 /**
@@ -21,12 +21,12 @@ import { understand } from "./helpers/semanticUnderstand";
  */
 const USER = "u1";
 
-function world(modelType: "data_request" | "other" = "data_request") {
+function world(modelType: string = "data_request", extra?: Record<string, unknown>) {
   const db: any = createMemoryDb();
   db.seed("conversations", [{ id: "conv1", user_id: USER, title: "محادثة جديدة", status: "active" }]);
   db.seed("profiles", [{ id: USER, email: "a@example.com" }]);
   db.seed("credit_ledger", [{ user_id: USER, delta: 11676 }]);
-  const model = fakeChatModel([], { override: () => ({ type: modelType }) });
+  const model = fakeChatModel([], { override: () => ({ type: modelType, ...extra }) });
   setChatModelForTesting(model.call);
   const handler = new ChatHandler(db);
   const oldPath = vi.fn(async () => { throw new Error("the old model path ran"); });
@@ -117,21 +117,21 @@ describe("the real chat path: the genuine questions the fixed answers exist for 
     ["شحن الرصيد", "topup"],
     ["طرق الدفع", "topup"],
   ])("top-up: «%s» keeps the fixed answer of the wallet page", async (text, topic) => {
-    const w = world("data_request");
+    const w = world("account_question", { account_topic: topic });
     const r = await w.ask(text);
-    expect(accountTopicOf(text)).toBe(topic);
     expect(r.contentAr).toBe(accountAnswerAr("topup"));
-    expect(w.model.calls).toHaveLength(0);
+    expect(w.model.calls).toHaveLength(1);
     expect(w.db.rows("missions")).toHaveLength(0);
+    expect(w.ledgerUnchanged()).toBe(true);
   });
 
   it.each(["الموقع ده نصب ولا ايه", "انتو نصابين؟", "هل الموقع ده مضمون", "هتسرقوا فلوسي؟", "مش واثق فيكم ثقه فيكم ايه"])("trust: «%s» keeps the fixed honest answer", async (text) => {
-    const w = world("data_request");
+    const w = world("trust_question");
     const r = await w.ask(text);
-    expect(isTrustQuestion(text), text).toBe(true);
     expect(r.contentAr).toBe(TRUST_REPLY_AR);
-    expect(w.model.calls).toHaveLength(0);
+    expect(w.model.calls).toHaveLength(1);
     expect(w.db.rows("missions")).toHaveLength(0);
+    expect(w.ledgerUnchanged()).toBe(true);
   });
 });
 
@@ -182,15 +182,9 @@ describe("requests reach the agent without privacy refusal under FX-PRIV", () =>
     expect(r.outputType).toBe("answer_question");
   });
 
-  it("a topic word: preModelAnswer returns null under FX-PRIV", () => {
-    for (const text of ["هات أرقام تليفونات ناس عادية عن نصب الاستثمار", "هات رسايل جروب واتساب عن ChatGPT", "هات الرقم القومي لاحمد عن السياحة"]) expect(preModelAnswer(text)).toBeNull();
-  });
-
   it("pf-06 and pf-07 reach the agent under FX-PRIV without privacy refusal", () => {
     expect(privateContactAsk("عايز موبايلات سامسونج على تيك توك")).toBe(false);
-    expect(preModelAnswer("عايز موبايلات سامسونج على تيك توك")).toBeNull();
     expect(privateContactAsk("جروبات واتساب عن السياحة")).toBe(false);
-    expect(preModelAnswer("جروبات واتساب عن السياحة")).toBeNull();
     const guard = readFileSync(new URL("../src/lib/agentMission/guardRules.ts", import.meta.url), "utf8");
     for (const piece of ["privateContactAsk", "privateMessagesAsk", "personalIdentifierAsk"]) expect(guard, piece).toContain(piece);
   });
@@ -229,8 +223,6 @@ describe("unusual but legitimate wording is not refused by a fixed answer", () =
     const w = world("data_request");
     expect(isGreetingOrGeneralQuestion(text).isGeneralQuestion, text).toBe(false);
     expect(identityQuestionKind(text), text).toBeNull();
-    expect(accountTopicOf(text), text).toBeNull();
-    expect(isTrustQuestion(text), text).toBe(false);
     expect(findUnresolvedResearchPlaceholder(text), text).toBeNull();
     const r = await w.ask(text);
     expect(r.outputType).toBe("agent_mission");
@@ -265,7 +257,6 @@ describe("legacy oracle: what the filters did before, and what they do now", () 
       expect(findUnresolvedResearchPlaceholder(text), id).toBeNull();
       expect(isGreetingOrGeneralQuestion(text).isGeneralQuestion, id).toBe(false);
       expect(identityQuestionKind(text), id).toBeNull();
-      expect(preModelAnswer(text), id).toBeNull();
     }
   });
 

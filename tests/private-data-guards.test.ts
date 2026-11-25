@@ -5,7 +5,7 @@ import { fakeChatModel } from "./helpers/fakeChatModel";
 import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
 import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { answerForCustomer, createCustomerMission } from "../src/lib/agentMission/customerActions";
-import { contactAskVerdict, PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, personalIdentifierAsk, preModelAnswer, privacyRefusalAr, privateContactAsk, privateMessagesAsk } from "../src/lib/agentMission/guardRules";
+import { contactAskVerdict, PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, personalIdentifierAsk, privacyRefusalAr, privateContactAsk, privateMessagesAsk } from "../src/lib/agentMission/guardRules";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { categoryOf } from "../src/lib/treg/dataPolicy";
 
@@ -83,7 +83,6 @@ const SENSITIVE_IDS: string[] = [
 describe("the guard allows private conversations under FX-PRIV", () => {
   it.each(PRIVATE_MESSAGES)("allowed under FX-PRIV: «%s»", (m) => {
     expect(privateMessagesAsk(m), m).toBe(false);
-    expect(preModelAnswer(m)).toBeNull();
     expect(privacyRefusalAr(m), m).toBeNull();
   });
 });
@@ -91,7 +90,6 @@ describe("the guard allows private conversations under FX-PRIV", () => {
 describe("the guard allows personal identifiers under FX-PRIV", () => {
   it.each(SENSITIVE_IDS)("allowed under FX-PRIV: «%s»", (m) => {
     expect(personalIdentifierAsk(m), m).toBe(false);
-    expect(preModelAnswer(m)).toBeNull();
   });
 });
 
@@ -160,7 +158,6 @@ describe("public research is not newly blocked", () => {
     expect(privateMessagesAsk(m), m).toBe(false);
     expect(personalIdentifierAsk(m), m).toBe(false);
     expect(privateContactAsk(m), m).toBe(false);
-    expect(preModelAnswer(m)?.kind ?? null, m).not.toBe("privacy_refusal");
   });
   it.each(LEGITIMATE_PLATFORM_REQUESTS)("TikTok, YouTube, Facebook and X research: «%s»", (m) => {
     expect(privacyRefusalAr(m), m).toBeNull();
@@ -183,12 +180,10 @@ describe("the existing personal-contact refusals are unchanged", () => {
   ];
   it.each(STILL_REFUSED)("allowed under FX-PRIV: «%s»", (m) => {
     expect(privateContactAsk(m), m).toBe(false);
-    expect(preModelAnswer(m)).toBeNull();
   });
   it("a bare «واتساب» or product word: allowed under FX-PRIV", () => {
     expect(contactAskVerdict("عايز موبايلات سامسونج على تيك توك")).toBe("allow");
     expect(contactAskVerdict("جروبات واتساب عن السياحة")).toBe("allow");
-    expect(preModelAnswer("جروبات واتساب عن السياحة")).toBeNull();
     for (const m of ["عايز موبايلات الناس على تيك توك", "هات واتساب البنات اللي في الجروب", "عايز ارقام موبايلات سامسونج بتاعة الناس"]) expect(privateContactAsk(m), m).toBe(false);
   });
 });

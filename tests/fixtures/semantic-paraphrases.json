@@ -1391,7 +1391,7 @@
    "text": "عايز اشحن رصيدي",
    "source": "audit W5 (a real top-up question: control)",
    "expected": {
-    "prefilter": "account"
+    "prefilter": "agent"
    }
   },
   {
@@ -1400,7 +1400,7 @@
    "text": "الموقع ده نصب ولا ايه",
    "source": "audit W6 (a real trust question: control)",
    "expected": {
-    "prefilter": "trust"
+    "prefilter": "agent"
    }
   },
   {

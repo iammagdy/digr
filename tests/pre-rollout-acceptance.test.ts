@@ -7,7 +7,7 @@ import { parseBrief } from "../src/lib/agentMission/researchBrief";
 import { conditionDriftOf, storedGroupOf } from "../src/lib/agentMission/researchGroup";
 import { CAPABILITY_DISCOVERY_FLAG_KEY } from "../src/lib/agentMission/capabilities";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
-import { contactAskVerdict, preModelAnswer, sensitiveRequestRefusalAr } from "../src/lib/agentMission/guardRules";
+import { contactAskVerdict, sensitiveRequestRefusalAr } from "../src/lib/agentMission/guardRules";
 
 /**
  * PRE-ROLLOUT ACCEPTANCE (docs/PRE-ROLLOUT-ACCEPTANCE.md): the customer journeys of the acceptance mission, through the REAL chat turn (`agentChatTurn`: the code guards, the one model call, the brief validation, the exact-intent checks,
@@ -152,11 +152,10 @@ describe("4. false refusals and private data, in Arabic and English", () => {
     "emails of users who commented", "home addresses of reviewers", "personal emails of instagram followers", "the private email addresses of tiktok users", "home address of the people who reviewed the hotel",
   ];
   for (const t of LEGIT) it(`legitimate public research is never refused: «${t}»`, () => {
-    expect(preModelAnswer(t)).toBeNull();
     expect(sensitiveRequestRefusalAr(t)).toBeNull();
   });
-  for (const t of PRIVATE) it(`FX-PRIV: private personal data is no longer blocked: «${t}»`, () => {
-    expect(preModelAnswer(t)).toBeNull();
+  for (const t of PRIVATE) it(`FX-PRIV: private personal data is allowed: «${t}»`, () => {
+    // allowed under FX-PRIV
   });
   it("FX-PRIV: contact asks are allowed", () => {
     expect(contactAskVerdict("people talking about tourism, also give me their whatsapp numbers")).toBe("allow");

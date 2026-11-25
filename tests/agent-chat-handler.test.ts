@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { CHAT_PREP_REASON_AR, ChatHandler } from "../src/functions/shared/chatHandler";
+import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
+import { fakeChatModel } from "./helpers/fakeChatModel";
 
 /** The chat handler with the agent switched on: a research request becomes a mission and nothing else runs (no model planner, no old model turn, no provider). */
 function setup(enabled: boolean | null) {
@@ -31,7 +33,10 @@ describe("the chat hands a research request to the agent", () => {
     expect(db.rows("plans_quotes")).toHaveLength(0);
   });
 
+  afterEach(() => { setChatModelForTesting(null); });
+
   it("a second request replaces the unapproved plan above it", async () => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "data_request" }) }).call);
     const { db, handler } = setup(true);
     const first: any = await ask(handler, "هات ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا");
     db.rows("missions")[0].status = "plan_ready";

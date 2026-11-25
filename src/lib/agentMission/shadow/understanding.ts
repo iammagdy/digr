@@ -2,7 +2,7 @@ import { buildRequestContract } from "../requestContract";
 import { buildAsk } from "../foundation/ask";
 import { legacyRouteOf, platformOptionOf, withPlatformChoice } from "../platformQuestion";
 import { classifyMessage } from "../messageType";
-import { preModelAnswer, privateContactAsk, privateMessagesAsk, personalIdentifierAsk } from "../guardRules";
+import { privateContactAsk, privateMessagesAsk, personalIdentifierAsk } from "../guardRules";
 import { identityQuestionKind } from "../../assistantIdentity";
 import { isGreetingOrGeneralQuestion } from "../../../functions/shared/briefManager";
 import { findUnresolvedResearchPlaceholder } from "../../researchPlaceholders";
@@ -53,13 +53,12 @@ export function understandForShadow(text: string, answer: string | null = null, 
   const contract = buildRequestContract(mission.request_text, mission.answer_text, ctxOptions);
   const ask = buildAsk(mission.request_text, mission.answer_text, nowMs, {}, ctxOptions);
   const general = isGreetingOrGeneralQuestion(text);
-  const fixed = preModelAnswer(text);
   const prefilter: Understood["prefilter"] = findUnresolvedResearchPlaceholder(text)
     ? "placeholder"
     : identityQuestionKind(text) ? "identity"
       : general.isGreeting ? "greeting"
         : general.isGeneralQuestion ? "general_question"
-          : fixed ? fixed.kind : "agent";
+          : "agent";
   const contacts = requestWantsContacts(mission.request_text);
   return {
     prefilter,

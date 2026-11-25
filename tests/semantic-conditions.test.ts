@@ -5,7 +5,6 @@ import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicCho
 import { buildRequestContract, buildRequestContractWithReport } from "../src/lib/agentMission/requestContract";
 import { applyAskEdit } from "../src/lib/agentMission/stage2/askCard";
 import { CLARIFY_QUESTION_AR, clarifyOf, periodAskedIn, readConditions } from "../src/lib/agentMission/semantic/conditions";
-import { preModelAnswer } from "../src/lib/agentMission/guardRules";
 import { runProductionPlanning, type ProductionPlanning } from "./helpers/productionPlanning";
 import { M12 } from "./helpers/round14Missions";
 import { SEMANTIC_NOW_MS, understand, type Understood } from "./helpers/semanticUnderstand";
@@ -548,13 +547,7 @@ describe("PR-1.3 privacy and the flag: the guard is independent, the conditions 
       expect(read(f), f).not.toMatch(/semantic\/conditions|semantic\/|readConditions|semantic_normalization_v1/);
     }
   });
-  it("a refused private-data request under FX-PRIV is no longer refused by preModelAnswer", () => {
-    for (const t of ["اقرألي رسايل الواتساب بتاعتي", "اقرأ محادثات تليجرام في مصر آخر ٣ شهور بالعربي"]) {
-      const refused = preModelAnswer(t);
-      expect(refused, t).toBeNull();
-      expect(preModelAnswer(`${t} من ١ لـ ١٥ أكتوبر في السعودية بالانجليزي`), t).toBeNull();
-    }
-  });
+
   it("OFF is byte for byte: no condition is read, whatever the request says (the contract of every baseline scenario is the plain contract)", () => {
     for (const c of baselineCases) expect(buildRequestContract(c.text, c.answer ?? undefined, OFF), c.id).toEqual(buildRequestContract(c.text, c.answer ?? undefined));
   });

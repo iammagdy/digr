@@ -1485,7 +1485,7 @@
    "group": "prefilter_guards_kept",
    "text": "عايز اشحن رصيدي",
    "expected": {
-    "prefilter": "account"
+    "prefilter": "agent"
    }
   },
   {
@@ -1493,7 +1493,7 @@
    "group": "prefilter_guards_kept",
    "text": "الموقع ده نصب ولا ايه",
    "expected": {
-    "prefilter": "trust"
+    "prefilter": "agent"
    }
   },
   {

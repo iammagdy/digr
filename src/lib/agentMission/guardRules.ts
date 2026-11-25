@@ -44,24 +44,6 @@ export function accountAnswerAr(topic: AccountTopic): string {
   }
 }
 
-// Deprecated keyword extractor retained for backwards-compatibility without regexes.
-export function accountTopicOf(_message: string): AccountTopic | null {
-  return null;
-}
-
 // ---- 3. trust ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 export const TRUST_REPLY_AR = "أفهم حرصك. لا يُخصم منك شيء قبل أن ترى الخطة والسعر وتعتمدها بنفسك بزر «اعتمد»، ولا تدفع إلا مقابل ما سُلّم لك فعلًا، وما حُجز مؤقتًا ولم يُسلَّم يُحرَّر كاملًا. وفي كل طلب تجد ما جُمع وما سُلّم وما خُصم، ويمكنك أن تبدأ بأقل طلب لتجرّب بنفسك.";
 
-// Deprecated keyword detector retained for backwards-compatibility without regexes.
-export function isTrustQuestion(_message: string): boolean {
-  return false;
-}
-
-// ---- the order -------------------------------------------------------------------------------------------------------------------------------------------------------------
-export type PreModelAnswer =
-  | { kind: "trust"; contentAr: string }
-  | { kind: "account"; contentAr: string; topic: AccountTopic };
-
-export function preModelAnswer(_message: string): PreModelAnswer | null {
-  return null;
-}

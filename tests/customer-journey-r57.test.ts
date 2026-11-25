@@ -90,11 +90,12 @@ describe("the follow-ups of 13 Nov never become a new mission, and each gets a r
     expect(t.reply).toBe(OPEN_KEPT_AR);
     expect(t.newMissions).toEqual([]);
   });
-  it("a request that stands on its own still replaces the plan, also when the model is unavailable (as before)", async () => {
+  it("intentional change (M3): a request that stands on its own keeps the plan when the model is unavailable", async () => {
     setChatModelForTesting(scripted(() => ({ fail: "http_503" })));
     const [t] = await runJourneyCase({ ...byId("E1"), turns: ["هات ٣٠٠ تغريدة عن محمد صلاح"] }, infos);
-    expect(t.openStatus).toBe("cancelled");
-    expect(t.newMissions.filter((m) => m.status !== "cancelled").map((m) => m.request)).toEqual(["هات ٣٠٠ تغريدة عن محمد صلاح"]);
+    expect(t.openStatus).toBe("plan_ready");
+    expect(t.reply).toBe(OPEN_KEPT_AR);
+    expect(t.newMissions).toEqual([]);
   });
 });
 

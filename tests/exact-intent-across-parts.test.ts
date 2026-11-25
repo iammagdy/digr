@@ -7,7 +7,6 @@ import { parseBrief } from "../src/lib/agentMission/researchBrief";
 import { conditionDriftOf, partBriefOf, partsOf, storedGroupOf } from "../src/lib/agentMission/researchGroup";
 import { CAPABILITY_DISCOVERY_FLAG_KEY } from "../src/lib/agentMission/capabilities";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
-import { preModelAnswer } from "../src/lib/agentMission/guardRules";
 
 /**
  * EXACT CUSTOMER REQUIREMENTS ACROSS RESEARCH PARTS (docs/MULTI-OBJECTIVE-RESEARCH.md section 12), OFFLINE through the real chat turn (a SCRIPTED model in the real JSON format, the real validation, the real mission creation) on the
@@ -292,7 +291,5 @@ describe("corrections, unfamiliar wording, privacy, approval", () => {
     const db = world();
     await turn(db, req);
     expect(live(db).map((m) => m.request_text).every((t) => !t.includes("تليفون"))).toBe(true);
-    // FX-PRIV: contacts request is not refused by preModelAnswer
-    expect(preModelAnswer("هات أرقام تليفونات الناس اللي علقوا على تيك توك آخر شهر")).toBeNull();
   });
 });

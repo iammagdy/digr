@@ -6,7 +6,7 @@ import { fakeChatModel } from "./helpers/fakeChatModel";
 import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
 import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { decideTurn, parseModelAnswer } from "../src/lib/agentMission/conversationModel";
-import { ACCOUNT_TOPICS, PRIVACY_REFUSAL_AR, TRUST_REPLY_AR, accountAnswerAr, accountTopicOf, isTrustQuestion, preModelAnswer, privateContactAsk } from "../src/lib/agentMission/guardRules";
+import { ACCOUNT_TOPICS, PRIVACY_REFUSAL_AR, TRUST_REPLY_AR, accountAnswerAr, privateContactAsk, type AccountTopic } from "../src/lib/agentMission/guardRules";
 import { PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, platformQuestionNeeded } from "../src/lib/agentMission/platformQuestion";
 import { buildRequestContract } from "../src/lib/agentMission/requestContract";
 import { checkCustomerText } from "../src/lib/agentMission/text";
@@ -62,8 +62,8 @@ describe("2. personal contact data of private individuals is refused by code; bu
     "أرقام تليفونات عيادات الأسنان في الرياض",
     "ايميلات شركات الشحن في مصر",
   ];
-  it.each(REFUSE)("allowed under FX-PRIV: «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); expect(preModelAnswer(m)).toBeNull(); });
-  it.each(ALLOW)("allowed (not refused): «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); expect(preModelAnswer(m)?.kind ?? null, m).not.toBe("privacy_refusal"); });
+  it.each(REFUSE)("allowed under FX-PRIV: «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); });
+  it.each(ALLOW)("allowed (not refused): «%s»", (m) => { expect(privateContactAsk(m), m).toBe(false); });
   it("the refusal is polite, says one sentence on privacy, offers what Diger can do, and is clean customer text", () => {
     expect(PRIVACY_REFUSAL_AR).toMatch(/خصوصي/);
     expect(PRIVACY_REFUSAL_AR).toMatch(/المنشورات والتعليقات العامة/);
@@ -102,13 +102,17 @@ describe("5. account questions are answered from the pages that really exist (an
     ["ازاي امسح حسابي؟", "delete"], ["أريد حذف حسابي", "delete"], ["عايز اقفل الاكاونت", "delete"],
     ["ازاي اشحن رصيدي؟", "topup"], ["كيف أشحن الرصيد", "topup"], ["عايز اضيف رصيد", "topup"],
   ];
-  it.each(CASES)("«%s» is the %s question and gets its fixed answer", (m, topic) => {
-    expect(accountTopicOf(m), m).toBe(topic);
-    const a = preModelAnswer(m)!;
-    expect(a.kind).toBe("account");
-    expect(a.contentAr).toBe(accountAnswerAr(topic));
-    expect(checkCustomerText(a.contentAr, { maxChars: 600 }).issues, a.contentAr).toEqual([]);
-    expect(a.contentAr).not.toMatch(/[0-9]|\p{Extended_Pictographic}/u);
+  it.each(CASES)("«%s» is the %s question and gets its fixed answer", async (m, topic) => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "account_question", account_topic: topic }) }).call);
+    const db = world(0);
+    const ledger = JSON.stringify(db.rows("credit_ledger"));
+    const { r, assistant } = await turn(db, m);
+    expect(r.ok).toBe(false);
+    expect(assistant.content_ar).toBe(accountAnswerAr(topic));
+    expect(db.rows("missions")).toHaveLength(0);
+    expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
+    expect(checkCustomerText(assistant.content_ar, { maxChars: 600 }).issues, assistant.content_ar).toEqual([]);
+    expect(assistant.content_ar).not.toMatch(/[0-9]|\p{Extended_Pictographic}/u);
   });
   it("each answer names only real places: the name and password in «الإعدادات», delete in «الإعدادات» then «حذف الحساب», top-up in «المحفظة» then «شحن الرصيد»", () => {
     expect(accountAnswerAr("name")).toMatch(/الإعدادات[\s\S]*الملف الشخصي[\s\S]*الاسم[\s\S]*حفظ/);
@@ -117,16 +121,19 @@ describe("5. account questions are answered from the pages that really exist (an
     expect(accountAnswerAr("delete")).toMatch(/الإعدادات[\s\S]*حذف الحساب/);
     expect(accountAnswerAr("topup")).toMatch(/المحفظة[\s\S]*شحن الرصيد/);
   });
-  it("a data request that merely contains a word like «حسابات» or «البريد» is NOT an account question", () => {
-    for (const m of ["هات حسابات إنستجرام لعيادات الأسنان في الرياض", "ممكن تجمعلي ١٠٠ تعليق من فيسبوك؟", "عايز البريد الإلكتروني لمديري شركات مقاولات", "اجمع لي كل الصيدليات في المنصورة مع أرقام الهاتف"]) expect(accountTopicOf(m), m).toBeNull();
-  });
 });
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 describe("4. a trust question gets a short honest answer from fixed facts", () => {
-  it.each(["الموقع ده نصب ولا ايه؟", "هل الموقع نصاب؟", "انتو نصابين؟", "الخدمة دي مضمونة؟", "هل يمكن الوثوق بكم؟", "فلوسي هتضيع؟", "الموقع ده حقيقي ولا وهمي؟"])("«%s»", (m) => {
-    expect(isTrustQuestion(m), m).toBe(true);
-    expect(preModelAnswer(m)).toEqual({ kind: "trust", contentAr: TRUST_REPLY_AR });
+  it.each(["الموقع ده نصب ولا ايه؟", "هل الموقع نصاب؟", "انتو نصابين؟", "الخدمة دي مضمونة؟", "هل يمكن الوثوق بكم؟", "فلوسي هتضيع؟", "الموقع ده حقيقي ولا وهمي؟"])("«%s»", async (m) => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "trust_question" }) }).call);
+    const db = world(0);
+    const ledger = JSON.stringify(db.rows("credit_ledger"));
+    const { r, assistant } = await turn(db, m);
+    expect(r.ok).toBe(false);
+    expect(assistant.content_ar).toBe(TRUST_REPLY_AR);
+    expect(db.rows("missions")).toHaveLength(0);
+    expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
   });
   it("it says only the facts: nothing before approval, the price seen before approving, charge only for what is delivered, an undelivered hold is released; nothing invented (no license, no guarantee, no number)", () => {
     expect(TRUST_REPLY_AR).toMatch(/لا يُخصم منك شيء قبل/);
@@ -136,19 +143,6 @@ describe("4. a trust question gets a short honest answer from fixed facts", () =
     expect(TRUST_REPLY_AR).not.toMatch(/ترخيص|مرخص|نضمن|ضمان|معتمد|أكثر من|عميل|[٠-٩0-9]/);
     expect(checkCustomerText(TRUST_REPLY_AR, { maxChars: 700 }).issues).toEqual([]);
     expect(TRUST_REPLY_AR.length).toBeLessThan(450);
-  });
-  it("ordinary questions about the service are not trust questions", () => {
-    for (const m of ["بكام النقطة؟", "هل بتخصموا قبل ما أوافق؟", "ديجر بتعمل ايه بالظبط؟", "انت مين", "يعني ايه ديجر الذكي"]) expect(isTrustQuestion(m), m).toBe(false);
-  });
-});
-
-// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-describe("the fixed rules never take a message of the round-21 and round-22 corpus", () => {
-  it("none of the 79 corpus messages is answered by a pre-model rule, except the top-up question, which is now an account question with the real page", () => {
-    for (const e of CORPUS) {
-      if (e.text === "كيف أشحن رصيدي؟") { expect(preModelAnswer(e.text), e.text).toMatchObject({ kind: "account", topic: "topup" }); continue; }
-      expect(preModelAnswer(e.text), e.text).toBeNull();
-    }
   });
 });
 
@@ -188,15 +182,15 @@ describe("3. the open-missions limit applies only to a NEW data request", () => 
     expect(db.rows("missions")).toHaveLength(OPEN);
   });
   it.each([
-    ["ممكن أغير اسمي في الحساب؟", /الإعدادات/],
-    ["الموقع ده نصب ولا ايه؟", /لا يُخصم منك شيء قبل/],
-    ["ازاي اشحن رصيدي؟", /المحفظة/],
-    ["بكام النقطة؟", /جنيه/],
-    ["هاي يا صاحبي", /ديجر/],
-    ["شكرًا", /./],
-    ["يعني ايه ديجر الذكي", /ديجر/],
-  ])("with three open missions «%s» is answered normally (never the limit sentence)", async (m, expected) => {
-    setChatModelForTesting(fakeChatModel().call);
+    ["ممكن أغير اسمي في الحساب؟", /الإعدادات/, { type: "account_question", account_topic: "name" }],
+    ["الموقع ده نصب ولا ايه؟", /لا يُخصم منك شيء قبل/, { type: "trust_question" }],
+    ["ازاي اشحن رصيدي؟", /المحفظة/, { type: "account_question", account_topic: "topup" }],
+    ["بكام النقطة؟", /جنيه/, { type: "service_question", reply: "سعر النقطة جنيه مصري واحد." }],
+    ["هاي يا صاحبي", /ديجر/, { type: "greeting_or_small_talk", reply: "أهلًا بك في ديجر." }],
+    ["شكرًا", /./, { type: "greeting_or_small_talk", reply: "العفو." }],
+    ["يعني ايه ديجر الذكي", /ديجر/, { type: "service_question", reply: "ديجر منصة أبحاث وجمع بيانات." }],
+  ])("with three open missions «%s» is answered normally (never the limit sentence)", async (m, expected, modelResponse) => {
+    setChatModelForTesting(fakeChatModel([], { override: () => modelResponse }).call);
     const db = world(OPEN);
     const { r, assistant } = await turn(db, m);
     expect(r.ok).toBe(false);
@@ -204,12 +198,13 @@ describe("3. the open-missions limit applies only to a NEW data request", () => 
     expect(assistant.content_ar).not.toContain("عندك مهام مفتوحة");
     expect(db.rows("missions")).toHaveLength(OPEN);
   });
-  it("…and the model down (keyword fallback) does not turn «ممكن أغير اسمي في الحساب؟» into a data request either", async () => {
+  it("intentional trade-off (T4): the model down without an open plan routes «ممكن أغير اسمي في الحساب؟» by classifyMessage; zero points held or charged", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => "fail" }).call);
-    const db = world(OPEN);
-    const { assistant } = await turn(db, "ممكن أغير اسمي في الحساب؟");
-    expect(assistant.content_ar).not.toContain("عندك مهام مفتوحة");
-    expect(assistant.content_ar).toMatch(/الإعدادات/);
+    const db = world(0);
+    const initialBalance = db.rows("credit_ledger").reduce((s: number, r: any) => s + (r.delta ?? 0), 0);
+    const { r } = await turn(db, "ممكن أغير اسمي في الحساب؟");
+    const finalBalance = db.rows("credit_ledger").reduce((s: number, r: any) => s + (r.delta ?? 0), 0);
+    expect(finalBalance).toBe(initialBalance);
   });
   it("an edit of an open request is applied to that request, with open missions present (the limit never sees it)", async () => {
     setChatModelForTesting(fakeChatModel().call);
@@ -222,7 +217,14 @@ describe("3. the open-missions limit applies only to a NEW data request", () => 
 
 describe("the live messages of the 30-scenario test, with and without open missions", () => {
   it.each(ROUND23_LIVE.flatMap((e) => [[e.text, e.behaviour, 0], [e.text, e.behaviour, 3]] as const))("«%s» → %s (open missions: %i)", async (text, behaviour, open) => {
-    const model = fakeChatModel([], { override: () => ({ type: "data_request" }) });
+    const model = fakeChatModel([], {
+      override: () =>
+        behaviour === "trust"
+          ? { type: "trust_question" }
+          : behaviour === "account_name"
+            ? { type: "account_question", account_topic: "name" }
+            : { type: "data_request" },
+    });
     setChatModelForTesting(model.call);
     const db = world(open);
     const { r, assistant } = await turn(db, text);
@@ -240,9 +242,14 @@ describe("the live messages of the 30-scenario test, with and without open missi
   });
 });
 
-describe("2/4/5 end to end: trust and account answers written before the model", () => {
-  it("the trust answer and the account answers are written by code before the model is called", async () => {
-    const model = fakeChatModel();
+describe("2/4/5 end to end: trust and account answers through the real chat turn", () => {
+  it("the trust answer and the account answers are answered with fixed copy when classified by model", async () => {
+    const model = fakeChatModel([], {
+      override: (input) =>
+        (typeof input === "string" ? input : input?.messages?.[0]?.content ?? "").includes("نصب")
+          ? { type: "trust_question" }
+          : { type: "account_question", account_topic: "name" },
+    });
     setChatModelForTesting(model.call);
     const db = world();
     const ledger = JSON.stringify(db.rows("credit_ledger"));
@@ -250,10 +257,44 @@ describe("2/4/5 end to end: trust and account answers written before the model",
     expect(b.assistant.content_ar).toBe(TRUST_REPLY_AR);
     const c = await turn(db, "ممكن أغير اسمي في الحساب؟");
     expect(c.assistant.content_ar).toBe(accountAnswerAr("name"));
-    expect(model.calls).toHaveLength(0);
     expect(db.rows("missions")).toHaveLength(0);
     expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
-    expect((globalThis.fetch as any).mock.calls).toHaveLength(0);
+  });
+
+  it("T1: with an open plan, account and trust questions leave the plan untouched", async () => {
+    const db = world(0);
+    db.seed("messages", [{ id: "a0", conversation_id: "conv1", user_id: USER, role: "assistant", content_ar: "خطة جاهزة", plan: { agentMissionId: "msn_open00000000" }, created_at: new Date(Date.now() - 60_000).toISOString() }]);
+    db.seed("missions", [{ id: "msn_open00000000", user_id: USER, status: "plan_ready" }]);
+    
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "account_question", account_topic: "name" }) }).call);
+    const t1 = await turn(db, "ممكن أغير اسمي في الحساب؟");
+    expect(t1.assistant.content_ar).toBe(accountAnswerAr("name"));
+    expect(db.rows("missions").find((m: any) => m.id === "msn_open00000000").status).toBe("plan_ready");
+
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "trust_question" }) }).call);
+    const t2 = await turn(db, "الموقع ده نصب ولا ايه؟");
+    expect(t2.assistant.content_ar).toBe(TRUST_REPLY_AR);
+    expect(db.rows("missions").find((m: any) => m.id === "msn_open00000000").status).toBe("plan_ready");
+  });
+
+  it("T2 counter-case: model answers account_question with NO topic -> no fixed account text (guarded model reply)", async () => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "account_question", reply: "رد مخصص من النموذج" }) }).call);
+    const db = world(0);
+    const { r, assistant } = await turn(db, "ممكن مساعدة بالحساب؟");
+    expect(r.ok).toBe(false);
+    expect(assistant.content_ar).toBe("رد مخصص من النموذج");
+    expect(assistant.content_ar).not.toBe(accountAnswerAr("name"));
+  });
+
+  it("T2 counter-case: open_request_question with no kind on a columns question -> never the price text", async () => {
+    setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "open_request_question", reply: "الأعمدة موضحة في كارت الخطة" }) }).call);
+    const db = world(0);
+    db.seed("messages", [{ id: "a0", conversation_id: "conv1", user_id: USER, role: "assistant", content_ar: "بدأ", plan: { agentMissionId: "msn_open00000000", stages: [{ how_ar: "جمع بيانات", planned_rows: 10, price: { estimate: 200, reserve: 434, minimum: 50 } }] }, created_at: new Date(Date.now() - 60_000).toISOString() }]);
+    db.seed("missions", [{ id: "msn_open00000000", user_id: USER, status: "plan_ready", plan: { stages: [{ how_ar: "جمع بيانات", planned_rows: 10, price: { estimate: 200, reserve: 434, minimum: 50 } }] } }]);
+    const { assistant } = await turn(db, "إيه الأعمدة اللي في الخطة؟");
+    expect(assistant.content_ar).not.toContain("نقطة لو اتسلّم");
+    expect(assistant.content_ar).not.toContain("هامش أمان");
+    expect(assistant.content_ar).toBe("الأعمدة موضحة في كارت الخطة");
   });
   it("a business contact request still goes on to planning (a mission is created)", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => ({ type: "data_request" }) }).call);

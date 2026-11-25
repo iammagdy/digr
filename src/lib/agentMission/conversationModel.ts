@@ -8,7 +8,7 @@ import { POINT_VALUE_EGP_AR, classifyMessage } from "./messageType";
 import { checkCustomerText } from "./text";
 import { countSupportedByMessage, normalizeWords, wordNumbersIn, writtenNumbers } from "./numberWords";
 import { planFactsLinesAr, planNumbersAr, planFollowUpAnswerAr, unsupportedClaimIssues, type OpenPlanFacts, type PlanQuestionKind } from "./openPlanFacts";
-import { accountAnswerAr, TRUST_REPLY_AR } from "./guardRules";
+import { accountAnswerAr, TRUST_REPLY_AR, type AccountTopic } from "./guardRules";
 
 /**
  * THE CHAT TALKS LIKE AN ASSISTANT, WITH CODE AS THE GUARD (round 22). The chat model names the type of every message and, for a message that is not a data request, writes the reply. Everything it says or decides is checked here:
@@ -61,8 +61,8 @@ export interface ParsedAnswer {
   reply: string;
   count: number | null;
   countText?: string | null;
-  account_topic?: "name" | "email" | "password" | "delete" | "topup";
-  open_plan_question_kind?: "sources" | "relevance" | "blank" | "cost" | "price" | "count" | "duplicates";
+  account_topic?: AccountTopic;
+  open_plan_question_kind?: PlanQuestionKind;
   brief?: unknown;
 }
 
@@ -268,8 +268,8 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
   const brief = briefWithObjectives(raw);
   const rawAccountTopic = typeof raw.account_topic === "string" ? raw.account_topic.trim() : undefined;
   const rawKind = typeof raw.open_plan_question_kind === "string" ? raw.open_plan_question_kind.trim() : undefined;
-  const VALID_ACCOUNT_TOPICS = new Set(["name", "email", "password", "delete", "topup"]);
-  const VALID_PLAN_KINDS = new Set(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
+  const VALID_ACCOUNT_TOPICS = new Set<AccountTopic>(["name", "email", "password", "delete", "topup"]);
+  const VALID_PLAN_KINDS = new Set<PlanQuestionKind>(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
 
   return {
     type: raw.type,
@@ -277,8 +277,8 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
     reply: typeof raw.reply === "string" ? raw.reply.replace(/\s+/g, " ").trim() : "",
     count: raw.count !== null && raw.count !== undefined && Number.isInteger(n) && n >= 1 ? n : null,
     countText: typeof raw.count_text === "string" && raw.count_text.trim() !== "" ? raw.count_text.trim().slice(0, 40) : null,
-    account_topic: rawAccountTopic && VALID_ACCOUNT_TOPICS.has(rawAccountTopic) ? (rawAccountTopic as any) : undefined,
-    open_plan_question_kind: rawKind && VALID_PLAN_KINDS.has(rawKind) ? (rawKind as any) : undefined,
+    account_topic: rawAccountTopic && VALID_ACCOUNT_TOPICS.has(rawAccountTopic as AccountTopic) ? (rawAccountTopic as AccountTopic) : undefined,
+    open_plan_question_kind: rawKind && VALID_PLAN_KINDS.has(rawKind as PlanQuestionKind) ? (rawKind as PlanQuestionKind) : undefined,
     ...(brief !== undefined ? { brief } : {}),
   };
 }
@@ -352,8 +352,6 @@ export function guardReply(reply: string, allowed: { message: string; balancePoi
 // the words of a message, normalised, and the check that a count the model returned is one the customer wrote: numberWords.ts (shared with the planner, DT-20261118-08)
 const supportedCount = countSupportedByMessage;
 
-export const OPEN_PLAN_FALLBACK_AR = "خطتك الحالية جاهزة وتنتظر اعتمادك للبدء. يمكنك مراجعتها والضغط على زر «اعتمد»، أو كتابة ما تريد تعديله في الخطة.";
-
 /**
  * Fallback when the chat model fails (timeout, 529, or unreadable JSON).
  * Invariant: if an open plan exists, a model failure NEVER cancels or edits the plan.
@@ -370,7 +368,7 @@ function keywordDecision(ctx: TurnContext, failure?: string): Decision {
   });
   if (ctx.open) {
     // Open plan is preserved safely without speculative edit or cancellation
-    return base("open_request_question", null, OPEN_PLAN_FALLBACK_AR);
+    return base("open_request_question", null, null);
   }
   const kind = classifyMessage(ctx.message);
   return base(kind === "greeting" ? "greeting_or_small_talk" : kind);
@@ -444,26 +442,26 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief, briefParts: rawPartsOf(answer.brief), briefRawStatus: rawStatus };
   }
   if (type === "account_question") {
-    const validTopics = new Set(["name", "email", "password", "delete", "topup"]);
+    const validTopics = new Set<AccountTopic>(["name", "email", "password", "delete", "topup"]);
     if (answer.account_topic && validTopics.has(answer.account_topic)) {
       return model_(accountAnswerAr(answer.account_topic), false, null);
     }
     // Missing or unknown topic: do NOT guess "name". Fall back to model's guarded reply:
     const guard = guardReply(answer.reply, allowed);
-    return model_(guard.ok ? guard.text : null, false, null);
+    return model_(guard.ok ? guard.text : null, guard !== null && !guard.ok, null);
   }
   if (type === "trust_question") {
     return model_(TRUST_REPLY_AR, false, null);
   }
   if (type === "open_request_question" && ctx.open?.facts) {
-    const validKinds = new Set(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
+    const validKinds = new Set<PlanQuestionKind>(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
     if (answer.open_plan_question_kind && validKinds.has(answer.open_plan_question_kind)) {
       const structured = planFollowUpAnswerAr(answer.open_plan_question_kind, ctx.open.facts);
       if (structured) return model_(structured, false, null);
     }
     // Missing or unknown kind: do NOT guess "price". Never show price facts for columns questions!
     const guard = guardReply(answer.reply, allowed);
-    return model_(guard.ok ? guard.text : OPEN_PLAN_FALLBACK_AR, false, null);
+    return model_(guard.ok ? guard.text : null, guard !== null && !guard.ok, null);
   }
   if (type === "data_request" || type === "cancel_open_request") return model_(null, false, null);
   if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count, answer.countText ?? null); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }

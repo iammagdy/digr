@@ -5,7 +5,7 @@ import { fakeChatModel } from "./helpers/fakeChatModel";
 import { validateAndPricePlan, type PlanLookup, type PricedPlan, customerPlanView } from "../src/lib/agentMission/plan";
 import { CHAT_TYPES, buildSystemPrompt, decideTurn, guardReply, parseModelAnswer, type OpenRequest } from "../src/lib/agentMission/conversationModel";
 import { callClaudeChatWith, CHAT_MODEL_MAX_TOKENS, setChatModelForTesting } from "../src/lib/agentMission/chatModel";
-import { agentChatTurn, REVISION_JOINER_AR, REVISION_STARTED_AR } from "../src/lib/agentMission/chatTurn";
+import { agentChatTurn, OPEN_KEPT_AR, REVISION_JOINER_AR, REVISION_STARTED_AR } from "../src/lib/agentMission/chatTurn";
 import { METHODOLOGY_CHOOSER_SENTENCE_AR, otherReplyAr } from "../src/lib/agentMission/messageType";
 
 /**
@@ -212,13 +212,12 @@ describe("the type is the model's, VALIDATED by code", () => {
     const two = fakeChatModel([], { override: () => ({ type: "edit_of_open_request", count: null }) });
     expect((await decideTurn(ctx("من ١٠ إلى ٢٠", open), two.call)).count).toBeNull();
   });
-  it("the fallback with an open request: an answer to a question, or a short edit with a number, is the edit of that request (not a new one, not a generic reply)", async () => {
+  it("intentional change (M3): the fallback with an open request preserves the plan (open_request_question, reply null, never edit or cancel)", async () => {
     const failing = fakeChatModel([], { override: () => "fail" });
-    expect(await decideTurn(ctx("السعودية", { id: "msn_open123456", state: "needs_input", questionAr: "أي بلد؟" }), failing.call)).toMatchObject({ type: "edit_of_open_request", source: "keyword" });
-    expect(await decideTurn(ctx("خليها ٥ تعليقات بس", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "edit_of_open_request", count: 5 });
-    expect(await decideTurn(ctx("خليها ٥٠٠", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "edit_of_open_request", count: 500 });
-    // a greeting stays a greeting
-    expect(await decideTurn(ctx("شكرًا", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "greeting_or_small_talk" });
+    expect(await decideTurn(ctx("السعودية", { id: "msn_open123456", state: "needs_input", questionAr: "أي بلد؟" }), failing.call)).toMatchObject({ type: "open_request_question", reply: null, source: "keyword" });
+    expect(await decideTurn(ctx("خليها ٥ تعليقات بس", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "open_request_question", reply: null, source: "keyword" });
+    expect(await decideTurn(ctx("خليها ٥٠٠", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "open_request_question", reply: null, source: "keyword" });
+    expect(await decideTurn(ctx("شكرًا", { id: "msn_open123456", state: "plan_ready" }), failing.call)).toMatchObject({ type: "open_request_question", reply: null, source: "keyword" });
   });
   it("parseModelAnswer reads the one line of JSON (also inside a code fence or after a few words) and rejects anything else", () => {
     expect(parseModelAnswer('{"type":"greeting_or_small_talk","reason":"hi","reply":"أهلًا","count":null}')).toMatchObject({ type: "greeting_or_small_talk", reply: "أهلًا" });
@@ -550,12 +549,13 @@ describe("an OPEN request receives the customer's follow-ups: its edit or answer
     expect(JSON.stringify(db.rows("credit_ledger"))).toBe(ledger);
     expect(db.rows("missions").every((m: any) => m.status !== "approved" && m.status !== "executing")).toBe(true);
   });
-  it("the model down while a plan waits: the fallback still routes «خليها ٥ تعليقات بس» to the edit", async () => {
+  it("intentional change (M3): the model down while a plan waits keeps the plan and answers OPEN_KEPT_AR without edit", async () => {
     setChatModelForTesting(fakeChatModel([], { override: () => "fail" }).call);
     const db = world({ status: "plan_ready" });
-    const { r } = await turn(db, "خليها ٥ تعليقات بس");
-    expect(r).toMatchObject({ ok: true, missionId: "msn_open123456" });
-    expect(db.rows("missions")[0].plan.stages[0].planned_rows).toBe(5);
+    const { r, assistant } = await turn(db, "خليها ٥ تعليقات بس");
+    expect(r).toMatchObject({ ok: false, status: 200 });
+    expect(assistant.content_ar).toBe(OPEN_KEPT_AR);
+    expect(db.rows("missions")[0].plan.stages[0].planned_rows).not.toBe(5);
   });
 });
 

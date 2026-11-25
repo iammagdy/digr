@@ -17,7 +17,16 @@ const REPLIES: Record<string, string> = {
 
 export interface FakeModelOptions {
   /** Overrides the type the fake gives to a message (a model that is wrong or unsure). */
-  override?: (text: string) => Partial<{ type: string; reply: string; count: number | null; count_text: string | null; reason: string }> | "fail" | "garbage" | undefined;
+  override?: (textOrInput: any) => Partial<{
+    type: string;
+    reply: string;
+    count: number | null;
+    count_text: string | null;
+    reason: string;
+    account_topic?: string;
+    open_plan_question_kind?: string;
+    [k: string]: unknown;
+  }> | "fail" | "garbage" | undefined;
 }
 
 export interface FakeChatModel { call: ChatModelCall; calls: ChatModelInput[] }
@@ -34,7 +43,14 @@ export function fakeChatModel(entries: CorpusEntry[] = CORPUS, options: FakeMode
   const call: ChatModelCall = async (input) => {
     calls.push(input);
     const text = lastUserText(input);
-    const o = options.override?.(text);
+    let o: any;
+    if (options.override) {
+      try {
+        o = options.override(text);
+      } catch {
+        o = options.override(input);
+      }
+    }
     if (o === "fail") return { ok: false, failure: "http_529" };
     if (o === "garbage") return { ok: true, text: "عذرًا، لا أستطيع التصنيف الآن." };
     const entry = byText.get(text);
@@ -42,7 +58,17 @@ export function fakeChatModel(entries: CorpusEntry[] = CORPUS, options: FakeMode
     const hasOpen = /OPEN_REQUEST: (?!none)/.test(input.system);
     const reply = o?.reply ?? (type === "data_request" || (type === "edit_of_open_request" && hasOpen) ? "" : REPLIES[type] ?? "");
     const count = o && "count" in o ? o.count ?? null : entry?.count ?? null;
-    return { ok: true, text: JSON.stringify({ type, reason: o?.reason ?? "corpus", reply, count, ...(o && "count_text" in o ? { count_text: o.count_text } : {}) }), usage: { inputTokens: 900, outputTokens: 120 } };
+    return {
+      ok: true,
+      text: JSON.stringify({
+        type,
+        reason: o?.reason ?? "corpus",
+        reply,
+        count,
+        ...(o && typeof o === "object" ? o : {}),
+      }),
+      usage: { inputTokens: 900, outputTokens: 120 },
+    };
   };
   return { call, calls };
 }

@@ -2,7 +2,6 @@ import { buildRequestContract } from "../../src/lib/agentMission/requestContract
 import { buildAsk } from "../../src/lib/agentMission/foundation/ask";
 import { legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { classifyMessage } from "../../src/lib/agentMission/messageType";
-import { preModelAnswer } from "../../src/lib/agentMission/guardRules";
 import { identityQuestionKind } from "../../src/lib/assistantIdentity";
 import { isGreetingOrGeneralQuestion } from "../../src/functions/shared/briefManager";
 import { findUnresolvedResearchPlaceholder } from "../../src/lib/researchPlaceholders";
@@ -52,7 +51,6 @@ export function understand(text: string, answer: string | null = null, nowMs: nu
   const contract = buildRequestContract(mission.request_text, mission.answer_text, options);
   const ask = buildAsk(mission.request_text, mission.answer_text, nowMs, {}, options);
   const general = isGreetingOrGeneralQuestion(text);
-  const fixed = preModelAnswer(text);
   const prefilter: Understood["prefilter"] = findUnresolvedResearchPlaceholder(text)
     ? "placeholder"
     : identityQuestionKind(text)
@@ -61,9 +59,7 @@ export function understand(text: string, answer: string | null = null, nowMs: nu
         ? "greeting"
         : general.isGeneralQuestion
           ? "general_question"
-          : fixed
-            ? fixed.kind
-            : "agent";
+          : "agent";
   return {
     prefilter,
     platform: contract.platform,

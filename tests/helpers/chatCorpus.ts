@@ -118,7 +118,12 @@ export const AMBIGUOUS_DATA: CorpusEntry[] = [
   { text: "أبحث عن آراء المستخدمين في تطبيقات التوصيل", type: "data_request" },
 ];
 
-export const CORPUS: CorpusEntry[] = [...ROUND21_CORPUS, ...ROUND22_LIVE, ...FOLLOW_UPS, ...AMBIGUOUS_DATA];
+export const ROUND23_TYPES: CorpusEntry[] = [
+  { text: "ممكن أغير اسمي في الحساب؟", type: "account_question" },
+  { text: "الموقع ده نصب ولا ايه؟", type: "trust_question" },
+];
+
+export const CORPUS: CorpusEntry[] = [...ROUND21_CORPUS, ...ROUND22_LIVE, ...FOLLOW_UPS, ...AMBIGUOUS_DATA, ...ROUND23_TYPES];
 
 /** ROUND 23: the live messages of the 30-scenario test (after #373) with the behaviour each must get, with or without open missions. */
 export type Behaviour = "platform_question" | "account_name" | "trust" | "greeting_with_name";
