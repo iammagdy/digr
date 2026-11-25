@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import platformHosts from "../data/capabilities/platform-hosts.json";
 import { normalizeHostToken } from "../agent/src/companyPeopleRecovery";
-import { withoutDirectionMarks, isMetaColumnKey } from "../agent/src/workbook";
+import { withoutDirectionMarks, isMetaColumnKey, buildMissionFiles } from "../agent/src/workbook";
+import { cellsOf } from "./helpers/round11Worlds";
+import { type PricedPlan } from "../src/lib/agentMission/plan";
 import { neutralPeopleTitleAr } from "../src/lib/agentMission/roles";
 
 describe("DT-20261125-wordlist-wave2 Phase 7: Execution Cleanup Wave 2", () => {
@@ -67,5 +69,50 @@ describe("DT-20261125-wordlist-wave2 Phase 7: Execution Cleanup Wave 2", () => {
     // Whereas manager role is neutralized to general employees
     const managerTitle = neutralPeopleTitleAr("مديرو كل شركة", "manager", "شركة");
     expect(managerTitle).toBe("موظفو كل شركة");
+  });
+  it("Must-Pass 4: child stage language is computed from comment's own text, not parent context text", async () => {
+    const plan = {
+      id: "msn_test",
+      stages: [
+        {
+          key: "videos",
+          title_ar: "الفيديوهات",
+          parent_key: null,
+          deliver: true,
+          capability: "tiktok",
+          columns: [
+            { key: "id", title_ar: "المعرف" },
+            { key: "text", title_ar: "النص" },
+          ],
+        },
+        {
+          key: "comments",
+          title_ar: "التعليقات",
+          parent_key: "videos",
+          deliver: true,
+          capability: "tiktok",
+          columns: [
+            { key: "id", title_ar: "المعرف" },
+            { key: "text", title_ar: "نص التعليق" },
+            { key: "lang", title_ar: "لغة النص" },
+          ],
+        },
+      ],
+      compiled: { by: "compiler", conditions: [] },
+    } as unknown as PricedPlan;
+
+    const rowsByStage = {
+      videos: [{ id: "v1", text: "English video caption only", __marks: {} }],
+      comments: [{ id: "c1", parent_id: "v1", text: "تعليق عربي جميل", lang: "", __marks: {} }],
+    };
+
+    const files = await buildMissionFiles(plan, rowsByStage as never);
+    const cells = await cellsOf(files.xlsx);
+    const commentRows = cells["التعليقات"];
+    expect(commentRows[0]).toEqual(["النص", "نص التعليق", "لغة النص", "المعرّف", "معرّف الأصل"]);
+    expect(commentRows[1][0]).toBe("English video caption only");
+    expect(commentRows[1][1]).toBe("تعليق عربي جميل");
+    // Language must be computed from the comment text ("العربية"), not parent text ("لغة أخرى")
+    expect(commentRows[1][2]).toBe("العربية");
   });
 });

@@ -420,7 +420,7 @@ function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: R
     if (f.kind === "precision") {
       const lay = layouts.find((l) => l.stage.key === f.stageKey) ?? layouts.find((l) => l.stage.replies_of === undefined && plan.stages.some((x) => x.key === f.stageKey && x.replies_of === l.stage.key));
       if (!lay) continue;
-      const dateCol = lay.columns.find((c) => c.key === f.dateKey);
+      const dateCol = lay.columns.find((c) => c.kind !== "context" && c.key === f.dateKey);
       if (!dateCol) continue;
       const header = precisionHeaderOf(lay.columns.map((c) => c.title), dateCol.title);
       if (header === null) {
@@ -598,8 +598,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         // A LANGUAGE CODE IS NEVER A CUSTOMER VALUE (S1 live findings fix 4): in a mission of the new pipeline the language cells are Arabic words
         // the source's own word first; when it gives none (an empty cell), the language of the text by its script; a source that says it cannot tell keeps «غير محددة», its own word (S4: the comment language column of the comments sheet, a mark, nothing is removed)
         const labelled = newPipeline && languageAt[k] ? languageLabelAr(got) : got;
-        const textKey = newPipeline && languageAt[k] ? textColumnKeyOf(lay.columns.map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
-        const textAt = textKey !== null ? lay.columns.findIndex((x) => x.key === textKey) : -1;
+        const textKey = newPipeline && languageAt[k] ? textColumnKeyOf(lay.columns.filter((x) => x.kind !== "context").map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
+        const textAt = textKey !== null ? lay.columns.findIndex((x) => x.kind !== "context" && x.key === textKey) : -1;
         const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && labelled.trim() === "")) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
         if (dateAt[k]) {
           // a date with no time stays a date (no time of day, no zone shift); only a real timestamp is written in Cairo time

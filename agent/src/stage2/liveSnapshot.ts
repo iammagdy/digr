@@ -96,8 +96,8 @@ function sheetRows(
   const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
   const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
   const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
-  const textKey = newPipeline ? textColumnKeyOf(lay.columns.map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
-  const textAt = textKey !== null ? lay.columns.findIndex((x) => x.key === textKey) : -1;
+  const textKey = newPipeline ? textColumnKeyOf(lay.columns.filter((x) => x.kind !== "context").map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
+  const textAt = textKey !== null ? lay.columns.findIndex((x) => x.kind !== "context" && x.key === textKey) : -1;
   return lay.rows.map((record) => {
     const parent = parentById.get(text(record.parent_id)) ?? null;
     const cells: LiveCell[] = lay.columns.map((c, k) => {
