@@ -7,7 +7,8 @@ import { parseBrief, type ParsedBrief, type ResearchBrief } from "./researchBrie
 import { POINT_VALUE_EGP_AR, classifyMessage } from "./messageType";
 import { checkCustomerText } from "./text";
 import { countSupportedByMessage, normalizeWords, wordNumbersIn, writtenNumbers } from "./numberWords";
-import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, unsupportedClaimIssues, type OpenPlanFacts } from "./openPlanFacts";
+import { planFactsLinesAr, planNumbersAr, planFollowUpAnswerAr, unsupportedClaimIssues, type OpenPlanFacts, type PlanQuestionKind } from "./openPlanFacts";
+import { accountAnswerAr, TRUST_REPLY_AR } from "./guardRules";
 
 /**
  * THE CHAT TALKS LIKE AN ASSISTANT, WITH CODE AS THE GUARD (round 22). The chat model names the type of every message and, for a message that is not a data request, writes the reply. Everything it says or decides is checked here:
@@ -22,7 +23,18 @@ import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, re
  * ROUND 57 (13 Nov cosmetics conversation): two types that exist only while the customer HAS an open request. `open_request_question`: a question, a check or a condition about the plan on the card, answered from the plan's own facts with
  * nothing changed («البيانات دي جاية منين؟», «لو مش لاقي رقم سيبه فاضي»); `cancel_open_request`: the customer explicitly cancels the whole request (code cancels only when the words themselves say so, `isExplicitCancel`).
  */
-export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
+export const CHAT_TYPES = [
+  "greeting_or_small_talk",
+  "service_question",
+  "methodology_request",
+  "data_request",
+  "edit_of_open_request",
+  "open_request_question",
+  "cancel_open_request",
+  "account_question",
+  "trust_question",
+  "other",
+] as const;
 export type ChatType = (typeof CHAT_TYPES)[number];
 
 export type OpenState = "planning" | "needs_input" | "plan_ready";
@@ -43,7 +55,16 @@ export interface TurnContext {
   brief?: { enabled: boolean; soFar: ResearchBrief | null; numbersAr?: string[]; /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1): the kinds of public data that can be collected now, written by code from the registry (no provider name). */ capabilityLines?: string[] };
 }
 
-export interface ParsedAnswer { type: ChatType; reason: string; reply: string; count: number | null; /** the customer's own words that wrote the count («شركتين», «اتنين», «عشر»): code checks they are in the message */ countText?: string | null; /** the raw brief object (brief mode), checked by `parseBrief` */ brief?: unknown }
+export interface ParsedAnswer {
+  type: ChatType;
+  reason: string;
+  reply: string;
+  count: number | null;
+  countText?: string | null;
+  account_topic?: "name" | "email" | "password" | "delete" | "topup";
+  open_plan_question_kind?: "sources" | "relevance" | "blank" | "cost" | "price" | "count" | "duplicates";
+  brief?: unknown;
+}
 
 export interface Decision {
   type: ChatType;
@@ -168,12 +189,16 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
     "- open_request_question: سؤال أو استفسار أو تأكيد عن الطلب المفتوح وخطته، أو شرط موجود فيها بالفعل (ولا يصح إلا مع وجود طلب مفتوح). لا يغيّر شيئًا.",
     "- cancel_open_request: يطلب صراحةً إلغاء الطلب المفتوح كله (ولا يصح إلا مع وجود طلب مفتوح). أما حذف جزء منه فهو edit_of_open_request.",
+    "- account_question: سؤال عن حسابه على ديجر أو إعداداته الشخصية (تغيير الاسم أو البريد أو كلمة المرور، حذف الحساب، أو شحن الرصيد). مع هذا النوع اكتب الحقل account_topic بإحدى هذه القيم فقط: name أو email أو password أو delete أو topup. تنبيه: طلب جمع بيانات حساب أو قناة أو صفحة عامة لشخص أو جهة (مثل «تغريدات حساب وزارة الصحة») هو data_request وليس account_question.",
+    "- trust_question: سؤال أو شك في مصداقية وأمان موقع ديجر نفسه أو الخوف من النصب وضياع الفلوس (مثل «الموقع ده نصب ولا حقيقي وفلوسي مضمونة؟»). تنبيه: طلب جمع منشورات أو آراء عن النصب والاحتيال في موضوع عام هو data_request وليس trust_question.",
     "- other: أي شيء آخر (سؤال عام، طلب مساعدة خارج الخدمة، نكتة).",
     "عند الشك بين data_request وأي نوع آخر اختر data_request؛ فرفض طلب حقيقي أسوأ من تجهيز خطة لتحية.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
     "count_text: مع count فقط: الكلمات نفسها من رسالة العميل التي كتب بها العدد (مثل «شركتين» أو «اتنين» أو «عشر»)، كما هي في رسالته حرفيًا؛ وإلا null.",
-    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
+    "account_topic: مع account_question فقط، واحدة من: name أو email أو password أو delete أو topup؛ وإلا null.",
+    "open_plan_question_kind: مع open_request_question فقط، حدد نوع السؤال بإحدى هذه القيم إذا طابقها تمامًا: sources (عن المصادر من أين تأتي البيانات) أو relevance (عن التأكد من صلة البيانات أو تخصص الشركات) أو blank (عن الخانات الفاضية في الملف إذا لم توجد أرقام أو إيميلات في المصدر؛ انتبه: السؤال عن قائمة الأعمدة التي ستكون في الملف ليس blank بل أجب عنه في reply واجعل هذا الحقل null) أو cost (عن تقليل التكلفة أو التوفير) أو price (عن السعر الإجمالي والحجز وهل يزيد) أو count (عن عدد العناصر وهل هي شركات) أو duplicates (عن التكرار وحذفه)؛ وإلا null.",
+    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request وaccount_question وtrust_question.",
     "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
     "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
     "",
@@ -241,12 +266,19 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
   if (!raw || typeof raw !== "object" || !isChatType(raw.type)) return null;
   const n = Number(raw.count);
   const brief = briefWithObjectives(raw);
+  const rawAccountTopic = typeof raw.account_topic === "string" ? raw.account_topic.trim() : undefined;
+  const rawKind = typeof raw.open_plan_question_kind === "string" ? raw.open_plan_question_kind.trim() : undefined;
+  const VALID_ACCOUNT_TOPICS = new Set(["name", "email", "password", "delete", "topup"]);
+  const VALID_PLAN_KINDS = new Set(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
+
   return {
     type: raw.type,
     reason: oneLine(typeof raw.reason === "string" ? raw.reason : "", 200),
     reply: typeof raw.reply === "string" ? raw.reply.replace(/\s+/g, " ").trim() : "",
     count: raw.count !== null && raw.count !== undefined && Number.isInteger(n) && n >= 1 ? n : null,
     countText: typeof raw.count_text === "string" && raw.count_text.trim() !== "" ? raw.count_text.trim().slice(0, 40) : null,
+    account_topic: rawAccountTopic && VALID_ACCOUNT_TOPICS.has(rawAccountTopic) ? (rawAccountTopic as any) : undefined,
+    open_plan_question_kind: rawKind && VALID_PLAN_KINDS.has(rawKind) ? (rawKind as any) : undefined,
     ...(brief !== undefined ? { brief } : {}),
   };
 }
@@ -320,27 +352,27 @@ export function guardReply(reply: string, allowed: { message: string; balancePoi
 // the words of a message, normalised, and the check that a count the model returned is one the customer wrote: numberWords.ts (shared with the planner, DT-20261118-08)
 const supportedCount = countSupportedByMessage;
 
-/** The words that open a short edit of a plan («خليها ٥٠٠»، «بس ١٠٠ تغريدة»، «قلّلها لـ ...»، «عدّل العدد»). */
-const EDIT_START = /^(?:خل\S*|بس|قلل\S*|زود\S*|نقص\S*|عدل\S*|غير\S*|اجعل\S*|ممكن تخل\S*)(?: |$)/;
-const TIME_OR_PERCENT = /يوم|ايام|اسبوع|اسابيع|شهر|شهور|اشهر|سنه|سنين|سنوات|ساعه|ساعات|%|بالمائه|دقيقه|دقايق/;
-const MAX_EDIT_WORDS = 8;
+export const OPEN_PLAN_FALLBACK_AR = "خطتك الحالية جاهزة وتنتظر اعتمادك للبدء. يمكنك مراجعتها والضغط على زر «اعتمد»، أو كتابة ما تريد تعديله في الخطة.";
 
-/** The fallback when the model gives nothing usable: the round-21 keyword rules, plus the short edit or answer of an open request. */
+/**
+ * Fallback when the chat model fails (timeout, 529, or unreadable JSON).
+ * Invariant: if an open plan exists, a model failure NEVER cancels or edits the plan.
+ */
 function keywordDecision(ctx: TurnContext, failure?: string): Decision {
-  const base = (type: ChatType, count: number | null = null): Decision => ({ type, reply: null, count, reason: "keyword rules", source: "keyword", guarded: false, ...(failure ? { failure } : {}) });
-  const text = normalizeWords(ctx.message);
-  const words = text === "" ? [] : text.split(" ");
-  const kind = classifyMessage(ctx.message);
-  // ROUND 57: with an open request, an explicit cancellation and a question about the plan are read first (their answers come from code and the plan's facts)
-  if (ctx.open && isExplicitCancel(ctx.message)) return base("cancel_open_request");
-  if (ctx.open && kind !== "greeting" && planQuestionKind(ctx.message) !== null) return base("open_request_question");
-  if (ctx.open && kind !== "greeting" && kind !== "service_question" && kind !== "methodology_request") {
-    if (ctx.open.state === "needs_input" && kind === "other") return base("edit_of_open_request");
-    if (ctx.open.state !== "needs_input" && words.length > 0 && words.length <= MAX_EDIT_WORDS && EDIT_START.test(text)) {
-      const numbers = writtenNumbers(ctx.message);
-      return base("edit_of_open_request", numbers.length === 1 && !TIME_OR_PERCENT.test(text) ? numbers[0] : null);
-    }
+  const base = (type: ChatType, count: number | null = null, reply: string | null = null): Decision => ({
+    type,
+    reply,
+    count,
+    reason: "model_fallback",
+    source: "keyword",
+    guarded: false,
+    ...(failure ? { failure } : {}),
+  });
+  if (ctx.open) {
+    // Open plan is preserved safely without speculative edit or cancellation
+    return base("open_request_question", null, OPEN_PLAN_FALLBACK_AR);
   }
+  const kind = classifyMessage(ctx.message);
   return base(kind === "greeting" ? "greeting_or_small_talk" : kind);
 }
 
@@ -410,6 +442,28 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     const count = type === "edit_of_open_request" ? supportedCount(ctx.message, answer.count, answer.countText ?? null) : null;
     const rawStatus = answer.brief && typeof answer.brief === "object" && typeof (answer.brief as Record<string, unknown>).status === "string" ? String((answer.brief as Record<string, unknown>).status) : null;
     return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief, briefParts: rawPartsOf(answer.brief), briefRawStatus: rawStatus };
+  }
+  if (type === "account_question") {
+    const validTopics = new Set(["name", "email", "password", "delete", "topup"]);
+    if (answer.account_topic && validTopics.has(answer.account_topic)) {
+      return model_(accountAnswerAr(answer.account_topic), false, null);
+    }
+    // Missing or unknown topic: do NOT guess "name". Fall back to model's guarded reply:
+    const guard = guardReply(answer.reply, allowed);
+    return model_(guard.ok ? guard.text : null, false, null);
+  }
+  if (type === "trust_question") {
+    return model_(TRUST_REPLY_AR, false, null);
+  }
+  if (type === "open_request_question" && ctx.open?.facts) {
+    const validKinds = new Set(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
+    if (answer.open_plan_question_kind && validKinds.has(answer.open_plan_question_kind)) {
+      const structured = planFollowUpAnswerAr(answer.open_plan_question_kind, ctx.open.facts);
+      if (structured) return model_(structured, false, null);
+    }
+    // Missing or unknown kind: do NOT guess "price". Never show price facts for columns questions!
+    const guard = guardReply(answer.reply, allowed);
+    return model_(guard.ok ? guard.text : OPEN_PLAN_FALLBACK_AR, false, null);
   }
   if (type === "data_request" || type === "cancel_open_request") return model_(null, false, null);
   if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count, answer.countText ?? null); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }

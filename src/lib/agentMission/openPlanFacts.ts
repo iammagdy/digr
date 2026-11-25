@@ -116,27 +116,20 @@ export function planNumbersAr(f: OpenPlanFacts | null): string[] {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // WHEN THE CHAT MODEL IS UNAVAILABLE (13 Nov: 5 of 9 turns «http_503», 3 «unreadable»): the questions a customer asks about the plan on the card are answered by code, from the same facts.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-const norm = (raw: string): string => String(raw ?? "").replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").toLowerCase().replace(/[،,.!؟?؛;:"'«»()[\]{}\-_/\\|*#@~`+=<>]/g, " ").replace(/\s+/g, " ").trim();
-
 export type PlanQuestionKind = "sources" | "relevance" | "blank" | "cost" | "price" | "count" | "duplicates";
-const KINDS: Array<[PlanQuestionKind, RegExp]> = [
-  ["blank", /(?:مالهاش|ملهاش|مفيهاش|معندهاش) (?:موقع|رقم|ايميل|تليفون|بريد)|فاضي|فاضيه|فارغ|سيبه|سيبها|سيبهم|متلاقيش|ملقتش|مش لاقي|مش لاقيه|مش موجود|مش منشور|لو مفيش|لو ملقيتش/],
-  ["sources", /منين|من اين|مصدر|مصادر|جايه من|جاي من|بتجيبوا|بتجيبها|بتجمعوا منين|تجيبوا/],
-  ["relevance", /علاقه|شغاله|تتاكد|نتاكد|هتتاكد|متاكد|التاكد|فعلا|نشاط|مالهاش دعوه|ملهاش دعوه|بعيد عن الموضوع/],
-  ["cost", /تكلف|ارخص|نقلل|نوفر|نخفض|ميزاني|اقل سعر|سعر اقل|اوفر|السعر (?:هيقل|يقل|بيقل|هينزل|ينزل|هيرخص)/],
-  ["price", /نهائي|هيزيد|يزيد|الحجز|حجز|هيتخصم|يتخصم|هتخصم/],
-  // ROUND 58: «هي كام شركة؟»، «يعني ٣٢ شركة؟»: the count of the plan, said with its noun
-  // (questions only: «قلل عدد الشركات لـ١٠» is an edit, never this)
-  ["duplicates", /تتكرر|يتكرر|هتتكرر|مكرره|مكرر|التكرار|تكرار/],
-  ["count", /كام (?:شركه|مكان|عنصر)|فيها كام|هتجيب كام|هيجيب كام|هتجيبوا كام|العدد كام|^يعني (?:[0-9]+ )?(?:شركه|مكان)/],
-];
 
-/** What a message asks about the open plan, read from its words (null: none of the kinds above). Used only while the customer HAS an open plan. */
-export function planQuestionKind(message: string): PlanQuestionKind | null {
-  const t = norm(message);
-  if (t === "") return null;
-  for (const [kind, re] of KINDS) if (re.test(t)) return kind;
+// Deprecated keyword extractors retained for backwards-compatibility without wordlist regexes.
+// The chat model decides open_plan_question_kind and cancel_open_request; planFollowUpAnswerAr builds the answer from facts.
+export function planQuestionKind(_message: string): PlanQuestionKind | null {
   return null;
+}
+
+export function isExplicitCancel(_message: string): boolean {
+  return false;
+}
+
+export function refersToOpenRequest(_message: string): boolean {
+  return false;
 }
 
 const quoted = (xs: string[]): string => xs.map((x) => `«${x}»`).join("، ");
@@ -183,21 +176,6 @@ export function planFollowUpAnswerAr(kind: PlanQuestionKind, f: OpenPlanFacts): 
   }
   if (!f.price) return null;
   return `أقصى ما يُخصم لخطتك ${formatAr(f.price.estimate)} نقطة لو اتسلّم كل حاجة، وأقل من كده بنسبة اللي اتسلّم فعلًا لو اتسلّم أقل، والحد الأدنى للمهمة ${formatAr(f.price.minimum)} نقطة. عند الاعتماد بنحجز مؤقتًا ${formatAr(f.price.reserve)} نقطة كهامش أمان، وده مش خصم: اللي مش بيتستخدم منه بيرجع لرصيدك بعد التسليم. والسعر ما بيزيدش إلا لو انت عدّلت الخطة، وساعتها بتشوف السعر الجديد قبل الاعتماد.`;
-}
-
-/** A typed, explicit cancellation of the WHOLE open request («الغي الطلب ده», «خلاص كنسل»), never a change of one part («الغي عمود العنوان»). */
-export function isExplicitCancel(message: string): boolean {
-  const t = norm(message);
-  const words = t.split(" ").filter(Boolean);
-  if (words.length === 0 || words.length > 8) return false;
-  if (!/(?:^| )(?:الغي|الغيه|الغيها|الغاء|كنسل|كنسله|cancel|بلاش|وقف|اوقف)(?: |$)/.test(t)) return false;
-  if (/عمود|خانه|خانات|ايميل|رقم|ارقام|عنوان|صفحات|خطوه|الخطوه|جزء|شرط|فلتر|مرحله/.test(t)) return false;
-  return /الطلب|المهمه|الخطه|البحث|(?:^| )(?:ده|دي|دا|كله|خلاص)(?: |$)/.test(t);
-}
-
-/** A message that points at the open request or an earlier plan («الخطة»، «الطلب ده»، «زي ما هي»): never a new request by itself, whatever its type. */
-export function refersToOpenRequest(message: string): boolean {
-  return /الخطه|الطلب (?:ده|دا|دي|السابق|اللي|بتاعي)|(?:الشركات|البيانات|الاعمده|الملف|النتايج|النتائج) (?:دي|دى|ده)|قبل كده|زي ما هي|زي ما هو|نفس الطلب|اللي فات|اللي كانت|اللي طلبته/.test(norm(message));
 }
 
 /**
