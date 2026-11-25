@@ -13,7 +13,7 @@
 - تشغيل مباشر (Live mode):
   `ANTHROPIC_API_KEY=<key> PROVIDER_KEY=<key> npx tsx scripts/full-flow-replay-runner.ts --providers=live --runs 1`
 - تطبيق قاعدة D-0202 (تشغيل 5 جولات متتالية 5/5 قبل دمج أي تعديل):
-  `ANTHROPIC_API_KEY=<key> npx tsx scripts/full-flow-replay-runner.ts --providers=live --runs 5`
+  `ANTHROPIC_API_KEY=<key> PROVIDER_KEY=<key> npx tsx scripts/full-flow-replay-runner.ts --providers=live --runs 5`
 
 ## معايير النجاح (Pass Criteria)
 1. **المطابقة العددية (Count Match):** تطابق أعداد السؤال والكارت والتسليم (`question count == card count == delivered count`).
@@ -24,4 +24,4 @@
 ## الروابط والقرارات
 - **Pull Request:** PR #671
 - **Gate File:** PR-671-GATE.md
-- **Decisions:** D-0202 (قاعدة 5/5 بالنموذج الحقيقي قبل الدمج) و D-0206 (الوضع الافتراضي recorded).
+- **Decisions:** D-0202 (قاعدة 5/5 بالنموذج الحقيقي قبل الدمج) و D-0207 (الوضع الافتراضي recorded).
