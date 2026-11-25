@@ -60,7 +60,7 @@ const DEFAULT_CUSTOMER_PROMPT =
   "عايز اسحب داتا عن الشائعات اتنشرت على وزارة الصحة في السعودية @SaudiMOH، عن الشائعات ومكافحة الشائعات، أي حاجة لها علاقة بالشائعات وتوعية الأفراد ضد الشائعات.";
 
 // Fallback built-in recorded tweets for msn_f91f7e220bbf60fd7c9c Call #6
-const BUILTIN_MSN_F91F_ROWS = [
+export const BUILTIN_MSN_F91F_ROWS = [
   { id: "1795486173152113063", text: "أخطاء شائعة عند علاج الإدمان، تعرف عليها", url: "https://x.com/SaudiMOH/status/1795486173152113063", authorUsername: "SaudiMOH" },
   { id: "1783068055615991878", text: "تعرّف على إجابات الأسئلة الشائعة حول التبرع بالدم عبر ملف الأسئلة الشائعة", url: "https://x.com/SaudiMOH/status/1783068055615991878", authorUsername: "SaudiMOH" },
   { id: "1725151378635411641", text: "مشاكل الجهاز الهضمي الشائعة أثناء الحمل وطرق التعامل معها", url: "https://x.com/SaudiMOH/status/1725151378635411641", authorUsername: "SaudiMOH" },
@@ -261,21 +261,76 @@ export function extractRowCountFromTregData(data: any): number {
   return 0;
 }
 
-function loadRecordedRows(config: RunnerConfig): ReplayRows {
+export interface RecordedRowMappingOptions {
+  deliveredId?: string;
+  defaultPrefix?: string;
+}
+
+/**
+ * Pure function mapping raw fixture rows to runner recorded rows.
+ * E1: A row keeps its fixture url ONLY if that url is present and no other row of the same fixture has the same url.
+ * Otherwise the row gets NO url field (identified by its own id, which ingest already dedupes on).
+ * E2: No marker-word checks, no platform/account/provider names. Hard-coded handle fallback url removed.
+ */
+export function mapFixtureRowsToRecordedRows(
+  fixtureRows: Array<Record<string, any>>,
+  options?: RecordedRowMappingOptions,
+): Array<Record<string, any>> {
+  if (!Array.isArray(fixtureRows)) return [];
+
+  // Count occurrences of each valid, trimmed, non-empty url across all fixture rows
+  const urlCounts = new Map<string, number>();
+  for (const r of fixtureRows) {
+    if (r && typeof r.url === "string") {
+      const trimmed = r.url.trim();
+      if (trimmed.length > 0) {
+        urlCounts.set(trimmed, (urlCounts.get(trimmed) ?? 0) + 1);
+      }
+    }
+  }
+
+  const prefix = options?.defaultPrefix ?? "recorded_tweet";
+
+  return fixtureRows.map((r: any, idx: number) => {
+    const isMatch = r.verdict === 1 || r.reason === "match";
+    const id = isMatch && options?.deliveredId
+      ? options.deliveredId
+      : (r.id ?? (r.url && typeof r.url === "string" && r.url.includes("status/") ? r.url.split("status/")[1].replace(/[^0-9]/g, "") : null) ?? `${prefix}_${idx + 1}`);
+
+    const text = r.text ?? r.title ?? "";
+    const title = r.title ?? r.text ?? "";
+    const authorUsername = r.authorUsername ?? "SaudiMOH";
+    const createdUtc = r.createdUtc ?? "2026-10-18T12:00:00Z";
+
+    const row: Record<string, any> = {
+      id: String(id),
+      text,
+      title,
+      authorUsername,
+      createdUtc,
+    };
+
+    // E1: Keep fixture url ONLY if present and unique in this fixture.
+    // E2: Remove hard-coded handle fallback url; rows without usable url get no url property.
+    if (typeof r.url === "string") {
+      const trimmed = r.url.trim();
+      if (trimmed.length > 0 && urlCounts.get(trimmed) === 1) {
+        row.url = r.url;
+      }
+    }
+
+    return row;
+  });
+}
+
+export function loadRecordedRows(config: RunnerConfig): ReplayRows {
   // 1. Explicit fixture file
   if (config.fixturePath) {
     const fullPath = resolve(config.fixturePath);
     if (!existsSync(fullPath)) throw new Error(`Fixture file not found: ${fullPath}`);
     const parsed = JSON.parse(readFileSync(fullPath, "utf-8"));
     const rawList = Array.isArray(parsed) ? parsed : parsed.judged_rows ?? parsed.rows ?? parsed.tweets ?? [];
-    const rows = rawList.map((r: any, idx: number) => ({
-      id: r.id ?? (r.url && r.url.includes("status/") ? r.url.split("status/")[1].replace(/[^0-9]/g, "") : null) ?? `row_${idx + 1}`,
-      text: r.text ?? r.title ?? "",
-      title: r.title ?? r.text ?? "",
-      url: r.url ?? `https://x.com/SaudiMOH/status/${r.id ?? idx + 1}`,
-      authorUsername: r.authorUsername ?? "SaudiMOH",
-      createdUtc: r.createdUtc ?? "2026-10-18T12:00:00Z",
-    }));
+    const rows = mapFixtureRowsToRecordedRows(rawList, { defaultPrefix: "row" });
     return {
       probeRows: rows,
       executionRows: rows,
@@ -289,19 +344,7 @@ function loadRecordedRows(config: RunnerConfig): ReplayRows {
     const parsed = JSON.parse(readFileSync(qaFixturePath, "utf-8"));
     const rawList = parsed.judged_rows ?? parsed.rows ?? parsed.tweets ?? [];
     const deliveredId = parsed.delivered_rows?.[0]?.id ?? (config.missionId === "msn_c41586cf9d40986250d0" ? "2111754500776030669" : "1466135018154205187");
-    const rows = rawList.map((r: any, idx: number) => {
-      const isMatch = r.verdict === 1 || r.reason === "match";
-      const id = isMatch ? deliveredId : (r.id ?? `recorded_tweet_${idx + 1}`);
-      const text = r.text ?? r.title ?? "";
-      return {
-        id,
-        text,
-        title: text,
-        url: r.url ?? `https://x.com/SaudiMOH/status/${id}`,
-        authorUsername: r.authorUsername ?? "SaudiMOH",
-        createdUtc: r.createdUtc ?? "2026-10-18T12:00:00Z",
-      };
-    });
+    const rows = mapFixtureRowsToRecordedRows(rawList, { deliveredId, defaultPrefix: "recorded_tweet" });
     return {
       probeRows: rows,
       executionRows: rows,
@@ -997,6 +1040,10 @@ export async function selfTestDistinctGatewayKeys(): Promise<{
       httpStatus: 200,
       data: { data: [{ id: "1", text: "probe tweet" }] },
       costMicro: 100,
+      tregCallId: "mock_planning_1",
+      latencyMs: 10,
+      isRouteMaxCost: false,
+      isPlatformBalanceLow: false,
     };
   };
 
@@ -1008,6 +1055,10 @@ export async function selfTestDistinctGatewayKeys(): Promise<{
       httpStatus: 200,
       data: { data: [{ id: "2", text: "timeline tweet" }] },
       costMicro: 100,
+      tregCallId: "mock_execution_1",
+      latencyMs: 10,
+      isRouteMaxCost: false,
+      isPlatformBalanceLow: false,
     };
   };
 
@@ -1023,6 +1074,7 @@ export async function selfTestDistinctGatewayKeys(): Promise<{
     catalog,
     budget: createJobCallBudget({ ceilingUsd: 0.20, spentUsd: 0 }),
     recorder: inMemoryRecorder,
+    defaultPurpose: "self-test",
     counter: callCounter,
     commit: async () => true,
     call: mockPlanningCall,
@@ -1048,6 +1100,7 @@ export async function selfTestDistinctGatewayKeys(): Promise<{
     catalog,
     budget: createJobCallBudget({ ceilingUsd: 0.50, spentUsd: 0 }),
     recorder: inMemoryRecorder,
+    defaultPurpose: "self-test",
     counter: callCounter,
     commit: async () => true,
     call: mockExecutionCall,
