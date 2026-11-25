@@ -53,18 +53,25 @@ interface TurnTestCase {
 }
 
 async function main() {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error("NO KEY");
+    process.exit(2);
+  }
+
   const args = parseArgs(process.argv.slice(2));
   const startTime = new Date().toISOString();
 
-  let headSha = "unknown";
-  try {
-    headSha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
-  } catch {
-    // fallback
-  }
+  const headSha =
+    process.env.HEAD_SHA ||
+    (() => {
+      try {
+        return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+      } catch {
+        return "unknown";
+      }
+    })();
 
-  const modelId = process.env.LLM_CHAT_MODEL || process.env.LLM_PLANNER_MODEL || "claude-haiku-5-5";
-  const hasKey = Boolean(process.env.ANTHROPIC_API_KEY);
+  const modelId = process.env.LLM_CHAT_MODEL || process.env.LLM_PLANNER_MODEL || process.env.ANTHROPIC_MODEL || "claude-haiku-5-5";
 
   const resolvedFixture = path.resolve(process.cwd(), args.fixturePath);
   if (!fs.existsSync(resolvedFixture)) {
@@ -444,10 +451,92 @@ async function main() {
       name: "Counter-case: هات تعليقات تيك توك عن نصب الاستثمار",
       text: "هات تعليقات تيك توك عن نصب الاستثمار",
       isOpenPlan: true,
-      expectedModelResponse: { type: "data_request" },
       verify: (d) => ({ pass: d.type === "data_request", details: `type=${d.type}` }),
     },
+    {
+      id: 39,
+      name: "Edit: خليهم ١٠ فيديوهات",
+      text: "خليهم ١٠ فيديوهات",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "edit_of_open_request" && d.count === 10 && d.refers_to_open_request === true,
+        details: `type=${d.type}, count=${d.count}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 40,
+      name: "Edit: ضيف عدد المشاهدات",
+      text: "ضيف عدد المشاهدات",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "edit_of_open_request" && d.refers_to_open_request === true,
+        details: `type=${d.type}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 41,
+      name: "Service question: ديجر بتشتغل ازاي",
+      text: "ديجر بتشتغل ازاي",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "service_question" && typeof d.reply === "string" && d.reply.length > 0 && d.refers_to_open_request === false,
+        details: `type=${d.type}, reply=${Boolean(d.reply)}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 42,
+      name: "Account question (topup with open plan): ازاي ادفع",
+      text: "ازاي ادفع",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "account_question" && (d.reply?.includes("شحن") || d.reply?.includes("المحفظة") || d.reply?.includes("رصيد")) && d.refers_to_open_request === false,
+        details: `type=${d.type}, replyMatch=${Boolean(d.reply?.includes("المحفظة") || d.reply?.includes("شحن"))}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 43,
+      name: "Account question (topup with open plan): رصيدي كام",
+      text: "رصيدي كام",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "account_question" && (d.reply?.includes("شحن") || d.reply?.includes("المحفظة") || d.reply?.includes("رصيد") || d.reply?.includes("نقطة")) && d.refers_to_open_request === false,
+        details: `type=${d.type}, replyMatch=${Boolean(d.reply?.includes("المحفظة") || d.reply?.includes("رصيد"))}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 44,
+      name: "Unrelated full data request with open plan: عايز ١٠٠ تغريدة عن الدوري السعودي آخر أسبوع",
+      text: "عايز ١٠٠ تغريدة عن الدوري السعودي آخر أسبوع",
+      isOpenPlan: true,
+      verify: (d) => ({
+        pass: d.type === "data_request" && d.refers_to_open_request === false,
+        details: `type=${d.type}, refers=${d.refers_to_open_request}`,
+      }),
+    },
+    {
+      id: 45,
+      name: "Account question (topup without open plan): ازاي ادفع",
+      text: "ازاي ادفع",
+      isOpenPlan: false,
+      verify: (d) => ({
+        pass: d.type === "account_question" && (d.reply?.includes("شحن") || d.reply?.includes("المحفظة") || d.reply?.includes("رصيد")) && d.refers_to_open_request === false,
+        details: `type=${d.type}, replyMatch=${Boolean(d.reply?.includes("المحفظة") || d.reply?.includes("شحن"))}, refers=${d.refers_to_open_request}`,
+      }),
+    },
   ];
+
+  const turnIdsEnv = process.env.TURN_IDS;
+  const turnIdsFilter = turnIdsEnv
+    ? new Set(
+        turnIdsEnv
+          .split(",")
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => !isNaN(n))
+      )
+    : null;
+  const activeTestCases = turnIdsFilter
+    ? testCases.filter((tc) => turnIdsFilter.has(tc.id))
+    : testCases;
 
   const logLines: string[] = [];
   function log(msg: string) {
@@ -460,49 +549,57 @@ async function main() {
   log(`UTC_START: ${startTime}`);
   log(`RUNS: ${args.runs}`);
   log(`FIXTURE: ${args.fixturePath}`);
-  log(`TOTAL_TURNS: ${testCases.length}`);
+  log(`TOTAL_TURNS: ${activeTestCases.length}`);
+  if (turnIdsFilter) log(`TURN_IDS_FILTER: ${Array.from(turnIdsFilter).join(",")}`);
   log("");
 
   let allPass = true;
 
+  let lastCallStats = { latencyMs: 0, inputTokens: 0, outputTokens: 0 };
+  const baseModel = getChatModel();
+  const instrumentedModel: ChatModelCall = async (input) => {
+    const t0 = Date.now();
+    const res = await baseModel(input);
+    const latencyMs = Date.now() - t0;
+    if (res.ok) {
+      lastCallStats = {
+        latencyMs,
+        inputTokens: res.usage?.inputTokens ?? 0,
+        outputTokens: res.usage?.outputTokens ?? 0,
+      };
+    } else {
+      lastCallStats = {
+        latencyMs,
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    }
+    return res;
+  };
+
   for (let loop = 1; loop <= args.runs; loop++) {
     log(`--- Loop ${loop}/${args.runs} ---`);
-    for (const tc of testCases) {
-      const modelCall: ChatModelCall | undefined = hasKey
-        ? undefined
-        : async () => {
-            const resp = tc.expectedModelResponse ?? { type: "data_request" };
-            return {
-              ok: true,
-              text: JSON.stringify({
-                type: resp.type,
-                reason: resp.reason ?? "harness",
-                reply: resp.reply ?? "",
-                count: null,
-                ...(resp.account_topic ? { account_topic: resp.account_topic } : {}),
-                ...(resp.open_plan_question_kind ? { open_plan_question_kind: resp.open_plan_question_kind } : {}),
-              }),
-              usage: { inputTokens: 500, outputTokens: 50 },
-            };
-          };
-
+    for (const tc of activeTestCases) {
       const decision = await decideTurn(
         {
           message: tc.text,
           balancePoints: 1000,
           open: tc.isOpenPlan ? openPlan : null,
         },
-        modelCall ?? getChatModel()
+        instrumentedModel
       );
 
+      const hasRefers = typeof decision.refers_to_open_request === "boolean";
       const res = tc.verify(decision);
-      const statusIcon = res.pass ? "PASS" : "FAIL";
-      if (!res.pass) allPass = false;
+      const pass = res.pass && hasRefers;
+      const statusIcon = pass ? "PASS" : "FAIL";
+      if (!pass) allPass = false;
 
-      log(`[Loop ${loop}/${args.runs} | Turn ${tc.id}/${testCases.length}: ${tc.name}] status=${statusIcon} (${res.details})`);
-      if (!res.pass) {
+      log(`[Loop ${loop}/${args.runs} | Turn ${tc.id}/${activeTestCases.length}: ${tc.name}] status=${statusIcon} (${res.details}) source=${decision.source} model=${modelId} latency=${lastCallStats.latencyMs}ms in_tokens=${lastCallStats.inputTokens} out_tokens=${lastCallStats.outputTokens} refers_to_open_request=${decision.refers_to_open_request}`);
+      if (!pass) {
         log(`  > Input: «${tc.text}»`);
         log(`  > Output: type=${decision.type}, source=${decision.source}, guarded=${decision.guarded}`);
+        log(`  > RefersToOpenRequest: ${decision.refers_to_open_request} (validBoolean=${hasRefers})`);
         log(`  > Reply: ${decision.reply ? `«${decision.reply.slice(0, 100)}...»` : "null"}`);
       }
     }

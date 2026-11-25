@@ -63,6 +63,7 @@ export interface ParsedAnswer {
   countText?: string | null;
   account_topic?: AccountTopic;
   open_plan_question_kind?: PlanQuestionKind;
+  refers_to_open_request?: boolean;
   brief?: unknown;
 }
 
@@ -88,6 +89,8 @@ export interface Decision {
   countRejected?: boolean;
   /** Brief mode: the status the model's raw brief states («needs_clarification»: the model itself says something is missing), before any check. */
   briefRawStatus?: string | null;
+  /** SAFE SIDE: whether the message refers to the open request (validated boolean). */
+  refers_to_open_request?: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -174,28 +177,30 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     }
     lines.push(OPEN_LINES[input.open.state]);
     if (input.open.facts) lines.push(...planFactsLinesAr(input.open.facts));
+    lines.push("تنبيه: إذا كانت الرسالة طلب بيانات جديدًا مستقلاً بموضوعه ولا يشير إلى هذا الطلب المفتوح فهو data_request وليس edit_of_open_request، واجعل refers_to_open_request false.");
   } else {
-    lines.push("OPEN_REQUEST: none", "لا يوجد طلب مفتوح، فلا تستعمل edit_of_open_request.");
+    lines.push("OPEN_REQUEST: none", "لا يوجد طلب مفتوح، فلا تستعمل edit_of_open_request واجعل refers_to_open_request false.");
   }
   lines.push(
     "",
     "مهمتك: اقرأ آخر رسالة من العميل (والمحادثة قبلها) وأجب بسطر واحد فقط من JSON، بلا أي كلام قبله أو بعده:",
-    '{"type":"...","reason":"...","reply":"...","count":null}',
+    '{"type":"...","reason":"...","reply":"...","count":null,"refers_to_open_request":false}',
     "قيمة type واحدة من هذه فقط:",
     "- greeting_or_small_talk: تحية أو شكر أو كلام اجتماعي.",
-    "- service_question: سؤال عن ديجر أو خدماتها أو أسعارها أو نقاطها أو رصيده أو طريقة العمل أو ما تقدر عليه، ومنه «يعني إيه ديجر الذكي؟».",
+    "- service_question: سؤال عام عن ديجر أو خدماتها أو طريقة عمل الخدمة وما تقدر عليه أو أسعار الخدمات عمومًا (مثل «ديجر بتشتغل ازاي؟» أو «يعني إيه ديجر الذكي؟»). لا يشمل حساب العميل الخاص أو رصيده أو دفعه.",
     "- methodology_request: يطلب منهجية (جمع البيانات أو منهجية بحث).",
-    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا عن موضوع آخر يختلف عن الطلب المفتوح (رسالة عن نفس الطلب أو خطته ليست data_request). ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
-    "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
+    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا عن موضوع آخر يختلف عن الطلب المفتوح، أو أي طلب مستقل بموضوعه أو منصته حتى مع وجود طلب مفتوح (رسالة تعدّل نفس الطلب المفتوح أو خطته ليست data_request). ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
+    "- edit_of_open_request: يعدّل عناصر الطلب المفتوح القائم أو يجيب عن سؤاله. ولا يُختار إلا إذا كانت الرسالة تشير صراحة إلى الطلب المفتوح وتغيّر خطته (مثل «خليهم ١٠ فيديوهات» أو «ضيف عدد المشاهدات» أو «احذف المنصة»). أما إذا كانت الرسالة طلب بيانات جديدًا مستقلاً بموضوعه أو منصته فهو data_request وليس تعديلاً.",
     "- open_request_question: سؤال أو استفسار أو تأكيد عن الطلب المفتوح وخطته، أو شرط موجود فيها بالفعل (ولا يصح إلا مع وجود طلب مفتوح). لا يغيّر شيئًا.",
     "- cancel_open_request: يطلب صراحةً إلغاء الطلب المفتوح كله (ولا يصح إلا مع وجود طلب مفتوح). أما حذف جزء منه فهو edit_of_open_request.",
-    "- account_question: سؤال عن حسابه على ديجر أو إعداداته الشخصية (تغيير الاسم أو البريد أو كلمة المرور، حذف الحساب، أو شحن الرصيد). مع هذا النوع اكتب الحقل account_topic بإحدى هذه القيم فقط: name أو email أو password أو delete أو topup. تنبيه: طلب جمع بيانات حساب أو قناة أو صفحة عامة لشخص أو جهة (مثل «تغريدات حساب وزارة الصحة») هو data_request وليس account_question.",
+    "- account_question: أي سؤال يتعلق بحساب العميل نفسه على ديجر: رصيده، شحن الرصيد، طرق الدفع أو كيف يدفع، تغيير الاسم أو البريد أو كلمة المرور، أو حذف حسابه. مع هذا النوع اكتب الحقل account_topic بإحدى هذه القيم فقط: name أو email أو password أو delete أو topup (الرصيد والشحن والدفع دائمًا topup). تنبيه: طلب جمع بيانات حساب أو قناة أو صفحة عامة لشخص أو جهة (مثل «تغريدات حساب وزارة الصحة») هو data_request وليس account_question.",
     "- trust_question: سؤال أو شك في مصداقية وأمان موقع ديجر نفسه أو الخوف من النصب وضياع الفلوس (مثل «الموقع ده نصب ولا حقيقي وفلوسي مضمونة؟»). تنبيه: طلب جمع منشورات أو آراء عن النصب والاحتيال في موضوع عام هو data_request وليس trust_question.",
     "- other: أي شيء آخر (سؤال عام، طلب مساعدة خارج الخدمة، نكتة).",
     "عند الشك بين data_request وأي نوع آخر اختر data_request؛ فرفض طلب حقيقي أسوأ من تجهيز خطة لتحية.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
     "count_text: مع count فقط: الكلمات نفسها من رسالة العميل التي كتب بها العدد (مثل «شركتين» أو «اتنين» أو «عشر»)، كما هي في رسالته حرفيًا؛ وإلا null.",
+    "refers_to_open_request: قيمة boolean (true أو false). تكون true فقط إذا كانت الرسالة تشير صراحة إلى الطلب المفتوح القائم أو تعدل خطته أو تستفسر عنه؛ وتكون false إذا كانت طلباً جديداً مستقلاً (مثل طلب جمع بيانات عن موضوع آخر) أو سؤالاً عاماً أو عن الحساب، أو إذا لم يكن هناك طلب مفتوح أصلاً.",
     "account_topic: مع account_question فقط، واحدة من: name أو email أو password أو delete أو topup؛ وإلا null.",
     "open_plan_question_kind: مع open_request_question فقط، حدد نوع السؤال بإحدى هذه القيم إذا طابقها تمامًا: sources (عن المصادر من أين تأتي البيانات) أو relevance (عن التأكد من صلة البيانات أو تخصص الشركات) أو blank (عن الخانات الفاضية في الملف إذا لم توجد أرقام أو إيميلات في المصدر؛ انتبه: السؤال عن قائمة الأعمدة التي ستكون في الملف ليس blank بل أجب عنه في reply واجعل هذا الحقل null) أو cost (عن تقليل التكلفة أو التوفير) أو price (عن السعر الإجمالي والحجز وهل يزيد) أو count (عن عدد العناصر وهل هي شركات) أو duplicates (عن التكرار وحذفه)؛ وإلا null.",
     "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request وaccount_question وtrust_question.",
@@ -268,6 +273,13 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
   const brief = briefWithObjectives(raw);
   const rawAccountTopic = typeof raw.account_topic === "string" ? raw.account_topic.trim() : undefined;
   const rawKind = typeof raw.open_plan_question_kind === "string" ? raw.open_plan_question_kind.trim() : undefined;
+  const rawRefers = typeof raw.refers_to_open_request === "boolean"
+    ? raw.refers_to_open_request
+    : raw.refers_to_open_request === "true"
+    ? true
+    : raw.refers_to_open_request === "false"
+    ? false
+    : undefined;
   const VALID_ACCOUNT_TOPICS = new Set<AccountTopic>(["name", "email", "password", "delete", "topup"]);
   const VALID_PLAN_KINDS = new Set<PlanQuestionKind>(["sources", "relevance", "blank", "cost", "price", "count", "duplicates"]);
 
@@ -279,6 +291,7 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
     countText: typeof raw.count_text === "string" && raw.count_text.trim() !== "" ? raw.count_text.trim().slice(0, 40) : null,
     account_topic: rawAccountTopic && VALID_ACCOUNT_TOPICS.has(rawAccountTopic as AccountTopic) ? (rawAccountTopic as AccountTopic) : undefined,
     open_plan_question_kind: rawKind && VALID_PLAN_KINDS.has(rawKind as PlanQuestionKind) ? (rawKind as PlanQuestionKind) : undefined,
+    ...(rawRefers !== undefined ? { refers_to_open_request: rawRefers } : {}),
     ...(brief !== undefined ? { brief } : {}),
   };
 }
@@ -426,12 +439,22 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   if (!answer) return keywordDecision(ctx, failure);
 
   let type = answer.type;
+  // SAFE SIDE: edit_of_open_request only when message refers to the open request; otherwise data_request
+  if (type === "edit_of_open_request" && answer.refers_to_open_request === false) type = "data_request";
   // an edit needs an open request to edit; without one the message is a request (nothing is lost)
   if (type === "edit_of_open_request" && !ctx.open) type = "data_request";
   // ROUND 57: the two open-request types need an open request too; without one a question about «the plan» is a service question and a cancellation has nothing to cancel
   if (type === "open_request_question" && !ctx.open) type = "service_question";
   if (type === "cancel_open_request" && !ctx.open) type = "other";
-  const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded });
+  const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({
+    type,
+    reply,
+    count,
+    reason: answer!.reason,
+    source: "model",
+    guarded,
+    ...(answer!.refers_to_open_request !== undefined ? { refers_to_open_request: answer!.refers_to_open_request } : {}),
+  });
   const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null), ...(ctx.open?.state === "needs_input" ? numbersIn(String(ctx.open.questionAr ?? "")) : [])], facts: ctx.open?.facts ?? null };
   if (ctx.brief?.enabled === true && (type === "data_request" || type === "edit_of_open_request")) {
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller

@@ -467,3 +467,69 @@ describe("6. the greeting's name and balance (the handler's one-line change is r
     expect(openLimitMessageAr([])).toContain("عندك مهام مفتوحة");
   });
 });
+
+describe("Phase 6 FIX 2: refers_to_open_request routing & safety", () => {
+  const openReq = { id: "msn_open123", state: "plan_ready" as const };
+  const ctx = (message: string) => ({
+    message,
+    balancePoints: 1000,
+    open: openReq,
+    history: [],
+  });
+
+  it("edit_of_open_request + refers_to_open_request=false → data_request", async () => {
+    const model = fakeChatModel([], {
+      override: () => ({
+        type: "edit_of_open_request",
+        count: 50,
+        count_text: "٥٠",
+        refers_to_open_request: false,
+      }),
+    });
+    const d = await decideTurn(ctx("هات ٥٠ تعليق عن السياحة"), model.call);
+    expect(d.type).toBe("data_request");
+    expect(d.count).toBeNull();
+    expect(d.refers_to_open_request).toBe(false);
+  });
+
+  it("edit_of_open_request + refers_to_open_request=true → edit (count kept)", async () => {
+    const model = fakeChatModel([], {
+      override: () => ({
+        type: "edit_of_open_request",
+        count: 10,
+        count_text: "١٠",
+        refers_to_open_request: true,
+      }),
+    });
+    const d = await decideTurn(ctx("خليهم ١٠ فيديوهات"), model.call);
+    expect(d.type).toBe("edit_of_open_request");
+    expect(d.count).toBe(10);
+    expect(d.refers_to_open_request).toBe(true);
+  });
+
+  it("field missing (format slip) → keep the model's type as today", async () => {
+    const model = fakeChatModel([], {
+      override: () => ({
+        type: "edit_of_open_request",
+        count: 10,
+        count_text: "١٠",
+        // refers_to_open_request missing (undefined)
+      }),
+    });
+    const d = await decideTurn(ctx("خليهم ١٠ فيديوهات"), model.call);
+    expect(d.type).toBe("edit_of_open_request");
+    expect(d.count).toBe(10);
+    expect(d.refers_to_open_request).toBeUndefined();
+  });
+
+  it("parseModelAnswer parses refers_to_open_request boolean properly", () => {
+    const rawTrue = '{"type":"edit_of_open_request","reason":"test","reply":"","count":10,"refers_to_open_request":true}';
+    expect(parseModelAnswer(rawTrue)?.refers_to_open_request).toBe(true);
+
+    const rawFalse = '{"type":"data_request","reason":"test","reply":"","count":null,"refers_to_open_request":false}';
+    expect(parseModelAnswer(rawFalse)?.refers_to_open_request).toBe(false);
+
+    const rawMissing = '{"type":"edit_of_open_request","reason":"test","reply":"","count":10}';
+    expect(parseModelAnswer(rawMissing)?.refers_to_open_request).toBeUndefined();
+  });
+});

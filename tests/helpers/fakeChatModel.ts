@@ -25,6 +25,7 @@ export interface FakeModelOptions {
     reason: string;
     account_topic?: string;
     open_plan_question_kind?: string;
+    refers_to_open_request?: boolean;
     [k: string]: unknown;
   }> | "fail" | "garbage" | undefined;
 }

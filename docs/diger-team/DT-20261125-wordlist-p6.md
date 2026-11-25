@@ -24,13 +24,16 @@
    - **T4 Trade-off:** When the model is down and there is NO open plan, a message like «ممكن أغير اسمي في الحساب؟» falls back to `classifyMessage` (as main does); verified invariant: zero points held or charged.
 
 3. **Multi-Turn Real-Model Harness (`scripts/verify-chat-turns-real-model.ts`):**
-   - Implemented real-model CLI evaluation tool testing 38 verbatim turns across 5 runs (190 runs total):
+   - Implemented real-model CLI evaluation tool testing 45 verbatim turns across 5 runs (225 runs total):
      - 8 baseline open-plan turns (price facts, columns question, explicit cancel in dialect and English, flight cancellation counter-case, account password, trust, MOH handle request).
      - 14 additional account-topic turns (`name`, `email`, `password`, `delete`, `topup`).
      - 10 additional trust-question turns.
      - 6 research counter-cases from `tests/chat-prefilter-false-positives.test.ts`.
-   - Evaluated on fixture `tests/fixtures/plan-ready-cfc0.json`: 100% PASS (5/5, 38/38 turns green).
-   - Log recorded outside repository at `/srv/diger-team/fawaaly/work/DT-20261125-wordlist-p6-realmodel.log`.
+     - 7 new FIX 2 turns: edit count to 10 videos, add views count, service question how Diger works, how to pay (open plan & without open plan), what is my balance, unrelated full data request.
+   - Strict API key guard: requires real `ANTHROPIC_API_KEY` (exits 2 with `NO KEY` if absent; mock fallback path removed).
+   - Per-turn latency ms, input/output tokens, and model ID logging with `TURN_IDS` and `HEAD_SHA` support.
+   - Enforces `refers_to_open_request` boolean presence on 100% of turns.
+   - Evaluated on fixture `tests/fixtures/plan-ready-cfc0.json`: live real-model run conducted by Commander with full production key; evidence log path and head SHA recorded upon run.
 
 4. **Allow-List Synchronization & Monotonic Ceiling:**
    - Synced via `npx tsx scripts/sync-design-guards-allow.ts --files src/lib/agentMission/guardRules.ts src/lib/agentMission/conversationModel.ts`.
