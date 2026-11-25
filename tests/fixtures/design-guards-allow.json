@@ -201,10 +201,6 @@
       "pattern": "/^(?:all|كل|الكل|كله|كلها)$/i"
     },
     {
-      "file": "src/components/pricing/CapacityCalculator.tsx",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
       "file": "src/functions/shared/briefManager.ts",
       "pattern": "/(?:خلال الفترة|خلال|من الفترة|بحد أقصى|بحد اقصى|عدد|آخر شهر|آخر أسبوع).*$/i"
     },
@@ -619,10 +615,6 @@
     {
       "file": "src/lib/activityCounts.ts",
       "pattern": "/استلمنا\\s+سجلين/"
-    },
-    {
-      "file": "src/lib/agentMission/allChildren.ts",
-      "pattern": "/(?:^|\\s|و)(?:كل|جميع|كافة)\\s+(?:ال)?تعليقات/"
     },
     {
       "file": "src/lib/agentMission/budget.ts",
@@ -4793,18 +4785,6 @@
       "pattern": "/الموقع\\s*(?:الإلكتروني|الالكتروني|الرسمي)?/i"
     },
     {
-      "file": "src/lib/server/extractionBenchmark.ts",
-      "pattern": "/^[٠-٩\\d]{1,4}[/\\-][٠-٩\\d]{1,2}[/\\-][٠-٩\\d]{1,4}/"
-    },
-    {
-      "file": "src/lib/server/extractionBenchmark.ts",
-      "pattern": "/^عدد |المشاهدات|الإعجابات|الردود|المتابعين|إعادة النشر/"
-    },
-    {
-      "file": "src/lib/server/extractionBenchmark.ts",
-      "pattern": "/تاريخ/"
-    },
-    {
       "file": "src/lib/server/failureBoard.ts",
       "pattern": "/[؀-ۿ]/"
     },
@@ -7119,10 +7099,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/facebookReport/cost.ts",
-      "token": "scrapecreators"
-    },
-    {
       "file": "src/lib/facebookTopicSources.ts",
       "token": "anyapi"
     },
@@ -7441,10 +7417,6 @@
     {
       "file": "src/lib/server/jobExecutionSpec.ts",
       "token": "tikhub.tiktok.user.profile"
-    },
-    {
-      "file": "src/lib/server/measurementReport.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/server/multiProvider/adapters/firecrawl.ts",
