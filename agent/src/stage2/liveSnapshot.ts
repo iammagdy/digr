@@ -93,7 +93,7 @@ function sheetRows(
   incompleteKeys: ReadonlySet<string>,
 ): LiveRow[] {
   const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentById.get(text(r.parent_id)) ?? null)));
-  const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
+  const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.kind === "context" ? undefined : c.key, columnValues[k]));
   const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
   const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
   const textKey = newPipeline ? textColumnKeyOf(lay.columns.filter((x) => x.kind !== "context").map((x) => ({ key: x.key ?? "", title: x.title }))) : null;

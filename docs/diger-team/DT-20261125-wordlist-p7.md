@@ -1,5 +1,7 @@
 # Phase 7: Ingest Reply Filter, Recovery Platform Hosts, and Workbook Bidi Cleanup
 
+- **PR:** [#683](https://github.com/iammagdy/digr/pull/683) (https://github.com/iammagdy/digr/pull/683)
+
 ## Overview
 Phase 7 cleans execution-layer keyword and regex dependencies across:
 1. `agent/src/items/ingest.ts`: Replaces regex matching against Arabic column titles with key-only regex matching against English slug keys (`description`, `bio`, `about`, `summary`, `overview`), and makes the reply filter generic across compiled platforms without hardcoding `"x"`.

@@ -115,4 +115,48 @@ describe("DT-20261125-wordlist-wave2 Phase 7: Execution Cleanup Wave 2", () => {
     // Language must be computed from the comment text ("العربية"), not parent text ("لغة أخرى")
     expect(commentRows[1][2]).toBe("العربية");
   });
+  it("Must-Pass 5: context column with date key and non-date title is not treated as date", async () => {
+    // Exact-main behaviour: context columns are checked for dates by title only, ignoring their key
+    const plan = {
+      id: "msn_test_date",
+      stages: [
+        {
+          key: "posts",
+          title_ar: "المنشورات",
+          parent_key: null,
+          deliver: true,
+          capability: "general",
+          columns: [
+            { key: "id", title_ar: "المعرف" },
+            { key: "created_at", title_ar: "كود المنشور" },
+          ],
+        },
+        {
+          key: "comments",
+          title_ar: "التعليقات",
+          parent_key: "posts",
+          deliver: true,
+          capability: "general",
+          columns: [
+            { key: "id", title_ar: "المعرف" },
+            { key: "text", title_ar: "النص" },
+          ],
+        },
+      ],
+      compiled: { by: "compiler", conditions: [] },
+    } as unknown as PricedPlan;
+
+    const rowsByStage = {
+      posts: [{ id: "p1", created_at: "2026-11-25T10:00:00Z", __marks: {} }],
+      comments: [{ id: "c1", parent_id: "p1", text: "مرحبا", __marks: {} }],
+    };
+
+    const files = await buildMissionFiles(plan, rowsByStage as never);
+    const cells = await cellsOf(files.xlsx);
+    const commentRows = cells["التعليقات"];
+    expect(commentRows[0]).toEqual(["كود المنشور", "النص", "المعرّف", "معرّف الأصل"]);
+    // Since title "كود المنشور" has no date words, and context columns ignore key for date detection,
+    // the cell value stays a raw string and is not formatted as a date.
+    expect(commentRows[1][0]).toBe("2026-11-25T10:00:00Z");
+  });
 });

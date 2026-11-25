@@ -575,7 +575,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     billingLayout.push(binding);
     const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
     const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
-    const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
+    const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.kind === "context" ? undefined : c.key, columnValues[k]));
     if (dateAt.some(Boolean)) hasDateColumn = true;
     const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
     const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
@@ -743,7 +743,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   if (last) {
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
-    const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
+    const lastDates = last.columns.map((c) => isDateValues(c.title, c.kind === "context" ? undefined : c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
     for (const r of last.rows) {
       lines.push([
         ...last.columns.map((c, k) => {
