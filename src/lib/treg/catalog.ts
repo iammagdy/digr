@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeArabic } from "../arabicNormalize";
 import { PAUSED_PROVIDERS } from "./blockList";
 import priceSync from "../../../data/treg/price_sync.json";
+import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
 import { applyPriceSync } from "./priceSyncFile";
 import { CATALOG_PRICE_REV } from "./priceRev";
 
@@ -134,6 +135,19 @@ export interface CatalogEndpoint {
   item_fields: Record<string, CatalogItemField> | null;
   example_response_trimmed: unknown;
   adapter_contract?: EndpointAdapterContract | null;
+  item_noun_ar?: {
+    singular: string;
+    dual: string;
+    dual_gen: string;
+    plural: string;
+    tamyiz: string;
+    feminine: boolean;
+  };
+  session_restriction?: {
+    param: string;
+    allowed_pattern: string;
+    message: string;
+  };
 }
 
 export interface TregCatalog {
@@ -267,36 +281,40 @@ export function parseCatalog(snapshot: unknown, writeActions: unknown, adapterCo
   return catalog;
 }
 
+export function applyEndpointMetadataOverlay(catalog: TregCatalog): void {
+  for (const [id, meta] of Object.entries(endpointMetadataOverlay as Record<string, any>)) {
+    const ep = catalog.byId.get(id);
+    if (!ep) continue;
+    if (meta.item_noun_ar) (ep as any).item_noun_ar = meta.item_noun_ar;
+    if (meta.session_restriction) (ep as any).session_restriction = meta.session_restriction;
+  }
+}
+
 /**
- * INPUTS THE PROVIDER ACCEPTS THAT THE ATTACHED SNAPSHOT DOES NOT LIST (round 8). The snapshot file is the owner's attached file and is pinned byte for byte (tests/treg-catalog-data.test.ts, data/treg/data_policy.json), so it is never edited; an input the gateway must keep
- * (it drops every input the catalog does not declare) is declared here, in code, once, and added to the typed catalog when it is loaded. `requireFields` of the X replies route: the provider's own answer to a page it cannot continue is to re-run with ["nextCursor"], to be served by a
- * source that can return a next-page cursor (it may cost more per request). Only the compiled plan of a TEST account sends it (toolCards/x.ts); the endpoint's catalog price is unchanged.
+ * INPUTS THE PROVIDER ACCEPTS THAT THE ATTACHED SNAPSHOT DOES NOT LIST (round 8).
+ * Loaded from data/treg/endpoint_metadata_overlay.json overlay.
  */
-export const DECLARED_EXTRA_INPUTS: Readonly<Record<string, ReadonlyArray<CatalogInput>>> = {
-  "anyapi.x.post.comments": [
-    { name: "requireFields", in: "body", type: "array", required: false, enum: null, minimum: null, maximum: null, default: null, example: ["nextCursor"], note: "Response fields the serving source must be able to return; [\"nextCursor\"] asks for a source that can return a next-page cursor (it may cost more per request). Set by the compiled plan of a test account only." },
-  ],
-};
+function getDeclaredExtraInputs(): Record<string, ReadonlyArray<CatalogInput>> {
+  const map: Record<string, ReadonlyArray<CatalogInput>> = {};
+  for (const [id, meta] of Object.entries(endpointMetadataOverlay as Record<string, any>)) {
+    if (meta.extra_inputs) map[id] = meta.extra_inputs;
+  }
+  return map;
+}
+export const DECLARED_EXTRA_INPUTS: Readonly<Record<string, ReadonlyArray<CatalogInput>>> = getDeclaredExtraInputs();
 
 /**
  * Nested object-field schemas omitted by the pinned catalog snapshot (D-0086):
- *  - Source of truth: data/treg/treg_catalog_sellable.json (describe pass 2026-10-27) marks `company` as `type: "object"`
- *    ("use a LinkedIn company URL to target a specific employer") without nested key types, and the file is SHA-256-pinned
- *    (tests/treg-catalog-data.test.ts) so it is never edited.
- *  - `company.fields.linkedin_url` (`array[string]`) comes from the provider's API validation contract / live upstream 422
- *    error (`company.linkedin_url: Expected an array, got a string`). Declared here as pure catalog metadata alongside
- *    DECLARED_EXTRA_INPUTS so toolDescribeEndpoint and validateInputShape remain 100% endpoint- and provider-agnostic.
+ * Loaded from data/treg/endpoint_metadata_overlay.json overlay.
  */
-export const DECLARED_INPUT_SHAPES: Readonly<Record<string, Readonly<Record<string, { example?: unknown; fields?: Record<string, CatalogNestedField> }>>>> = {
-  "blitzapi.people.search": {
-    company: {
-      example: { linkedin_url: ["https://www.linkedin.com/company/example"] },
-      fields: {
-        linkedin_url: { type: "array[string]", example: ["https://www.linkedin.com/company/example"] },
-      },
-    },
-  },
-};
+function getDeclaredInputShapes(): Record<string, Readonly<Record<string, { example?: unknown; fields?: Record<string, CatalogNestedField> }>>> {
+  const map: Record<string, Record<string, { example?: unknown; fields?: Record<string, CatalogNestedField> }>> = {};
+  for (const [id, meta] of Object.entries(endpointMetadataOverlay as Record<string, any>)) {
+    if (meta.input_shapes) map[id] = meta.input_shapes;
+  }
+  return map;
+}
+export const DECLARED_INPUT_SHAPES: Readonly<Record<string, Readonly<Record<string, { example?: unknown; fields?: Record<string, CatalogNestedField> }>>>> = getDeclaredInputShapes();
 
 function declareExtraInputs(catalog: TregCatalog): void {
   for (const [id, inputs] of Object.entries(DECLARED_EXTRA_INPUTS)) {
@@ -386,6 +404,7 @@ export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatal
     // fallback
   }
   const catalog = parseCatalog(snapshot, writes, adapterContracts);
+  applyEndpointMetadataOverlay(catalog);
   declareExtraInputs(catalog);
   applyPriceCorrections(catalog);
   return catalog;

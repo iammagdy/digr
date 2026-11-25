@@ -3,7 +3,7 @@ import { pointsAr } from "../pointsFormat";
 import { customerSafeText } from "./text";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 import { fitArabicWords, missionTitleAr } from "./fileNames";
-import { CONTACT_ITEM_NOUN, countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounFromCapability, itemNounOf, knownItemNoun, type ItemNoun } from "./itemNoun";
+import { CONTACT_ITEM_NOUN, countAr, coerceItemNoun, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounFromCapability, itemNounOf, knownItemNoun, type ItemNoun } from "./itemNoun";
 import { FREE_RERUN_MONEY_LINE_AR, heldPointsOf } from "./moneyText";
 
 /**
@@ -22,6 +22,7 @@ export interface NoticeStageCount {
   isContacts?: boolean;
   capability?: string | null;
   platform?: string | null;
+  item_noun_ar?: unknown;
 }
 
 export interface MissionNoticeFacts {
@@ -83,7 +84,7 @@ function stageNounOf(s: NoticeStageCount, parentNoun?: ItemNoun): ItemNoun {
   if (s.isPeople) {
     return n.key !== GENERIC_ITEM_NOUN.key ? n : (knownItemNoun("شخص") ?? n);
   }
-  const byMeta = itemNounFromCapability(s.capability, s.platform);
+  const byMeta = (s as any).item_noun_ar ? coerceItemNoun((s as any).item_noun_ar) : null;
   if (n.key !== GENERIC_ITEM_NOUN.key && !(s.parentKey && s.isContacts !== false && parentNoun && n.key === parentNoun.key)) {
     return n;
   }

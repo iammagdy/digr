@@ -22,7 +22,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countAr, itemNounOf, itemNounFromCapability, knownItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
+import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
@@ -2254,7 +2254,7 @@ export function scoutFallbackAr(
     const byTitle = itemNounOf(f.step.title_ar);
     const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
       ? byTitle
-      : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
+      : (((f.step as any).item_noun_ar ? coerceItemNoun((f.step as any).item_noun_ar) : null) ?? byTitle);
     const title = noForeignLatin(f.step.title_ar) ?? noun.plural;
     if (f.found === 0) {
       if (f.step.source?.value && (f.examinedCount ?? 0) > 0) {
@@ -2399,7 +2399,7 @@ export function buildCatalogWideningFacts(
   const byTitle = itemNounOf(first.step.title_ar);
   const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
     ? byTitle
-    : (itemNounFromCapability(first.step.capability, first.step.platform) ?? byTitle);
+    : (((first.step as any).item_noun_ar ? coerceItemNoun((first.step as any).item_noun_ar) : null) ?? byTitle);
 
   const out: CatalogWideningOptionFact[] = [];
   const foundCount = Math.max(0, first.found);
@@ -2530,7 +2530,7 @@ export function buildCatalogWideningFacts(
       access,
       pricingSettings,
     });
-    const webNoun = itemNounFromCapability(webStep.capability, webStep.platform) ?? knownItemNoun("خبر") ?? knownItemNoun("مقال") ?? GENERIC_ITEM_NOUN;
+    const webNoun = (webEp as any)?.item_noun_ar ? (coerceItemNoun((webEp as any).item_noun_ar) ?? GENERIC_ITEM_NOUN) : GENERIC_ITEM_NOUN;
     const webKind: "measured" | "up_to" = measuredWeb ? "measured" : "up_to";
     const webVerb = webKind === "measured" ? "يضيف نحو" : "يضيف حتى";
     const webStem = "أضف الأخبار وصفحات الويب العامة";
