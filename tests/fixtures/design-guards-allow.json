@@ -5883,24 +5883,12 @@
   ],
   "treg_tokens": [
     {
-      "file": "agent/src/asyncTreg.ts",
-      "token": "treg"
-    },
-    {
-      "file": "agent/src/companyPeopleRecovery.ts",
-      "token": "treg"
-    },
-    {
       "file": "agent/src/companyPeopleRecovery.ts",
       "token": "x"
     },
     {
       "file": "agent/src/companyPeopleRecovery.ts",
       "token": "youtube"
-    },
-    {
-      "file": "agent/src/compiled.ts",
-      "token": "treg"
     },
     {
       "file": "agent/src/compiled.ts",
@@ -5919,10 +5907,6 @@
       "token": "treg"
     },
     {
-      "file": "agent/src/engine/spec.ts",
-      "token": "treg"
-    },
-    {
       "file": "agent/src/gateway.ts",
       "token": "treg"
     },
@@ -5935,24 +5919,12 @@
       "token": "x"
     },
     {
-      "file": "agent/src/llmPlanner/catalogView.ts",
-      "token": "treg"
-    },
-    {
-      "file": "agent/src/llmPlanner/planner.ts",
-      "token": "treg"
-    },
-    {
       "file": "agent/src/llmPlanner/planner.ts",
       "token": "you"
     },
     {
       "file": "agent/src/llmPlanner/prompts.ts",
       "token": "you"
-    },
-    {
-      "file": "agent/src/llmPlanner/run.ts",
-      "token": "treg"
     },
     {
       "file": "agent/src/main.ts",
@@ -5979,10 +5951,6 @@
       "token": "you"
     },
     {
-      "file": "agent/src/periodRequest.ts",
-      "token": "treg"
-    },
-    {
       "file": "agent/src/researchSpec.ts",
       "token": "you"
     },
@@ -5999,16 +5967,8 @@
       "token": "treg"
     },
     {
-      "file": "agent/src/stage4/rereadRun.ts",
-      "token": "treg"
-    },
-    {
       "file": "agent/src/tools.ts",
       "token": "firecrawl"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "token": "treg"
     },
     {
       "file": "agent/src/tools.ts",
@@ -6068,10 +6028,6 @@
     },
     {
       "file": "src/app/api/admin/providers/route.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/app/api/admin/recipes-seed/route.ts",
       "token": "treg"
     },
     {
@@ -6231,10 +6187,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/functions/shared/embeddedFonts.ts",
-      "token": "x"
-    },
-    {
       "file": "src/functions/shared/exampleTemplates.ts",
       "token": "x"
     },
@@ -6379,10 +6331,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/candidates.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/capabilities/artifact.ts",
       "token": "treg"
     },
@@ -6431,36 +6379,12 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/capabilities/selection.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/catalogPriceGuard.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/chatTurn.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/chatTurn.ts",
       "token": "x"
     },
     {
       "file": "src/lib/agentMission/chatTurn.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/childSources.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/contactFinders.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/contacts.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/conversationModel.ts",
@@ -6481,14 +6405,6 @@
     {
       "file": "src/lib/agentMission/customerExclusion.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/dateWindow.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/fileNames.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/agentMission/finderStats.ts",
@@ -6643,18 +6559,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/foundation/discovery/chain.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/discovery/deriveCards.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/discovery/index.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/foundation/discovery/plan.ts",
       "token": "you"
     },
@@ -6713,14 +6617,6 @@
     {
       "file": "src/lib/agentMission/foundation/toolCards/facebook.ts",
       "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/toolCards/index.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/toolCards/index.ts",
-      "token": "youtube"
     },
     {
       "file": "src/lib/agentMission/foundation/toolCards/instagram.ts",
@@ -6847,20 +6743,8 @@
       "token": "you"
     },
     {
-      "file": "src/lib/agentMission/giveUp.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/mediaProof.ts",
-      "token": "x"
-    },
-    {
       "file": "src/lib/agentMission/messageType.ts",
       "token": "you"
-    },
-    {
-      "file": "src/lib/agentMission/namedRoutes.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/namedRoutes.ts",
@@ -6871,32 +6755,16 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/pageLimit.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/peopleCheck.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/plan.ts",
       "token": "you"
     },
     {
       "file": "src/lib/agentMission/planningBudget.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
       "token": "x"
     },
     {
       "file": "src/lib/agentMission/planningBudget.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/price.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/priorDelivery.ts",
@@ -6905,10 +6773,6 @@
     {
       "file": "src/lib/agentMission/priorDelivery.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/providerHosts.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/providerHosts.ts",
@@ -7296,10 +7160,6 @@
     },
     {
       "file": "src/lib/agentMission/replies.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/replies.ts",
       "token": "youtube"
     },
     {
@@ -7364,19 +7224,7 @@
     },
     {
       "file": "src/lib/agentMission/shadow/compare.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
       "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/context.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/sourceRanking.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/sources.ts",
@@ -7519,22 +7367,6 @@
       "token": "treg.people.search"
     },
     {
-      "file": "src/lib/agentMission/stage3/b2bPlan.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/stage3/b2bPlanning.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/toolInput.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/agentMission/toolProfile.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/channelNames.ts",
       "token": "youtube"
     },
@@ -7599,10 +7431,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/liveServicesCatalog.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/messageDraft.ts",
       "token": "you"
     },
@@ -7615,40 +7443,8 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/modelPlanner/acceptGuard.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/chatTurn.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/digest.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/editPlan.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/exploration.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/fieldMap.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/health.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/modelPlanner/manager.ts",
       "token": "you"
-    },
-    {
-      "file": "src/lib/modelPlanner/paramRules.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/modelPlanner/planner.ts",
@@ -7669,14 +7465,6 @@
     {
       "file": "src/lib/modelPlanner/planner.ts",
       "token": "you"
-    },
-    {
-      "file": "src/lib/modelPlanner/pricing.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/reader.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/modelPlanner/recipeSeeds.ts",
@@ -7732,19 +7520,7 @@
     },
     {
       "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
       "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/retryRequest.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/selfTest.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/modelPlanner/selfTest.ts",
@@ -7753,18 +7529,6 @@
     {
       "file": "src/lib/modelPlanner/selfTest.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/modelPlanner/siblings.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/stageCall.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/tools.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/modelPlanner/tools.ts",
@@ -7780,10 +7544,6 @@
     },
     {
       "file": "src/lib/modelPlanner/validate.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/modelPlanner/validate.ts",
       "token": "x"
     },
     {
@@ -7793,10 +7553,6 @@
     {
       "file": "src/lib/modelPlanner/validate.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/modelPlanner/workerContext.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/multiProvider/catalog.ts",
@@ -7883,10 +7639,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/releaseText.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/requestCoverage.ts",
       "token": "x"
     },
@@ -7908,10 +7660,6 @@
     },
     {
       "file": "src/lib/server/adminJobLabels.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/adminLookup.ts",
       "token": "treg"
     },
     {
@@ -7973,14 +7721,6 @@
     {
       "file": "src/lib/server/multiProvider/adapters/firecrawl.ts",
       "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/multiProvider/adapters/index.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/multiProvider/adapters/index.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/server/multiProvider/adapters/treg.ts",
@@ -8119,10 +7859,6 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/server/rawCapture.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/server/realProviderBalance.ts",
       "token": "treg"
     },
@@ -8141,10 +7877,6 @@
     {
       "file": "src/lib/server/rowReviewAdvisor.ts",
       "token": "you"
-    },
-    {
-      "file": "src/lib/server/sensitiveAccess.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/server/socialAdapter.ts",
@@ -8273,10 +8005,6 @@
     {
       "file": "src/lib/servicesCatalog.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/servicesCatalogView.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/servicesRequestExamples.ts",
@@ -8443,10 +8171,6 @@
       "token": "datagma"
     },
     {
-      "file": "src/lib/treg/blockList.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/treg/catalog.ts",
       "token": "anyapi"
     },
@@ -8488,10 +8212,6 @@
     },
     {
       "file": "src/lib/treg/circuitBreaker.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/treg/dataPolicy.ts",
       "token": "treg"
     },
     {
@@ -8609,10 +8329,6 @@
     {
       "file": "src/lib/walletEstimate.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/xPlatform.ts",
-      "token": "x"
     }
   ],
   "srv_paths": [],
