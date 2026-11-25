@@ -124,7 +124,7 @@ export interface CatalogEndpoint {
   inputs: CatalogInput[];
   pagination: string[];
   cost: CatalogCost | null;
-  observed: Record<string, unknown> | null;
+  observed: (Record<string, unknown> & { diger_calls?: number; diger_hits?: number }) | null;
   scope: string;
   cost_confidence: string | null;
   siblings: string[];
@@ -287,6 +287,9 @@ export function applyEndpointMetadataOverlay(catalog: TregCatalog): void {
     if (!ep) continue;
     if (meta.item_noun_ar) (ep as any).item_noun_ar = meta.item_noun_ar;
     if (meta.session_restriction) (ep as any).session_restriction = meta.session_restriction;
+    if (meta.observed && typeof meta.observed === "object") {
+      ep.observed = { ...((ep.observed as Record<string, unknown> | null) ?? {}), ...meta.observed };
+    }
   }
 }
 
