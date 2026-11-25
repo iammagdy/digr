@@ -45,8 +45,10 @@ import { ingestRows } from "../agent/src/items/ingest";
 import { runEngine } from "../agent/src/engine/run";
 import { runInSandbox } from "../agent/src/sandbox";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
-import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../src/lib/treg/catalog";
 import { buildShapeDigest, digestValue } from "../src/lib/modelPlanner/digest";
+import { priceFactsOf } from "../src/lib/agentMission/customerView";
+import { customerPlanView } from "../src/lib/agentMission/plan";
 import { createGateway, RAW_PATH, type GatewayCallResult } from "../agent/src/gateway";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 type TregCallOptions = Parameters<NonNullable<Parameters<typeof createGateway>[0]["call"]>>[0];
@@ -97,6 +99,7 @@ export interface RunnerConfig {
   fixturePath?: string;
   verbose: boolean;
   prompt: string;
+  promptPassed?: boolean;
 }
 
 export interface RoutedRecordedSpec {
@@ -107,11 +110,396 @@ export interface RoutedRecordedSpec {
   defaultPrompt?: string;
 }
 
+export interface RecordedCallSpec {
+  phase: "planning" | "execution";
+  endpoint_id: string;
+  params: Record<string, unknown>;
+  status: number;
+  envelope: Record<string, unknown> | null;
+}
+
+export interface RecordingRecordedSpec {
+  request: string;
+  answers?: string[];
+  calls: RecordedCallSpec[];
+}
+
 export interface ReplayRows {
   probeRows: Record<string, unknown>[];
   executionRows: Record<string, unknown>[];
   sourceDescription: string;
+  origin: "builtin" | "cli" | "qa";
   routed?: RoutedRecordedSpec;
+  recording?: RecordingRecordedSpec;
+}
+
+/** Drops keys starting with "_" and returns an object with sorted keys. */
+export function canonicalParams(params: Record<string, unknown> | undefined | null): Record<string, unknown> {
+  if (!params || typeof params !== "object") return {};
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(params).sort()) {
+    if (!key.startsWith("_") && params[key] !== undefined) {
+      out[key] = params[key];
+    }
+  }
+  return out;
+}
+
+/** Strict deep-or-primitive comparison of canonical param objects. */
+export function canonicalParamsEquals(
+  a: Record<string, unknown> | undefined | null,
+  b: Record<string, unknown> | undefined | null,
+): boolean {
+  const canA = canonicalParams(a);
+  const canB = canonicalParams(b);
+  const keysA = Object.keys(canA);
+  const keysB = Object.keys(canB);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    if (canA[k] !== canB[k]) {
+      if (typeof canA[k] === "object" && typeof canB[k] === "object" && canA[k] !== null && canB[k] !== null) {
+        if (JSON.stringify(canA[k]) !== JSON.stringify(canB[k])) return false;
+      } else {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Candidate pagination parameter keys from catalog metadata (no keyword or regex filtering). */
+export function candidatePaginationKeysOf(ep: CatalogEndpoint | undefined): string[] {
+  if (!ep) return [];
+  const keys = new Set<string>();
+  if (Array.isArray(ep.pagination)) {
+    for (const k of ep.pagination) {
+      if (typeof k === "string" && k.trim()) keys.add(k.trim());
+    }
+  }
+  const cip = ep.adapter_contract?.pagination?.cursor_in_param;
+  if (typeof cip === "string" && cip.trim()) {
+    keys.add(cip.trim());
+  }
+  return Array.from(keys);
+}
+
+/** Collects all next-cursor strings returned by envelopes recorded on this endpoint. */
+export function recordedNextCursorsOn(ep: CatalogEndpoint, calls: RecordedCallSpec[]): Set<string> {
+  const cursors = new Set<string>();
+  for (const call of calls) {
+    if (call.endpoint_id === ep.id && call.envelope) {
+      const digest = buildShapeDigest(call.envelope, ep);
+      const nc = digest.reading.nextCursor;
+      if (nc !== undefined && nc !== null && String(nc).trim() !== "") {
+        cursors.add(String(nc).trim());
+      }
+    }
+  }
+  return cursors;
+}
+
+export interface MatchRecordedCallOptions {
+  requestedEndpoint: CatalogEndpoint;
+  params: Record<string, unknown>;
+  phase: "planning" | "execution";
+  calls: RecordedCallSpec[];
+  catalog: TregCatalog;
+  log?: (msg: string) => void;
+}
+
+export interface MatchRecordedCallResult {
+  call: RecordedCallSpec;
+  matchRule: "exact" | "page_chain" | "nearest" | "capability";
+  recordedEndpoint: CatalogEndpoint;
+}
+
+export function matchRecordedCall(opts: MatchRecordedCallOptions): MatchRecordedCallResult | null {
+  const { requestedEndpoint, params, phase, calls, catalog, log } = opts;
+  const canP = canonicalParams(params);
+
+  // Candidate pagination keys and recorded cursors on E
+  const candidateKeys = candidatePaginationKeysOf(requestedEndpoint);
+  const recordedCursors = recordedNextCursorsOn(requestedEndpoint, calls);
+
+  // 1. Page chain via data-driven cursor key (D1)
+  // A cursor key of E is candidate key K in (E.pagination ∪ cursor_in_param) whose value in P
+  // equals a next-cursor read from ANY recorded envelope on E.
+  if (candidateKeys.length > 0 && recordedCursors.size > 0) {
+    for (const k of candidateKeys) {
+      const pVal = canP[k];
+      if (pVal !== undefined && pVal !== null && recordedCursors.has(String(pVal).trim())) {
+        const targetCursor = String(pVal).trim();
+        for (const call of calls) {
+          if (call.endpoint_id === requestedEndpoint.id) {
+            const callCan = canonicalParams(call.params);
+            if (callCan[k] !== undefined && String(callCan[k]).trim() === targetCursor) {
+              const recordedEp = catalog.byId.get(call.endpoint_id) ?? requestedEndpoint;
+              return { call, matchRule: "page_chain", recordedEndpoint: recordedEp };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Exact match on E
+  for (const call of calls) {
+    if (call.endpoint_id === requestedEndpoint.id && canonicalParamsEquals(call.params, canP)) {
+      const recordedEp = catalog.byId.get(call.endpoint_id) ?? requestedEndpoint;
+      return { call, matchRule: "exact", recordedEndpoint: recordedEp };
+    }
+  }
+
+  // Helper to evaluate first-page candidates:
+  // A first-page call is a recorded call none of whose param values equals a next-cursor read on that endpoint.
+  const scoreCandidate = (call: RecordedCallSpec, ep: CatalogEndpoint) => {
+    const callCan = canonicalParams(call.params);
+    const epCursors = recordedNextCursorsOn(ep, calls);
+    const isFirstPage = !Object.values(callCan).some((v) => v !== null && v !== undefined && epCursors.has(String(v).trim()));
+    if (!isFirstPage) return null;
+
+    let matchingKeyValues = 0;
+    for (const [k, v] of Object.entries(canP)) {
+      if (callCan[k] === v) matchingKeyValues += 1;
+    }
+    const phaseScore = call.phase === phase ? 1 : 0;
+    return { phaseScore, matchingKeyValues };
+  };
+
+  // 3. Nearest first page on E
+  let bestCandidateOnE: { call: RecordedCallSpec; phaseScore: number; matchingKeyValues: number; index: number } | null = null;
+  for (let idx = 0; idx < calls.length; idx++) {
+    const call = calls[idx];
+    if (call.endpoint_id === requestedEndpoint.id) {
+      const score = scoreCandidate(call, requestedEndpoint);
+      if (score) {
+        if (
+          !bestCandidateOnE ||
+          score.phaseScore > bestCandidateOnE.phaseScore ||
+          (score.phaseScore === bestCandidateOnE.phaseScore && score.matchingKeyValues > bestCandidateOnE.matchingKeyValues)
+        ) {
+          bestCandidateOnE = { call, ...score, index: idx };
+        }
+      }
+    }
+  }
+
+  if (bestCandidateOnE) {
+    log?.(`[recording:nearest] ${requestedEndpoint.id} (call #${bestCandidateOnE.index + 1})`);
+    const recordedEp = catalog.byId.get(bestCandidateOnE.call.endpoint_id) ?? requestedEndpoint;
+    return { call: bestCandidateOnE.call, matchRule: "nearest", recordedEndpoint: recordedEp };
+  }
+
+  // 4. Same capability AND same kind across catalog
+  let bestCandidateCap: { call: RecordedCallSpec; phaseScore: number; matchingKeyValues: number; index: number; ep: CatalogEndpoint } | null = null;
+  for (let idx = 0; idx < calls.length; idx++) {
+    const call = calls[idx];
+    const otherEp = catalog.byId.get(call.endpoint_id);
+    if (
+      otherEp &&
+      otherEp.id !== requestedEndpoint.id &&
+      otherEp.capability === requestedEndpoint.capability &&
+      otherEp.kind === requestedEndpoint.kind
+    ) {
+      const score = scoreCandidate(call, otherEp);
+      if (score) {
+        if (
+          !bestCandidateCap ||
+          score.phaseScore > bestCandidateCap.phaseScore ||
+          (score.phaseScore === bestCandidateCap.phaseScore && score.matchingKeyValues > bestCandidateCap.matchingKeyValues)
+        ) {
+          bestCandidateCap = { call, ...score, index: idx, ep: otherEp };
+        }
+      }
+    }
+  }
+
+  if (bestCandidateCap) {
+    log?.(`[recording:capability] ${requestedEndpoint.id} -> ${bestCandidateCap.call.endpoint_id} (call #${bestCandidateCap.index + 1})`);
+    return { call: bestCandidateCap.call, matchRule: "capability", recordedEndpoint: bestCandidateCap.ep };
+  }
+
+  return null;
+}
+
+export interface RecordedGatewayResultInput {
+  fixture: ReplayRows;
+  requestedEndpoint: CatalogEndpoint;
+  params: Record<string, unknown>;
+  phase: "planning" | "execution";
+  catalog: TregCatalog;
+  callId?: string;
+  callSeq?: number;
+  log?: (msg: string) => void;
+}
+
+export interface RecordedGatewayResultOutput {
+  result: GatewayCallResult;
+  unmatched: 0 | 1;
+  envelopeToStore?: { callId: string; envelope: Record<string, unknown> };
+}
+
+/** Exported pure helper that builds the gateway answer for both planning and execution gateways (D3, A1, A2). */
+export function recordedGatewayResult(input: RecordedGatewayResultInput): RecordedGatewayResultOutput {
+  const { fixture, requestedEndpoint, params, phase, catalog, callSeq = 1, log } = input;
+  const callId = input.callId ?? `call_${phase}_${callSeq}`;
+
+  // Mode 1: Recording Fixtures
+  if (fixture.recording) {
+    const match = matchRecordedCall({
+      requestedEndpoint,
+      params,
+      phase,
+      calls: fixture.recording.calls,
+      catalog,
+      log,
+    });
+
+    if (!match) {
+      return {
+        result: {
+          ok: true,
+          call_id: callId,
+          http_status: 200,
+          rows_in_page: 0,
+          has_more: false,
+          next_cursor: null,
+          shape: { list_path: null, cursor_path: null, shape: "empty" },
+          first_rows: [],
+          warnings: ["not_recorded"],
+          saved: callId,
+        },
+        unmatched: 1,
+      };
+    }
+
+    if (!match.call.envelope || match.call.status >= 400) {
+      const failureResult: GatewayCallResult & { rows_in_page: number } = {
+        ok: false,
+        call_id: callId,
+        failed: true,
+        http_status: match.call.status || 403,
+        message: "recorded refusal",
+        rows_in_page: 0,
+      };
+      return {
+        result: failureResult,
+        unmatched: 0,
+      };
+    }
+
+    const digest = buildShapeDigest(match.call.envelope, match.recordedEndpoint);
+    const r = digest.reading;
+    return {
+      result: {
+        ok: true,
+        call_id: callId,
+        http_status: match.call.status || 200,
+        rows_in_page: r.rows.length,
+        has_more: Boolean(r.hasMore),
+        next_cursor: r.nextCursor,
+        shape: digest.digest,
+        first_rows: r.rows.slice(0, 3) as never,
+        warnings: r.warnings,
+        saved: callId,
+      },
+      unmatched: 0,
+      envelopeToStore: { callId, envelope: match.call.envelope },
+    };
+  }
+
+  // Mode 2: Routed Fixtures with C4 Guard & Amendment A1
+  if (fixture.routed) {
+    if (requestedEndpoint.kind !== "routed") {
+      return {
+        result: {
+          ok: true,
+          call_id: callId,
+          http_status: 200,
+          rows_in_page: 0,
+          has_more: false,
+          next_cursor: null,
+          shape: { list_path: null, cursor_path: null, shape: "empty" },
+          first_rows: [],
+          warnings: ["not_recorded"],
+          saved: callId,
+        },
+        unmatched: 1,
+      };
+    }
+
+    const ep = catalog.byId.get(fixture.routed.endpointId) ?? requestedEndpoint;
+    const envelopes = phase === "planning" ? fixture.routed.probeEnvelopes : fixture.routed.executionEnvelopes;
+
+    // Amendment A1: empty routed envelopes guard
+    if (!envelopes || envelopes.length === 0) {
+      return {
+        result: {
+          ok: true,
+          call_id: callId,
+          http_status: 200,
+          rows_in_page: 0,
+          has_more: false,
+          next_cursor: null,
+          shape: { list_path: null, cursor_path: null, shape: "empty" },
+          first_rows: [],
+          warnings: ["not_recorded"],
+          saved: callId,
+        },
+        unmatched: 1,
+      };
+    }
+
+    const envIndex = (callSeq - 1) % envelopes.length;
+    const envelope = envelopes[envIndex < envelopes.length ? envIndex : envelopes.length - 1];
+
+    const digest = buildShapeDigest(envelope, ep);
+    const r = digest.reading;
+    return {
+      result: {
+        ok: true,
+        call_id: callId,
+        http_status: 200,
+        rows_in_page: r.rows.length,
+        has_more: Boolean(r.hasMore),
+        next_cursor: r.nextCursor,
+        shape: digest.digest,
+        first_rows: r.rows.slice(0, 3) as never,
+        warnings: r.warnings,
+        saved: callId,
+      },
+      unmatched: 0,
+      envelopeToStore: { callId, envelope },
+    };
+  }
+
+  // Mode 3: Legacy probeRows / executionRows Fallback
+  const rows = phase === "planning" ? fixture.probeRows : fixture.executionRows;
+  const pageData = {
+    output: {
+      data: {
+        tweets: rows,
+        items: rows,
+        nextCursor: null,
+      },
+    },
+  };
+  return {
+    result: {
+      ok: true,
+      call_id: callId,
+      http_status: 200,
+      rows_in_page: rows.length,
+      has_more: false,
+      next_cursor: null,
+      shape: { list_path: "output.data.items", cursor_path: null, shape: "list" },
+      first_rows: rows.slice(0, 3) as never,
+      warnings: [],
+      saved: callId,
+    },
+    unmatched: 0,
+    envelopeToStore: { callId, envelope: pageData },
+  };
 }
 
 export const BUILTIN_ROUTED_REPLAYS: Record<string, RoutedRecordedSpec> = {
@@ -249,6 +637,7 @@ export interface RunIterationResult {
   failureReason?: string;
   questionText?: string;
   notes?: string;
+  unmatchedCount?: number;
 }
 
 export function formatErrorWithStack(err: unknown): string {
@@ -323,11 +712,30 @@ function parseCliArgs(): RunnerConfig {
     }
   }
 
-  if (!promptPassed && BUILTIN_ROUTED_REPLAYS[missionId]?.defaultPrompt) {
-    prompt = BUILTIN_ROUTED_REPLAYS[missionId].defaultPrompt!;
-  }
+  return { providers, missionId, runs, maxUsd, fixturePath, verbose, prompt, promptPassed };
+}
 
-  return { providers, missionId, runs, maxUsd, fixturePath, verbose, prompt };
+export function resolvePrompt(
+  config: { prompt: string; promptPassed?: boolean; missionId: string; fixturePath?: string },
+  fixture: ReplayRows,
+): string {
+  if (config.promptPassed) {
+    return config.prompt;
+  }
+  if (fixture.origin === "cli" || fixture.origin === "qa") {
+    if (fixture.recording?.request && fixture.recording.request.trim().length > 0) {
+      return fixture.recording.request.trim();
+    }
+    if (fixture.routed?.defaultPrompt && fixture.routed.defaultPrompt.trim().length > 0) {
+      return fixture.routed.defaultPrompt.trim();
+    }
+    console.error("Error: External fixture file has no customer request and no --prompt was passed on CLI.");
+    process.exit(2);
+  }
+  if (config.missionId in BUILTIN_ROUTED_REPLAYS && BUILTIN_ROUTED_REPLAYS[config.missionId]?.defaultPrompt) {
+    return BUILTIN_ROUTED_REPLAYS[config.missionId].defaultPrompt!;
+  }
+  return DEFAULT_CUSTOMER_PROMPT;
 }
 
 function printHelp(): void {
@@ -357,12 +765,63 @@ Output:
 `);
 }
 
-function extractNumberFromArabicOrAscii(str: string): number | null {
+export function extractNumberFromArabicOrAscii(str: string): number | null {
   const m = str.match(/([0-9\u0660-\u0669]+)/);
   if (!m) return null;
   const normalized = m[1].replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660));
   const val = parseInt(normalized, 10);
   return isNaN(val) ? null : val;
+}
+
+export interface Crit2EvaluationResult {
+  pass: boolean;
+  maxPoints: number;
+  holdAmount: number;
+  cardMax: number | null;
+  cardHold: number | null;
+  failures: string[];
+}
+
+export function evaluateCrit2(plan: any, optionPrice: number | null = null): Crit2EvaluationResult {
+  const maxPoints = Math.round(Number(plan?.price?.maxChargePoints ?? plan?.price?.max_charge_points ?? 0));
+  const holdAmount = Math.round(Number(plan?.price?.reservePoints ?? plan?.price?.reserve_points ?? 0));
+
+  const pub = customerPlanView(plan);
+  const facts = priceFactsOf(pub).facts;
+
+  let cardMax: number | null = null;
+  let cardHold: number | null = null;
+
+  for (const f of facts) {
+    if (f.labelAr === "السعر حتى") {
+      cardMax = extractNumberFromArabicOrAscii(f.valueAr);
+    } else if (f.labelAr === "حجز مؤقت") {
+      cardHold = extractNumberFromArabicOrAscii(f.valueAr);
+    }
+  }
+
+  const failures: string[] = [];
+  if (cardHold === null || cardHold !== holdAmount) {
+    failures.push(`cardHold(${cardHold}) !== holdAmount(${holdAmount})`);
+  }
+  if (cardMax === null || cardMax !== maxPoints) {
+    failures.push(`cardMax(${cardMax}) !== maxPoints(${maxPoints})`);
+  }
+  if (maxPoints > holdAmount) {
+    failures.push(`maxPoints(${maxPoints}) > holdAmount(${holdAmount})`);
+  }
+  if (optionPrice !== null && cardMax !== null && cardMax !== optionPrice) {
+    failures.push(`cardMax(${cardMax}) !== optionPrice(${optionPrice})`);
+  }
+
+  return {
+    pass: failures.length === 0,
+    maxPoints,
+    holdAmount,
+    cardMax,
+    cardHold,
+    failures,
+  };
 }
 
 export function extractOptionPricePoints(optionText: string): number | null {
@@ -500,6 +959,33 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
     const fullPath = resolve(config.fixturePath);
     if (!existsSync(fullPath)) throw new Error(`Fixture file not found: ${fullPath}`);
     const parsed = JSON.parse(readFileSync(fullPath, "utf-8"));
+    if (parsed.recording) {
+      const recordingSpec: RecordingRecordedSpec = {
+        request: String(parsed.recording.request ?? ""),
+        answers: Array.isArray(parsed.recording.answers) ? parsed.recording.answers.map(String) : undefined,
+        calls: Array.isArray(parsed.recording.calls) ? parsed.recording.calls : [],
+      };
+      const catalog = loadTregCatalog();
+      const probeRows: Record<string, unknown>[] = [];
+      const executionRows: Record<string, unknown>[] = [];
+      for (const call of recordingSpec.calls) {
+        if (call.envelope) {
+          const ep = catalog.byId.get(call.endpoint_id);
+          if (ep) {
+            const rows = buildShapeDigest(call.envelope, ep).reading.rows as Record<string, unknown>[];
+            if (call.phase === "planning") probeRows.push(...rows);
+            else executionRows.push(...rows);
+          }
+        }
+      }
+      return {
+        probeRows,
+        executionRows,
+        sourceDescription: `Fixture file (recording): ${fullPath} (${recordingSpec.calls.length} calls)`,
+        origin: "cli",
+        recording: recordingSpec,
+      };
+    }
     if (parsed.routed) {
       const catalog = loadTregCatalog();
       const endpointId = parsed.routed.endpointId ?? parsed.routed.endpoint_id;
@@ -514,6 +1000,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
         probeRows,
         executionRows,
         sourceDescription: `CLI fixture file (routed): ${fullPath} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+        origin: "cli",
         routed: {
           endpointId: ep.id,
           probeEnvelopes,
@@ -529,6 +1016,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
       probeRows: rows,
       executionRows: rows,
       sourceDescription: `CLI fixture file: ${fullPath} (${rows.length} rows)`,
+      origin: "cli",
     };
   }
 
@@ -536,6 +1024,33 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
   const qaFixturePath = `/srv/diger-team/qa/work/e2e-fixtures/${config.missionId}.json`;
   if (existsSync(qaFixturePath)) {
     const parsed = JSON.parse(readFileSync(qaFixturePath, "utf-8"));
+    if (parsed.recording) {
+      const recordingSpec: RecordingRecordedSpec = {
+        request: String(parsed.recording.request ?? ""),
+        answers: Array.isArray(parsed.recording.answers) ? parsed.recording.answers.map(String) : undefined,
+        calls: Array.isArray(parsed.recording.calls) ? parsed.recording.calls : [],
+      };
+      const catalog = loadTregCatalog();
+      const probeRows: Record<string, unknown>[] = [];
+      const executionRows: Record<string, unknown>[] = [];
+      for (const call of recordingSpec.calls) {
+        if (call.envelope) {
+          const ep = catalog.byId.get(call.endpoint_id);
+          if (ep) {
+            const rows = buildShapeDigest(call.envelope, ep).reading.rows as Record<string, unknown>[];
+            if (call.phase === "planning") probeRows.push(...rows);
+            else executionRows.push(...rows);
+          }
+        }
+      }
+      return {
+        probeRows,
+        executionRows,
+        sourceDescription: `QA work fixture (recording): ${qaFixturePath} (${recordingSpec.calls.length} calls)`,
+        origin: "qa",
+        recording: recordingSpec,
+      };
+    }
     if (parsed.routed) {
       const catalog = loadTregCatalog();
       const endpointId = parsed.routed.endpointId ?? parsed.routed.endpoint_id;
@@ -550,6 +1065,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
         probeRows,
         executionRows,
         sourceDescription: `QA work fixture (routed): ${qaFixturePath} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+        origin: "qa",
         routed: {
           endpointId: ep.id,
           probeEnvelopes,
@@ -566,6 +1082,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
       probeRows: rows,
       executionRows: rows,
       sourceDescription: `QA work fixture: ${qaFixturePath} (${rows.length} rows, 1 on-topic match)`,
+      origin: "qa",
     };
   }
 
@@ -581,6 +1098,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
       probeRows,
       executionRows,
       sourceDescription: `Built-in routed fixture for ${config.missionId} (${probeRows.length} probe rows, ${executionRows.length} exec rows)`,
+      origin: "builtin",
       routed: spec,
     };
   }
@@ -590,6 +1108,7 @@ export function loadRecordedRows(config: RunnerConfig): ReplayRows {
     probeRows: BUILTIN_MSN_F91F_ROWS,
     executionRows: BUILTIN_MSN_F91F_ROWS,
     sourceDescription: `Built-in recorded fixture for ${config.missionId} (${BUILTIN_MSN_F91F_ROWS.length} rows, 1 on-topic match)`,
+    origin: "builtin",
   };
 }
 
@@ -604,6 +1123,7 @@ async function runSingleIteration(
   let turn1Kind = "unknown";
   let examinedCount = 0;
   let acceptedCount = 0;
+  let unmatchedCount = 0;
   const planningAcceptedIds: string[] = [];
 
   // Live provider call wrapper with outer --max-usd spend cap guard (shared by planning and execution)
@@ -630,7 +1150,7 @@ async function runSingleIteration(
     const store = createMemoryStore();
     const rawCatalog = loadTregCatalog();
     let catalog = rawCatalog;
-    if (fixture.routed?.forceRoutedEndpoint) {
+    if (fixture.routed?.forceRoutedEndpoint && !fixture.recording) {
       const routedEp = rawCatalog.byId.get(fixture.routed.endpointId);
       if (routedEp) {
         const filteredEndpoints = rawCatalog.endpoints.filter((e) => e.capability !== routedEp.capability || e.id === routedEp.id);
@@ -682,61 +1202,29 @@ async function runSingleIteration(
       // --- MODE B: RECORDED FIXTURE GATEWAY ---
       let callSeq = 0;
       gateway = {
-        tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
+        tregCall: async ({ endpoint_id, params }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
           callSeq += 1;
           const callId = `call_recorded_${callSeq}`;
-          if (fixture.routed) {
-            const ep = catalog.byId.get(endpoint_id) ?? catalog.byId.get(fixture.routed.endpointId);
-            if (!ep) throw new Error(`Endpoint not found in catalog: ${endpoint_id}`);
-            const envelope = fixture.routed.probeEnvelopes[(callSeq - 1) % fixture.routed.probeEnvelopes.length];
-            await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelope), "application/json");
-            const digest = buildShapeDigest(envelope, ep);
-            const r = digest.reading;
-            if (config.verbose) {
-              console.log(`[recorded-gateway:routed] probe ${endpoint_id} -> ${callId} (${r.rows.length} rows, has_more=${r.hasMore})`);
-            }
-            return {
-              ok: true,
-              call_id: callId,
-              http_status: 200,
-              rows_in_page: r.rows.length,
-              has_more: Boolean(r.hasMore),
-              next_cursor: r.nextCursor,
-              shape: digest.digest,
-              first_rows: r.rows.slice(0, 3) as never,
-              warnings: r.warnings,
-              saved: callId,
-            };
+          const ep = catalog.byId.get(endpoint_id);
+          if (!ep) throw new Error(`Endpoint not found in catalog: ${endpoint_id}`);
+          const { result, unmatched, envelopeToStore } = recordedGatewayResult({
+            fixture,
+            requestedEndpoint: ep,
+            params,
+            phase: "planning",
+            catalog,
+            callId,
+            callSeq,
+            log: config.verbose ? (msg) => console.log(msg) : undefined,
+          });
+          unmatchedCount += unmatched;
+          if (envelopeToStore) {
+            await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelopeToStore.envelope), "application/json");
           }
-          const rows = fixture.probeRows;
-          const pageData = {
-            output: {
-              data: {
-                tweets: rows,
-                items: rows,
-                nextCursor: null,
-              },
-            },
-          };
-
-          await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(pageData), "application/json");
-
           if (config.verbose) {
-            console.log(`[recorded-gateway] probe ${endpoint_id} -> ${callId} (${rows.length} rows)`);
+            console.log(`[recorded-gateway] probe ${endpoint_id} -> ${callId} (${result.ok && "rows_in_page" in result ? result.rows_in_page : 0} rows)`);
           }
-
-          return {
-            ok: true,
-            call_id: callId,
-            http_status: 200,
-            rows_in_page: rows.length,
-            has_more: false,
-            next_cursor: null,
-            shape: null,
-            first_rows: rows.slice(0, 3) as never,
-            warnings: [],
-            saved: callId,
-          };
+          return result;
         },
       };
     }
@@ -834,36 +1322,34 @@ async function runSingleIteration(
         log: config.verbose ? (line: string) => console.log(`[reviewer] ${line}`) : undefined,
       });
 
-      if ((config.providers === "live" || fixture.routed) && plan.stages.every((s: any) => s.engine !== undefined)) {
+      if ((config.providers === "live" || fixture.routed || fixture.recording) && plan.stages.every((s: any) => s.engine !== undefined)) {
         let executionGateway: any;
-        if (fixture.routed) {
+        if (fixture.routed || fixture.recording) {
           let execSeq = 0;
           executionGateway = {
-            tregCall: async ({ endpoint_id }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
+            tregCall: async ({ endpoint_id, params }: { endpoint_id: string; params: Record<string, unknown> }): Promise<GatewayCallResult> => {
               execSeq += 1;
               const callId = `call_exec_recorded_${execSeq}`;
-              const ep = catalog.byId.get(endpoint_id) ?? catalog.byId.get(fixture.routed!.endpointId);
+              const ep = catalog.byId.get(endpoint_id);
               if (!ep) throw new Error(`Endpoint not found in catalog for execution: ${endpoint_id}`);
-              const envIndex = execSeq - 1;
-              const envelope = fixture.routed!.executionEnvelopes[envIndex < fixture.routed!.executionEnvelopes.length ? envIndex : fixture.routed!.executionEnvelopes.length - 1];
-              await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelope), "application/json");
-              const digest = buildShapeDigest(envelope, ep);
-              const r = digest.reading;
-              if (config.verbose) {
-                console.log(`[recorded-exec-gateway:routed] exec ${endpoint_id} -> ${callId} (${r.rows.length} rows, has_more=${r.hasMore})`);
+              const { result, unmatched, envelopeToStore } = recordedGatewayResult({
+                fixture,
+                requestedEndpoint: ep,
+                params,
+                phase: "execution",
+                catalog,
+                callId,
+                callSeq: execSeq,
+                log: config.verbose ? (msg) => console.log(msg) : undefined,
+              });
+              unmatchedCount += unmatched;
+              if (envelopeToStore) {
+                await store.putFile(missionId, RAW_PATH(callId), JSON.stringify(envelopeToStore.envelope), "application/json");
               }
-              return {
-                ok: true,
-                call_id: callId,
-                http_status: 200,
-                rows_in_page: r.rows.length,
-                has_more: Boolean(r.hasMore),
-                next_cursor: r.nextCursor,
-                shape: digest.digest,
-                first_rows: r.rows.slice(0, 3) as never,
-                warnings: r.warnings,
-                saved: callId,
-              };
+              if (config.verbose) {
+                console.log(`[recorded-exec-gateway] exec ${endpoint_id} -> ${callId} (${result.ok && "rows_in_page" in result ? result.rows_in_page : 0} rows)`);
+              }
+              return result;
             },
           };
         } else {
@@ -996,17 +1482,19 @@ async function runSingleIteration(
         planningAcceptedIds.push(...deliveredIds);
       }
 
-      // Direct plan parity checks: delivered == card count and max == hold. Question/option criteria are N/A.
+      // Direct plan parity checks: delivered == card count and evaluateCrit2(r1.plan, null). Question/option criteria are N/A.
       const crit1Pass = cardCount === deliveredCount;
-      const crit2Pass = maxPoints === holdAmount;
+      const crit2 = evaluateCrit2(r1.plan, null);
+      const crit2Pass = crit2.pass;
       const crit3Pass = "N/A" as const;
       const crit4Pass = "N/A" as const;
       const passed = crit1Pass && crit2Pass;
 
       const failures: string[] = [];
       if (!crit1Pass) failures.push(`crit1(cardCount=${cardCount} vs deliveredCount=${deliveredCount})`);
-      if (!crit2Pass) failures.push(`crit2(maxPoints=${maxPoints} vs holdAmount=${holdAmount})`);
-      const failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
+      if (!crit2Pass) failures.push(`crit2(${crit2.failures.join(", ")})`);
+      let failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
+      if (!passed && unmatchedCount > 0) failureReason += ` (unmatched=${unmatchedCount})`;
 
       return {
         runIndex,
@@ -1030,6 +1518,7 @@ async function runSingleIteration(
         passed,
         failureReason,
         notes: "no question (found enough)",
+        unmatchedCount,
       };
     }
 
@@ -1245,17 +1734,19 @@ async function runSingleIteration(
 
     // Evaluate D-0202 Criteria for this run
     const crit1Pass = questionCount === cardCount && cardCount === deliveredCount;
-    const crit2Pass = maxPoints === holdAmount && (optionPrice === null || maxPoints === optionPrice);
+    const crit2 = evaluateCrit2(r2.plan, optionPrice);
+    const crit2Pass = crit2.pass;
     const crit3Pass = options.length > 0 && options.every((opt) => /[0-9\u0660-\u0669]/.test(opt));
     const crit4Pass = questionCount === 0 ? !options.some((opt) => opt.includes("الموجود") || opt.includes("سلّمني")) : true;
     const passed = crit1Pass && crit2Pass && crit3Pass && crit4Pass;
 
     const failures: string[] = [];
     if (!crit1Pass) failures.push(`crit1(qCount=${questionCount} cardCount=${cardCount} deliveredCount=${deliveredCount})`);
-    if (!crit2Pass) failures.push(`crit2(maxPoints=${maxPoints} holdAmount=${holdAmount} optionPrice=${optionPrice})`);
+    if (!crit2Pass) failures.push(`crit2(${crit2.failures.join(", ")})`);
     if (!crit3Pass) failures.push(`crit3(options code-stamped numbers)`);
     if (!crit4Pass) failures.push(`crit4(take_found on found=0)`);
-    const failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
+    let failureReason = passed ? undefined : `Criteria mismatch: ${failures.join(", ")}`;
+    if (!passed && unmatchedCount > 0) failureReason += ` (unmatched=${unmatchedCount})`;
 
     return {
       runIndex,
@@ -1279,6 +1770,7 @@ async function runSingleIteration(
       passed,
       failureReason,
       questionText: r1.question_ar,
+      unmatchedCount,
     };
   } catch (err: unknown) {
     return {
@@ -1456,7 +1948,6 @@ export async function selfTestDistinctGatewayKeys(): Promise<{
 
 async function main(): Promise<void> {
   const config = parseCliArgs();
-  const fixture = loadRecordedRows(config);
 
   // Standalone self-test check
   if (process.argv.includes("--self-test")) {
@@ -1471,6 +1962,9 @@ async function main(): Promise<void> {
     console.log(`  Execution keys: ${keyTest.executionKeys.join(", ")} (job: ${keyTest.executionJobIds[0]})`);
     process.exit(0);
   }
+
+  const fixture = loadRecordedRows(config);
+  config.prompt = resolvePrompt(config, fixture);
 
   console.log("================================================================================");
   console.log("DIGER E2E FULL-FLOW REPLAY RUNNER (D-0202)");
@@ -1554,19 +2048,21 @@ async function main(): Promise<void> {
       const acceptedIdsStr = res.planningAcceptedIds.length > 0 ? `[${res.planningAcceptedIds.join(", ")}]` : "[]";
       const deliveredIdsStr = res.deliveredIds.length > 0 ? `[${res.deliveredIds.join(", ")}]` : "[]";
 
+      const unmatchedSuffix = res.unmatchedCount !== undefined ? ` unmatched=${res.unmatchedCount}` : "";
+
       // Summary line per run
       if (!res.passed) {
         console.log(
-          `Run ${i + 1}: FAIL | kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | reason: ${res.failureReason} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: FAIL | kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | reason: ${res.failureReason} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}${unmatchedSuffix}`
         );
       } else if (res.notes) {
         console.log(
-          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | ${res.notes} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}${unmatchedSuffix}`
         );
       } else {
         const optionsSummary = `[${res.options.map((o) => `"${o.slice(0, 30)}..."`).join(", ")}]`;
         console.log(
-          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}`
+          `Run ${i + 1}: kind=${res.turn1Kind} | examined=${res.examinedCount} accepted=${res.acceptedCount} | question=${res.questionCount} | options=${optionsSummary} | card=${res.cardCount} | max=${res.maxPoints} hold=${res.holdAmount} | delivered=${res.deliveredCount} | accepted_ids=${acceptedIdsStr} delivered_ids=${deliveredIdsStr} | cost=$${res.providerCostUsd.toFixed(6)}${unmatchedSuffix}`
         );
       }
 

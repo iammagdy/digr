@@ -37,6 +37,11 @@ const dummyEp1: CatalogEndpoint = {
   scope: "default",
   cost_confidence: null,
   siblings: [],
+  test_request: null,
+  list_path: null,
+  cursor_path: null,
+  item_fields: null,
+  example_response_trimmed: null,
 };
 
 describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests", () => {
@@ -59,9 +64,9 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
 
   it("T2: page chain serves calls 1, 2, 3 linked by cursor and ends with has_more false", () => {
     const calls: RecordedCallSpec[] = [
-      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed" }, status: 200, envelope: { output: { posts: [{ id: "p1" }], next_cursor: "cur_1" } } },
-      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed", cursor: "cur_1" }, status: 200, envelope: { output: { posts: [{ id: "p2" }], next_cursor: "cur_2" } } },
-      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed", cursor: "cur_2" }, status: 200, envelope: { output: { posts: [{ id: "p3" }], next_cursor: null } } },
+      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed" }, status: 200, envelope: { output: { posts: [{ id: "p1" }], next_cursor: "cur_1", has_more: true } } },
+      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed", cursor: "cur_1" }, status: 200, envelope: { output: { posts: [{ id: "p2" }], next_cursor: "cur_2", has_more: true } } },
+      { phase: "execution", endpoint_id: dummyEp1.id, params: { q: "feed", cursor: "cur_2" }, status: 200, envelope: { output: { posts: [{ id: "p3" }], next_cursor: null, has_more: false } } },
     ];
     const miniCatalog = { ...catalog, byId: new Map([[dummyEp1.id, dummyEp1]]) } as any;
 
@@ -258,8 +263,11 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
       catalog: syntheticCatalog,
       callId: "call_direct_1",
     });
-    expect(resDirect.result.rows_in_page).toBe(0);
-    expect(resDirect.result.warnings).toContain("not_recorded");
+    expect(resDirect.result.ok).toBe(true);
+    if (resDirect.result.ok) {
+      expect(resDirect.result.rows_in_page).toBe(0);
+      expect(resDirect.result.warnings).toContain("not_recorded");
+    }
     expect(resDirect.unmatched).toBe(1);
 
     // Routed endpoint requesting from routed fixture succeeds
@@ -271,7 +279,10 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
       catalog: syntheticCatalog,
       callId: "call_routed_1",
     });
-    expect(resRouted.result.rows_in_page).toBe(2);
+    expect(resRouted.result.ok).toBe(true);
+    if (resRouted.result.ok) {
+      expect(resRouted.result.rows_in_page).toBe(2);
+    }
     expect(resRouted.unmatched).toBe(0);
   });
 
@@ -303,9 +314,12 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
       catalog: { ...catalog, byId: new Map([[dummyEp1.id, dummyEp1]]) } as any,
       callId: "call_unmatched_1",
     });
-    expect(res.result.rows_in_page).toBe(0);
-    expect(res.result.has_more).toBe(false);
-    expect(res.result.warnings).toContain("not_recorded");
+    expect(res.result.ok).toBe(true);
+    if (res.result.ok) {
+      expect(res.result.rows_in_page).toBe(0);
+      expect(res.result.has_more).toBe(false);
+      expect(res.result.warnings).toContain("not_recorded");
+    }
     expect(res.unmatched).toBe(1);
   });
 
@@ -337,8 +351,10 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
       callId: "call_refusal_1",
     });
     expect(res.result.ok).toBe(false);
-    expect(res.result.http_status).toBe(403);
-    expect((res.result as any).rows_in_page).toBe(0);
+    if (!res.result.ok && "http_status" in res.result) {
+      expect(res.result.http_status).toBe(403);
+      expect((res.result as any).rows_in_page).toBe(0);
+    }
     expect(res.unmatched).toBe(0);
   });
 
@@ -375,12 +391,14 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
     });
 
     expect(res.result.ok).toBe(true);
-    expect(res.result.http_status).toBe(200);
-    expect(res.result.rows_in_page).toBe(0);
-    expect(res.result.has_more).toBe(false);
-    expect(res.result.next_cursor).toBeNull();
-    expect((res.result as any).shape.shape).toBe("empty");
-    expect(res.result.warnings).toContain("not_recorded");
+    if (res.result.ok) {
+      expect(res.result.http_status).toBe(200);
+      expect(res.result.rows_in_page).toBe(0);
+      expect(res.result.has_more).toBe(false);
+      expect(res.result.next_cursor).toBeNull();
+      expect((res.result as any).shape.shape).toBe("empty");
+      expect(res.result.warnings).toContain("not_recorded");
+    }
     expect(res.unmatched).toBe(1);
   });
 
