@@ -1722,6 +1722,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     .filter((s) => s.deliver && s.replies_of === undefined)
     .map((s) => {
       const ep = deps.catalog.byId.get(s.endpoint_id);
+      const epNoun = ep?.item_noun_ar;
       const epCap = ep?.capability ?? "";
       const people = isPeopleStage(s) || PEOPLE_OF_COMPANY_CAPABILITIES.has(epCap);
       const contacts = !people && (MAILBOX_LISTER_CAPABILITIES.has(epCap) || isContactSource(s.endpoint_id));
@@ -1735,6 +1736,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
         isContacts: contacts,
         ...(epCap ? { capability: epCap } : {}),
         ...(ep?.platform ? { platform: ep.platform } : {}),
+        ...(epNoun ? { item_noun_ar: epNoun } : {}),
       };
     });
   await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });

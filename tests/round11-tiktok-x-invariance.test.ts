@@ -61,6 +61,13 @@ function withoutPriceRevision(v: unknown): unknown {
   return v;
 }
 
+/** DT-20261125-wordlist-wave2 Phase 3: the plan's customer view stages carry item_noun_ar from the endpoint overlay. */
+function withoutItemNoun(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutItemNoun);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "item_noun_ar").map(([k, x]) => [k, withoutItemNoun(x)]));
+  return v;
+}
+
 /** The topic mark taken out: its column entry and its value on every row, anywhere in the document. */
 function withoutTopicMark(v: unknown): unknown {
   if (Array.isArray(v)) return v.filter((x) => !(x && typeof x === "object" && (x as { key?: unknown }).key === "topic_relation")).map(withoutTopicMark);
@@ -72,7 +79,7 @@ describe("TikTok: the plan and the customer's view are byte for byte what they w
   it("plan and view", async () => {
     const w = await tiktokWorld();
     expect(sha(withoutPriceRevision(withoutResearchGate(withoutMatchCounts(withoutConditions(w.plan)))))).toBe(BASE.tiktok.plan);
-    expect(sha(withTextUnlocked(withoutResearchGate(withoutLinksWhole(withoutMatchCounts(w.view)))))).toBe(BASE.tiktok.view);
+    expect(sha(withTextUnlocked(withoutResearchGate(withoutLinksWhole(withoutItemNoun(withoutMatchCounts(w.view))))))).toBe(BASE.tiktok.view);
   }, 120_000);
   it("the file: the only change is «عدد الردود» of the reply rows (20 cells, empty -> «غير متاح»); with those put back the file is the old one", async () => {
     const w = await tiktokWorld();
@@ -96,7 +103,7 @@ describe("X: the plan, the view and the file are what they were, plus the topic 
   it("with the topic mark taken out, the plan and the view are the old ones; the mark itself is there on every chosen tweet", async () => {
     const w = await xWorld();
     expect(sha(withoutPriceRevision(withoutResearchGate(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan))))))).toBe(BASE.x.plan);
-    expect(sha(withoutResearchGate(withoutLinksWhole(withoutTopicMark(withoutMatchCounts(w.view)))))).toBe(BASE.x.view);
+    expect(sha(withoutResearchGate(withoutLinksWhole(withoutItemNoun(withoutTopicMark(withoutMatchCounts(w.view))))))).toBe(BASE.x.view);
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);
     for (const r of pinned) expect(typeof r.topic_relation).toBe("string");

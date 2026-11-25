@@ -6920,19 +6920,7 @@
     },
     {
       "file": "src/lib/agentMission/sources.ts",
-      "token": "crawl4ai"
-    },
-    {
-      "file": "src/lib/agentMission/sources.ts",
-      "token": "crawl4ai.x.search.posts"
-    },
-    {
-      "file": "src/lib/agentMission/sources.ts",
       "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/agentMission/sources.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/agentMission/stage2/askCard.ts",
@@ -7848,14 +7836,6 @@
     },
     {
       "file": "src/lib/treg/catalog.ts",
-      "token": "anyapi"
-    },
-    {
-      "file": "src/lib/treg/catalog.ts",
-      "token": "anyapi.x.post.comments"
-    },
-    {
-      "file": "src/lib/treg/catalog.ts",
       "token": "blitzapi"
     },
     {
@@ -7881,10 +7861,6 @@
     {
       "file": "src/lib/treg/catalog.ts",
       "token": "treg"
-    },
-    {
-      "file": "src/lib/treg/catalog.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/treg/circuitBreaker.ts",

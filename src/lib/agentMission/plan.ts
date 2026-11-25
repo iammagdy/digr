@@ -23,6 +23,7 @@ import { isTextItemStage, textKeyOf } from "./contract";
 import { repliesLinesAr } from "./repliesCard";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
+import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
 import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
 import { APPROX_DATES_CARD_LINE_AR, APPROX_WORD_AR, approxColumnsOf, approxDayOfMs } from "./relativeDates";
@@ -1294,12 +1295,14 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
     ...(plan.unserved_steps && plan.unserved_steps.length > 0 ? { unserved_ar: plan.unserved_steps.map(unservedStepLineAr) } : {}),
     stages: plan.stages.map((s) => {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
+      const epNoun = (endpointMetadataOverlay as Record<string, any>)[s.endpoint_id]?.item_noun_ar;
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
         // NOV 7 2026: a link is never cut (a cut permalink opened nothing); every other cell keeps its limit. `links_whole` marks a stage written under that rule (sampleLinks.ts)
         sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? sampleCellText(s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? ""), SAMPLE_CELL_CHARS)]))),
         links_whole: true,
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
+        ...(epNoun ? { item_noun_ar: epNoun } : (s as any).item_noun_ar ? { item_noun_ar: (s as any).item_noun_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
         ...(s.children_open && !s.per_parent_asked ? { children_open: true } : {}),

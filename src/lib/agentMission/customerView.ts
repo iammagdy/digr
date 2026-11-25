@@ -11,7 +11,7 @@ import { pointsAr, unitPriceLabelAr } from "../pointsFormat";
 import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
-import { countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
+import { countAr, coerceItemNoun, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
 import { entityBreakdownOf, entityStagesOfPublic, pricedTotalAr, receiveLineAr, targetLineAr } from "./entityCount";
 import { moneyLineAr } from "./moneyText";
 import { isFreeRerunEvents } from "./freeRerunMark";
@@ -187,9 +187,16 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const parentIndex = typeof s?.parent_key === "string" ? list.findIndex((x) => x?.key === s.parent_key) : -1;
     // a stage that only FEEDS the next one is a ceiling, never a promise: «حتى ١٠ فيديوهات» (how many of them end up with results in the file is counted from the item store at the end)
     // ROUND 58: a step that hangs on a step of the same noun («بيانات تواصل الشركات» under «شركات …») holds details of those items, never more of them: its rows are «عنصر» («١٢ عنصرًا», not «١٢ شركة»)
-    const ownNoun = itemNounOf(String(s?.title_ar ?? ""));
+    const titleNoun = itemNounOf(String(s?.title_ar ?? ""));
+    const metaNoun = coerceItemNoun(s?.item_noun_ar ?? s?.itemNounAr);
+    const ownNoun = (titleNoun.key !== GENERIC_ITEM_NOUN.key ? titleNoun : metaNoun) ?? GENERIC_ITEM_NOUN;
     const parentStage = typeof s?.parent_key === "string" ? list.find((x) => x?.key === s.parent_key) : null;
-    const rowsAr = countAr(rows, parentStage && ownNoun.key !== GENERIC_ITEM_NOUN.key && itemNounOf(String(parentStage?.title_ar ?? "")).key === ownNoun.key ? GENERIC_ITEM_NOUN : ownNoun);
+    const parentTitleNoun = parentStage ? itemNounOf(String(parentStage?.title_ar ?? "")) : null;
+    const parentMetaNoun = parentStage ? coerceItemNoun(parentStage?.item_noun_ar ?? parentStage?.itemNounAr) : null;
+    const parentNoun = parentTitleNoun && parentTitleNoun.key !== GENERIC_ITEM_NOUN.key ? parentTitleNoun : parentMetaNoun;
+    const isSubDetails = parentStage && ownNoun.key !== GENERIC_ITEM_NOUN.key && parentNoun && parentNoun.key === ownNoun.key;
+    const stageNoun = isSubDetails ? GENERIC_ITEM_NOUN : ownNoun;
+    const rowsAr = countAr(rows, stageNoun);
     stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows: open ? 0 : rows, rowsAr: split ? repliesSplitAr(split.counted, split.open) : open ? (openReplies ? ALL_REPLIES_AR : ALL_COMMENTS_AR) : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };

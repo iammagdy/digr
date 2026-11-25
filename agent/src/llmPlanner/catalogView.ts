@@ -12,6 +12,7 @@ import type { WebAvailability } from "../../../src/lib/agentMission/webAvailabil
 import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 import { getCircuitBreaker, type EndpointCircuitBreaker } from "../../../src/lib/treg/circuitBreaker";
 import { getMultiProviderContracts, type MultiProviderContract } from "../../../src/lib/multiProvider/catalog";
+import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
 
 /** The endpoints Diger has proven on stored real pages and in production (the reviewed list): ranked first and marked for the model. */
 const PROVEN: ReadonlySet<string> = new Set(((productionEligible as { ids?: unknown }).ids as string[] | undefined) ?? []);
@@ -171,6 +172,7 @@ export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?
     observed: { ok_rate: 0.97, hit_rate: 0.95, samples: 200 },
     scope: "public",
     item_fields: { title: { type: "string", example: "" }, url: { type: "string", example: "" }, description: { type: "string", example: "" } },
+    item_noun_ar: (endpointMetadataOverlay as Record<string, any>)[s.id]?.item_noun_ar,
   })) as unknown as CatalogEndpoint[];
 }
 
@@ -233,6 +235,7 @@ export function multiProviderEndpoints(): CatalogEndpoint[] {
       example_response_trimmed: c.outputs_schema?.example_response_trimmed ?? null,
       adapter_contract: c as unknown as any,
       capability_tags: c.capability_tags ?? [],
+      item_noun_ar: (endpointMetadataOverlay as Record<string, any>)[c.endpoint_id]?.item_noun_ar,
     } as unknown as CatalogEndpoint;
   });
   return multiEndpointsCache;

@@ -22,7 +22,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countAr, itemNounOf, itemNounFromCapability, knownItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
+import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
@@ -2242,6 +2242,8 @@ export function scoutFallbackAr(
   weak: ReadonlyArray<ScoutFinding>,
   said: ReadonlyArray<string>,
   wideningFacts?: ReadonlyArray<CatalogWideningOptionFact>,
+  catalog?: TregCatalog,
+  access?: AccountAccess | null,
 ): { question_ar: string; options_ar: string[] } {
   const customerText = said.join(" ");
   const customerNumbers = numbersWritten(customerText);
@@ -2251,10 +2253,17 @@ export function scoutFallbackAr(
   const sourceAsWritten = (v: string | null | undefined): string | null => { const t = noForeignLatin(v); return t && labelWrittenBy(t, said) ? t : null; };
   const lines = weak.map((f) => {
     const platformName = platformAr(f.step.platform, f.step.capability, said);
+    const candidateEp = catalog
+      ? candidatesFor(catalog, access ?? null, f.step.platform, f.step.capability, 1).find((c) => !needsMissingSession(c))
+      : undefined;
+    const fromMeta = coerceItemNoun(
+      f.builtStep?.option.endpoint.item_noun_ar ??
+      candidateEp?.item_noun_ar ??
+      (f as any).endpoint?.item_noun_ar ??
+      (f.step as any).endpoint?.item_noun_ar
+    );
     const byTitle = itemNounOf(f.step.title_ar);
-    const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
-      ? byTitle
-      : (itemNounFromCapability(f.step.capability, f.step.platform) ?? byTitle);
+    const noun = fromMeta ?? (byTitle.key !== GENERIC_ITEM_NOUN.key ? byTitle : GENERIC_ITEM_NOUN);
     const title = noForeignLatin(f.step.title_ar) ?? noun.plural;
     if (f.found === 0) {
       if (f.step.source?.value && (f.examinedCount ?? 0) > 0) {
@@ -2396,10 +2405,17 @@ export function buildCatalogWideningFacts(
 ): CatalogWideningOptionFact[] {
   const first = weak[0];
   if (!first) return [];
+  const candidateEp = catalog
+    ? candidatesFor(catalog, access, first.step.platform, first.step.capability, 1).find((c) => !needsMissingSession(c))
+    : undefined;
+  const fromMeta = coerceItemNoun(
+    first.builtStep?.option.endpoint.item_noun_ar ??
+    candidateEp?.item_noun_ar ??
+    (first as any).endpoint?.item_noun_ar ??
+    (first.step as any).endpoint?.item_noun_ar
+  );
   const byTitle = itemNounOf(first.step.title_ar);
-  const noun = byTitle.key !== GENERIC_ITEM_NOUN.key
-    ? byTitle
-    : (itemNounFromCapability(first.step.capability, first.step.platform) ?? byTitle);
+  const noun = fromMeta ?? (byTitle.key !== GENERIC_ITEM_NOUN.key ? byTitle : GENERIC_ITEM_NOUN);
 
   const out: CatalogWideningOptionFact[] = [];
   const foundCount = Math.max(0, first.found);
@@ -2530,7 +2546,7 @@ export function buildCatalogWideningFacts(
       access,
       pricingSettings,
     });
-    const webNoun = itemNounFromCapability(webStep.capability, webStep.platform) ?? knownItemNoun("خبر") ?? knownItemNoun("مقال") ?? GENERIC_ITEM_NOUN;
+    const webNoun = (webEp as any)?.item_noun_ar ? (coerceItemNoun((webEp as any).item_noun_ar) ?? GENERIC_ITEM_NOUN) : GENERIC_ITEM_NOUN;
     const webKind: "measured" | "up_to" = measuredWeb ? "measured" : "up_to";
     const webVerb = webKind === "measured" ? "يضيف نحو" : "يضيف حتى";
     const webStem = "أضف الأخبار وصفحات الويب العامة";
@@ -2625,7 +2641,7 @@ export async function scoutQuestion(
     })),
   };
   const hasFound = weak.some((f) => f.found > 0);
-  const baseFallback = scoutFallbackAr(weak, said, wideningFacts);
+  const baseFallback = scoutFallbackAr(weak, said, wideningFacts, deps.catalog, deps.access);
   const fallbackOptions = wideningFacts.length > 0
     ? wideningFacts.map((w) => w.label_ar)
     : (hasFound ? baseFallback.options_ar : baseFallback.options_ar.slice(1));

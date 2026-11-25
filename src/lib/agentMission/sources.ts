@@ -1,5 +1,6 @@
 import { CONTEXTDEV_USD_PER_CREDIT, FIRECRAWL_USD_PER_CREDIT } from "../multiProvider/catalog";
 import rawWebSources from "../../../data/capabilities/web-sources.json";
+import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
 
 /**
  * THE AGENT'S WEB SOURCES, as data: pre-built page parsers, web search, page scrape,
@@ -311,18 +312,24 @@ export function describeAgentSource(id: string): (SourceCandidate & { how: strin
 
 export type WebProvider = "firecrawl" | "contextdev";
 
+function getSessionRestrictedSources(): Record<string, { param: string; allowed: RegExp; message: string }> {
+  const map: Record<string, { param: string; allowed: RegExp; message: string }> = {};
+  for (const [id, meta] of Object.entries(endpointMetadataOverlay as Record<string, any>)) {
+    if (meta.session_restriction) {
+      map[id] = {
+        param: meta.session_restriction.param,
+        allowed: new RegExp(meta.session_restriction.allowed_pattern, "i"),
+        message: meta.session_restriction.message,
+      };
+    }
+  }
+  return map;
+}
+
 /**
- * SOURCES THAT REFUSE WHAT THEIR INPUT SCHEMA ACCEPTS. `crawl4ai.x.search.posts` takes `query` and `limit` (the payload is valid), but its catalog description says: "Without [an X login session] only from:<account> ...
- * in mode latest ... Other queries are refused, not billed." A topic search («محمد صلاح») therefore answers HTTP 400 and costs nothing (mission msn_480a44f90e1784edbc94: http 400, 905 ms, cost 0). A mission never has the
- * customer's own login, so the call is refused here, BEFORE it is made, with the reason the model needs to go on to the next source.
+ * Restriction rules loaded dynamically from data/treg/endpoint_metadata_overlay.json.
  */
-export const SESSION_RESTRICTED_SOURCES: Readonly<Record<string, { param: string; allowed: RegExp; message: string }>> = {
-  "crawl4ai.x.search.posts": {
-    param: "query",
-    allowed: /^\s*from:@?[A-Za-z0-9_]{1,15}(\s|$)/i,
-    message: "this source answers only `from:<account>` searches (that account's timeline); a topic search needs the customer's own X login, which a mission never has, so it would be refused. It was NOT called and cost nothing: sample the next source of the ranking",
-  },
-};
+export const SESSION_RESTRICTED_SOURCES: Readonly<Record<string, { param: string; allowed: RegExp; message: string }>> = getSessionRestrictedSources();
 
 /** The reason a call would be refused by the source itself (so it is not made), or null. */
 export function sessionRestriction(endpointId: string, params: Record<string, unknown>): string | null {

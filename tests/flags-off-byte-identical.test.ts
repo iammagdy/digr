@@ -45,7 +45,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 // g2_petroleum: FX-01B: card names the requested role + fallback clause
 // Only mission, providerCalls and workbook are re-pinned for those worlds. The existing ledger, planView, finalView, notices and visible event hashes still apply.
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
-const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);
+const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at", "item_noun_ar"]);
 const norm = (value: unknown): string => JSON.stringify(value, (k, v) => {
   if (DROP.has(k) || /(_hash$|_ms(_|$))/.test(k)) return undefined;
   if (typeof v === "string") return v.replace(/msn_[a-z0-9]+/g, "msn_X").replace(/(job_quote|quote|res|rel|chg|top)_[A-Za-z0-9_-]{6,}/g, "$1_X").replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "TS");

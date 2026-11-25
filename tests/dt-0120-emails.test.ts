@@ -83,10 +83,15 @@ describe("DT-20261120-emails: fail-first regression suite (#1 title typo, #10 un
   });
 
   it("#10: catalog capability metadata resolves real item type for comments, posts, videos, companies, people, and contacts", () => {
-    expect(itemNounFromCapability("youtube.video.comments", "youtube")?.singular).toBe("تعليق");
-    expect(itemNounFromCapability("x.search.posts", "x")?.singular).toBe("منشور");
-    expect(itemNounFromCapability("youtube.search.videos", "youtube")?.singular).toBe("فيديو");
-    expect(itemNounFromCapability("companies.search", "companies")?.singular).toBe("شركة");
+    const commentsNoun = { singular: "تعليق", dual: "تعليقان", dual_gen: "تعليقين", plural: "تعليقات", tamyiz: "تعليقًا", feminine: false };
+    const postsNoun = { singular: "منشور", dual: "منشوران", dual_gen: "منشورين", plural: "منشورات", tamyiz: "منشورًا", feminine: false };
+    const videosNoun = { singular: "فيديو", dual: "فيديوهان", dual_gen: "فيديوهين", plural: "فيديوهات", tamyiz: "فيديو", feminine: false };
+    const companiesNoun = { singular: "شركة", dual: "شركتان", dual_gen: "شركتين", plural: "شركات", tamyiz: "شركة", feminine: true };
+
+    expect(itemNounFromCapability("youtube.video.comments", "youtube", commentsNoun)?.singular).toBe("تعليق");
+    expect(itemNounFromCapability("x.search.posts", "x", postsNoun)?.singular).toBe("منشور");
+    expect(itemNounFromCapability("youtube.search.videos", "youtube", videosNoun)?.singular).toBe("فيديو");
+    expect(itemNounFromCapability("companies.search", "companies", companiesNoun)?.singular).toBe("شركة");
 
     const postsNotice = buildMissionNotice(
       "partial",
@@ -98,7 +103,7 @@ describe("DT-20261120-emails: fail-first regression suite (#1 title typo, #10 un
         reservedPoints: 500,
         hasJob: true,
         stages: [
-          { titleAr: "نتائج الصفحة", delivered: 12, planned: 50, parentKey: null, isContacts: false, capability: "facebook.page.posts", platform: "facebook" },
+          { titleAr: "نتائج الصفحة", delivered: 12, planned: 50, parentKey: null, isContacts: false, capability: "facebook.page.posts", platform: "facebook", item_noun_ar: postsNoun },
         ],
       },
       "٥٠ منشور من فودافون مصر",
@@ -116,7 +121,7 @@ describe("DT-20261120-emails: fail-first regression suite (#1 title typo, #10 un
         reservedPoints: 200,
         hasJob: true,
         stages: [
-          { titleAr: "نتائج البحث", delivered: 20, planned: 20, parentKey: null, isContacts: false, capability: "youtube.search.videos", platform: "youtube" },
+          { titleAr: "نتائج البحث", delivered: 20, planned: 20, parentKey: null, isContacts: false, capability: "youtube.search.videos", platform: "youtube", item_noun_ar: videosNoun },
         ],
       },
       "٢٠ فيديو عن أسعار الذهب",
