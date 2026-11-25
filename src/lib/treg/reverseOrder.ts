@@ -1,40 +1,58 @@
+import providerMetadata from "../../../data/capabilities/provider-metadata.json";
+
+export interface ReverseLookupMetadata {
+  emailOrder: readonly string[];
+  phoneOrder: readonly string[];
+  noWaterfall: readonly string[];
+  companyDomainOnly: readonly string[];
+  usOnlyPhone: readonly string[];
+}
+
+function readNonEmptyStringArray(obj: Record<string, unknown>, key: string): readonly string[] {
+  const val = obj[key];
+  if (!Array.isArray(val) || val.length === 0 || val.some((x) => typeof x !== "string" || x.length === 0)) {
+    throw new Error(`provider-metadata.json: missing or empty treg.reverseLookup.${key}`);
+  }
+  return val;
+}
+
+/** Validates and extracts reverse-lookup order lists from provider metadata; throws a clear error naming the missing key. */
+export function readReverseLookupConfig(meta: unknown): ReverseLookupMetadata {
+  const treg = (meta as { treg?: { reverseLookup?: unknown } } | null | undefined)?.treg;
+  const raw = treg?.reverseLookup;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("provider-metadata.json: missing treg.reverseLookup");
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    emailOrder: readNonEmptyStringArray(obj, "emailOrder"),
+    phoneOrder: readNonEmptyStringArray(obj, "phoneOrder"),
+    noWaterfall: readNonEmptyStringArray(obj, "noWaterfall"),
+    companyDomainOnly: readNonEmptyStringArray(obj, "companyDomainOnly"),
+    usOnlyPhone: readNonEmptyStringArray(obj, "usOnlyPhone"),
+  };
+}
+
+const REVERSE_CONFIG = readReverseLookupConfig(providerMetadata);
+
 /**
  * THE ORDER OF REVERSE LOOKUPS, from live evidence (one place, used by the admin «بحث عكسي» and by the planner's candidate list for a verified business, so the two can never disagree).
- *
- * E-mail → person: the order below, each tried only after the one before it gave nothing useful.
- *   - fiber-ai.people.identity.resolve answered with a name and a country at 0 USD (a miss is free), so it goes first.
- *   - treg.people.identity.resolve is a routed waterfall that bills every provider it tries: it is always called with `X-Treg-Route-Waterfall: 0` (one provider, one price).
- *   - branddev.brand.retrieve-by-email refuses outlook/gmail-type mailboxes (it answers about a COMPANY), so it is tried ONLY for a company domain.
- * Phone → person (sixtyfour.people.phone.reverse is left out: it needs a structured «lead» object, not a number): only the endpoints that cost nothing run by default. Any paid phone endpoint runs only after the admin confirmed its price, with a warning when its coverage of the number's
- * country is unproven. enrichlayer.contacts.reverse-phone is for US numbers: it is never offered automatically outside the US.
+ * Lists come from `data/capabilities/provider-metadata.json` (`treg.reverseLookup`) so code holds no hardcoded endpoint lists.
  */
-export const EMAIL_REVERSE_ORDER: readonly string[] = [
-  "fiber-ai.people.identity.resolve",
-  "blitzapi.people.email.reverse",
-  "quickenrich.people.enrich",
-  "aiark.people.enrich",
-  "findymail.search.reverse-email",
-  "treg.people.identity.resolve",
-  "branddev.brand.retrieve-by-email",
-  "companyenrich.people.lookup",
-];
+export const EMAIL_REVERSE_ORDER: readonly string[] = REVERSE_CONFIG.emailOrder;
 
 /** Phone endpoints in the order they are offered: the free one first, then the paid ones (each needs a confirmed price). */
-export const PHONE_REVERSE_ORDER: readonly string[] = [
-  "getleadsio.people.phone.lookup",
-  "blitzapi.people.phone.reverse",
-  "enrichlayer.contacts.reverse-phone",
-];
+export const PHONE_REVERSE_ORDER: readonly string[] = REVERSE_CONFIG.phoneOrder;
 
 /** The endpoints that carry the header `X-Treg-Route-Waterfall: 0` (a routed waterfall: without it every provider tried is billed). */
-export const NO_WATERFALL_ENDPOINTS: readonly string[] = ["treg.people.identity.resolve"];
+export const NO_WATERFALL_ENDPOINTS: readonly string[] = REVERSE_CONFIG.noWaterfall;
 export const NO_WATERFALL_HEADER = "X-Treg-Route-Waterfall";
 
 /** Endpoints that answer about the COMPANY of an e-mail's domain: a mailbox at a public provider has no company to find. */
-export const COMPANY_DOMAIN_ONLY_ENDPOINTS: readonly string[] = ["branddev.brand.retrieve-by-email"];
+export const COMPANY_DOMAIN_ONLY_ENDPOINTS: readonly string[] = REVERSE_CONFIG.companyDomainOnly;
 
 /** Phone endpoints for numbers of one country only, whatever the catalog's own text says (never automatic elsewhere). */
-export const US_ONLY_PHONE_ENDPOINTS: readonly string[] = ["enrichlayer.contacts.reverse-phone"];
+export const US_ONLY_PHONE_ENDPOINTS: readonly string[] = REVERSE_CONFIG.usOnlyPhone;
 
 const PUBLIC_MAILBOX_DOMAINS = new Set([
   "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com", "ymail.com", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "pm.me",
