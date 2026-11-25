@@ -339,3 +339,75 @@ describe("the whole snapshot: every example answer is read without an error, and
     expect(withRows).toHaveLength(725);
   });
 });
+
+describe("routedOutputOnly (D-0215 R2 opt-in & K3 isolation)", () => {
+  const routedEnvelope = {
+    output: {
+      full_name: "Lina Mansour",
+      first_name: "Lina",
+      last_name: "Mansour",
+      title: "VP Product",
+      company: "Nile Labs",
+      company_domain: "nilelabs.example",
+      linkedin_url: "https://www.linkedin.com/in/lina-mansour-demo",
+      location: "Cairo, Egypt",
+    },
+    raw: {
+      data: {
+        company: { domain: "wrong-raw.example", industry: "Software", name: "Wrong Raw Co" },
+        first_name: "Wrong",
+        id: "p_01",
+        insight: { decision_role: "exec", department: "product", location: "Wrong Raw City", seniority: "vp", summary: "Synthetic", topics: ["a", "b", "c"] },
+        last_name: "Raw",
+        linkedin: "wrong",
+        linkedin_url: "https://www.linkedin.com/in/wrong-raw",
+        location: { city: "Alex", country_code: "ZZ" },
+        name: "Wrong Raw",
+        title: "Wrong Raw Title",
+      },
+      meta: { took_ms: 42 },
+    },
+    _treg: {
+      served_by: "crawl4ai.people.enrich",
+      provider: "crawl4ai",
+      tier: "core",
+      outcome: "hit",
+      tried: [{ endpoint_id: "crawl4ai.people.enrich", provider: "crawl4ai", outcome: "hit", status: 200, charged_micro: 950 }],
+      charged_micro: 950,
+      dropped: [{ endpoint_id: "p1", why: "cap" }],
+    },
+  };
+
+  it("T5 & K3: default hintsOf leaves customer/default reading unchanged; routedOutputOnly reads strictly from output and ignores raw/_treg", () => {
+    const endpoint = catalog.byId.get("treg.people.enrich")!;
+    const defaultRead = readShape(routedEnvelope, hintsOf(endpoint));
+    expect(defaultRead.listPath).toBe("_treg.tried");
+    expect(defaultRead.listStrategy).toBe("inferred_list");
+
+    const routedRead = readShape(routedEnvelope, { ...hintsOf(endpoint), routedOutputOnly: true });
+    expect(routedRead.listPath).toBe("output");
+    expect(routedRead.listStrategy).toBe("single_object");
+    expect(routedRead.rows).toEqual([routedEnvelope.output]);
+
+    const withRawContacts = {
+      ...routedEnvelope,
+      raw: { ...routedEnvelope.raw, data: { ...routedEnvelope.raw.data, emails: [{ email: "leak@raw.example", type: "work" }], phones: [{ phone: "+201099999999" }] } },
+    };
+    const isolatedRead = readShape(withRawContacts, { ...hintsOf(endpoint), routedOutputOnly: true });
+    expect(isolatedRead.listPath).toBe("output");
+    expect(isolatedRead.rows).toEqual([routedEnvelope.output]);
+
+    const nullOutput = readShape({ output: null, raw: withRawContacts.raw, _treg: routedEnvelope._treg }, { ...hintsOf(endpoint), routedOutputOnly: true });
+    expect(nullOutput.rows).toEqual([]);
+    expect(nullOutput.listStrategy).toBe("none");
+
+    const listOutput = readShape({ output: { items: [{ full_name: "Lina Mansour" }] }, raw: withRawContacts.raw, _treg: routedEnvelope._treg }, { routedOutputOnly: true });
+    expect(listOutput.listPath).toBe("output.items");
+    expect(listOutput.rows).toEqual([{ full_name: "Lina Mansour" }]);
+
+    const arrayOutput = readShape({ output: [{ full_name: "Lina Mansour" }], raw: withRawContacts.raw, _treg: routedEnvelope._treg }, { routedOutputOnly: true });
+    expect(arrayOutput.listPath).toBe("output");
+    expect(arrayOutput.listStrategy).toBe("list_path");
+    expect(arrayOutput.rows).toEqual([{ full_name: "Lina Mansour" }]);
+  });
+});

@@ -119,7 +119,7 @@ export async function writeSensitiveAudit(client: any, row: SensitiveAuditRow): 
   } catch { return false; }
 }
 
-async function completeSensitiveAudit(client: any, id: string, patch: Partial<Pick<SensitiveAuditRow, "cost_usd" | "outcome">>): Promise<void> {
+async function completeSensitiveAudit(client: any, id: string, patch: Partial<Pick<SensitiveAuditRow, "cost_usd" | "outcome" | "job_id">>): Promise<void> {
   if (typeof client?.from !== "function") return;
   try { await client.from(SENSITIVE_AUDIT_TABLE).update(patch).eq("id", id); } catch { /* the row was written before the call; its completion is best effort */ }
 }
@@ -139,7 +139,7 @@ export interface SensitiveCallInput<T> {
    * Makes the call (the gateway) after every check passed; returns what it cost so the audit row can say. `costUsd: null` means the charge is UNKNOWN (a cut or unreachable call
    * the source may have billed): the row then keeps `reserveUsd`, never 0.
    */
-  call: () => Promise<{ result: T; costUsd: number | null; ok: boolean }>;
+  call: () => Promise<{ result: T; costUsd: number | null; ok: boolean; jobId?: string | null }>;
   /**
    * PHASE 5 (admin reverse lookup): the most this call can cost (its route cap). When set, the «pending» row is written WITH this amount, so a call in flight already counts in any
    * sum of the day's cost read from the audit log (a concurrent request sees it), and an unknown charge keeps it. Absent: the row says nothing until the call ends (unchanged behaviour).
@@ -208,7 +208,7 @@ export async function runSensitiveCall<T>(input: SensitiveCallInput<T>): Promise
       return { ok: false, refused: refusal, auditId: id };
     }
   }
-  let out: { result: T; costUsd: number | null; ok: boolean };
+  let out: { result: T; costUsd: number | null; ok: boolean; jobId?: string | null };
   try {
     out = await input.call();
   } catch (err) {
@@ -217,7 +217,8 @@ export async function runSensitiveCall<T>(input: SensitiveCallInput<T>): Promise
     throw err;
   }
   const cost = out.costUsd === null ? reserved ?? 0 : Number(Math.max(0, out.costUsd).toFixed(6));
-  await completeSensitiveAudit(client, id, { cost_usd: cost, outcome: out.ok ? "called" : "failed" });
+  const nextJobId = typeof out.jobId === "string" && out.jobId.trim() ? out.jobId.trim() : undefined;
+  await completeSensitiveAudit(client, id, { cost_usd: cost, outcome: out.ok ? "called" : "failed", ...(nextJobId ? { job_id: nextJobId } : {}) });
   return { ok: true, result: out.result, auditId: id, auditWritten: written };
 }
 

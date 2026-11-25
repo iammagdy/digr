@@ -284,7 +284,7 @@ function extractContacts(row: Record<string, unknown>): { workEmail: string; per
 /** Name, company, title, contact fields, profile link and country read from the first row of an answer (admin screen only). A brand record (branddev) is about the COMPANY: its title is the company's name, never a job title. */
 export function extractIdentity(row: Record<string, unknown> | undefined, endpointId = ""): LookupIdentity {
   if (!row) return emptyIdentity();
-  const country = pick(row, /^(country|country_?name|country_?code|location_?country)$/i, isText);
+  const country = pick(row, /^(country|country_?name|country_?code|location_?country)$/i, isText) || pick(row, /^location$/i, isText);
   if (/^branddev\./.test(endpointId)) {
     return { ...emptyIdentity(), company: pick(row, /^(title|name|brand_?name|company_?name|company)$/i, isText), profileUrl: pick(row, /^(linkedin|linkedin_?url|url|domain)$/i, isLink), country };
   }
@@ -309,6 +309,8 @@ export interface LookupAttempt {
   note: string;
   /** PHASE 5: the answer held SEVERAL different people (by name): the first is shown, and it is NOT a confirmed match. */
   ambiguous?: boolean;
+  /** TREG call id (`x-treg-call-id`) when TREG answered. */
+  tregCallId?: string;
 }
 
 /** PHASE 5: how many DIFFERENT people (by normalized name) the rows of one answer describe. A brand record is about a company, never counted. */
@@ -394,6 +396,7 @@ export async function runLookupAttempt(input: {
   const value = parsed.value;
   let unknownCharge = false;
   let knownUsd = 0;
+  let tregCallId = "";
   /**
    * THE HARD CAP, across processes and concurrent requests (Phase 5): the pending audit row is written WITH the reservation (`reserveUsd`), then the day's sum is read again. That sum
    * holds this row and every reservation or cost written before the read; if it passes the cap the row is marked refused and nothing is called. Of two requests racing, at least one
@@ -416,7 +419,9 @@ export async function runLookupAttempt(input: {
       const charge = classifyTregCharge(r);
       unknownCharge = !charge.known;
       knownUsd = charge.known ? charge.usd : 0;
-      return { result: r, costUsd: charge.known ? charge.usd : null, ok: r.ok };
+      const rawCallId = typeof r.tregCallId === "string" ? r.tregCallId.trim() : "";
+      tregCallId = rawCallId && !/^err_\d+$/.test(rawCallId) ? rawCallId.slice(0, 120) : "";
+      return { result: r, costUsd: charge.known ? charge.usd : null, ok: r.ok, ...(tregCallId ? { jobId: `${jobId}:${tregCallId}` } : {}) };
     },
   });
   if (!out.ok) {
@@ -428,15 +433,15 @@ export async function runLookupAttempt(input: {
   const costUsd = unknownCharge ? reserveUsd : knownUsd;
   const spentAfter = spent + costUsd;
   if (!result.ok) {
-    const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : unknownCharge ? "no answer: the charge is unknown and is counted at its cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` };
+    const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : unknownCharge ? "no answer: the charge is unknown and is counted at its cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}`, ...(tregCallId ? { tregCallId } : {}) };
     return { ok: true, attempt, identity: extractIdentity(undefined), fields: input.previous ?? {}, found: false, spentTodayUsd: spentAfter, capUsd };
   }
-  const reading = readShape(result.data, hintsOf(endpoint));
+  const reading = readShape(result.data, { ...hintsOf(endpoint), ...(endpoint.kind === "routed" ? { routedOutputOnly: true } : {}) });
   const identity = extractIdentity(reading.rows[0], entry.id);
   const found = isUsefulIdentity(identity);
   const people = distinctPeopleIn(reading.rows, entry.id);
   const ambiguous = found && people > 1;
-  const attempt: LookupAttempt = { endpointId: entry.id, outcome: found ? "found" : "no_data", costUsd, note: !found ? "the source answered with no data" : ambiguous ? `ambiguous: ${people} different people answered; the first is shown, not a confirmed match` : "", ...(ambiguous ? { ambiguous: true } : {}) };
+  const attempt: LookupAttempt = { endpointId: entry.id, outcome: found ? "found" : "no_data", costUsd, note: !found ? "the source answered with no data" : ambiguous ? `ambiguous: ${people} different people answered; the first is shown, not a confirmed match` : "", ...(ambiguous ? { ambiguous: true } : {}), ...(tregCallId ? { tregCallId } : {}) };
   return { ok: true, attempt, identity, fields: found ? mergeFields(input.previous, entry.id, identity) : input.previous ?? {}, found, spentTodayUsd: spentAfter, capUsd };
 }
 

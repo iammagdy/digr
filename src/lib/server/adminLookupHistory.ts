@@ -11,7 +11,7 @@ import { classifyLookupInput } from "./adminLookup";
 export const LOOKUP_HISTORY_TABLE = "admin_lookup_history";
 export const LOOKUP_HISTORY_LIMIT = 30;
 
-export interface HistoryAttempt { endpointId: string; outcome: string; costUsd: number; note: string }
+export interface HistoryAttempt { endpointId: string; outcome: string; costUsd: number; note: string; tregCallId?: string }
 export interface HistoryEntry {
   id: string;
   createdAt: string;
@@ -35,7 +35,7 @@ export function sanitizeEntry(raw: any, rawInput: unknown): Omit<HistoryEntry, "
     const f = raw?.fields?.[key];
     if (f && typeof f.value === "string" && f.value.trim()) fields[key] = { value: clip(f.value, 160), source: clip(f.source, 80) };
   }
-  const attempts: HistoryAttempt[] = (Array.isArray(raw?.attempts) ? raw.attempts : []).slice(0, 16).map((a: any) => ({ endpointId: clip(a?.endpointId, 80), outcome: clip(a?.outcome, 24), costUsd: Math.max(0, Number(a?.costUsd) || 0), note: clip(a?.note, 120) }));
+  const attempts: HistoryAttempt[] = (Array.isArray(raw?.attempts) ? raw.attempts : []).slice(0, 16).map((a: any) => ({ endpointId: clip(a?.endpointId, 80), outcome: clip(a?.outcome, 24), costUsd: Math.max(0, Number(a?.costUsd) || 0), note: clip(a?.note, 120), ...(typeof a?.tregCallId === "string" && a.tregCallId.trim() ? { tregCallId: clip(a.tregCallId, 120) } : {}) }));
   return { kind: parsed.kind, maskedInput: maskLookupValue(parsed.value), found: Object.keys(fields).length > 0, fields, attempts, costUsd: Number(attempts.reduce((s, a) => s + a.costUsd, 0).toFixed(6)) };
 }
 
