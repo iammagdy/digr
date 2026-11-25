@@ -21357,6 +21357,30 @@
    }
   },
   "reverseLookup": {
+   "emailOrder": [
+    "fiber-ai.people.identity.resolve",
+    "blitzapi.people.email.reverse",
+    "quickenrich.people.enrich",
+    "aiark.people.enrich",
+    "findymail.search.reverse-email",
+    "treg.people.identity.resolve",
+    "branddev.brand.retrieve-by-email",
+    "companyenrich.people.lookup"
+   ],
+   "phoneOrder": [
+    "getleadsio.people.phone.lookup",
+    "blitzapi.people.phone.reverse",
+    "enrichlayer.contacts.reverse-phone"
+   ],
+   "noWaterfall": [
+    "treg.people.identity.resolve"
+   ],
+   "companyDomainOnly": [
+    "branddev.brand.retrieve-by-email"
+   ],
+   "usOnlyPhone": [
+    "enrichlayer.contacts.reverse-phone"
+   ],
    "adminOnly": [
     {
      "id": "treg.people.enrich",
@@ -21539,6 +21563,14 @@
     }
    },
    "changelog_latest": "2026-11-12"
+  }
+ },
+ "multiProvider": {
+  "singleRouteId": "single:treg-companies",
+  "websiteShare": {
+   "treg.companies.search": 0.7,
+   "firecrawl.search": 0.5,
+   "contextdev.search": 0.5
   }
  }
 }
