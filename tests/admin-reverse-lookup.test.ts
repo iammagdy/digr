@@ -13,7 +13,9 @@ import { ADMIN_LOOKUP_DAILY_CAP_USD, ADMIN_LOOKUP_PURPOSE, classifyLookupInput, 
 import { policyRuleOf } from "../src/lib/treg/dataPolicy";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { EMAIL_REVERSE_ORDER, PHONE_REVERSE_ORDER, applyReverseOrder, isCompanyDomainEmail } from "../src/lib/treg/reverseOrder";
-import { mergeFields } from "../src/lib/adminLookupResult";
+import { saveLookupHistory, sanitizeEntry, loadLookupHistory } from "../src/lib/server/adminLookupHistory";
+import { FIELD_KEYS, mergeFields } from "../src/lib/adminLookupResult";
+import { runProviderSync } from "../scripts/capabilities/sync-providers";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
 
 const catalog = loadTregCatalog();
@@ -209,9 +211,9 @@ describe("the admin reverse-lookup tool: the order live evidence gave", () => {
   });
 
   it("the identity is read from whatever shape the source answers (flat, nested, split first and last name, with its country); a brand record is a COMPANY, its title is never a job title", () => {
-    expect(extractIdentity({ first_name: "Sara", last_name: "Ahmed", employer: "Acme", headline: "CEO", linkedin_profile_url: "https://linkedin.com/in/s", country_code: "EG" })).toEqual({ name: "Sara Ahmed", company: "Acme", title: "CEO", profileUrl: "https://linkedin.com/in/s", country: "EG" });
+    expect(extractIdentity({ first_name: "Sara", last_name: "Ahmed", employer: "Acme", headline: "CEO", linkedin_profile_url: "https://linkedin.com/in/s", country_code: "EG" })).toEqual({ name: "Sara Ahmed", company: "Acme", title: "CEO", workEmail: "", personalEmail: "", phone: "", profileUrl: "https://linkedin.com/in/s", country: "EG" });
     expect(extractIdentity({ result: { person: { name: "X Y" } } }).name).toBe("X Y");
-    expect(extractIdentity(undefined)).toEqual({ name: "", company: "", title: "", profileUrl: "", country: "" });
+    expect(extractIdentity(undefined)).toEqual({ name: "", company: "", title: "", workEmail: "", personalEmail: "", phone: "", profileUrl: "", country: "" });
     expect(extractIdentity({ title: "Acme Industries", domain: "acme.com" }, "branddev.brand.retrieve-by-email")).toMatchObject({ company: "Acme Industries", title: "", name: "" });
   });
 });
@@ -296,5 +298,123 @@ describe("the admin API route: admin only, plan / attempt / save, the history", 
     const page = readFileSync("src/app/admin/reverse-lookup/page.tsx", "utf-8");
     for (const needle of ["بحث عكسي", "بحث أعمق", "دولار", "جارٍ البحث", "disabled={busy", "aria-busy", "يعمل الآن", "lookup-running", "lookup-paid", "أؤكد دفع", "warningAr", "field-", "source", "سجل البحث", "بلا مكالمة جديدة", "localStorage", "action: \"attempt\"", "action: \"plan\"", "action: \"save\""]) expect(page, needle).toContain(needle);
     expect(readFileSync("src/components/admin/icons.tsx", "utf-8")).toContain('["reverse-lookup", "بحث عكسي"]');
+  });
+});
+
+describe("DT-20261125-people-search-admin: admin-only treg.people.enrich & social_url (A1-A3, D1-D4, M1-M7, C1-C5)", () => {
+  it("M1 & A3: email candidates/plan on the real catalog preserve EMAIL_REVERSE_ORDER first and place treg.people.enrich immediately after them and before catalog others in confirm state ($0.28)", () => {
+    const listedIds = EMAIL_REVERSE_ORDER.filter((id) => catalog.byId.has(id));
+    const candidates = lookupCandidates("email", catalog, policyRuleOf);
+    expect(candidates.slice(0, listedIds.length).map((c) => c.id)).toEqual(listedIds);
+    expect(candidates[listedIds.length]).toMatchObject({ id: "treg.people.enrich", paramName: "email", costUsd: 0.28, paid: true, confirm: true, waterfall: true });
+
+    const plan = lookupPlan("email", "sara@acme.com", catalog, policyRuleOf);
+    expect(plan.slice(0, listedIds.length).map((p) => p.state)).toEqual(listedIds.map(() => "auto"));
+    expect(plan[listedIds.length]).toEqual({ id: "treg.people.enrich", paramName: "email", usd: 0.28, paid: true, state: "confirm" });
+    expect(candidates.map((c) => c.id)).toEqual([...listedIds, "treg.people.enrich"]);
+    expect(readFileSync("src/lib/server/adminLookup.ts", "utf-8")).toContain("return [...out, ...adminOnly, ...others];");
+  });
+
+  it("M2 & C4: LinkedIn /in/ profile URLs normalize cleanly as social_url and plan ONLY treg.people.enrich; other URLs/company pages are refused at 0 cost", async () => {
+    for (const raw of [
+      "https://www.linkedin.com/in/sara-ahmed",
+      "https://linkedin.com/in/sara-ahmed/",
+      "https://www.linkedin.com/in/sara-ahmed?trk=qa#profile",
+      "http://www.linkedin.com/in/sara-ahmed",
+    ]) {
+      expect(classifyLookupInput(raw), raw).toEqual({ kind: "social_url", value: raw.replace(/^http:\/\//i, "https://").replace(/[?#].*$/, "").replace(/\/+$/, "") });
+    }
+    for (const bad of ["https://x.com/someone", "https://www.linkedin.com/company/acme", "https://www.linkedin.com/in/", "https://evil.linkedin.com/in/sara", "ftp://www.linkedin.com/in/sara"]) {
+      expect(classifyLookupInput(bad), bad).toBeNull();
+    }
+
+    const plan = lookupPlan("social_url", "https://www.linkedin.com/in/sara-ahmed", catalog, policyRuleOf);
+    expect(plan).toEqual([{ id: "treg.people.enrich", paramName: "linkedin_url", usd: 0.28, paid: true, state: "confirm" }]);
+
+    const autoOut = await runAdminLookup({ client: state.client, adminId: "adm-1", text: "https://www.linkedin.com/in/sara-ahmed", call: async () => { throw new Error("should not call"); } });
+    expect(autoOut).toMatchObject({ ok: false, reason: "no_endpoint" });
+  });
+
+  it("M3 & C1: phone plan and customer reverseOrder remain unchanged (treg.people.enrich absent)", () => {
+    expect(lookupCandidates("phone", catalog, policyRuleOf).map((c) => c.id)).not.toContain("treg.people.enrich");
+    expect(EMAIL_REVERSE_ORDER).not.toContain("treg.people.enrich");
+    expect(PHONE_REVERSE_ORDER).not.toContain("treg.people.enrich");
+    expect(applyReverseOrder(["x.a", "treg.people.enrich", "quickenrich.people.enrich"], (s) => s)).toEqual(["x.a", "treg.people.enrich", "quickenrich.people.enrich"]);
+  });
+
+  it("M4 & M5: extractIdentity & attempt capture workEmail, personalEmail, phone with source, and miss reports $0 no_data", async () => {
+    expect(FIELD_KEYS).toContain("workEmail");
+    expect(FIELD_KEYS).toContain("personalEmail");
+    expect(FIELD_KEYS).toContain("phone");
+    const enriched = { data: { person: { full_name: "Sara Ahmed", company: "Acme Co", job_title: "CTO", work_email: "sara@acme.com", personal_email: "sara.personal@gmail.com", phone_number: "+201001112233", linkedin_url: "https://www.linkedin.com/in/sara-ahmed", country: "Egypt" } } };
+    const { calls, call } = fakeCall({ "treg.people.enrich": enriched }, () => 950);
+    const out = await runLookupAttempt({ client: state.client, adminId: "adm-1", text: "https://www.linkedin.com/in/sara-ahmed", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call });
+    expect(out.ok && out.found).toBe(true);
+    expect(out.ok && out.fields).toMatchObject({
+      name: { value: "Sara Ahmed", source: "treg.people.enrich" },
+      workEmail: { value: "sara@acme.com", source: "treg.people.enrich" },
+      personalEmail: { value: "sara.personal@gmail.com", source: "treg.people.enrich" },
+      phone: { value: "+201001112233", source: "treg.people.enrich" },
+    });
+    expect(calls[0].params).toEqual({ linkedin_url: "https://www.linkedin.com/in/sara-ahmed" });
+
+    const miss = fakeCall({ "treg.people.enrich": nothing }, () => 0);
+    const missOut = await runLookupAttempt({ client: state.client, adminId: "adm-1", text: "https://www.linkedin.com/in/missing-person", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call: miss.call });
+    expect(missOut).toMatchObject({ ok: true, found: false, attempt: { outcome: "no_data", costUsd: 0 } });
+  });
+
+  it("M6 & A1: confirmation gate refuses < 0.28, and confirmed call enables waterfall (no X-Treg-Route-Waterfall: 0 header) bounded by routeMaxCostUsd <= confirmedUsd <= 0.28", async () => {
+    const { calls, call } = fakeCall({ "treg.people.enrich": person }, () => 120_000);
+    const low = await runLookupAttempt({ client: state.client, adminId: "adm-1", text: "sara@acme.com", endpointId: "treg.people.enrich", confirmedUsd: 0.2, call });
+    expect(low).toMatchObject({ ok: false, reason: "needs_confirmation", priceUsd: 0.28 });
+    expect(calls).toHaveLength(0);
+
+    const okRun = await runLookupAttempt({ client: state.client, adminId: "adm-1", text: "sara@acme.com", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call });
+    expect(okRun).toMatchObject({ ok: true, found: true, attempt: { outcome: "found", costUsd: 0.12 } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].routeWaterfall).toBeUndefined();
+    expect(calls[0].routeMaxCostUsd).toBeLessThanOrEqual(0.28);
+  });
+
+  it("M7 & A2: history sanitizeEntry/loadLookupHistory/saveLookupHistory accept social_url & contact fields, and DB CHECK rejection falls back cleanly with stored: false", async () => {
+    const rawResult = { fields: { workEmail: { value: "sara@acme.com", source: "treg.people.enrich" }, phone: { value: "+201001112233", source: "treg.people.enrich" } }, attempts: [{ endpointId: "treg.people.enrich", outcome: "found", costUsd: 0.05, note: "" }] };
+    const clean = sanitizeEntry(rawResult, "https://www.linkedin.com/in/sara-ahmed?trk=1");
+    expect(clean).toMatchObject({ kind: "social_url", maskedInput: "www.linkedin.com/***", found: true, costUsd: 0.05, fields: rawResult.fields });
+
+    state.client.seed("admin_lookup_history", [{ id: "row-1", created_at: "2026-11-25T10:00:00Z", kind: "social_url", masked_input: "www.linkedin.com/***", found: true, result: rawResult, cost_usd: 0.05 }]);
+    const loaded = await loadLookupHistory(state.client);
+    expect(loaded.available).toBe(true);
+    expect(loaded.rows[0]).toMatchObject({ id: "row-1", kind: "social_url", maskedInput: "www.linkedin.com/***", fields: rawResult.fields });
+
+    // Counter-case A2: server table CHECK constraint rejects social_url -> save returns stored: false without throwing
+    const rejectingClient = { from: () => ({ insert: async () => ({ data: null, error: { message: "new row violates check constraint admin_lookup_history_kind_check" } }) }) };
+    await expect(saveLookupHistory(rejectingClient, "adm-1", clean!)).resolves.toEqual({ stored: false, id: null });
+  });
+
+  it("D3: runProviderSync preserves treg.reverseLookup in baselineNext", async () => {
+    const metadata = JSON.parse(readFileSync("data/capabilities/provider-metadata.json", "utf-8"));
+    const writeIds = new Set((JSON.parse(readFileSync("data/treg/treg_write_actions.json", "utf-8")) as Array<{ id: string }>).map((w) => w.id));
+    const snapshot = (JSON.parse(readFileSync("data/treg/treg_catalog_sellable.json", "utf-8")) as { endpoints: any[] }).endpoints;
+    const registry = JSON.parse(readFileSync("data/capabilities/registry.json", "utf-8"));
+    const out = await runProviderSync({
+      registry,
+      snapshot,
+      writeIds,
+      baseline: metadata,
+      fetchText: async () => ({ ok: false, error: "offline" }),
+      date: "2026-11-25",
+    });
+    expect(out.baselineNext.treg.reverseLookup).toEqual(metadata.treg.reverseLookup);
+  });
+
+  it("C3 & route social_url plan: API authenticates admin before plan/attempt/save for social_url", async () => {
+    const post = (body: unknown) => import("../src/app/api/admin/reverse-lookup/route").then((m) => m.POST(new NextRequest("http://127.0.0.1:3000/api/admin/reverse-lookup", { method: "POST", body: JSON.stringify(body) })));
+    state.admin = false;
+    expect((await post({ action: "plan", input: "https://www.linkedin.com/in/sara-ahmed" })).status).toBe(403);
+    state.admin = true;
+    const res = await post({ action: "plan", input: "https://www.linkedin.com/in/sara-ahmed" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, kind: "social_url", plan: [{ id: "treg.people.enrich", paramName: "linkedin_url", usd: 0.28, paid: true, state: "confirm" }] });
+    expect((await post({ action: "plan", input: "https://www.linkedin.com/company/acme" })).status).toBe(400);
   });
 });

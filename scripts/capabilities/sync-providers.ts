@@ -128,7 +128,7 @@ export interface WebBaseline { summary: OpenApiSummary; changelog_latest: string
 export interface ProviderBaseline {
   version: 1;
   synced_at: string;
-  treg: { treg_version: string | null; paused_providers: string[]; contracts: Record<string, BaselineContract>; missionListedServices?: Record<string, unknown> };
+  treg: { treg_version: string | null; paused_providers: string[]; contracts: Record<string, BaselineContract>; missionListedServices?: Record<string, unknown>; reverseLookup?: Record<string, unknown> };
   web: { firecrawl: WebBaseline | null; contextdev: WebBaseline | null };
 }
 export const emptyBaseline = (): ProviderBaseline => ({ version: 1, synced_at: "", treg: { treg_version: null, paused_providers: [], contracts: {} }, web: { firecrawl: null, contextdev: null } });
@@ -262,6 +262,7 @@ export async function runProviderSync(input: SyncInput): Promise<SyncReport> {
   next.treg.treg_version = metaFetched ? String(metaJson.treg_version ?? "") || null : (baseline?.treg.treg_version ?? null);
   next.treg.paused_providers = [...paused].sort();
   if (baseline?.treg.missionListedServices) next.treg.missionListedServices = baseline.treg.missionListedServices;
+  if (baseline?.treg.reverseLookup) next.treg.reverseLookup = baseline.treg.reverseLookup;
   for (const id of tregIds) {
     const live = after.get(id);
     const raw = rawAfter.get(id);

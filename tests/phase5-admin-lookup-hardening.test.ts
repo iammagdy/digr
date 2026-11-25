@@ -237,3 +237,41 @@ describe("Phase 5: input compatibility and ambiguous matches (simulated answers)
     expect(readFileSync("src/app/admin/reverse-lookup/page.tsx", "utf-8")).toContain("lookup-ambiguous");
   });
 });
+
+describe("DT-20261125-people-search-admin: money cap, unknown charge, audit & A2 UI fallback hardening for treg.people.enrich", () => {
+  it("M6/A1: respects $2 daily cap, sends routeMaxCostUsd <= confirmedUsd <= 0.28 without disabling waterfall, and keeps $0.28 reservation on timeout/unknown charge", async () => {
+    const db = createMemoryDb();
+    seedSpent(db, 1.8);
+    const calls: TregCallOptions[] = [];
+    const over = await runLookupAttempt({ client: db, adminId: "adm-1", text: "https://www.linkedin.com/in/sara", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call: async (o) => { calls.push(o); return ok(person, 100_000); }, now: NOW });
+    expect(over).toMatchObject({ ok: false, reason: "daily_cap" });
+    expect(calls).toHaveLength(0);
+
+    const db2 = createMemoryDb();
+    const seen: TregCallOptions[] = [];
+    const timeoutOut = await runLookupAttempt({ client: db2, adminId: "adm-1", text: "https://www.linkedin.com/in/sara", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call: async (o) => { seen.push(o); return { ok: false, httpStatus: 503, tregCallId: "", costMicro: 0, latencyMs: 15000, data: null, error: "network_failure", timedOut: true, isRouteMaxCost: false, isPlatformBalanceLow: false } as any; }, now: NOW });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].routeWaterfall).toBeUndefined();
+    expect(seen[0].routeMaxCostUsd).toBeLessThanOrEqual(0.28);
+    expect(timeoutOut.ok && timeoutOut.attempt).toMatchObject({ outcome: "failed", costUsd: 0.28 });
+    expect(db2.rows("sensitive_lookup_audit")[0]).toMatchObject({ outcome: "failed", cost_usd: 0.28 });
+  });
+
+  it("fail-closed audit refuses treg.people.enrich when sensitive_lookup_audit is absent (0 calls)", async () => {
+    const db = createMemoryDb({ missing: ["sensitive_lookup_audit"] });
+    const calls: string[] = [];
+    const out = await runLookupAttempt({ client: db, adminId: "adm-1", text: "https://www.linkedin.com/in/sara", endpointId: "treg.people.enrich", confirmedUsd: 0.28, call: async (o) => { calls.push(o.endpointId); return ok(person, 1000); }, now: NOW });
+    expect(out).toMatchObject({ ok: false, reason: "audit_unavailable" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("A2/M7: page keeps result display untouched when server save fails/rejects social_url, while withoutFields preserves social_url kind and strips fields from localStorage", () => {
+    const page = readFileSync("src/app/admin/reverse-lookup/page.tsx", "utf-8");
+    expect(page).toContain('"social_url"');
+    expect(page).toContain("maskOf");
+    expect(page).toMatch(/withoutFields = [^\n]*fields: \{\}/);
+    const writes = page.match(/localStorage\.setItem\([^)]*/g) ?? [];
+    expect(writes.length).toBe(2);
+    for (const w of writes) expect(w).toMatch(/HISTORY_KEY, JSON\.stringify\((withoutFields|merged)/);
+  });
+});

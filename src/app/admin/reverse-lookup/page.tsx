@@ -12,12 +12,12 @@ const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4
 
 interface PlanEntry { id: string; paramName: string; usd: number; paid: boolean; state: "auto" | "confirm" | "skipped"; skipReasonAr?: string; warningAr?: string }
 interface Attempt { endpointId: string; outcome: string; costUsd: number; note: string; ambiguous?: boolean }
-interface HistoryRow { id: string; createdAt: string; kind: "phone" | "email"; maskedInput: string; found: boolean; fields: LookupFields; attempts: Attempt[]; costUsd: number }
+interface HistoryRow { id: string; createdAt: string; kind: "phone" | "email" | "social_url"; maskedInput: string; found: boolean; fields: LookupFields; attempts: Attempt[]; costUsd: number }
 interface AttemptReply { ok: boolean; reason?: string; attempt?: Attempt; found?: boolean; fields?: LookupFields; spentTodayUsd?: number; capUsd?: number; message?: string }
 
 const ATTEMPT_AR: Record<string, string> = { found: "وجد بيانات", no_data: "لا بيانات", failed: "فشل", skipped_country: "تخطّاه: لا يغطي دولة الرقم", skipped: "تخطّاه", cap: "أوقفه الحد اليومي", needs_confirmation: "ينتظر تأكيد السعر" };
 const REASON_AR: Record<string, string> = {
-  bad_input: "اكتب رقم هاتف أو بريدًا إلكترونيًا صحيحًا.",
+  bad_input: "اكتب رقم هاتف أو بريدًا إلكترونيًا أو رابط ملف شخصي على لينكدإن صحيحًا.",
   daily_cap: "بلغ البحث العكسي حدّه اليومي من التكلفة؛ جرّب غدًا.",
   audit_unavailable: "تعذّر تسجيل البحث في سجل المراجعة فلم يُنفَّذ.",
   needs_confirmation: "هذه الخدمة مدفوعة: أكّد سعرها أولًا.",
@@ -32,7 +32,7 @@ const REASON_AR: Record<string, string> = {
 const HISTORY_KEY = "diger.admin.reverseLookupHistory.v2";
 const LEGACY_HISTORY_KEY = "diger.admin.reverseLookupHistory.v1";
 const HISTORY_MAX = 30;
-const withoutFields = (rows: unknown): HistoryRow[] => (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object").map((r: HistoryRow) => ({ id: String(r.id), createdAt: String(r.createdAt), kind: r.kind === "email" ? "email" : "phone", maskedInput: String(r.maskedInput ?? ""), found: Boolean(r.found), fields: {}, attempts: Array.isArray(r.attempts) ? r.attempts : [], costUsd: Number(r.costUsd) || 0 }));
+const withoutFields = (rows: unknown): HistoryRow[] => (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object").map((r: HistoryRow) => ({ id: String(r.id), createdAt: String(r.createdAt), kind: r.kind === "email" ? "email" : r.kind === "social_url" ? "social_url" : "phone", maskedInput: String(r.maskedInput ?? ""), found: Boolean(r.found), fields: {}, attempts: Array.isArray(r.attempts) ? r.attempts : [], costUsd: Number(r.costUsd) || 0 }));
 const readLocalHistory = (): HistoryRow[] => {
   try {
     const legacy = window.localStorage.getItem(LEGACY_HISTORY_KEY);
@@ -48,7 +48,7 @@ const writeLocalHistory = (rows: HistoryRow[]) => { try { window.localStorage.se
 
 /** USD with Arabic-Indic digits: this screen is admin-only, the only place a cost in dollars is shown. */
 const usd = (n: number) => `${toArabicDigits(n.toFixed(4))} دولار`;
-const maskOf = (raw: string) => { const t = raw.trim(); if (t.includes("@")) return `*@${t.split("@")[1] ?? ""}`; const d = t.replace(/\D/g, ""); return `***${d.slice(-3)}`; };
+const maskOf = (raw: string) => { const t = raw.trim(); if (t.includes("@")) return `*@${t.split("@")[1] ?? ""}`; if (/^https?:\/\//i.test(t)) { try { return `${new URL(t).hostname.toLowerCase()}/***`; } catch { return "***"; } } const d = t.replace(/\D/g, ""); return `***${d.slice(-3)}`; };
 
 export default function AdminReverseLookupPage() {
   const { toast } = useAdmin();
@@ -67,6 +67,7 @@ export default function AdminReverseLookupPage() {
   const [reopened, setReopened] = useState<HistoryRow | null>(null);
   const [message, setMessage] = useState("");
   const inputValue = useRef("");
+  const inputKind = useRef<HistoryRow["kind"]>("email");
   // every attempt of THIS lookup, kept synchronously so the history row saved at the end carries all of them
   const attemptsRef = useRef<Attempt[]>([]);
   const pushAttempt = (a: Attempt) => { attemptsRef.current = [...attemptsRef.current, a]; setAttempts(attemptsRef.current); };
@@ -96,12 +97,13 @@ export default function AdminReverseLookupPage() {
 
   async function saveHistory(finalFields: LookupFields, finalAttempts: Attempt[]) {
     if (fieldCount(finalFields) === 0 && finalAttempts.every((a) => a.costUsd === 0)) return;
-    const row: HistoryRow = { id: `local_${Date.now()}`, createdAt: new Date().toISOString(), kind: inputValue.current.includes("@") ? "email" : "phone", maskedInput: maskOf(inputValue.current), found: fieldCount(finalFields) > 0, fields: finalFields, attempts: finalAttempts, costUsd: Number(finalAttempts.reduce((s, a) => s + a.costUsd, 0).toFixed(6)) };
+    const row: HistoryRow = { id: `local_${Date.now()}`, createdAt: new Date().toISOString(), kind: inputKind.current, maskedInput: maskOf(inputValue.current), found: fieldCount(finalFields) > 0, fields: finalFields, attempts: finalAttempts, costUsd: Number(finalAttempts.reduce((s, a) => s + a.costUsd, 0).toFixed(6)) };
     try {
       const r = await post<{ stored: boolean; id: string | null }>({ action: "save", result: { fields: finalFields, attempts: finalAttempts } });
       if (r.stored) { setHistoryOnServer(true); setHistory((h) => [{ ...row, id: r.id ?? row.id }, ...h].slice(0, HISTORY_MAX)); return; }
     } catch { /* kept in the browser below */ }
-    const next = [row, ...readLocalHistory()].slice(0, HISTORY_MAX);
+    const maskedRow = withoutFields([row])[0];
+    const next = [maskedRow, ...readLocalHistory()].slice(0, HISTORY_MAX);
     writeLocalHistory(next);
     setHistory(next);
   }
@@ -131,7 +133,8 @@ export default function AdminReverseLookupPage() {
     attemptsRef.current = []; setBusy(true); setReopened(null); setAttempts([]); setFields({}); setFinished(false); setConfirming(null); setMessage(""); setCursor(0);
     inputValue.current = text.trim();
     try {
-      const p = await post<{ ok: boolean; plan: PlanEntry[] }>({ action: "plan" });
+      const p = await post<{ ok: boolean; kind?: HistoryRow["kind"]; plan: PlanEntry[] }>({ action: "plan" });
+      if (p.kind) inputKind.current = p.kind;
       setPlan(p.plan);
       const r = await walk(p.plan, 0, {});
       await saveHistory(r.fields, attemptsRef.current);
@@ -168,8 +171,8 @@ export default function AdminReverseLookupPage() {
     <div className="flex flex-col gap-4" dir="rtl">
       <section className={SECTION} aria-label="بحث عكسي">
         <h2 className="m-0 text-base font-semibold text-ink">بحث عكسي</h2>
-        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">اكتب رقم هاتف أو بريدًا إلكترونيًا. البريد يمرّ على الخدمات بترتيبها المبني على التجربة ويتوقف عند أول إجابة مفيدة، و«بحث أعمق» يكمل ويضم الحقول. الهاتف يستخدم الخدمات المجانية فقط، وأي خدمة مدفوعة لا تعمل إلا بعد أن تؤكد سعرها. لا نقاط من أي عميل، وكل بحث يُسجَّل في سجل المراجعة.</p>
-        <input className={FIELD} inputMode="email" dir="ltr" placeholder="+20… أو name@company.com" value={text} onChange={(e) => setText(e.target.value)} aria-label="رقم الهاتف أو البريد" disabled={busy} onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
+        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">اكتب رقم هاتف أو بريدًا إلكترونيًا أو رابط ملف شخصي على لينكدإن. البريد يمرّ على الخدمات بترتيبها المبني على التجربة ويتوقف عند أول إجابة مفيدة، و«بحث أعمق» يكمل ويضم الحقول. الهاتف يستخدم الخدمات المجانية فقط، ورابط لينكدإن والخدمات المدفوعة لا تعمل إلا بعد أن تؤكد سعرها. لا نقاط من أي عميل، وكل بحث يُسجَّل في سجل المراجعة.</p>
+        <input className={FIELD} inputMode="text" dir="ltr" placeholder="+20… أو name@company.com أو https://www.linkedin.com/in/…" value={text} onChange={(e) => setText(e.target.value)} aria-label="رقم الهاتف أو البريد أو رابط لينكدإن" disabled={busy} onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
         <div className="flex flex-wrap gap-2">
           <button type="button" className={BTN} disabled={busy || !text.trim()} onClick={start} data-testid="lookup-start" aria-busy={busy}>{busy ? "جارٍ البحث…" : "بحث"}</button>
           {hasDeeper && !reopened ? <button type="button" className={BTN} disabled={busy} onClick={deeper} data-testid="lookup-deeper">بحث أعمق</button> : null}
@@ -213,7 +216,7 @@ export default function AdminReverseLookupPage() {
               {FIELD_KEYS.filter((k) => shownFields[k]?.value).map((k) => (
                 <div key={k} className="contents" data-testid={`field-${k}`}>
                   <dt className="font-medium text-ink2">{FIELD_LABEL_AR[k]}</dt>
-                  <dd className="m-0 text-ink" dir={k === "profileUrl" ? "ltr" : undefined}>{k === "profileUrl" ? <a className="underline" href={shownFields[k]!.value} target="_blank" rel="noreferrer noopener">{shownFields[k]!.value}</a> : shownFields[k]!.value}</dd>
+                  <dd className="m-0 text-ink" dir={k === "profileUrl" || k === "workEmail" || k === "personalEmail" || k === "phone" ? "ltr" : undefined}>{k === "profileUrl" ? <a className="underline" href={shownFields[k]!.value} target="_blank" rel="noreferrer noopener">{shownFields[k]!.value}</a> : shownFields[k]!.value}</dd>
                   <dd className="m-0 text-[11px] text-mut" dir="ltr">{shownFields[k]!.source}</dd>
                 </div>
               ))}
