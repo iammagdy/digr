@@ -21,10 +21,6 @@
       "pattern": "/^﻿/"
     },
     {
-      "file": "agent/src/items/ingest.ts",
-      "pattern": "/desc|about|summary|bio|overview|نبذ|وصف/i"
-    },
-    {
       "file": "agent/src/llmPlanner/planner.ts",
       "pattern": "/(\\d)[٬,](?=\\d{3})/g"
     },
@@ -111,14 +107,6 @@
     {
       "file": "agent/src/tools.ts",
       "pattern": "`غير\\\\s+م?(?:صف|فلتر)(?:ي|ه|ات|اه|ا)?(?!${ar})`"
-    },
-    {
-      "file": "agent/src/workbook.ts",
-      "pattern": "/^(?:اسم(?:\\s|$)|الاسم|الناشر|الكاتب|المعلّق|المعلق|كاتب|الشركة|القناة|الصفحة|المصدر|صاحب|اسم الشركة|اسم الموظف)/"
-    },
-    {
-      "file": "agent/src/workbook.ts",
-      "pattern": "/^تم تسليم/"
     },
     {
       "file": "src/app/admin/agent/page.tsx",
@@ -5611,10 +5599,6 @@
       "token": "x"
     },
     {
-      "file": "agent/src/companyPeopleRecovery.ts",
-      "token": "youtube"
-    },
-    {
       "file": "agent/src/compiled.ts",
       "token": "youtube"
     },
@@ -5637,10 +5621,6 @@
     {
       "file": "agent/src/gateway.ts",
       "token": "you"
-    },
-    {
-      "file": "agent/src/items/ingest.ts",
-      "token": "x"
     },
     {
       "file": "agent/src/llmPlanner/planner.ts",

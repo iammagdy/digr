@@ -1,3 +1,4 @@
+import platformHostsRaw from "../../data/capabilities/platform-hosts.json";
 import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../src/lib/agentMission/childSources";
 import { isContactSource, requestWantsContacts } from "../../src/lib/agentMission/contacts";
 import { firstSentenceAr, validateAndPricePlan, type PricedPlan, type SavedEndpointCallDetail } from "../../src/lib/agentMission/plan";
@@ -371,10 +372,7 @@ export function buildSavedCompanyMapCode(rowExpr: string, extraFields: ReadonlyA
   ].join("\n");
 }
 
-const SOCIAL_OR_PLATFORM_HOSTS = new Set([
-  "linkedin.com", "lnkd.in", "facebook.com", "fb.com", "twitter.com", "x.com",
-  "instagram.com", "youtube.com", "youtu.be", "t.me", "tiktok.com", "github.com",
-]);
+const SOCIAL_OR_PLATFORM_HOSTS = new Set<string>(platformHostsRaw);
 const LINKEDIN_NUMERIC_ID = /^\d{4,15}$/;
 const URN_COMPANY_ID = /^urn:li:[^:]+:(\d{4,15})$/i;
 const PARAMS_IGNORE_FOR_LINK = /^(?:page|per_?page|limit|max_?results|count|size|offset|country|country_code|cursor)$/i;

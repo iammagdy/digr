@@ -68,9 +68,8 @@ export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row
  */
 const DIRECTION_MARKS = /[\u202a-\u202e\u200e\u200f\u2066-\u2069]/g;
 export const withoutDirectionMarks = (v: unknown): unknown => (typeof v === "string" ? v.replace(DIRECTION_MARKS, "") : v);
-const NAME_KEY = /(^|_)(name|full_?name|first_?name|last_?name|display_?name|author|author_?name|username|user_?name|parent_company|company|company_?name|channel|channel_?name|page|page_?name|owner|publisher|uploader|creator|poster|contact)$/i;
-const NAME_TITLE = /^(?:اسم(?:\s|$)|الاسم|الناشر|الكاتب|المعلّق|المعلق|كاتب|الشركة|القناة|الصفحة|المصدر|صاحب|اسم الشركة|اسم الموظف)/;
-const isNameColumn = (c: SheetColumn): boolean => (c.key !== undefined && NAME_KEY.test(c.key)) || NAME_TITLE.test(c.title.trim());
+const NAME_KEY = /(^|_)(name|full_?name|first_?name|last_?name|display_?name|person|person_?name|author|author_?name|username|user_?name|parent_company|company|company_?name|channel|channel_?name|page|page_?name|owner|publisher|uploader|creator|poster|contact)$/i;
+const isNameColumn = (c: SheetColumn): boolean => c.key !== undefined && NAME_KEY.test(c.key);
 
 const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isInternalColumn(c));
 
@@ -88,8 +87,9 @@ const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (t
 
 export const MISSING_LABELS: ReadonlySet<string> = new Set([COUNTER_UNAVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR]);
 
-export const isMetaColumnKey = (c: { availability?: boolean; key?: string }): boolean =>
+export const isMetaColumnKey = (c: { availability?: boolean; key?: string; kind?: string }): boolean =>
   c.availability === true ||
+  c.kind === "context" ||
   c.key === undefined ||
   c.key === "__row_number" ||
   c.key === VERIFICATION_NOTE_KEY ||
@@ -185,7 +185,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         if (twin && !rawSheet) continue;
         const title = titles.has(pc.title_ar) || own.some((c) => c.title_ar === pc.title_ar) ? `${pc.title_ar} (${parentInfo.s.title_ar})` : pc.title_ar;
         titles.add(title);
-        columns.push({ title, get, kind: "context", link: isUrl(values.find((v) => text(v)) ?? "") });
+        columns.push({ title, get, kind: "context", key: pc.key, link: isUrl(values.find((v) => text(v)) ?? "") });
       }
     }
     // 2. the stage's own readable columns, without a repeated title or a copy of another column
@@ -400,7 +400,7 @@ function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: R
   const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, a.repliesJudged);
   const publicPlan = customerPlanView(plan);
   const compiled = plan.compiled?.by === "compiler";
-  const chatLine = customerMissionView({ requestText: a.requestText ?? "", mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
+  const chatLine = customerMissionView({ requestText: a.requestText ?? "", mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => l.startsWith("تم تسليم")) ?? null;
   const chat = parseDeliveredLine(chatLine);
   // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
   const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true && !st.per_parent_asked).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
@@ -420,7 +420,7 @@ function runContract(a: { requestText?: string; plan: PricedPlan; rowsByStage: R
     if (f.kind === "precision") {
       const lay = layouts.find((l) => l.stage.key === f.stageKey) ?? layouts.find((l) => l.stage.replies_of === undefined && plan.stages.some((x) => x.key === f.stageKey && x.replies_of === l.stage.key));
       if (!lay) continue;
-      const dateCol = lay.columns.find((c) => c.key === f.dateKey);
+      const dateCol = lay.columns.find((c) => c.kind !== "context" && c.key === f.dateKey);
       if (!dateCol) continue;
       const header = precisionHeaderOf(lay.columns.map((c) => c.title), dateCol.title);
       if (header === null) {
@@ -575,7 +575,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     billingLayout.push(binding);
     const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
     const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
-    const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
+    const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.kind === "context" ? undefined : c.key, columnValues[k]));
     if (dateAt.some(Boolean)) hasDateColumn = true;
     const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
     const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
@@ -598,8 +598,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         // A LANGUAGE CODE IS NEVER A CUSTOMER VALUE (S1 live findings fix 4): in a mission of the new pipeline the language cells are Arabic words
         // the source's own word first; when it gives none (an empty cell), the language of the text by its script; a source that says it cannot tell keeps «غير محددة», its own word (S4: the comment language column of the comments sheet, a mark, nothing is removed)
         const labelled = newPipeline && languageAt[k] ? languageLabelAr(got) : got;
-        const textKey = newPipeline && languageAt[k] ? textColumnKeyOf(lay.columns.map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
-        const textAt = textKey !== null ? lay.columns.findIndex((x) => x.key === textKey) : -1;
+        const textKey = newPipeline && languageAt[k] ? textColumnKeyOf(lay.columns.filter((x) => x.kind !== "context").map((x) => ({ key: x.key ?? "", title: x.title }))) : null;
+        const textAt = textKey !== null ? lay.columns.findIndex((x) => x.kind !== "context" && x.key === textKey) : -1;
         const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && labelled.trim() === "")) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
         if (dateAt[k]) {
           // a date with no time stays a date (no time of day, no zone shift); only a real timestamp is written in Cairo time
@@ -743,7 +743,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   if (last) {
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
-    const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
+    const lastDates = last.columns.map((c) => isDateValues(c.title, c.kind === "context" ? undefined : c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
     for (const r of last.rows) {
       lines.push([
         ...last.columns.map((c, k) => {
