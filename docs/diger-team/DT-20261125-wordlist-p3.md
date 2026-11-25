@@ -31,3 +31,4 @@
 ## القرارات والروابط
 - القرارات: Megz `D-0086`, `D-0199`, `D-0211`
 - الفرع: `team/DT-20261125-wordlist-p3-catalog-item-noun`
+- طلب السحب (PR): [PR #684](https://github.com/iammagdy/digr/pull/684)
