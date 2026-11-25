@@ -15,9 +15,9 @@ describe("sourceLabelAr", () => {
     ["tomba.companies.emails.list", "مصدر عناوين البريد الإلكتروني للعمل"],
     ["blitzapi.people.email.find", "مصدر عناوين البريد الإلكتروني للعمل"],
     ["quickenrich.people.phone.find", "مصدر أرقام الهواتف"],
-    ["crawl4ai.instagram.user.posts", "إنستغرام"],
+    ["crawl4ai.instagram.user.posts", "إنستجرام"],
     ["crawl4ai.youtube.search.videos", "يوتيوب"],
-    ["anyapi.linkedin.company.people", "لينكد إن"],
+    ["anyapi.linkedin.company.people", "لينكدإن"],
     ["acme.something.unknown", "مصدر بيانات متخصص"],
   ])("%s → %s", (id, label) => {
     expect(sourceLabelAr(id)).toBe(label);

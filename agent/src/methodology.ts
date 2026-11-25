@@ -19,6 +19,9 @@ import { contactColumnsOf } from "../../src/lib/agentMission/contactFinders";
 import { B2B_NOT_SEARCHED_AR, NOT_AVAILABLE_AR } from "../../src/lib/agentMission/taskContracts";
 import { threadCounterLinesOfPlan } from "./threadCounters";
 import { TOPIC_RELATION_KEY, topicRelationAr } from "../../src/lib/agentMission/foundation/topicChoice";
+import { PLATFORM_AR } from "../../src/lib/agentMission/platformLabels";
+import { loadTregCatalog, type TregCatalog } from "../../src/lib/treg/catalog";
+import rawWebSources from "../../data/capabilities/web-sources.json";
 
 /**
  * THE «المنهجية» SECTION OF THE FIRST SHEET, built by CODE from what the mission RECORDED (the approved plan, the item store's counts, the request's own words, the delivered rows): the model never writes it, and a fact that was not
@@ -99,21 +102,57 @@ export interface MethodologyModel {
   tableAfterLabel: string;
 }
 
-const PLATFORM_WORDS: ReadonlyArray<[string, string]> = [["tiktok", "تيك توك"], ["instagram", "إنستغرام"], ["youtube", "يوتيوب"], ["facebook", "فيسبوك"], ["linkedin", "لينكد إن"], ["reddit", "ريديت"], ["twitter", "إكس"], ["x", "إكس"], ["maps", "خرائط جوجل"]];
-/** The platform a stage reads, in Arabic, from the words of its source's name (the source's own name is never shown). Null when the name says no platform. */
-export function platformOfEndpoint(endpointId: string | null | undefined): string | null {
-  const tokens = String(endpointId ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  for (const [word, ar] of PLATFORM_WORDS) if (tokens.includes(word)) return ar;
-  return null;
+let cachedCatalog: TregCatalog | null = null;
+function getCatalog(): TregCatalog {
+  if (!cachedCatalog) cachedCatalog = loadTregCatalog();
+  return cachedCatalog;
+}
+
+const WEB_SOURCE_PLATFORMS: ReadonlyMap<string, string> = (() => {
+  const map = new Map<string, string>();
+  const parsers = (rawWebSources as { parsers?: Array<{ id?: string; platform?: string }> })?.parsers ?? [];
+  for (const p of parsers) {
+    if (p.id && p.platform) map.set(p.id, p.platform.toLowerCase());
+  }
+  const sources = (rawWebSources as { webSources?: Array<{ id?: string; platform?: string }> })?.webSources ?? [];
+  for (const s of sources) {
+    if (s.id && s.platform) map.set(s.id, s.platform.toLowerCase());
+  }
+  return map;
+})();
+
+/**
+ * Resolves the platform Arabic label for an endpoint using catalog metadata (`endpoint.platform`),
+ * falling back to stage metadata.
+ */
+export function platformOfEndpoint(endpointId: string | null | undefined, catalog?: TregCatalog | null): string | null {
+  if (!endpointId) return null;
+  const cat = catalog ?? getCatalog();
+  let platform = cat.byId.get(endpointId)?.platform?.toLowerCase();
+  if (!platform) {
+    platform = WEB_SOURCE_PLATFORMS.get(endpointId);
+  }
+  if (!platform) {
+    for (const [key, val] of cat.byId.entries()) {
+      if (key.startsWith(endpointId + ".") && val.platform) {
+        platform = val.platform.toLowerCase();
+        break;
+      }
+    }
+  }
+  if (!platform || platform === "web") return null;
+  if (platform === "google_maps" || platform === "maps") return PLATFORM_AR["google"] ?? null;
+  if (platform === "twitter") return PLATFORM_AR["x"] ?? null;
+  return PLATFORM_AR[platform] ?? null;
 }
 
 /**
  * WHAT KIND OF SOURCE A STAGE READ, in customer-safe Arabic: the platform when the source's name says one («إكس», «يوتيوب»); otherwise the KIND of data the source gives (live: A1 and A2 said «غير مسجّل» in «المنصات والمصادر المستخدمة» because their
  * sources are company, people and e-mail databases whose names say no platform). Read from the words of the source's name only (never from a table of providers) and never the name itself: a customer sees what was read, not who sold it.
  */
-export function sourceLabelAr(endpointId: string | null | undefined): string | null {
+export function sourceLabelAr(endpointId: string | null | undefined, catalog?: TregCatalog | null): string | null {
   if (!endpointId) return null;
-  const platform = platformOfEndpoint(endpointId);
+  const platform = platformOfEndpoint(endpointId, catalog);
   if (platform) return platform;
   const tokens = String(endpointId).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(1);
   // a name that says nothing (no provider prefix, no capability) is not guessed at: the row says «غير مسجّل»
