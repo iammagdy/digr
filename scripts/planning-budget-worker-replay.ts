@@ -66,15 +66,27 @@ export const measuredUnderstanding = {
   ],
 };
 
-export function measuredCalls(now: number): CallRow[] {
+type ReplayCallRow = CallRow & { created_at: string };
+
+const replayCallMetadata = {
+  params_digest: {},
+  refused_reason: null,
+  http_status: null,
+  provider_cost_id: null,
+  storage_path: null,
+  duration_ms: null,
+};
+
+export function measuredCalls(now: number): ReplayCallRow[] {
   return [
     { endpoint_id: "scrapecreators.x.v1-facebook-post-comments", rows_returned: 0, cost_usd: 0.00188 },
     { endpoint_id: "brightdata.x.facebook-comments", rows_returned: 0, cost_usd: 0.0075 },
     { endpoint_id: COMMENTS, rows_returned: 100, cost_usd: 0.02952 },
-  ].map((row, index) => ({
-    ...row, id: `stats-${index}`, mission_id: "ranking-history", phase: "execution",
+  ].map((row, index): ReplayCallRow => ({
+    ...replayCallMetadata, ...row, estimate_usd: row.cost_usd,
+    id: `stats-${index}`, mission_id: "ranking-history", phase: "execution",
     status: row.rows_returned === 0 ? "empty" : "ok", created_at: new Date(now).toISOString(),
-  } as CallRow));
+  }));
 }
 
 const sample = (endpoint_id: string, params: Record<string, unknown>): FakeStep => ({
@@ -264,10 +276,12 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turn
   const turnOfCall = new Map<string, number>();
   if (priorPlanningUsd !== undefined) {
     const id = `${mission.id}:call_0001`;
-    await store.addCall({
+    const priorCall: ReplayCallRow = {
+      ...replayCallMetadata,
       id, mission_id: mission.id, phase: "planning", endpoint_id: WEB, status: "empty",
       rows_returned: 0, cost_usd: priorPlanningUsd, estimate_usd: priorPlanningUsd, created_at: new Date(Date.now()).toISOString(),
-    } as CallRow);
+    };
+    await store.addCall(priorCall);
     turnOfCall.set(id, 0);
   }
   const realDriver: RunnerDeps["driver"] = {
@@ -316,7 +330,8 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turn
         const fixedPrice = spec.world === "measured" ? 0.02952 : spec.world === "cheap-web" ? 0.001
           : spec.world === "fallback" ? (endpointId === POSTS ? 0.02952 : 0.002) : undefined;
         const billed = usd(fixedPrice ?? recorded?.costUsd ?? callEstimateUsd(price, Number(params?.limit ?? params?.size ?? params?.perPage ?? 1)));
-        if (routeMaxCostUsd != null && billed > routeMaxCostUsd + 1e-9) return transportError(`Fixture cost for ${endpointId} exceeds the wire bound`);
+        if (routeMaxCostUsd != null && billed > Number(routeMaxCostUsd) + 1e-9) return transportError(`Fixture cost for ${endpointId} exceeds the wire bound`);
+        if (stepId === undefined) return transportError(`Replay transport is missing the step ID for ${endpointId}`);
         return { ok: true, httpStatus: 200, tregCallId: stepId, costMicro: Math.round(billed * 1_000_000), latencyMs: 0, data: page, isRouteMaxCost: false, isPlatformBalanceLow: false, allowLegacyEnvelope: true };
       },
       log: (line) => { if (line.startsWith("llm_planner ") || line.startsWith("planning_budget ")) decisions.push(line); },
