@@ -62,6 +62,7 @@ export interface MissionFacts {
   /** How the automatic review ended (it ran out of its budget, or the source of the review failed). */
   reviewStop?: "budget" | "failed" | null;
   incompleteCells?: ReadonlyArray<{ stage: string; rowId: string; column: string }>;
+  filterNotesAr?: ReadonlyArray<string>;
 }
 
 /** The alternative routes that ANSWERED for each parent, from the streams the item store persisted (the engine's keys: `p:<parent>` the main route, `p:<parent>:alt<i>` the i-th alternative). A route that never answered left no stream, so it is not counted: the number is a floor, never an overstatement. */
@@ -77,14 +78,14 @@ export function alternativeRoutesOf(streams: ReadonlyMap<string, { pages: number
   return out;
 }
 
-export function missionFactsOf(input: { requestText: string | null | undefined; customerWords?: ReadonlyArray<string> | null; plan: PricedPlan; snap: ItemSnapshot; reviewStop: "budget" | "failed" | null; deliveredAt?: Date }): MissionFacts {
+export function missionFactsOf(input: { requestText: string | null | undefined; customerWords?: ReadonlyArray<string> | null; plan: PricedPlan; snap: ItemSnapshot; reviewStop: "budget" | "failed" | null; deliveredAt?: Date; filterNotesAr?: ReadonlyArray<string> }): MissionFacts {
   const stages: Record<string, StageRecord> = {};
   for (const s of input.plan.stages) {
     const c = input.snap.counts(s.key);
     const routes = alternativeRoutesOf(input.snap.stage(s.key).streams);
     stages[s.key] = { found: c.found, duplicates: c.duplicates, accepted: c.accepted, excluded: c.excluded, pending: c.pending, unchecked: c.unchecked, acceptedByRule: c.acceptedByRule, acceptedByModel: c.acceptedByModel, excludedByReason: { ...c.excludedByReason } as Record<string, number>, stop: input.snap.stage(s.key).stop, ...(Object.keys(routes).length > 0 ? { routes } : {}) };
   }
-  return { requestText: input.requestText ?? null, ...(input.customerWords && input.customerWords.length > 0 ? { customerWords: [...input.customerWords] } : {}), deliveredAt: input.deliveredAt ?? new Date(), stages, reviewStop: input.reviewStop };
+  return { requestText: input.requestText ?? null, ...(input.customerWords && input.customerWords.length > 0 ? { customerWords: [...input.customerWords] } : {}), deliveredAt: input.deliveredAt ?? new Date(), stages, reviewStop: input.reviewStop, ...(input.filterNotesAr && input.filterNotesAr.length > 0 ? { filterNotesAr: [...input.filterNotesAr] } : {}) };
 }
 
 /** The sheets of the file as the workbook lays them out (only what the dates need). */
@@ -479,6 +480,11 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   // ROUND 28: the relation of the delivered items to the topic, in an item of its own (a relation mark is not an execution limit, and the line below keeps saying no limit was recorded when none was)
   const topicLines = topicRelationLinesOf(stages, rowsByStage);
   if (topicLines.length > 0) items.push({ label: "صلة النتائج بالموضوع", values: topicLines });
+  if (facts.filterNotesAr && facts.filterNotesAr.length > 0) {
+    for (const line of facts.filterNotesAr) {
+      if (!limits.includes(line)) limits.push(line);
+    }
+  }
   items.push({ label: "حدود هذا التسليم", values: limits.length ? limits : ["لا قيود سُجّلت على هذا التسليم"] });
 
   // 9. one sentence the researcher can paste, with the delivery date

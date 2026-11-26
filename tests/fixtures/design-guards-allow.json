@@ -85,30 +85,6 @@
       "pattern": "/ردود التعليقات المسلّمة بحسب عدّاداتها[^؛]*/"
     },
     {
-      "file": "agent/src/tools.ts",
-      "pattern": "/(?:بدون|دون)\\s+(?:ال)?(?:تصفيه|فلتره|فلتر)/"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "pattern": "/(?:قد\\s+)?(?:تشمل|تتضمن|تحتوي|تضم)\\s+(?:علي\\s+)?(?:بعض\\s+)?(?:ردود|اسماء\\s+مشابهه|اشخاص\\s+اخر)/"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "pattern": "/(?:لم|لا)\\s+(?:تتم|يتم|تجر|يجر)\\s+(?:ال)?(?:تصفيه|فلتره)/"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "pattern": "/(?:لن|لا)\\s+(?:ي|ت)جلب\\s+لها\\s+(?:موظف|اشخاص|أشخاص)/"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "pattern": "`(?:لم|لا)\\\\s+[تي]?(?:صف|فلتر)(?:ي|ت|ا|وا)?(?!${ar})`"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "pattern": "`غير\\\\s+م?(?:صف|فلتر)(?:ي|ه|ات|اه|ا)?(?!${ar})`"
-    },
-    {
       "file": "src/app/admin/agent/page.tsx",
       "pattern": "/[\\s,،]+/"
     },
@@ -5600,19 +5576,7 @@
     },
     {
       "file": "agent/src/tools.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "token": "x"
-    },
-    {
-      "file": "agent/src/tools.ts",
       "token": "you"
-    },
-    {
-      "file": "agent/src/tools.ts",
-      "token": "youtube"
     },
     {
       "file": "agent/src/webGateway.ts",
