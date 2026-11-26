@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
-import { buildContactSteps, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+import { buildContactSteps, finderSourcesOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
 import { MEASURED_FINDER_CALLS, finderHitRate, pooledHitRate } from "../src/lib/agentMission/finderStats";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 
 /**
@@ -109,5 +110,30 @@ describe("LIVE SHAPE: every person goes through the whole chain, not the first o
     const w = await world(8, step, (ep, p) => (ep === FREE.id ? null : ep === QUICK.id ? { phone: "+201000000000", email: null } : ep === DEAR.id ? { emails: [{ address: `${slug(p)}@365ecology.com` }] } : { status: "safe", deliverable: true }));
     expect(w.spent).toBeLessThanOrEqual(step.max_person_usd! * 8 + 1e-9);
     expect(w.spent).toBeGreaterThan(step.per_person_usd * 8 * 0.9);
+  });
+});
+
+describe("unmeasured finders fall back to dynamic pooledHitRate without a 0.01 floor", () => {
+  it("gives pooledHitRate for unmeasured or null-hit-rate finders and 0.5 on an empty catalog", () => {
+    expect(finderHitRate("enrichlayer.contacts.personal-phone", "phone")).toBe(pooledHitRate("phone"));
+    expect(finderHitRate("companyenrich.people.email", "email")).toBe(pooledHitRate("email"));
+    const emptyCatalog = { source: "", count: 0, excluded: { own_account: 0, write: 0, paused: 0 }, endpoints: [], byId: new Map(), writeIds: new Set<string>() };
+    expect(pooledHitRate("email", emptyCatalog)).toBe(0.5);
+    expect(pooledHitRate("phone", emptyCatalog)).toBe(0.5);
+  });
+
+  it("ranks measured higher-hit-rate finders ahead of a synthetic $0.005 unmeasured finder using pooledHitRate", () => {
+    const base = loadTregCatalog();
+    const synthId = "synthetic.people.email.find";
+    const synthEndpoint = {
+      id: synthId, provider: "synthetic", capability: "people.email.find", kind: "direct", tier: null, async: null, async_config: null,
+      inputs: [{ name: "linkedin_url", type: "string", required: false, default: null, minimum: null, maximum: null, enum: null, example: null }],
+      pagination: [], cost: { unit: "call", usd: 0.005, type: "per_success" }, observed: null, scope: "public", cost_confidence: null,
+      siblings: [], test_request: null, list_path: null, cursor_path: null, item_fields: null, example_response_trimmed: null,
+    };
+    const synthCatalog = { ...base, endpoints: [...base.endpoints, synthEndpoint as any], byId: new Map([...base.byId, [synthId, synthEndpoint as any]]) };
+    const ranked = finderSourcesOf("email", synthCatalog, (id) => id === "anyapi.linkedin.email.work.find" || id === synthId);
+    expect(ranked.map((f) => f.id)).toEqual(["anyapi.linkedin.email.work.find", synthId]);
+    expect(finderHitRate(synthId, "email", synthCatalog)).toBe(pooledHitRate("email", synthCatalog));
   });
 });

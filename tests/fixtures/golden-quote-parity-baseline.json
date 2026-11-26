@@ -1,0 +1,872 @@
+{
+  "baseSha": "73036bd6a36e3c8c67ddd20e6028b0acf91f49cc",
+  "recordedMissions": {
+    "msn_c41586cf9d40986250d0": {
+      "rule": 2,
+      "pricedUnder": 2,
+      "totalCostUsd": 0.000025069767441860464,
+      "providerCostUsd": 0.000025069767441860464,
+      "modelCostUsd": 0.013000000000000001,
+      "deliveredRows": 1,
+      "costPerFinalRowUsd": 0.013025069767441862,
+      "ruleUnitPoints": 71.637884,
+      "unitPricePoints": 200,
+      "reservePoints": 200,
+      "maxChargePoints": 200,
+      "minChargePoints": 200,
+      "minApplied": true,
+      "settings": {
+        "markup": 10,
+        "minChargePoints": 200
+      },
+      "overCap": false,
+      "reviewBudgetUsd": 0.07272727272727274
+    },
+    "msn_f91f7e220bbf60fd7c9c": {
+      "rule": 2,
+      "pricedUnder": 2,
+      "totalCostUsd": 0.0001531578947368421,
+      "providerCostUsd": 0.0001531578947368421,
+      "modelCostUsd": 0.013000000000000001,
+      "deliveredRows": 1,
+      "costPerFinalRowUsd": 0.013153157894736844,
+      "ruleUnitPoints": 72.342369,
+      "unitPricePoints": 200,
+      "reservePoints": 200,
+      "maxChargePoints": 200,
+      "minChargePoints": 200,
+      "minApplied": true,
+      "settings": {
+        "markup": 10,
+        "minChargePoints": 200
+      },
+      "overCap": false,
+      "reviewBudgetUsd": 0.07272727272727274
+    }
+  },
+  "finderStats": {
+    "pooledHitRate": {
+      "email": 0.22602739726027396,
+      "phone": 0.11538461538461539
+    },
+    "sampleHitRates": {
+      "blitzapi.people.email.find": 0.22093023255813954,
+      "quickenrich.people.email.find": 0.03333333333333333,
+      "anyapi.linkedin.email.work.find": 0.9166666666666666,
+      "blitzapi.people.phone.find": 0.11363636363636363,
+      "unmeasured.email.finder": 0.22602739726027396,
+      "unmeasured.phone.finder": 0.11538461538461539
+    },
+    "finderSourcesOf": {
+      "email": [
+        "blitzapi.people.email.find",
+        "anyapi.linkedin.email.work.find",
+        "dropleads.people.email.find"
+      ],
+      "alternateEmail": [
+        "tomba.people.email.find",
+        "moltsets.people.email.find.name",
+        "icypeas.people.email.find"
+      ],
+      "phone": [
+        "blitzapi.people.phone.find",
+        "aiark.people.phone.find",
+        "tomba.people.phone.find"
+      ],
+      "alternatePhone": [
+        "quickenrich.people.phone.find"
+      ]
+    }
+  },
+  "b2bSteps": {
+    "email": {
+      "per_person_usd": 0.010592543604651165,
+      "max_person_usd": 0.031275
+    },
+    "phone": {
+      "per_person_usd": 0.021136639204545456,
+      "max_person_usd": 0.071331
+    }
+  },
+  "b2bPrice": {
+    "rule": 2,
+    "pricedUnder": 2,
+    "totalCostUsd": 0.7003436561839325,
+    "providerCostUsd": 0.7003436561839325,
+    "modelCostUsd": 0.026000000000000002,
+    "deliveredRows": 30,
+    "costPerFinalRowUsd": 0.024211455206131084,
+    "ruleUnitPoints": 133.163004,
+    "unitPricePoints": 133.163004,
+    "reservePoints": 4595,
+    "maxChargePoints": 3995,
+    "minChargePoints": 200,
+    "minApplied": false,
+    "settings": {
+      "markup": 10,
+      "minChargePoints": 200
+    },
+    "overCap": false,
+    "reviewBudgetUsd": 1.4527272727272729
+  },
+  "listedUnitPoints": {
+    "social-youtube-videos": 5,
+    "social-youtube-comments": 0.275,
+    "social-tiktok-comments": 0.275,
+    "social-facebook-comments": 1.034,
+    "social-facebook-posts": 3.4485,
+    "social-x-posts": 0.11715,
+    "icypeas-companies-search": 3.168,
+    "tiktok-profile": 6,
+    "professional-people-search": 83
+  },
+  "listedMissions": {
+    "fbComments": {
+      "rule": 2,
+      "pricedUnder": 2,
+      "totalCostUsd": 0.20133333333333334,
+      "providerCostUsd": 0.20133333333333334,
+      "modelCostUsd": 0.026000000000000002,
+      "deliveredRows": 200,
+      "costPerFinalRowUsd": 0.0011366666666666667,
+      "ruleUnitPoints": 1.034,
+      "unitPricePoints": 1.034,
+      "reservePoints": 752,
+      "maxChargePoints": 207,
+      "minChargePoints": 200,
+      "minApplied": false,
+      "settings": {
+        "markup": 10,
+        "minChargePoints": 200
+      },
+      "overCap": false,
+      "listedRate": {
+        "unitPoints": 1.034,
+        "nounAr": "تعليق"
+      },
+      "executionFundingApplied": true,
+      "reviewBudgetUsd": 0.07527272727272728
+    },
+    "yt5": {
+      "rule": 2,
+      "pricedUnder": 2,
+      "totalCostUsd": 0,
+      "providerCostUsd": 0,
+      "modelCostUsd": 0.013000000000000001,
+      "deliveredRows": 5,
+      "costPerFinalRowUsd": 0.0026000000000000003,
+      "ruleUnitPoints": 5,
+      "unitPricePoints": 40,
+      "reservePoints": 200,
+      "maxChargePoints": 200,
+      "minChargePoints": 200,
+      "minApplied": true,
+      "settings": {
+        "markup": 10,
+        "minChargePoints": 200
+      },
+      "overCap": false,
+      "listedRate": {
+        "unitPoints": 5,
+        "nounAr": "فيديو"
+      },
+      "reviewBudgetUsd": 0.07272727272727274
+    },
+    "yt60": {
+      "rule": 2,
+      "pricedUnder": 2,
+      "totalCostUsd": 0,
+      "providerCostUsd": 0,
+      "modelCostUsd": 0.013000000000000001,
+      "deliveredRows": 60,
+      "costPerFinalRowUsd": 0.00021666666666666668,
+      "ruleUnitPoints": 5,
+      "unitPricePoints": 5,
+      "reservePoints": 300,
+      "maxChargePoints": 300,
+      "minChargePoints": 200,
+      "minApplied": false,
+      "settings": {
+        "markup": 10,
+        "minChargePoints": 200
+      },
+      "overCap": false,
+      "listedRate": {
+        "unitPoints": 5,
+        "nounAr": "فيديو"
+      },
+      "reviewBudgetUsd": 0.10909090909090909
+    },
+    "ytCapQuote60": {
+      "unitPricePoints": 5,
+      "rawPoints": 300,
+      "expectedPoints": 300,
+      "quotedPoints": 345,
+      "targetVolumeMax": 60,
+      "safetyBufferPercent": 15,
+      "isAffordable": true,
+      "userBalance": 100000
+    }
+  },
+  "wallet": {
+    "minimumOrderPoints": 200,
+    "capacities": {
+      "113": {
+        "kind": "below_minimum",
+        "minimumPoints": 200
+      },
+      "200": {
+        "kind": "ok",
+        "chips": [
+          {
+            "id": "youtube-comments",
+            "labelAr": "تعليق يوتيوب",
+            "records": 68
+          },
+          {
+            "id": "x-posts",
+            "labelAr": "منشور إكس",
+            "records": 496
+          }
+        ]
+      },
+      "242": {
+        "kind": "ok",
+        "chips": [
+          {
+            "id": "youtube-comments",
+            "labelAr": "تعليق يوتيوب",
+            "records": 152
+          },
+          {
+            "id": "x-posts",
+            "labelAr": "منشور إكس",
+            "records": 673
+          }
+        ]
+      },
+      "500": {
+        "kind": "ok",
+        "chips": [
+          {
+            "id": "youtube-comments",
+            "labelAr": "تعليق يوتيوب",
+            "records": 661
+          },
+          {
+            "id": "x-posts",
+            "labelAr": "منشور إكس",
+            "records": 1761
+          }
+        ]
+      },
+      "1000": {
+        "kind": "ok",
+        "chips": [
+          {
+            "id": "youtube-comments",
+            "labelAr": "تعليق يوتيوب",
+            "records": 1649
+          },
+          {
+            "id": "x-posts",
+            "labelAr": "منشور إكس",
+            "records": 3869
+          }
+        ]
+      }
+    }
+  },
+  "reverseOrder": {
+    "EMAIL_REVERSE_ORDER": [
+      "fiber-ai.people.identity.resolve",
+      "blitzapi.people.email.reverse",
+      "quickenrich.people.enrich",
+      "aiark.people.enrich",
+      "findymail.search.reverse-email",
+      "treg.people.identity.resolve",
+      "branddev.brand.retrieve-by-email",
+      "companyenrich.people.lookup"
+    ],
+    "PHONE_REVERSE_ORDER": [
+      "getleadsio.people.phone.lookup",
+      "blitzapi.people.phone.reverse",
+      "enrichlayer.contacts.reverse-phone"
+    ],
+    "NO_WATERFALL_ENDPOINTS": [
+      "treg.people.identity.resolve"
+    ],
+    "COMPANY_DOMAIN_ONLY_ENDPOINTS": [
+      "branddev.brand.retrieve-by-email"
+    ],
+    "US_ONLY_PHONE_ENDPOINTS": [
+      "enrichlayer.contacts.reverse-phone"
+    ]
+  },
+  "multiProvider": {
+    "routeIds": [
+      "single:treg-companies",
+      "chain:treg>firecrawl",
+      "chain:treg>contextdev",
+      "chain:firecrawl>firecrawl",
+      "chain:firecrawl>contextdev",
+      "chain:contextdev>firecrawl",
+      "chain:contextdev>contextdev"
+    ],
+    "routeCodes": {
+      "single:treg-companies": "r6eb92d2f",
+      "chain:treg>firecrawl": "r664f6975",
+      "chain:treg>contextdev": "ra36771a8",
+      "chain:firecrawl>firecrawl": "rf1d4e428",
+      "chain:firecrawl>contextdev": "r2f487907",
+      "chain:contextdev>firecrawl": "ra8251841",
+      "chain:contextdev>contextdev": "r2cdb094c"
+    },
+    "estimates": [
+      {
+        "route": {
+          "id": "single:treg-companies",
+          "kind": "single",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "treg.companies.search"
+              ],
+              "maxCalls": 12
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "country",
+            "industry",
+            "description"
+          ]
+        },
+        "sellable": true,
+        "covers": false,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "treg.companies.search",
+            "provider": "treg",
+            "maxCalls": 2,
+            "costPerDeliveredRowUsd": 0.000576,
+            "unitPricePoints": 3.168,
+            "expectedYield": 1,
+            "jobUsd": 0.01152
+          }
+        ],
+        "discoveryResults": 20,
+        "candidates": 20,
+        "costPerDeliveredRowUsd": 0.000576,
+        "providerJobUsd": {
+          "treg": 0.01152
+        },
+        "estimatedJobUsd": 0.01152,
+        "budgetUsd": 0.013248
+      },
+      {
+        "route": {
+          "id": "chain:treg>firecrawl",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "treg.companies.search",
+                "contextdev.search",
+                "firecrawl.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "firecrawl.scrape",
+                "contextdev.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "country",
+            "industry",
+            "description",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "page_url",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "treg.companies.search",
+            "provider": "treg",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.00235102,
+            "unitPricePoints": 12.93061,
+            "expectedYield": 0.7,
+            "jobUsd": 0.047232
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "firecrawl.scrape",
+            "provider": "firecrawl",
+            "maxCalls": 116,
+            "costPerDeliveredRowUsd": 0.028571429,
+            "unitPricePoints": 157.14286,
+            "expectedYield": 0.35,
+            "jobUsd": 0.58
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 82,
+        "candidates": 58,
+        "costPerDeliveredRowUsd": 0.030922449,
+        "providerJobUsd": {
+          "treg": 0.047232,
+          "firecrawl": 0.58
+        },
+        "estimatedJobUsd": 0.627232,
+        "budgetUsd": 0.7213168
+      },
+      {
+        "route": {
+          "id": "chain:treg>contextdev",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "treg.companies.search",
+                "contextdev.search",
+                "firecrawl.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "contextdev.scrape",
+                "firecrawl.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "country",
+            "industry",
+            "description",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "page_url",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "treg.companies.search",
+            "provider": "treg",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.00235102,
+            "unitPricePoints": 12.93061,
+            "expectedYield": 0.7,
+            "jobUsd": 0.047232
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "contextdev.scrape",
+            "provider": "contextdev",
+            "maxCalls": 116,
+            "costPerDeliveredRowUsd": 0.014514286,
+            "unitPricePoints": 79.828573,
+            "expectedYield": 0.35,
+            "jobUsd": 0.29464
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 82,
+        "candidates": 58,
+        "costPerDeliveredRowUsd": 0.016865306,
+        "providerJobUsd": {
+          "treg": 0.047232,
+          "contextdev": 0.29464
+        },
+        "estimatedJobUsd": 0.341872,
+        "budgetUsd": 0.3931528
+      },
+      {
+        "route": {
+          "id": "chain:firecrawl>firecrawl",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "firecrawl.search",
+                "contextdev.search",
+                "treg.companies.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "firecrawl.scrape",
+                "contextdev.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "description",
+            "page_url",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "firecrawl.search",
+            "provider": "firecrawl",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.005714286,
+            "unitPricePoints": 31.428573,
+            "expectedYield": 0.5,
+            "jobUsd": 0.1
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "firecrawl.scrape",
+            "provider": "firecrawl",
+            "maxCalls": 100,
+            "costPerDeliveredRowUsd": 0.028571429,
+            "unitPricePoints": 157.14286,
+            "expectedYield": 0.35,
+            "jobUsd": 0.5
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 100,
+        "candidates": 50,
+        "costPerDeliveredRowUsd": 0.034285714,
+        "providerJobUsd": {
+          "firecrawl": 0.6
+        },
+        "estimatedJobUsd": 0.6,
+        "budgetUsd": 0.69
+      },
+      {
+        "route": {
+          "id": "chain:firecrawl>contextdev",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "firecrawl.search",
+                "contextdev.search",
+                "treg.companies.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "contextdev.scrape",
+                "firecrawl.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "description",
+            "page_url",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "firecrawl.search",
+            "provider": "firecrawl",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.005714286,
+            "unitPricePoints": 31.428573,
+            "expectedYield": 0.5,
+            "jobUsd": 0.1
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "contextdev.scrape",
+            "provider": "contextdev",
+            "maxCalls": 100,
+            "costPerDeliveredRowUsd": 0.014514286,
+            "unitPricePoints": 79.828573,
+            "expectedYield": 0.35,
+            "jobUsd": 0.254
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 100,
+        "candidates": 50,
+        "costPerDeliveredRowUsd": 0.020228571,
+        "providerJobUsd": {
+          "firecrawl": 0.1,
+          "contextdev": 0.254
+        },
+        "estimatedJobUsd": 0.354,
+        "budgetUsd": 0.4071
+      },
+      {
+        "route": {
+          "id": "chain:contextdev>firecrawl",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "contextdev.search",
+                "treg.companies.search",
+                "firecrawl.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "firecrawl.scrape",
+                "contextdev.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "description",
+            "page_url",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "contextdev.search",
+            "provider": "contextdev",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.001451429,
+            "unitPricePoints": 7.98286,
+            "expectedYield": 0.5,
+            "jobUsd": 0.0254
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "firecrawl.scrape",
+            "provider": "firecrawl",
+            "maxCalls": 100,
+            "costPerDeliveredRowUsd": 0.028571429,
+            "unitPricePoints": 157.14286,
+            "expectedYield": 0.35,
+            "jobUsd": 0.5
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 100,
+        "candidates": 50,
+        "costPerDeliveredRowUsd": 0.030022857,
+        "providerJobUsd": {
+          "contextdev": 0.0254,
+          "firecrawl": 0.5
+        },
+        "estimatedJobUsd": 0.5254,
+        "budgetUsd": 0.60421
+      },
+      {
+        "route": {
+          "id": "chain:contextdev>contextdev",
+          "kind": "chain",
+          "stages": [
+            {
+              "stage": "discover",
+              "capabilityIds": [
+                "contextdev.search",
+                "treg.companies.search",
+                "firecrawl.search"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "enrich",
+              "capabilityIds": [
+                "contextdev.scrape",
+                "firecrawl.scrape"
+              ],
+              "maxCalls": 0
+            },
+            {
+              "stage": "verify",
+              "capabilityIds": [],
+              "maxCalls": 0
+            }
+          ],
+          "fields": [
+            "business_name",
+            "website",
+            "description",
+            "page_url",
+            "work_email",
+            "office_phone",
+            "profile_link",
+            "decision_maker"
+          ]
+        },
+        "sellable": true,
+        "covers": true,
+        "stages": [
+          {
+            "stage": "discover",
+            "capabilityId": "contextdev.search",
+            "provider": "contextdev",
+            "maxCalls": 3,
+            "costPerDeliveredRowUsd": 0.001451429,
+            "unitPricePoints": 7.98286,
+            "expectedYield": 0.5,
+            "jobUsd": 0.0254
+          },
+          {
+            "stage": "enrich",
+            "capabilityId": "contextdev.scrape",
+            "provider": "contextdev",
+            "maxCalls": 100,
+            "costPerDeliveredRowUsd": 0.014514286,
+            "unitPricePoints": 79.828573,
+            "expectedYield": 0.35,
+            "jobUsd": 0.254
+          },
+          {
+            "stage": "verify",
+            "capabilityId": null,
+            "provider": null,
+            "maxCalls": 0,
+            "costPerDeliveredRowUsd": 0,
+            "unitPricePoints": 0,
+            "expectedYield": 1,
+            "jobUsd": 0
+          }
+        ],
+        "discoveryResults": 100,
+        "candidates": 50,
+        "costPerDeliveredRowUsd": 0.015965714,
+        "providerJobUsd": {
+          "contextdev": 0.2794
+        },
+        "estimatedJobUsd": 0.2794,
+        "budgetUsd": 0.32131
+      }
+    ]
+  }
+}
