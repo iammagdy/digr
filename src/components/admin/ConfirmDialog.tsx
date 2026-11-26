@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { foldSeparatorMarks } from "@/lib/arabicNormalize";
 import { normalizeDigits } from "@/lib/arabicDigits";
 
 const FOCUSABLE = "button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
-const plain = (s: string) => normalizeDigits(s).replace(/[\s,٬]/g, "");
+const plain = (s: string) => foldSeparatorMarks(normalizeDigits(s)).replace(/[\s,]/g, "");
 
 /** True when the typed text equals the expected one (Arabic-Indic or Latin digits, spaces and group separators ignored); always true when nothing must be typed. */
 export function typedConfirmMatches(typed: string, expected?: string): boolean {

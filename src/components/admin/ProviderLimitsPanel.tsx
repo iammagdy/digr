@@ -5,6 +5,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import type { ProviderLimitsState } from "@/lib/server/providerLimitsAdmin";
 import { dateTimeAr, tint } from "./format";
+import { PROVIDER_ANTHROPIC, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text-sm text-ink outline-none text-left";
@@ -32,10 +33,10 @@ export function SpendLimitBanner({ level, percent, label }: { level: "ok" | "war
  * Editable spend limits for one provider. Values apply at once on the server that saves (30 s elsewhere), with no
  * redeploy. Before the database update is applied the fields are read-only and the tab says so.
  */
-type ExtraCaps = Record<"firecrawl" | "contextdev", { dailyUsd: number; todayUsd: number | null }>;
+type ExtraCaps = Record<typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV, { dailyUsd: number; todayUsd: number | null }>;
 const EXTRA_KEY = { firecrawl: "firecrawlDailyUsd", contextdev: "contextdevDailyUsd" } as const;
 
-export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provider: "treg" | "anthropic" | "firecrawl" | "contextdev"; balanceUsd?: number | null; onSaved?: () => void }) {
+export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provider: typeof PROVIDER_TREG | typeof PROVIDER_ANTHROPIC | typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV; balanceUsd?: number | null; onSaved?: () => void }) {
   const [state, setState] = useState<ProviderLimitsState | null>(null);
   const [extra, setExtra] = useState<ExtraCaps | null>(null);
   const [error, setError] = useState("");
@@ -52,7 +53,7 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
       const r = await adminFetch<{ state: ProviderLimitsState; extra?: ExtraCaps }>("/api/admin/provider-limits");
       setState(r.state);
       setExtra(r.extra ?? null);
-      setDaily(provider === "firecrawl" || provider === "contextdev" ? String(r.extra?.[provider]?.dailyUsd ?? 0) : String(r.state.limits.dailyUsd));
+      setDaily(provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV ? String(r.extra?.[provider]?.dailyUsd ?? 0) : String(r.state.limits.dailyUsd));
       setPerJob(asText(r.state.limits.perJobUsd));
       setPerUser(asText(r.state.limits.perUserDailyUsd));
       setWarn(String(r.state.limits.warnPercent));
@@ -67,9 +68,9 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
   const save = async () => {
     if (busy || !state) return;
     setBusy(true); setMsg(null);
-    const limits = provider === "treg"
+    const limits = provider === PROVIDER_TREG
       ? { dailyUsd: daily, perJobUsd: perJob, perUserDailyUsd: perUser, warnPercent: warn }
-      : provider === "firecrawl" || provider === "contextdev"
+      : provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV
       ? { [EXTRA_KEY[provider]]: daily, warnPercent: warn }
       : { llmDailyUsd: llmDaily, warnPercent: warn };
     try {
@@ -85,8 +86,8 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
   if (error && !state) return <p role="alert" className="m-0 text-[13px] text-bad">{error}</p>;
   if (!state) return <div className="h-40 rounded-[18px] bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />;
 
-  const isTreg = provider === "treg";
-  const isExtra = provider === "firecrawl" || provider === "contextdev";
+  const isTreg = provider === PROVIDER_TREG;
+  const isExtra = provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV;
   const extraCap = isExtra ? extra?.[provider] ?? { dailyUsd: 0, todayUsd: null } : null;
   // The extra providers' level is computed here from the same two numbers (their spend is read from the cost table).
   const extraToday = extraCap?.todayUsd ?? 0;

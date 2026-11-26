@@ -8,6 +8,7 @@ import { paginate, pageLabel, type PagePlan } from "@/lib/invoices/paginate";
 import type { SheetModel, SheetRow } from "@/lib/invoices/sheetModel";
 import { TOPUP_INSTAPAY_QR_SRC } from "@/lib/topupConfig";
 import { SHEET_CSS, SHEET_PAGE_HEIGHT_PX, SHEET_PAGE_WIDTH_PX } from "./sheetCss";
+import { foldDigits } from "@/lib/arabicNormalize";
 
 export const LOGO_SRC = "/brand/diger-wordmark.svg";
 const digits = (n: number) => toArabicDigits(n);
@@ -98,7 +99,7 @@ function First({ model }: { model: SheetModel }) {
         </dl>
         <h3 style={{ marginTop: 8 }}>التفاصيل</h3>
         <dl className="inv-kv">
-          {model.meta.map((m) => <Fragment key={m.label}><dt>{m.label}</dt><dd>{/\d|٠|١|٢|٣|٤|٥|٦|٧|٨|٩/.test(m.value) ? <Num>{m.value}</Num> : m.value}</dd></Fragment>)}
+          {model.meta.map((m) => <Fragment key={m.label}><dt>{m.label}</dt><dd>{/\d/.test(foldDigits(m.value)) ? <Num>{m.value}</Num> : m.value}</dd></Fragment>)}
         </dl>
       </div>
       {model.client.length ? (

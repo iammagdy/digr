@@ -6,6 +6,7 @@ import {
   adoptMainKey, addPoolKey, checkPastedKey, checkPoolKeyNow, loadPoolOverview, refreshPoolKeys, removePoolKey, replacePoolKey, setActivePoolKey, setPoolChain, setPoolRollout, setPoolSettings,
   type CheckOutcome, type PoolActionOutcome,
 } from "@/lib/server/tregPoolAdmin";
+import { BRAND_TREG } from "@/lib/multiProvider/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,8 +32,8 @@ export async function GET(req: NextRequest) {
 }
 
 const ACTION_LABEL: Record<string, string> = {
-  add: "إضافة مفتاح TREG", adopt_main: "اعتماد المفتاح الرئيسي لـ TREG", replace: "استبدال مفتاح TREG", remove: "حذف مفتاح TREG", set_active: "تفعيل مفتاح TREG",
-  set_chain: "ترتيب سلسلة مفاتيح TREG", set_rollout: "تشغيل/إيقاف مجمّع مفاتيح TREG", settings: "الحد الأدنى لرصيد مفاتيح TREG", refresh: "فحص مفاتيح TREG",
+  add: `إضافة مفتاح ${BRAND_TREG}`, adopt_main: `اعتماد المفتاح الرئيسي لـ ${BRAND_TREG}`, replace: `استبدال مفتاح ${BRAND_TREG}`, remove: `حذف مفتاح ${BRAND_TREG}`, set_active: `تفعيل مفتاح ${BRAND_TREG}`,
+  set_chain: `ترتيب سلسلة مفاتيح ${BRAND_TREG}`, set_rollout: `تشغيل/إيقاف مجمّع مفاتيح ${BRAND_TREG}`, settings: `الحد الأدنى لرصيد مفاتيح ${BRAND_TREG}`, refresh: `فحص مفاتيح ${BRAND_TREG}`,
 };
 /** Actions that write their own audit row inside the limiter (so the route does not write a second one). */
 const SELF_AUDITED = new Set(["refresh", "check_key", "check_pool_key"]);
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
   // the audit line names the action and the key's number or last 4: never a key
   if (outcome.ok && !SELF_AUDITED.has(action)) {
     const target = [outcome.number ? `رقم ${outcome.number}` : "", outcome.last4 ? `ينتهي بـ ${outcome.last4}` : "", action === "set_rollout" ? (body?.on ? "تشغيل" : "إيقاف") : ""].filter(Boolean).join(" · ") || action;
-    await auth.ctx.audit("key", ACTION_LABEL[action] ?? "مجمّع مفاتيح TREG", target, { targetType: "treg_pool", targetId: outcome.keyId ?? action });
+    await auth.ctx.audit("key", ACTION_LABEL[action] ?? `مجمّع مفاتيح ${BRAND_TREG}`, target, { targetType: "treg_pool", targetId: outcome.keyId ?? action });
   }
   return NextResponse.json(
     { success: outcome.ok, reason: outcome.reason, message: outcome.messageAr, ...(outcome.ok ? {} : { error: outcome.messageAr }), ...(outcome.number ? { number: outcome.number } : {}), ...(outcome.last4 ? { last4: outcome.last4 } : {}), ...("report" in outcome && outcome.report ? { report: outcome.report } : {}) },

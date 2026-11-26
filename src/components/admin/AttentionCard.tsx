@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatAr } from "@/lib/arabicDigits";
 import type { AdminAlerts, ProviderStatus } from "./AdminShell";
 import { Card, CardSkeleton } from "./ui";
+import { PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 /** DT-20261118-06 §3.2: «يحتاج انتباهك», the first card of the overview. Admin only, so dollars may be named here. Logical properties only, no emoji. */
 export interface AttentionItem { level: "warn" | "bad"; text: string; actionLabel: string; href: string }
@@ -10,7 +11,7 @@ export interface AttentionItem { level: "warn" | "bad"; text: string; actionLabe
 export const usd = (n: number) => (Number.isInteger(n) ? formatAr(n) : formatAr(n, 2));
 
 /** The data provider's balance as the attention card and the providers card both read it. A balance that could not be read is never called low. */
-export function tregBalanceState(treg: ProviderStatus["treg"] | null | undefined): { balance: number | null; threshold: number | null; low: boolean } {
+export function tregBalanceState(treg: ProviderStatus[typeof PROVIDER_TREG] | null | undefined): { balance: number | null; threshold: number | null; low: boolean } {
   const balance = treg?.balance?.available && typeof treg.balance.balanceUsd === "number" ? treg.balance.balanceUsd : null;
   const threshold = typeof treg?.thresholdUsd === "number" ? treg.thresholdUsd : null;
   return { balance, threshold, low: balance !== null && threshold !== null && (treg?.lowBalance === true || balance < threshold) };

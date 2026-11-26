@@ -64,7 +64,7 @@ describe("the admin key pool table", () => {
 
   it("the TREG tab mounts the pool section and keeps today's key section, labelled as the key used while the pool is off", async () => {
     const src = (await import("node:fs")).readFileSync("src/components/admin/ProviderTab.tsx", "utf8");
-    expect(src).toContain('provider === "treg" && <TregKeyPool />');
+    expect(src).toContain('provider === PROVIDER_TREG && <TregKeyPool />');
     expect(src).toContain("هذا هو المفتاح الذي تستخدمه المنصة عندما يكون المجمّع أعلاه مغلقًا");
     expect(src).toContain("استبدال المفتاح");
   });

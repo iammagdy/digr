@@ -6,6 +6,7 @@ import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import type { CallsLogResult, CallStatus, TestFilter } from "@/lib/server/adminCallsLog";
 import { dateTimeAr, tint } from "./format";
 import { JobCell, NOT_RECORDED } from "./JobCell";
+import { BRAND_CONTEXTDEV, BRAND_FIRECRAWL, BRAND_TREG, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 /**
  * The admin CALLS LOG: every provider API call with the user behind it (admin only, read only). Provider names are shown here because only an
@@ -15,8 +16,8 @@ const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text-sm text-ink outline-none text-left";
 const BTN = "min-h-11 cursor-pointer whitespace-nowrap rounded-full border border-ln2 bg-sf px-4 text-xs text-ink";
 
-const PROVIDERS = [["treg", "TREG"], ["firecrawl", "Firecrawl"], ["contextdev", "Context.dev"]] as const;
-const PROVIDER_NAME: Record<string, string> = { treg: "TREG", firecrawl: "Firecrawl", contextdev: "Context.dev" };
+const PROVIDERS = [[PROVIDER_TREG, BRAND_TREG], [PROVIDER_FIRECRAWL, BRAND_FIRECRAWL], [PROVIDER_CONTEXTDEV, BRAND_CONTEXTDEV]] as const;
+const PROVIDER_NAME: Record<string, string> = { [PROVIDER_TREG]: BRAND_TREG, [PROVIDER_FIRECRAWL]: BRAND_FIRECRAWL, [PROVIDER_CONTEXTDEV]: BRAND_CONTEXTDEV };
 const STATUS_AR: Record<CallStatus, string> = { success: "نجح", failed: "فشل", empty: "بلا نتيجة" };
 const STATUS_COLOR: Record<CallStatus, string> = { success: "var(--ok)", failed: "var(--bad)", empty: "var(--mut)" };
 const UNAVAILABLE = "غير متاح";

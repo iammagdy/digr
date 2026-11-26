@@ -7,6 +7,7 @@ import {
   MSG, PROVIDER_LABEL_AR, isProviderId, loadProviderTabState, replaceProviderKey, rollbackProviderKey,
   saveProviderKeySettings, validateSettingsInput,
 } from "@/lib/server/providerKeyAdmin";
+import { PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (body?.action === "settings") {
-    if (provider !== "treg") return NextResponse.json({ error: "هذه الإعدادات لمزود البيانات فقط." }, { status: 400 });
+    if (provider !== PROVIDER_TREG) return NextResponse.json({ error: "هذه الإعدادات لمزود البيانات فقط." }, { status: 400 });
     const parsed = validateSettingsInput({ lowBalanceThresholdUsd: body?.lowBalanceThresholdUsd, tregOrgId: body?.tregOrgId });
     if (!parsed.ok) return NextResponse.json({ success: false, message: parsed.messageAr, error: parsed.messageAr }, { status: 400 });
     const saved = await saveProviderKeySettings(client, parsed.value);

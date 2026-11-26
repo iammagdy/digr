@@ -9,6 +9,7 @@ import { readProviderKeySettings } from "@/lib/server/providerKeyAdmin";
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { loadProviderLimitsState } from "@/lib/server/providerLimitsAdmin";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
+import { PROVIDER_ANTHROPIC, PROVIDER_TREG, TREG_DEFAULT_BASE_URL } from "@/lib/multiProvider/types";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +45,11 @@ export async function GET(req: NextRequest) {
 
   // Real checks (an authenticated provider call, cached 60 s per server instance), never a flag.
   const settings = await readProviderKeySettings(createAdminClient());
-  const [tregKey, anthropicKey] = await Promise.all([resolveProviderKey("treg"), resolveProviderKey("anthropic")]);
+  const [tregKey, anthropicKey] = await Promise.all([resolveProviderKey(PROVIDER_TREG), resolveProviderKey(PROVIDER_ANTHROPIC)]);
   // the sidebar reads the SAME live check the TREG tab runs (`?refresh=true` skips the 60 s cache, as the tab's refresh does)
   const forceRefresh = req.nextUrl.searchParams.get("refresh") === "true";
   const [tregStatus, anthropicStatus] = await Promise.all([
-    getProviderStatus("treg", tregKey.key, { orgIdOverride: settings.tregOrgId, forceRefresh }),
+    getProviderStatus(PROVIDER_TREG, tregKey.key, { orgIdOverride: settings.tregOrgId, forceRefresh }),
     getProviderStatus("anthropic", anthropicKey.key, { forceRefresh }),
   ]);
 
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
       balance: tregStatus.balance,
       thresholdUsd: settings.lowBalanceThresholdUsd,
       lowBalance: isLowBalance(tregStatus.balance, settings.lowBalanceThresholdUsd),
-      baseUrl: (process.env.TREG_BASE_URL || "https://treg.to").replace(/\/$/, ""),
+      baseUrl: (process.env.TREG_BASE_URL || TREG_DEFAULT_BASE_URL).replace(/\/$/, ""),
       lastCall: lastTregCall,
       callsToday: tregCallsToday,
     },

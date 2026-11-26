@@ -6,6 +6,7 @@ import { formatAr, normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
 import type { PoolKeyView, PoolOverview, PublicKeyCheckReport } from "@/lib/server/tregPoolAdmin";
 import { agoAr } from "./format";
 import { StatusBadge, type BadgeTone } from "./ui";
+import { BRAND_TREG } from "@/lib/multiProvider/types";
 
 /**
  * «مجمّع مفاتيح TREG» inside the TREG tab of «مزودو الخدمة» (docs/proposals/treg-key-pool). Admin only. A key is typed into a password field, sent once, validated against
@@ -129,7 +130,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
   };
 
   return (
-    <section className={SECTION} aria-label="مجمّع مفاتيح TREG" data-testid="treg-key-pool">
+    <section className={SECTION} aria-label={`مجمّع مفاتيح ${BRAND_TREG}`} data-testid="treg-key-pool">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0 text-[15px] font-semibold text-ink">مجمّع مفاتيح TREG</h3>
         <StatusBadge tone={ov.rolloutOn ? "ok" : "mute"} testId="rollout-state">{ov.rolloutOn ? "المجمّع يعمل" : "المجمّع مغلق"}</StatusBadge>
@@ -266,7 +267,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
         {!adding ? <div><button type="button" disabled={!ov.ready || busy !== ""} onClick={() => { setAdding(true); setSecret(""); setLabel(""); }} className={BTN} data-testid="add-key">أضف مفتاحًا</button></div> : (
           <div className="flex flex-col gap-2 rounded-xl border border-ln bg-sf p-3">
             <input type="text" value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} placeholder="اسم المفتاح (مثال: اختبار-١)" className={FIELD} style={{ textAlign: "right" }} />
-            <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="الصق مفتاح TREG هنا" className={FIELD} style={MONO} />
+            <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={`الصق مفتاح ${BRAND_TREG} هنا`} className={FIELD} style={MONO} />
             <p className="m-0 text-[11px] leading-[1.7] text-mut">يُفحص المفتاح أولًا بطلب حقيقي لدى المزود؛ إن رفضه لا يُحفظ. يُحفظ مشفّرًا ولا يُعرض إلا آخر ٤ خانات.</p>
             <div className="flex gap-2">
               <button type="button" disabled={!label.trim() || secret.length < 12 || busy !== ""} onClick={async () => { const k = secret; setSecret(""); if (await act("add", { action: "add", label: label.trim(), key: k })) { setAdding(false); setLabel(""); } }} className={BTN_PRIMARY}>{busy === "add" ? "جارٍ الفحص والحفظ…" : "فحص وحفظ"}</button>
@@ -280,7 +281,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
         <h4 className="m-0 text-[13px] font-semibold text-ink">فحص مفتاح قبل استخدامه</h4>
         <p className="m-0 text-[11px] leading-[1.7] text-mut">الصق مفتاح TREG واضغط «افحص». يُجرى على الخادم فقط: قراءة الهوية، قراءة الرصيد، ثم طلب حقيقي واحد بتكلفة نحو {usdFine(0.00015)} يُحسب من الحد اليومي للمزود. المفتاح لا يُحفظ ولا يُسجَّل ولا يُعاد إليك، ويُمسح من الحقل فور الإرسال. الحد: ٥ فحوص في الساعة.</p>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={probe} onChange={(e) => setProbe(e.target.value)} placeholder="الصق مفتاح TREG هنا" aria-label="مفتاح TREG للفحص" className={`${FIELD} sm:max-w-md`} style={MONO} data-testid="checker-input" />
+          <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={probe} onChange={(e) => setProbe(e.target.value)} placeholder={`الصق مفتاح ${BRAND_TREG} هنا`} aria-label={`مفتاح ${BRAND_TREG} للفحص`} className={`${FIELD} sm:max-w-md`} style={MONO} data-testid="checker-input" />
           <button type="button" disabled={probe.trim().length < 12 || busy !== "" || !ov.ready} onClick={checkPasted} className={BTN_PRIMARY} data-testid="checker-run">{busy === "check" ? "جارٍ الفحص…" : "افحص"}</button>
         </div>
         {checkError && <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="checker-error">{checkError}</p>}

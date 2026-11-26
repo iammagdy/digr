@@ -124,9 +124,9 @@ describe("admin screens", () => {
 
   it("one tab per provider, the data provider first", () => {
     expect(page).toMatch(/role="tablist"/);
-    expect(page.indexOf('["treg", "TREG: مزود البيانات"]')).toBeGreaterThan(-1);
-    expect(page.indexOf('["treg", "TREG: مزود البيانات"]')).toBeLessThan(page.indexOf('["anthropic", "مزود النموذج الذكي"]'));
-    expect(page).toMatch(/useState<TabId>\("treg"\)/);
+    expect(page.indexOf("[PROVIDER_TREG, `${BRAND_TREG}: مزود البيانات`]")).toBeGreaterThan(-1);
+    expect(page.indexOf("[PROVIDER_TREG, `${BRAND_TREG}: مزود البيانات`]")).toBeLessThan(page.indexOf('[PROVIDER_ANTHROPIC, "مزود النموذج الذكي"]'));
+    expect(page).toMatch(/useState<TabId>\(PROVIDER_TREG\)/);
   });
 
   it("shows a real check, a real balance with refresh, spend against the cap, masked key, replace, rollback and activity", () => {
