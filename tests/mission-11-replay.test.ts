@@ -227,14 +227,25 @@ describe("2. Facebook «هات ٥ فيديوهات ... عن منتخب مصر، 
     const { fakeRecorder, NOT_ADMIN, USER_ID } = await import("./helpers/agentHarness");
     const { loadTregCatalog } = await import("../src/lib/treg/catalog");
     const store = createMemoryStore();
-    store.missions.set("msn_fb", newMission({ id: "msn_fb", user_id: USER_ID, status: "planning", request_text: REQUEST, answer_text: ANSWER }));
+    store.missions.set("msn_fb", newMission({ id: "msn_fb", user_id: USER_ID, status: "planning", request_text: `${REQUEST} — ${ANSWER}` }));
     const queue = [tregResult(postsPage, 0.02952), tregResult(postsPage, 0.02952), tregResult(commentsPage, 0.002)];
     const rec = fakeRecorder();
     const money = fakeMoneyClient();
     const call = vi.fn(async () => { const n = queue.shift(); if (!n) throw new Error("no fake answer left"); return n; });
     const driver = createFakeDriver(first, nudge ? { nudgeScript: nudge } : {});
     const deps = { store, client: money.client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
-    await runPlanning(deps as never, store.missions.get("msn_fb")!);
+    // Keep the chosen video scope in the request so this synthetic handover does not enter the unrelated companies-only answer path.
+    // This worker replay is about the nudge after admitted samples. P09 separately pins the owner-only ceiling.
+    // A scripted handover enters the worker with the same Facebook parent and comment stages, without sampling in the model planner.
+    const plannerModel = async () => ({
+      input: { decision: "plan", understanding_ar: "فيديوهات وتعليقات وبيانات شركات.", steps: [
+        { key: "videos", platform: "facebook", capability: "facebook.search.posts", parent: null },
+        { key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: "videos" },
+        { key: "handover", platform: "companies", capability: "companies.search", parent: null },
+      ] },
+      costUsd: 0,
+    });
+    await runPlanning({ ...deps, plannerModel }, store.missions.get("msn_fb")!);
     return { store, driver, mission: store.missions.get("msn_fb")! };
   }
 
