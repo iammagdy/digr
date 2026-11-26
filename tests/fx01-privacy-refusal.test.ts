@@ -3,7 +3,6 @@ import { createMemoryDb } from "./helpers/memoryDb";
 import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
 import { buildSystemPrompt, decideTurn, type Decision } from "../src/lib/agentMission/conversationModel";
 import { setChatModelForTesting, type ChatModelCall } from "../src/lib/agentMission/chatModel";
-import { preModelAnswer } from "../src/lib/agentMission/guardRules";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { capabilitiesOf } from "../agent/src/llmPlanner/catalogView";
 import { acceptOf } from "../agent/src/llmPlanner/run";

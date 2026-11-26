@@ -1,0 +1,83 @@
+{
+  "source": "production missions table, read-only by COMMANDER 2026-11-25, mission msn_cfc0152ed9b2365172eb (test account, plan_ready); sample_rows removed",
+  "id": "msn_cfc0152ed9b2365172eb",
+  "status": "plan_ready",
+  "question_ar": null,
+  "request_text": "عايز ٥ فيديوهات من يوتيوب عن نصائح التغذية الصحية لمرضى السكري",
+  "summary_ar": "خمسة فيديوهات من يوتيوب عن نصائح التغذية الصحية لمرضى السكري.",
+  "stages": [
+    {
+      "key": "videos",
+      "columns": [
+        {
+          "key": "text",
+          "title_ar": "النص"
+        },
+        {
+          "key": "title",
+          "title_ar": "العنوان"
+        },
+        {
+          "key": "author",
+          "title_ar": "الاسم"
+        },
+        {
+          "key": "posted_at",
+          "title_ar": "تاريخ النشر"
+        },
+        {
+          "key": "link",
+          "title_ar": "الرابط"
+        },
+        {
+          "key": "views",
+          "title_ar": "المشاهدات"
+        },
+        {
+          "key": "x_length",
+          "title_ar": "مدة الفيديو"
+        }
+      ],
+      "deliver": true,
+      "title_ar": "الفيديوهات",
+      "parent_key": null,
+      "links_whole": true,
+      "yield_share": 1,
+      "expected_rows": 5
+    }
+  ],
+  "edit": {
+    "stages": [
+      {
+        "key": "videos",
+        "per_parent": null
+      }
+    ]
+  },
+  "price": {
+    "listed_rate": {
+      "noun_ar": "فيديو",
+      "unit_points": 5
+    },
+    "min_applied": true,
+    "delivered_rows": 5,
+    "reserve_points": 434,
+    "minimum_line_ar": "الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء.",
+    "max_charge_points": 200,
+    "min_charge_points": 200,
+    "unit_price_points": 40,
+    "execution_funding_applied": true
+  },
+  "assumptions_ar": [
+    "الترتيب حسب الأنسب للموضوع دون تفضيل للأحدث أو الأكثر مشاهدة."
+  ],
+  "notes_ar": [
+    "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
+  ],
+  "quantity": null,
+  "request_parts_ar": [
+    "يوتيوب",
+    "نصائح التغذية الصحية لمرضى السكري"
+  ],
+  "expected_minutes": 2
+}

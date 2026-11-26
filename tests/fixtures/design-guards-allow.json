@@ -850,15 +850,7 @@
     },
     {
       "file": "src/lib/agentMission/conversationModel.ts",
-      "pattern": "/^(?:خل\\S*|بس|قلل\\S*|زود\\S*|نقص\\S*|عدل\\S*|غير\\S*|اجعل\\S*|ممكن تخل\\S*)(?: |$)/"
-    },
-    {
-      "file": "src/lib/agentMission/conversationModel.ts",
       "pattern": "/anthropic|claude|openai|chatgpt|gpt|haiku|sonnet|opus|gemini|llama|mistral|أنثروبيك|انثروبيك|كلود|هايكو|سونيت|أوبوس|جيميني|شات\\s?جي\\s?بي\\s?تي|أوبن\\s?إيه\\s?آي|اوبن\\s?اي/i"
-    },
-    {
-      "file": "src/lib/agentMission/conversationModel.ts",
-      "pattern": "/يوم|ايام|اسبوع|اسابيع|شهر|شهور|اشهر|سنه|سنين|سنوات|ساعه|ساعات|%|بالمائه|دقيقه|دقايق/"
     },
     {
       "file": "src/lib/agentMission/customerExclusion.ts",
@@ -1563,66 +1555,6 @@
     {
       "file": "src/lib/agentMission/government.ts",
       "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:^| )(?:اسمي|اسمى|الاسم|اسم الحساب|اسم المستخدم)(?: |$)/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:^| )(?:عن|حول|بخصوص|في موضوع|رايك في|رايكم في|about|regarding)\\s+(?:ال)?(?:\\S+\\s+){0,2}$/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:^| )(?:نصب|نصاب\\S*|احتيال\\S*|حرام[يه]\\S*|وهم[يه]|مزيف\\S*|مضمون\\S*|موثوق\\S*|ضمان)(?: |$)|سرقه|الوثوق|اثق /"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:احذف|حذف|امسح|مسح|الغاء|الغي|الغا|اقفل|قفل|ازاله|ازيل)\\S*\\s*(?:ال)?(?:حساب|اكونت|اكاونت)|(?:حسابي|اكونتي|الاكونت|الاكاونت)\\s*(?:ده|دا|هذا)?\\s*(?:ال)?(?:حذف|مسح|الغاء)/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:ال)?شحن(?: |$)/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/(?:نصبتوا|نصبو|ثقه فيكم|ثقه في|هتسرقوا|بتسرقوا|فلوسي\\s*(?:هتضيع|ضاعت|راحت)|(?:ال)?موقع\\s*(?:ده|دا|هذا)?\\s*(?:حقيقي|امن|امان|مضمون))/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/اشحن|شحن\\s*(?:ال)?(?:رصيد|حساب|محفظ)|اضيف\\s*(?:ال)?رصيد|اضافه\\s*(?:ال)?رصيد|اشتري\\s*(?:ال)?نقاط|شراء\\s*(?:ال)?نقاط|طرق\\s*(?:ال)?دفع|ادفع\\s*ازاي|ازاي\\s*ادفع|زياده\\s*(?:ال)?رصيد|اعبي\\s*(?:ال)?رصيد/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/ايميلي|(?:^| )الايميل|(?:^| )الاميل|(?:^| )البريد|بريدي|اميلي/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/تعليق|منشور|بوست|فيديو|ريلز|شركات|شركه|تغريد|داتا|بيانات|مراجعات|صيدلي|مطاعم|عيادات|قائمه|قوائم|حسابات|متابع|هاتف|تليفون|ارقام/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/تعليق|منشور|فيديو|شركات|تغريد/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/حسابات/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/غير|تغيير|اغير|بدل|تبديل|اعدل|تعديل|عدل|ضيف|اضافه|اضيف/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/كلمه (?:ال)?(?:سر|مرور)|باسورد|باسوورد|(?:ال)?رقم (?:ال)?سري/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/مكاتب|مكتب|شركات|شركه|خدمات|خدمه|اسعار|سعر|تكلفه|بضاع|بضايع|شحنات|شحنه|دولي|بحري|جوي|جمارك|توصيل|مناديب|تجار|مستورد|موردين|مورد|(?:^| )(?:في|من|الي|الى|لـ)(?: |$)/"
-    },
-    {
-      "file": "src/lib/agentMission/guardRules.ts",
-      "pattern": "/نسيت|ازاي|كيف|عايز|اريد|ممكن|اعمل/"
     },
     {
       "file": "src/lib/agentMission/itemNoun.ts",

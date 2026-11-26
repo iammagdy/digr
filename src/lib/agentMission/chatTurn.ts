@@ -6,7 +6,7 @@ import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, cancelForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
 import { isExplicitCancel, openPlanFactsOf, planFollowUpAnswerAr, planQuestionKind, refersToOpenRequest } from "./openPlanFacts";
-import { preModelAnswer, PRIVACY_REFUSAL_AR } from "./guardRules";
+import { PRIVACY_REFUSAL_AR } from "./guardRules";
 import { checkCustomerText } from "./text";
 import { LLM_PLANNER_SETTING_KEY, llmPlannerOnValue } from "./llmPlannerFlag";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
@@ -342,13 +342,8 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
   // ROUND 21/22: the type of the message is decided before anything is planned (the chat model names it, code validates it); only a data request goes on, and only code routes to planning.
   // The chat's own button messages (retry, review) are data requests by code and cost no model call.
   if (!isRetrySamePlanMessage(input.message) && !isReviewPlanMessage(input.message)) {
-    // ROUND 23: privacy (personal contact data of private individuals), the account and trust questions have fixed answers written BEFORE the model is called: no mission, no model, no money, and the open-missions limit never sees them
-    const fixed = preModelAnswer(input.message);
-    if (fixed) {
-      console.info(JSON.stringify({ tag: "chat_message_type", type: `fixed_${fixed.kind}`, source: "code" }));
-      await writeAnswer(input, fixed.contentAr);
-      return { ok: false, contentAr: fixed.contentAr, status: 200 };
-    }
+    // In LLM-first turn flow, account and trust intents are classified by decideTurn
+    // and served with canonical checked copy directly by code.
     // LLM-FIRST PLANNER (llm_planner_v1, on unless the owner set it false): the worker's planning model reads the customer's own messages and asks what it needs on the card; the chat does not re-check the
     // request with word rules (the brief's consistency checks, the capability gate), which asked again and again for what the customer had already written. Privacy and the open request's handling stay.
     const plannerOn = llmPlannerOnValue(await readSettingValue(sb, LLM_PLANNER_SETTING_KEY));

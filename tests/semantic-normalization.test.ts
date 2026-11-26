@@ -5,7 +5,7 @@ import { explainNormalization, matchKey, NORMALIZATION_STEPS, normalizeArabic, s
 import { COMPILED_LEXICON, findTerms, LEXICON } from "../src/lib/agentMission/semantic/lexicon";
 import { interpretRequest, type SemanticInterpretation } from "../src/lib/agentMission/semantic/interpret";
 import { interpretIfEnabled, readSemanticNormalizationFlag, SEMANTIC_NORMALIZATION_FLAG_KEY } from "../src/lib/agentMission/semantic/flag";
-import { preModelAnswer, privacyRefusalAr } from "../src/lib/agentMission/guardRules";
+import { privacyRefusalAr } from "../src/lib/agentMission/guardRules";
 import { understand, type Understood } from "./helpers/semanticUnderstand";
 
 /**
@@ -275,15 +275,14 @@ describe("privacy: the semantic layer is not in the privacy path and cannot wide
     "هات تعليقات فيسبوك عن واتساب بيزنس",
   ];
 
-  it("requests are allowed under FX-PRIV, and preModelAnswer returns null", () => {
+  it("requests are allowed under FX-PRIV", () => {
     for (const t of MUST_REFUSE) {
-      expect(preModelAnswer(t)).toBeNull();
       expect(privacyRefusalAr(normalizeArabic(t))).toBeNull();
     }
   });
 
   it("the legitimate public research of #447 is still not refused", () => {
-    for (const t of MUST_STAY_LEGITIMATE) expect(preModelAnswer(t)?.kind ?? null, t).not.toBe("privacy_refusal");
+    for (const t of MUST_STAY_LEGITIMATE) expect(privacyRefusalAr(normalizeArabic(t)), t).toBeNull();
   });
 
   it("the vocabulary contains no messenger and no «messages» word: a semantic reading can never ask for a private conversation", () => {
@@ -301,7 +300,6 @@ describe("privacy: the semantic layer is not in the privacy path and cannot wide
     expect(r.platform).toEqual({ status: "none" });
     expect(asked(r)).toEqual([]);
     expect(r.topic).toBe("تطبيق واتساب");
-    expect(preModelAnswer("هات رسايل عن تطبيق واتساب")).toBeNull();
   });
 
   it("the privacy rules and the existing normalizer do not import the semantic module (no shared code path)", () => {
