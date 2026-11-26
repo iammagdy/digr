@@ -14,6 +14,7 @@ import { emailOnOtherDomain } from "./emailVerification";
 import { isRoleMailbox } from "./people";
 import { isPersonalMailDomain } from "../multiProvider/policy";
 import { COMPANY_EMAIL_STATUS_TITLE_AR, COMPANY_EMAIL_TITLE_AR, COMPANY_PHONE_TITLE_AR } from "./taskContracts";
+import { invisibleToSpace } from "../arabicNormalize";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -364,7 +365,7 @@ export interface PersonFacts { linkedin: string | null; name: string | null; fir
 
 // DT-20261118-03: a profile written without its scheme («linkedin.com/in/…», as some people sources give it) is the same profile; it is given to a finder with https://
 const LINKEDIN_PERSON = /^(https?:\/\/)?([a-z]{2,3}\.)?linkedin\.[a-z.]+\/in\/[^\s?#]+/i;
-const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
+const text = (v: unknown): string => invisibleToSpace(typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/\s+/g, " ").trim();
 const bareDomain = (v: unknown): string | null => { const t = text(v); if (!t || /linkedin\./i.test(t)) return null; const d = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0]; return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(d) ? d.toLowerCase() : null; };
 
 /** The facts of a person row (and of its company's row): decided by code from the values, not from the planner's key names alone. */

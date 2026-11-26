@@ -4,6 +4,7 @@
  * a date got 13 and was cut, a 114-character link wrapped on four lines, and a post of 3,800 characters sat in a 52-wide cell on a row Excel sizes by itself (and cuts at 409 points). Nothing here changes a value: the cell keeps its full text; only the width, the wrap and the height of the row change.
  * Pure: no I/O.
  */
+import { foldDigits, foldSeparatorMarks } from "../../src/lib/arabicNormalize";
 export type ColumnKind = "long_text" | "text" | "link" | "date" | "number" | "id";
 export interface ColumnSpec { kind: ColumnKind; width: number; wrap: boolean }
 
@@ -25,7 +26,7 @@ export function columnSpec(input: { title: string; values: ReadonlyArray<unknown
   if (input.date) return { kind: "date", width: 24, wrap: false };
   const shown = input.values.map(textOf).filter((s) => s.trim() !== "");
   const longest = shown.reduce((n, s) => Math.max(n, s.length), 0);
-  if (input.numeric || (shown.length > 0 && shown.every((s) => /^-?[\d٠-٩][\d٠-٩.,٫٬]*$/.test(s.trim())))) return { kind: "number", width: Math.max(12, Math.min(18, Math.ceil(input.title.length * 1.05) + 3, Math.max(12, longest + 4))), wrap: false };
+  if (input.numeric || (shown.length > 0 && shown.every((s) => /^-?\d[\d.,]*$/.test(foldSeparatorMarks(foldDigits(s.trim())))))) return { kind: "number", width: Math.max(12, Math.min(18, Math.ceil(input.title.length * 1.05) + 3, Math.max(12, longest + 4))), wrap: false };
   // every filled cell an address: the address stays on ONE line (the hyperlink and the cell hold all of it); a wrapped 114-character link is four lines of noise
   if (shown.length > 0 && shown.every(isLink)) return { kind: "link", width: 40, wrap: false };
   if (longest > LONG_TEXT_FROM) return { kind: "long_text", width: LONG_TEXT_WIDTH, wrap: true };

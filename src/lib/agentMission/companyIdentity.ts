@@ -1,5 +1,6 @@
 import { placesInText } from "./places";
 import { normalizeText } from "./relevance";
+import { invisibleToSpace } from "../arabicNormalize";
 
 /**
  * WHO A PERSON WORKS FOR, CONFIRMED BY CODE (live test A1, 2026-11-01). The company «falcon misr» (falconmisr.com) carried the company page link https://linkedin.com/company/mycompany, a placeholder some data source filled in. The people source answered for a company that
@@ -108,7 +109,7 @@ export interface CompanyIdentity {
   domain: string | null;
 }
 
-const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
+const text = (v: unknown): string => invisibleToSpace(typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/\s+/g, " ").trim();
 
 /** What a company row tells about who the company is: its name and its website, from the values (the planner's key names are only a hint). */
 export function companyIdentityOf(row: Record<string, unknown> | null | undefined, nameKeys: ReadonlyArray<string> = []): CompanyIdentity {

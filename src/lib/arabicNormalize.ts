@@ -131,6 +131,26 @@ export function removeListPunctuation(text: string): string {
   return Array.from(String(text ?? "")).filter((c) => !DROP.has(c)).join("");
 }
 
+/** Zero-width, bidirectional-control and BOM characters (U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF) each turned into ONE blank. \u escapes on purpose: these characters are invisible, not Arabic letters. */
+export function invisibleToSpace(text: string): string {
+  return String(text ?? "").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, " ");
+}
+
+/** A leading byte-order mark (U+FEFF) removed. */
+export function stripBom(text: string): string {
+  return String(text ?? "").replace(/^\uFEFF/, "");
+}
+
+/** C0 control characters (except tab, line feed and carriage return), DEL, and the zero-width / bidi / BOM characters removed. \u escapes on purpose (invisible characters). */
+export function removeControlAndInvisible(text: string): string {
+  return String(text ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
+}
+
+/** Arabic-Indic digits (٠-٩) → 0-9 and NOTHING else (Persian digits stay; use `foldDigits` for both). */
+export function foldArabicIndicDigits(text: string): string {
+  return String(text ?? "").replace(ARABIC_INDIC, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
 /** Edge trimming with the caller's own predicate (so each caller keeps its exact set of characters): removes the characters at the start, the end, or both, while `isTrim(ch)` is true. */
 export function trimEdges(text: string, isTrim: (ch: string) => boolean, edge: "start" | "end" | "both" = "both"): string {
   const chars = Array.from(String(text ?? ""));
