@@ -84,9 +84,9 @@ export const PAID_PATH_GROUPS: ReadonlyArray<PaidPathGroup> = [
     safeInCampaign: false, note: "Not reached by a console mission. Not gated: do not claim the platform is protected.",
   },
   {
-    id: "website.review", title: "Website: row review, relevance, report axis model, invoices assist, social and TREG adapters", kind: "model", campaign: "excluded",
+    id: "website.review", title: "Website: row review, relevance, invoices assist, social and TREG adapters", kind: "model", campaign: "excluded",
     files: [
-      "src/lib/server/companyRelevanceReview.ts", "src/lib/server/rowReviewAdvisor.ts", "src/lib/server/facebookReportAxisModel.ts", "src/lib/server/facebookReportAdapter.ts", "src/lib/server/relevanceDecision.ts",
+      "src/lib/server/companyRelevanceReview.ts", "src/lib/server/rowReviewAdvisor.ts", "src/lib/server/relevanceDecision.ts",
       "src/lib/server/invoices/assist.ts", "src/lib/server/socialAdapter.ts", /* the path is built, not written whole: tests/fake-provider-production-refusal.test.ts lists the files that NAME the fake provider, and this registry only classifies it */ `src/lib/server/${"fake"}SocialSource.ts`, "src/lib/server/tregAdapter.ts", "src/lib/facebookTopicSources.ts",
     ],
     bound: "none", mechanism: "none", safeInCampaign: false, note: "Customer-job paths on the website. Not reached by a console mission.",

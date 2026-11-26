@@ -15,8 +15,6 @@ import { getLiveProviderGateStatus } from "./providerGate";
 import { resolveProviderKey } from "./providerKeys";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
-import { isFacebookTopicReport } from "../facebookReport/constants";
-import { runFacebookReportChunk } from "./facebookReportAdapter";
 import { runSocialChunk, type SocialCall, type VideoSelector } from "./socialAdapter";
 import { markContactRowsForReview } from "../../functions/shared/decisionMakerPricing";
 import {
@@ -1136,9 +1134,6 @@ export interface ProviderAdapterCallInput {
   quoteId?: string;
   /** Social topic searches only: judges the discovered videos before their comments are read (set by the worker). */
   videoSelector?: VideoSelector;
-  /** The Facebook topic report only (set by the worker): where the collector keeps its record between chunks, and the one model call that places the posts the rules could not. */
-  reportStore?: import("./facebookReportAdapter").ReportStateStore;
-  axisModel?: import("./facebookReportAdapter").AxisModelCall;
   /** The job's hard USD budget (set by the worker): asked before EVERY provider call of the chunk, not once per chunk. */
   callBudget?: import("./callBudget").JobCallBudget;
   /** What one call of a generic (non-social) source may cost, for that budget. */
@@ -1174,16 +1169,12 @@ export interface ProviderAdapterCallOutput {
    * (links, bare reactions, pleasantries). `asked` is the number of comments wanted from each post.
    */
   postReads?: { read: number; sourceShort: number; sourceMissing: number; filteredShort: number; asked: number };
-  /** The Facebook topic report only: a chunk that delivered no row but made progress (browsing, classifying): the worker does not count it as an empty page. */
-  reportProgress?: boolean;
   /** A model-planned job with a topic: the model calls of the topic review of the chunk (usage and cost), for the worker to log. */
   reviewModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string; reason?: string }>;
   /** A model-planned mission only: short Arabic lines about what happened at a decision point (a source replaced, a stage stopped, the final review), kept with the job for the customer's summary. */
   missionNotes?: Array<{ kind: string; stage?: number; textAr: string }>;
   /** A model-planned mission only: where each stage stands after this chunk (rows collected, rows delivered, rows wanted, parent rows waiting, finished, why stopped). The panel reads it. */
   missionProgress?: { stages: Array<{ c: number; d: number; x: number; e: number; q: number; done: boolean; stopped?: string }> };
-  /** The Facebook topic report only: the model calls of the chunk (usage and cost), for the worker to log. */
-  reportModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
 }
 
 export type ProviderAdapterFn = (
@@ -1330,12 +1321,6 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       errorCode: gate.reasonCode,
       errorMessageAr: gate.messageAr,
     };
-  }
-
-  // The Facebook topic report has its own collector (vetted Pages round-robin, the exact date window, the per-publisher cap, then the comments): see facebookReportAdapter.
-  if (isFacebookTopicReport(input.capabilitySlug)) {
-    if (!input.reportStore) return { ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode: "report_store_missing", errorMessageAr: "تعذر تجهيز التقرير؛ لم يُخصم أي رصيد." };
-    return runFacebookReportChunk(input, { call: socialCallThroughTreg(input), store: input.reportStore, axisModel: input.axisModel });
   }
 
   // A MODEL-PLANNED job: the generic interpreter runs the approved plan (see src/lib/modelPlanner/interpreter.ts).

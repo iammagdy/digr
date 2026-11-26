@@ -1,7 +1,7 @@
 import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
 import { extractNumberFromText } from "./arabicNumbers";
 import { countPlainAr } from "./planCounts";
-import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, stripReportWords, type SocialPlatformId } from "./socialTasks";
+import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, type SocialPlatformId } from "./socialTasks";
 import { proposedDefaultWindow, resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -46,8 +46,6 @@ export interface MissionUnderstanding {
   missing: MissingInput[];
   /** The customer skipped the channels of a mission: the videos are found by a topic instead, and the plan says so. */
   channelsSkipped: boolean;
-  /** Set only for the Facebook topic REPORT. */
-  report?: true;
   /** The X account whose own posts are wanted («@elonmusk», or its link): the request is the account's posts, so it has no topic. Null otherwise. */
   xAccount?: string | null;
 }
@@ -263,8 +261,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   // Without channels the top videos are found by a topic: a search, which needs its period like any other.
   const asked = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" && !channelsSkipped });
   // A comments request never stops to ask for a period: the plan proposes the last month (or the dates of a known event) and the customer edits it there.
-  // (the Facebook topic REPORT is a report for a period the customer states: it is asked, never proposed unasked, so its understanding carries no default window)
-  const window = commentsFlow && asked.status === "missing" && !social.report ? proposedDefaultWindow(options.today) : asked;
+  const window = commentsFlow && asked.status === "missing" ? proposedDefaultWindow(options.today) : asked;
 
   const topicAnswer = channelsSkipped ? topicAnswerFromText(text) : null;
   // A named channel is scoped by the channel itself: its subject is only what the customer said after «عن», never the words left over once
@@ -300,7 +297,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   return {
     kind,
     platform,
-    subject: (social.report && subject ? stripReportWords(subject) : subject) || null,
+    subject: subject || null,
     channels,
     topPerChannel: top,
     rankedBy,
@@ -316,7 +313,6 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     needsCap: allComments || allItems || (feedKind && volume === null && kind !== "social_feed"),
     missing,
     channelsSkipped,
-    ...(social.report ? { report: true as const } : {}),
     ...(xAccount ? { xAccount } : {}),
   };
 }
@@ -434,8 +430,6 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
       // The posts of one X account: said as the account's posts, with no topic phrase.
       if (u.xAccount) return `فهمت أنك تريد ${u.volume ? `أحدث ${countPlainAr(u.volume, "tweets")}` : "أحدث المنشورات"} من حساب ${u.xAccount}${where}${windowText}.`;
       const about = u.subject ? ` عن «${u.subject}»` : "";
-      // the Facebook topic REPORT is a report, not «comments of posts»; its period is said only when the customer stated one
-      if (u.report) return `فهمت أنك تريد تقريرًا${about} على فيسبوك${windowText}.`;
       if (u.commentsFlow) {
         const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" || u.platform === "facebook" ? "منشورات" : "فيديوهات";
         const cap = u.volume ? `، حتى ${countPlainAr(u.volume, "comments")}` : "";

@@ -7,7 +7,6 @@
  * every turn and can be tested.
  */
 import { periodWordFlags } from "./timeWindow";
-import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 import { extractNumberFromText, isNumberWord } from "./arabicNumbers";
 import { normalizeDigits } from "./arabicDigits";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -150,8 +149,6 @@ export interface SocialIntent {
   discover: "target" | "trending" | "keyword" | "channel" | null;
   /** True when the customer wants the posts/videos AND their comments together. */
   videosWithComments: boolean;
-  /** Set only when the customer asked for a REPORT on a topic on Facebook («تقرير عن الترندات الصحية على فيسبوك»): served by the Facebook topic report. Absent otherwise. */
-  report?: true;
 }
 
 function detectPlatform(text: string, urls: SocialUrl[]): SocialPlatformId | null {
@@ -198,18 +195,6 @@ export function facebookPageNameIn(text: string): string | null {
   // «صفحة https://…»: the word after «صفحة» is the start of a link, not a name (the link is read as the page by its own reader).
   if (/^https?$/iu.test(kept[0])) return null;
   return kept.join(" ");
-}
-
-/** A report, an analysis or a monitoring of a topic: the words that ask for the Facebook topic report (a deliverable with a statistical summary), not for rows. */
-export const REPORT_WORDS_RE = /(?:^|[\s(،,«"])(?:ال)?(?:تقرير|تقارير|تحليل|رصد)(?![\p{L}])/u;
-/** The words of a request with the report words taken out, so a subject reader never takes «تقرير» for the topic. */
-export function stripReportWords(text: string): string {
-  return String(text || "")
-    .replace(/(?:^|[\s(،,«"])(?:ال)?(?:تقرير|تقارير|تحليل|رصد)(?![\p{L}])/gu, " ")
-    // the «بـ» left behind when a count is cut out of «بـ ٢٠ تعليق لكل منشور» is not part of a topic
-    .split(/\s+/).filter((token) => !/^(?:بـ+|ـ+|ب)$/u.test(token)).join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /** The customer's «posts only» answer (the card's second option, or the same words typed). */
@@ -300,12 +285,6 @@ export function detectSocialIntent(text: string): SocialIntent {
   }
 
   const pageName = platform === "facebook" && !channelRef && ((task === "page_posts" && discover === "keyword") || (task === "comments" && discover === "channel")) ? facebookPageNameIn(body) : null;
-
-  // A REPORT on a topic on Facebook (a topic, no link, no page): one deliverable, the posts of vetted Pages with their comments, a statistical summary and a methodology file.
-  // Only the report words make it one: every other Facebook request keeps its own route untouched.
-  if (FACEBOOK_REPORT_ENABLED && platform === "facebook" && !targetUrl && !channelRef && !facebookPageNameIn(body) && REPORT_WORDS_RE.test(body) && hasSocialSubject(stripReportWords(body))) {
-    return { platform, wantsComments: true, wantsTrending: false, targetUrl: null, channelRef: null, pageName: null, task: "comments", discover: "keyword", videosWithComments: true, report: true };
-  }
 
   return { platform, wantsComments, wantsTrending, targetUrl, channelRef, pageName, task, discover, videosWithComments };
 }
@@ -588,7 +567,7 @@ export function socialTaskQuestion(id: MissingSocialTaskInput, platform?: Social
 /** Closes a stored card answer (see consultantCopy ANSWER_END). */
 const STORED_ANSWER_END = "\u2063";
 /** The stored card answers that never carry a topic word: how many, which period, which platform, which channels. */
-const NON_TOPIC_ANSWER_LABELS = ["volume_cap_required", "social_time_required", "social_platform_required", "social_platform_other_required", "social_channel_required", "social_report_country_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
+const NON_TOPIC_ANSWER_LABELS = ["volume_cap_required", "social_time_required", "social_platform_required", "social_platform_other_required", "social_channel_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
 const TOPIC_ANSWER_LABELS = ["social_topic_required", "social_x_topic_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
 const ANY_STORED_LABEL = Array.from(new Set(Object.values(CLARIFICATION_ANSWER_LABELS)));
 const answerSegmentRe = (labels: string[], flags: string) =>

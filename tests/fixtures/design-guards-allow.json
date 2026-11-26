@@ -377,14 +377,6 @@
       "pattern": "/منصة|مصدر|platform|source|تيك توك|يوتيوب|تويتر|منصة x/"
     },
     {
-      "file": "src/functions/shared/facebookReportPdf.ts",
-      "pattern": "/[٠-٩٬٫٪]+/gu"
-    },
-    {
-      "file": "src/functions/shared/facebookReportPdf.ts",
-      "pattern": "/^[٠-٩٬٫٪ .:-]+$/u"
-    },
-    {
       "file": "src/functions/shared/fileGenerators.ts",
       "pattern": "/(?:نتائج|بيانات)\\s+(?:استخراج|بحث)\\s*—?\\s*$/u"
     },
@@ -3325,50 +3317,6 @@
       "pattern": "/\\s+([،.])/g"
     },
     {
-      "file": "src/lib/facebookReport/axes.ts",
-      "pattern": "/^(?:[وفبكل]|لل)?(?:ال)?/u"
-    },
-    {
-      "file": "src/lib/facebookReport/axes.ts",
-      "pattern": "/^ال/u"
-    },
-    {
-      "file": "src/lib/facebookReport/read.ts",
-      "pattern": "/[^a-z0-9؀-ۿ]/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/[ً-ٰٟـ]/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/[؀-ۿ]/"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/[أإآٱ]/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/^(?:[وفبكل]|لل)?(?:ال)?/u"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/ؤ/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/ئ/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/facebookReport/registry.ts",
-      "pattern": "/ى/g"
-    },
-    {
       "file": "src/lib/fileSpec.ts",
       "pattern": "/(?:^|\\s)(?:و|ثم)\\s/u"
     },
@@ -5122,14 +5070,6 @@
     },
     {
       "file": "src/lib/socialTasks.ts",
-      "pattern": "/(?:^|[\\s(،,«\"])(?:ال)?(?:تقرير|تقارير|تحليل|رصد)(?![\\p{L}])/gu"
-    },
-    {
-      "file": "src/lib/socialTasks.ts",
-      "pattern": "/(?:^|[\\s(،,«\"])(?:ال)?(?:تقرير|تقارير|تحليل|رصد)(?![\\p{L}])/u"
-    },
-    {
-      "file": "src/lib/socialTasks.ts",
       "pattern": "/(?:^|[\\s(])(?:صفحة|صفحه|بيج|page)\\s+((?:[\\p{L}\\p{N}_.\\-]+\\s?){1,5})/iu"
     },
     {
@@ -5163,10 +5103,6 @@
     {
       "file": "src/lib/socialTasks.ts",
       "pattern": "/[0-9٠-٩۰-۹]+\\s*(?:سجلات|سجل|نتيجة|نتائج)(?=\\s|$)/gu"
-    },
-    {
-      "file": "src/lib/socialTasks.ts",
-      "pattern": "/^(?:بـ+|ـ+|ب)$/u"
     },
     {
       "file": "src/lib/socialTasks.ts",
@@ -6457,26 +6393,6 @@
     {
       "file": "src/lib/server/adminCallsLog.ts",
       "token": "treg"
-    },
-    {
-      "file": "src/lib/server/fakeFacebookSource.ts",
-      "token": "anyapi"
-    },
-    {
-      "file": "src/lib/server/fakeFacebookSource.ts",
-      "token": "anyapi.facebook.user.posts"
-    },
-    {
-      "file": "src/lib/server/fakeFacebookSource.ts",
-      "token": "scrapecreators"
-    },
-    {
-      "file": "src/lib/server/fakeFacebookSource.ts",
-      "token": "scrapecreators.x.v1-facebook-post-comments"
-    },
-    {
-      "file": "src/lib/server/fakeFacebookSource.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/server/jobExecutionSpec.ts",
