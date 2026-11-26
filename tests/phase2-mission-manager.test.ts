@@ -13,7 +13,6 @@ import { safeArabicSentence, safeStageTitleAr } from "../src/lib/modelPlanner/cu
 import { MODEL_PLAN_PARAM, MODEL_PLAN_REQUEST_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
 import type { ProviderAdapterCallInput } from "../src/lib/server/tregAdapter";
 import type { TregCallOptions, TregCallResult } from "../src/functions/shared/tregClient";
-import { seedRecipeRows, seedRecipes } from "../src/lib/modelPlanner/recipeSeeds";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { use } from "./helpers/plannerKit";
 
@@ -547,31 +546,5 @@ describe("customer text made by the model is made safe by code", () => {
     expect(safeStageTitleAr("", 1, "person")).toBe("جمع الأشخاص");
     expect(safeStageTitleAr(undefined, 2, null)).toBe("المرحلة ٣");
     expect(safeStageTitleAr("جمع الفيديوهات", 0, null)).toBe("جمع الفيديوهات");
-  });
-});
-
-describe("reviewed recipes for the services proven on the old path", () => {
-  it("seven services plus the two-step ones are seeded (a draft until real measurements prove them) with no customer value in them", () => {
-    const rows = seedRecipeRows();
-    const endpoints = rows.map((r) => r.row.endpoint_id);
-    for (const id of ["anyapi.x.user.posts", "anyapi.x.search.posts", "tikhub.tiktok.video.comments", "scrapecreators.x.v1-facebook-post-comments", "justoneapi.x.facebook-search-post-v1", "icypeas.companies.search", "icypeas.people.search"]) expect(endpoints).toContain(id);
-    for (const { row } of rows) {
-      expect(row.status).toBe("draft"); // a `reviewed` row needs a reviewer, a date and a fixture ref (the table refuses it otherwise): see tests/recipe-seeds-constraints.test.ts
-      expect(row.created_by).toBe("seed");
-      expect(JSON.stringify(row)).not.toMatch(/elonmusk|@/);
-    }
-    expect(new Set(rows.map((r) => r.row.slug)).size).toBe(rows.length);
-  });
-
-  it("the button inserts the missing ones once, never changes a saved one, and says so when the table is not applied", async () => {
-    const db = createMemoryDb();
-    const first = await seedRecipes(db);
-    expect(first.inserted).toBe(seedRecipeRows().length);
-    expect(db.rows("recipes")).toHaveLength(seedRecipeRows().length);
-    const again = await seedRecipes(db);
-    expect(again).toMatchObject({ inserted: 0, present: seedRecipeRows().length });
-    const missing = await seedRecipes(createMemoryDb({ missing: ["recipes"] }));
-    expect(missing.tableApplied).toBe(false);
-    expect(missing.inserted).toBe(0);
   });
 });

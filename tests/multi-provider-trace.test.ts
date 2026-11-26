@@ -7,7 +7,6 @@ vi.mock("../src/lib/supabase/server", () => ({
   createAdminClient: vi.fn(() => state.adminClient),
 }));
 
-import { GET as traceGet } from "../src/app/api/admin/job-trace/route";
 import { runChainChunk, type ChainChunkInput, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
@@ -213,31 +212,6 @@ describe("routing trace storage: private bucket only, never job_events or the qu
     expect(text).not.toMatch(/firecrawl|context\.?dev|treg|usd|\$|دولار|mp\.|scrape|search/i);
     expect(text).not.toMatch(/[A-Za-z]/);
     expect(h.traces.length).toBeGreaterThan(0);
-  });
-});
-
-describe("admin-only trace route", () => {
-  beforeEach(() => { state.user = null; state.adminClient = null; });
-
-  it("401 without a session, 403 for a customer, 400 for a bad id, and the trace + summary for an admin", async () => {
-    const { client } = fakeStorageClient();
-    state.adminClient = client;
-    const chunk: ChunkTrace = { step: 0, at: "t", stages: [{ stage: "discover", provider: "contextdev", capabilityId: "contextdev.search", calls: 1, success: 1, failed: 0, empty: 0, costUsd: 0.0025, durationMs: 10, found: 5, fresh: 5, duplicate: 0, read: 0, skipped: 0, verified: 0, unverified: 0 }], fallbacks: [], delivered: 0, spentBeforeUsd: 0, costUsd: 0.0025, stoppedBy: null };
-    await appendChunkTrace(client, { jobId: "job_route_1", chunk });
-    const get = (id: string) => traceGet(new NextRequest(`http://localhost/api/admin/job-trace?jobId=${id}`));
-
-    expect((await get("job_route_1")).status).toBe(401);
-    state.user = { id: "u1", email: "c@t", app_metadata: {}, user_metadata: {} };
-    expect((await get("job_route_1")).status).toBe(403);
-    state.user = ADMIN;
-    expect((await get("../etc")).status).toBe(400);
-    const ok = await get("job_route_1");
-    expect(ok.status).toBe(200);
-    const body = await ok.json();
-    expect(body.trace.chunks).toHaveLength(1);
-    expect(body.summary.totalCalls).toBe(1);
-    const none = await (await get("job_unknown_9")).json();
-    expect(none.trace).toBeNull();
   });
 });
 

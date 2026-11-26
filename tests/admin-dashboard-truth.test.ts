@@ -182,6 +182,13 @@ describe("admin jobs page source", () => {
     expect(source).toContain("HIDE_TEST_ACCOUNTS_LABEL_AR");
     expect(source).toContain("hideTest=${hideTest ? 1 : 0}");
   });
+
+  it("the jobs page does not import or render RoutingTracePanel and has no job-trace endpoint reference", () => {
+    const source = readFileSync("src/app/admin/jobs/page.tsx", "utf8");
+    expect(source).not.toContain("RoutingTracePanel");
+    expect(source).not.toContain("/api/admin/job-trace");
+    expect(source).toContain("JobDiagnosticPanel");
+  });
 });
 
 // ---- The route, end to end: the real adapter, the real queries, an in-memory Supabase-style client. ----

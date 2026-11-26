@@ -10,7 +10,7 @@ No API, SQL, money logic, key-pool behaviour, worker, price, customer page or cu
 | العملاء والطلبات | المستخدمون `/admin/users` · عمليات البحث `/admin/jobs` · رسائل الدعم `/admin/support` · طلبات غير مدعومة `/admin/requests` |
 | الفلوس والشحن | طلبات الشحن `/admin/topups` · الإيرادات والأرباح `/admin/finance` · الأكواد الترويجية `/admin/promo-codes` |
 | المزودون والمفاتيح | مزودو الخدمة `/admin/providers` · سجل الاستدعاءات `/admin/calls-log` |
-| الوكيل والجودة | الوكيل `/admin/agent` · لوحة الأعطال `/admin/failures` · فحص المخطط `/admin/planner-selftest` · بحث عكسي `/admin/reverse-lookup` |
+| الوكيل والجودة | الوكيل `/admin/agent` · لوحة الأعطال `/admin/failures` · بحث عكسي `/admin/reverse-lookup` |
 | الإعدادات | الإعدادات `/admin/settings` · سجل العمليات `/admin/audit` · نسخة احتياطية `/admin/export` |
 
 Source of truth: `src/components/admin/nav.ts` (groups, one-line page descriptions, the old address list). `ADMIN_PAGES` in `icons.tsx` is unchanged.

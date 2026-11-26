@@ -12,7 +12,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
   { id: "customers", label: "العملاء والطلبات", pages: ["users", "messages", "jobs", "support", "requests"] },
   { id: "money", label: "الفلوس والشحن", pages: ["topups", "finance", "invoices", "promo-codes"] },
   { id: "providers", label: "المزودون والمفاتيح", pages: ["providers", "calls-log", "provider-updates"] },
-  { id: "agent", label: "الوكيل والجودة", pages: ["agent", "failures", "planner-selftest", "reverse-lookup"] },
+  { id: "agent", label: "الوكيل والجودة", pages: ["agent", "failures", "reverse-lookup"] },
   { id: "settings", label: "الإعدادات", pages: ["settings", "audit", "export"] },
 ];
 
@@ -36,7 +36,6 @@ export const ADMIN_PAGE_INFO: Record<AdminPageId, string> = {
   "provider-updates": "ما أضافه أو عدّله أو أوقفه مزودو البيانات وتقارير دراستها قبل الدمج.",
   agent: "تشغيل مهام الوكيل ومتابعتها.",
   failures: "كل ما فشل أو رجع فارغًا في آخر سبعة أيام، مع إعادة التجربة.",
-  "planner-selftest": "فحص المخطط على طلبات جاهزة دون أي خصم من العملاء.",
   "reverse-lookup": "بحث عن شخص برقم هاتف أو بريد إلكتروني.",
   settings: "سعر النقطة وحدود الشحن وبيانات الدعم وفريق الإدارة.",
   audit: "من فعل ماذا ومتى في لوحة الإدارة. لا يُعدَّل ولا يُحذف.",
@@ -51,6 +50,6 @@ export const BOTTOM_BAR_PAGES: AdminPageId[] = ["overview", "users", "messages",
 /** Every admin address that existed before the reorganisation. A page must keep answering at its old address. */
 export const ADMIN_LEGACY_ROUTES = [
   "/admin", "/admin/users", "/admin/topups", "/admin/jobs", "/admin/visitors", "/admin/operations", "/admin/finance", "/admin/promo-codes", "/admin/support",
-  "/admin/providers", "/admin/calls-log", "/admin/audit", "/admin/requests", "/admin/conference", "/admin/reverse-lookup", "/admin/planner-selftest",
+  "/admin/providers", "/admin/calls-log", "/admin/audit", "/admin/requests", "/admin/conference", "/admin/reverse-lookup",
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ] as const;

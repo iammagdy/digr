@@ -3805,10 +3805,6 @@
       "pattern": "/غير\\s+متاح|لا\\s+تتوفر|غير\\s+متوفر|لا\\s+يمكن\\s+(?:توفير|تنفيذ)|لا\\s+نستطيع/"
     },
     {
-      "file": "src/lib/modelPlanner/selfTest.ts",
-      "pattern": "/(?:آخر|اخر|الماضي|يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|\\d{4})/"
-    },
-    {
       "file": "src/lib/modelPlanner/stageCall.ts",
       "pattern": "/^[\\d٠-٩]+$/u"
     },
@@ -6509,70 +6505,6 @@
     {
       "file": "src/lib/modelPlanner/planner.ts",
       "token": "you"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "anyapi"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "anyapi.tiktok.search.videos"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "anyapi.x.search.posts"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "anyapi.x.user.posts"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "icypeas"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "icypeas.companies.search"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "icypeas.people.search"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "justoneapi"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "justoneapi.x.facebook-search-post-v1"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "scrapecreators"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "scrapecreators.x.v1-facebook-post-comments"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "tikhub"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "tikhub.tiktok.video.comments"
-    },
-    {
-      "file": "src/lib/modelPlanner/recipeSeeds.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/selfTest.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/selfTest.ts",
-      "token": "youtube"
     },
     {
       "file": "src/lib/modelPlanner/tools.ts",
