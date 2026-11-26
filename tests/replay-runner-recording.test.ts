@@ -452,4 +452,198 @@ describe("DT-20261125-tweets-replay-parity: Replay Runner Recording Engine Tests
     const c5 = evaluateCrit2(makePlan(700, 631), null);
     expect(c5.pass).toBe(false);
   });
+
+  it("T11a: recording call whose envelope has a next cursor at the catalog cursor_out_path and NO has_more field returns has_more null and next_cursor", () => {
+    const syntheticPagingEp: CatalogEndpoint = {
+      ...dummyEp1,
+      id: "test.synthetic.ep.paging",
+      cursor_path: "output.next_cursor",
+    };
+    const syntheticCatalog: TregCatalog = {
+      ...catalog,
+      byId: new Map<string, CatalogEndpoint>([[syntheticPagingEp.id, syntheticPagingEp]]),
+    };
+    const fixtureT11a: ReplayRows = {
+      probeRows: [],
+      executionRows: [],
+      sourceDescription: "Synthetic Recording T11a",
+      origin: "cli",
+      recording: {
+        request: "fetch data",
+        calls: [
+          {
+            phase: "planning",
+            endpoint_id: syntheticPagingEp.id,
+            params: { q: "test" },
+            status: 200,
+            envelope: {
+              output: {
+                items: [{ id: "item_1", text: "Alpha" }],
+                next_cursor: "cursor_synth_next_page",
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const res = recordedGatewayResult({
+      fixture: fixtureT11a,
+      requestedEndpoint: syntheticPagingEp,
+      params: { q: "test" },
+      phase: "planning",
+      catalog: syntheticCatalog,
+    });
+
+    expect(res.result.ok).toBe(true);
+    if (res.result.ok) {
+      expect(res.result.has_more).toBeNull();
+      expect(res.result.next_cursor).toBe("cursor_synth_next_page");
+    }
+  });
+
+  it("T11b: recording call with envelope has_more false and cursor returns has_more false", () => {
+    const syntheticPagingEp: CatalogEndpoint = {
+      ...dummyEp1,
+      id: "test.synthetic.ep.paging.b",
+      cursor_path: "output.next_cursor",
+    };
+    const syntheticCatalog: TregCatalog = {
+      ...catalog,
+      byId: new Map<string, CatalogEndpoint>([[syntheticPagingEp.id, syntheticPagingEp]]),
+    };
+    const fixtureT11b: ReplayRows = {
+      probeRows: [],
+      executionRows: [],
+      sourceDescription: "Synthetic Recording T11b",
+      origin: "cli",
+      recording: {
+        request: "fetch data",
+        calls: [
+          {
+            phase: "planning",
+            endpoint_id: syntheticPagingEp.id,
+            params: { q: "test" },
+            status: 200,
+            envelope: {
+              output: {
+                items: [{ id: "item_1", text: "Alpha" }],
+                next_cursor: "cursor_synth_next_page",
+                has_more: false,
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const res = recordedGatewayResult({
+      fixture: fixtureT11b,
+      requestedEndpoint: syntheticPagingEp,
+      params: { q: "test" },
+      phase: "planning",
+      catalog: syntheticCatalog,
+    });
+
+    expect(res.result.ok).toBe(true);
+    if (res.result.ok) {
+      expect(res.result.has_more).toBe(false);
+    }
+  });
+
+  it("T11c: recording call with envelope has_more true returns has_more true", () => {
+    const syntheticPagingEp: CatalogEndpoint = {
+      ...dummyEp1,
+      id: "test.synthetic.ep.paging.c",
+      cursor_path: "output.next_cursor",
+    };
+    const syntheticCatalog: TregCatalog = {
+      ...catalog,
+      byId: new Map<string, CatalogEndpoint>([[syntheticPagingEp.id, syntheticPagingEp]]),
+    };
+    const fixtureT11c: ReplayRows = {
+      probeRows: [],
+      executionRows: [],
+      sourceDescription: "Synthetic Recording T11c",
+      origin: "cli",
+      recording: {
+        request: "fetch data",
+        calls: [
+          {
+            phase: "planning",
+            endpoint_id: syntheticPagingEp.id,
+            params: { q: "test" },
+            status: 200,
+            envelope: {
+              output: {
+                items: [{ id: "item_1", text: "Alpha" }],
+                next_cursor: "cursor_synth_next_page",
+                has_more: true,
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const res = recordedGatewayResult({
+      fixture: fixtureT11c,
+      requestedEndpoint: syntheticPagingEp,
+      params: { q: "test" },
+      phase: "planning",
+      catalog: syntheticCatalog,
+    });
+
+    expect(res.result.ok).toBe(true);
+    if (res.result.ok) {
+      expect(res.result.has_more).toBe(true);
+    }
+  });
+
+  it("T11d: routed fixture envelope with a next cursor and no has_more on a routed endpoint returns has_more null", () => {
+    const syntheticRoutedEp: CatalogEndpoint = {
+      ...dummyEp1,
+      id: "test.synthetic.routed.paging.d",
+      kind: "routed",
+      capability: "social.search",
+      cursor_path: "output.next_cursor",
+    };
+    const syntheticCatalog: TregCatalog = {
+      ...catalog,
+      byId: new Map<string, CatalogEndpoint>([[syntheticRoutedEp.id, syntheticRoutedEp]]),
+    };
+    const routedFixtureT11d: ReplayRows = {
+      probeRows: [],
+      executionRows: [],
+      sourceDescription: "Synthetic Routed T11d",
+      origin: "cli",
+      routed: {
+        endpointId: syntheticRoutedEp.id,
+        probeEnvelopes: [
+          {
+            output: {
+              items: [{ id: "item_1", text: "Alpha" }],
+              next_cursor: "cursor_synth_routed_page",
+            },
+            _treg: { outcome: "hit", tried: [{ endpoint_id: "ep_direct_sub", status: 200 }] },
+          },
+        ],
+        executionEnvelopes: [],
+      },
+    };
+
+    const res = recordedGatewayResult({
+      fixture: routedFixtureT11d,
+      requestedEndpoint: syntheticRoutedEp,
+      params: { q: "test" },
+      phase: "planning",
+      catalog: syntheticCatalog,
+    });
+
+    expect(res.result.ok).toBe(true);
+    if (res.result.ok) {
+      expect(res.result.has_more).toBeNull();
+      expect(res.result.next_cursor).toBe("cursor_synth_routed_page");
+    }
+  });
 });
