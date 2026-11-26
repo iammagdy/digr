@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { levelRank } from "./evidence";
 import type { ArtifactEntry, RegistryArtifact } from "./artifact";
+import { BRAND_TREG, FIRECRAWL_DOCS_HOST, FIRECRAWL_SITE_HOST, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, TREG_HOST } from "../../multiProvider/types";
 
 /**
  * PHASE 6.1 / 6.2 (docs/intelligence/PHASE-5-3-AND-6.md §C; audit §7.3, §7.4): PROVIDER UPDATE INTELLIGENCE, as pure code.
@@ -21,9 +22,9 @@ import type { ArtifactEntry, RegistryArtifact } from "./artifact";
  * request is made, and no request may carry credentials.
  */
 const METADATA_URLS: ReadonlyArray<{ host: string; path: RegExp }> = [
-  { host: "treg.to", path: /^\/(?:meta|openapi\.json|catalog\/search|catalog\/endpoints\/[A-Za-z0-9._-]+)$/ },
-  { host: "docs.firecrawl.dev", path: /^\/(?:api-reference\/v2-openapi\.json|llms\.txt)$/ },
-  { host: "www.firecrawl.dev", path: /^\/changelog\/rss\.xml$/ },
+  { host: TREG_HOST, path: /^\/(?:meta|openapi\.json|catalog\/search|catalog\/endpoints\/[A-Za-z0-9._-]+)$/ },
+  { host: FIRECRAWL_DOCS_HOST, path: /^\/(?:api-reference\/v2-openapi\.json|llms\.txt)$/ },
+  { host: FIRECRAWL_SITE_HOST, path: /^\/changelog\/rss\.xml$/ },
   { host: "docs.context.dev", path: /^\/(?:openapi\.json|changelog\/rss\.xml|llms\.txt)$/ },
 ];
 /** The only query parameters any metadata address may carry (TREG's public catalog search). A credential never rides in a query string. */
@@ -34,7 +35,7 @@ export function isMetadataUrl(url: string): boolean {
     if (u.protocol !== "https:" || u.username || u.password || u.port || u.hash) return false;
     if (!METADATA_URLS.some((m) => m.host === u.hostname && m.path.test(u.pathname))) return false;
     if (u.search) {
-      if (u.hostname !== "treg.to" || u.pathname !== "/catalog/search") return false;
+      if (u.hostname !== TREG_HOST || u.pathname !== "/catalog/search") return false;
       for (const k of u.searchParams.keys()) if (!SEARCH_QUERY_KEYS.has(k)) return false;
     }
     return true;
@@ -84,7 +85,7 @@ const blockReason = (e: Record<string, any>, paused: boolean): string | null => 
   if (typeof e.platform_blocked === "string" && e.platform_blocked.trim()) return e.platform_blocked.replace(/\s+/g, " ").trim().slice(0, 200);
   if (e.platform_blocked) return "no reason given";
   if (e.platform_eligible === false) return "no reason given";
-  return paused ? "the provider is paused on TREG" : null;
+  return paused ? `the provider is paused on ${BRAND_TREG}` : null;
 };
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 /** True when `now` (possibly a union such as «boolean|object») still accepts everything `was` accepted. */
@@ -330,11 +331,11 @@ export function summarizeOpenApi(spec: unknown): OpenApiSummary | null {
   return { version: s.info?.version ? String(s.info.version) : null, server: Array.isArray(s.servers) && s.servers[0]?.url ? String(s.servers[0].url) : null, paths: paths.sort(), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) };
 }
 
-export interface WebDependency { provider: "firecrawl" | "contextdev"; method: string; path: string; /** For a parser: the enum value the call sends. */ parser?: string }
+export interface WebDependency { provider: typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV; method: string; path: string; /** For a parser: the enum value the call sends. */ parser?: string }
 export interface WebDrift { provider: string; kind: "path_removed" | "path_added" | "parser_removed" | "parser_added" | "version_changed" | "server_changed" | "unverified"; detail: string; breaking: boolean }
 
 /** Compares a provider's public OpenAPI with the baseline and with the calls Diger makes. A failed fetch is «unverified» (the baseline is kept). A path or parser Diger CALLS that disappeared is breaking. */
-export function diffWebProvider(provider: "firecrawl" | "contextdev", baseline: OpenApiSummary | null, current: OpenApiSummary | null, used: ReadonlyArray<WebDependency>, parserEnumPointer?: string): WebDrift[] {
+export function diffWebProvider(provider: typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV, baseline: OpenApiSummary | null, current: OpenApiSummary | null, used: ReadonlyArray<WebDependency>, parserEnumPointer?: string): WebDrift[] {
   if (!current) return [{ provider, kind: "unverified", detail: "public OpenAPI could not be fetched or read: the last known-good baseline is kept", breaking: false }];
   const out: WebDrift[] = [];
   const base = baseline ?? { version: null, server: null, paths: [], enums: {} };

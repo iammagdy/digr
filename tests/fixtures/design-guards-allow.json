@@ -2073,14 +2073,6 @@
       "pattern": "/https?:\\/\\/[^\\s\"'<>)\\]،]+/gi"
     },
     {
-      "file": "src/lib/agentMission/providerLabels.ts",
-      "pattern": "/(?<![\\w@./-])(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:\\/[^\\s\"'<>)\\]،]*)?/gi"
-    },
-    {
-      "file": "src/lib/agentMission/providerLabels.ts",
-      "pattern": "/https?:\\/\\/[^\\s\"'<>)\\]،]+/gi"
-    },
-    {
       "file": "src/lib/agentMission/quantity.ts",
       "pattern": "/(?:ون|ين|ان|ات|اء)$/u"
     },
@@ -2983,6 +2975,14 @@
     {
       "file": "src/lib/arabicNormalize.ts",
       "pattern": "/([a-z0-9])(?=[ء-ي])/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/https?:\\/\\/[^\\s\"'<>)\\]،]+/gi"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/(?<![\\w@./-])(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:\\/[^\\s\"'<>)\\]،]*)?/gi"
     },
     {
       "file": "src/lib/arabicNumbers.ts",
@@ -4381,10 +4381,6 @@
       "pattern": "/[٠-٩]/g"
     },
     {
-      "file": "src/lib/server/adminJobLabels.ts",
-      "pattern": "/\\s*\\(عدة مزودين\\)\\s*$/"
-    },
-    {
       "file": "src/lib/server/adminLookup.ts",
       "pattern": "/خدمة محدودة/"
     },
@@ -4607,14 +4603,6 @@
     {
       "file": "src/lib/server/promoCodes.ts",
       "pattern": "/[۰-۹]/g"
-    },
-    {
-      "file": "src/lib/server/promptTokenBreakdown.ts",
-      "pattern": "/[؀-ۿݐ-ݿ]/g"
-    },
-    {
-      "file": "src/lib/server/providerKeyAdmin.ts",
-      "pattern": "/[٠-٩]/g"
     },
     {
       "file": "src/lib/server/providerLimits.ts",
@@ -4991,10 +4979,6 @@
     {
       "file": "src/lib/server/topicMatch.ts",
       "pattern": "/ى/gu"
-    },
-    {
-      "file": "src/lib/server/tregPoolAdmin.ts",
-      "pattern": "/[٠-٩]/g"
     },
     {
       "file": "src/lib/servicesCatalogText.ts",
@@ -5739,14 +5723,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/capabilities/providerDrift.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/providerDrift.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/capabilities/registry.ts",
       "token": "firecrawl"
     },
@@ -6407,18 +6383,6 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/server/adminJobLabels.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/callsLogExport.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/callsLogExport.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/server/fakeFacebookSource.ts",
       "token": "anyapi"
     },
@@ -6547,43 +6511,11 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/server/providerGate.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/providerKeyAdmin.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/providerKeyAdmin.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/providerKeyCrypto.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/providerKeyCrypto.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/providerKeys.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/server/providerLimits.ts",
       "token": "treg"
     },
     {
       "file": "src/lib/server/providerLimitsAdmin.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/providerStatus.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/server/providerStatus.ts",
       "token": "treg"
     },
     {
@@ -6692,22 +6624,6 @@
     },
     {
       "file": "src/lib/server/tregKeyCheck.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/tregKeyPool.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/tregPoolAdmin.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/tregPoolAlerts.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/server/tregPoolHealth.ts",
       "token": "treg"
     },
     {
@@ -6883,14 +6799,6 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/treg/blockList.ts",
-      "token": "apollo"
-    },
-    {
-      "file": "src/lib/treg/blockList.ts",
-      "token": "datagma"
-    },
-    {
       "file": "src/lib/treg/catalog.ts",
       "token": "blitzapi"
     },
@@ -6916,14 +6824,6 @@
     },
     {
       "file": "src/lib/treg/catalog.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/treg/circuitBreaker.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/lib/treg/reverseOrder.ts",
       "token": "treg"
     }
   ],

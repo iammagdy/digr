@@ -1,6 +1,26 @@
 /** Data providers of the multi-provider feature. The language model provider is separate (it never collects data). */
-export type DataProviderId = "treg" | "firecrawl" | "contextdev";
-export const DATA_PROVIDER_IDS: readonly DataProviderId[] = ["treg", "firecrawl", "contextdev"];
+/**
+ * THE IDENTITY FILE of the platform's OWN integrations (D-0232): the ids, the brand names shown on the admin screens and in the admin alerts, and the
+ * public addresses of the providers we operate. This is the ONLY file that spells them; everything else imports these names. They are used for keys,
+ * health checks, limits, logs and the admin screens, and NEVER to choose a provider for a customer request (the model and the catalog decide that).
+ */
+export const PROVIDER_TREG = "treg";
+export const PROVIDER_FIRECRAWL = "firecrawl";
+export const PROVIDER_CONTEXTDEV = "contextdev";
+export const PROVIDER_ANTHROPIC = "anthropic";
+export const BRAND_TREG = "TREG";
+export const BRAND_FIRECRAWL = "Firecrawl";
+export const BRAND_CONTEXTDEV = "Context.dev";
+export const TREG_DEFAULT_BASE_URL = "https://treg.to";
+export const TREG_HOST = "treg.to";
+/** The folder of the catalog snapshot (data/treg). */
+export const TREG_DATA_DIR = "treg";
+export const FIRECRAWL_CREDIT_USAGE_URL = `https://api.${PROVIDER_FIRECRAWL}.dev/v2/team/credit-usage`;
+export const FIRECRAWL_DOCS_HOST = "docs.firecrawl.dev";
+export const FIRECRAWL_SITE_HOST = "www.firecrawl.dev";
+
+export type DataProviderId = typeof PROVIDER_TREG | typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV;
+export const DATA_PROVIDER_IDS: readonly DataProviderId[] = [PROVIDER_TREG, PROVIDER_FIRECRAWL, PROVIDER_CONTEXTDEV];
 
 /** What one capability does. */
 export type OperationKind =

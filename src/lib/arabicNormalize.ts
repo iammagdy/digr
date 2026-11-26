@@ -141,6 +141,19 @@ export function trimEdges(text: string, isTrim: (ch: string) => boolean, edge: "
   return chars.slice(a, b).join("");
 }
 
+const URL_IN_TEXT = /https?:\/\/[^\s"'<>)\]،]+/gi;
+const BARE_HOST_IN_TEXT = /(?<![\w@./-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s"'<>)\]،]*)?/gi;
+
+/** Every http(s) address in the text goes through `replacement` (an address ends at a blank, a quote, a bracket or the Arabic comma ،). */
+export function replaceUrlsInText(text: string, replacement: (match: string) => string): string {
+  return String(text ?? "").replace(URL_IN_TEXT, replacement);
+}
+
+/** Every bare host or host/path in the text (example.com, example.com/page) goes through `replacement` (it ends at a blank, a quote, a bracket or the Arabic comma ،). */
+export function replaceBareHostsInText(text: string, replacement: (match: string) => string): string {
+  return String(text ?? "").replace(BARE_HOST_IN_TEXT, replacement);
+}
+
 /** The full fold: letters, digits, Latin case, blanks. The shape every request reader should compare against. */
 export function normalizeArabic(text: string): string {
   return foldDigits(foldArabicLetters(text)).toLowerCase().replace(/\s+/g, " ").trim();

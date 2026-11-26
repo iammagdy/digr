@@ -20,8 +20,8 @@ import {
  *  3. Stale allow-list entries (with zero AST hits in the codebase) are FORBIDDEN.
  */
 export const ALLOW_LIST_CEILING = {
-  arabic_regex: 1338,
-  treg_tokens: 393,
+  arabic_regex: 1334,
+  treg_tokens: 372,
   srv_paths: 0,
   fallback_lists: 2,
 } as const;

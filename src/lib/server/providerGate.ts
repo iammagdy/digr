@@ -1,4 +1,5 @@
 import { peekProviderKey, resolveProviderKey } from "./providerKeys";
+import { PROVIDER_TREG } from "../multiProvider/types";
 
 /**
  * Live Data Provider Gate & Diagnostics
@@ -40,7 +41,7 @@ const REASON_MESSAGES_AR: Record<ProviderGateReasonCode, string> = {
  */
 export function getSanitizedProviderToken(): string {
   // Last resolved key (store or environment); callers that matter prime it with resolveProviderKey first.
-  return peekProviderKey("treg");
+  return peekProviderKey(PROVIDER_TREG);
 }
 
 /**
@@ -115,7 +116,7 @@ export async function getLiveProviderGateStatusFromSettings(source: any): Promis
   }
 
   // Prime the shared resolver so a key held only in the encrypted store counts as configured.
-  await resolveProviderKey("treg");
+  await resolveProviderKey(PROVIDER_TREG);
   return getLiveProviderGateStatus();
 }
 

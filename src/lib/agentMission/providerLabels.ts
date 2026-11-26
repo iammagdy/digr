@@ -1,6 +1,7 @@
 import catalogIndexRaw from "../../../data/treg/treg_catalog_index.json";
 import providerMetadataRaw from "../../../data/capabilities/provider-metadata.json";
 import platformHostsRaw from "../../../data/capabilities/platform-hosts.json";
+import { replaceBareHostsInText, replaceUrlsInText } from "../arabicNormalize";
 
 function loadProviderLabels(): Set<string> {
   const platformTokens = new Set<string>();
@@ -49,9 +50,6 @@ function loadProviderLabels(): Set<string> {
 const LABELS: ReadonlySet<string> = loadProviderLabels();
 export const PROVIDER_LABELS: readonly string[] = [...LABELS].sort();
 
-const URL_IN_TEXT = /https?:\/\/[^\s"'<>)\]،]+/gi;
-const BARE_DOMAIN_IN_TEXT = /(?<![\w@./-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s"'<>)\]،]*)?/gi;
-
 function isProviderAddress(address: string): boolean {
   const t = address.replace(/[.,;:!?]+$/, "");
   let host = "";
@@ -62,6 +60,7 @@ function isProviderAddress(address: string): boolean {
 /** The text with every address of a data provider taken out (the address itself, not the words around it); the same text when there is none. */
 export function withoutProviderHosts(text: string): string {
   if (!text) return text;
-  const out = text.replace(URL_IN_TEXT, (m) => (isProviderAddress(m) ? "" : m)).replace(BARE_DOMAIN_IN_TEXT, (m) => (isProviderAddress(m) ? "" : m));
+  const dropProviderAddress = (m: string): string => (isProviderAddress(m) ? "" : m);
+  const out = replaceBareHostsInText(replaceUrlsInText(text, dropProviderAddress), dropProviderAddress);
   return out === text ? text : out.replace(/[ \t]{2,}/g, " ").trim();
 }

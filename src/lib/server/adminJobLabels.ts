@@ -2,6 +2,10 @@ import { capabilityById } from "../multiProvider/catalog";
 import { CHAIN_CAPABILITY_SLUG } from "../multiProvider/routes";
 import { getSocialCapability } from "../socialSources";
 import { SOCIAL_PLATFORM_LABEL_AR } from "../socialTasks";
+import { BRAND_TREG } from "../multiProvider/types";
+
+/** The suffix OUR label of the multi-provider chain carries (written below, removed again in `deriveJobLabelAr`). */
+const MULTI_PROVIDER_SUFFIX_AR = " (عدة مزودين)";
 
 /**
  * ADMIN ONLY, READ ONLY. Arabic labels for the owner's call logs: what a provider call was for, and a short label of the job behind it.
@@ -31,9 +35,9 @@ export function adminCapabilityLabelAr(id: unknown): string | null {
   const social = getSocialCapability(value);
   if (social) return `${social.nameAr} (TREG)`;
   const lower = value.toLowerCase();
-  if (lower === CHAIN_CAPABILITY_SLUG) return "بيانات تواصل الشركات (عدة مزودين)";
-  if (PEOPLE_RE.test(lower) && !COMPANIES_RE.test(lower)) return "صناع القرار (TREG)";
-  if (COMPANIES_RE.test(lower)) return "دليل الشركات (TREG)";
+  if (lower === CHAIN_CAPABILITY_SLUG) return `بيانات تواصل الشركات${MULTI_PROVIDER_SUFFIX_AR}`;
+  if (PEOPLE_RE.test(lower) && !COMPANIES_RE.test(lower)) return `صناع القرار (${BRAND_TREG})`;
+  if (COMPANIES_RE.test(lower)) return `دليل الشركات (${BRAND_TREG})`;
   return value;
 }
 
@@ -83,7 +87,8 @@ function jobTypeLabelAr(slug: string): string | null {
   }
   const label = adminCapabilityLabelAr(slug);
   if (!label || label === slug) return null;
-  return label.replace(/\s*\((?:TREG|Firecrawl|Context\.dev)\)\s*$/, "").replace(/\s*\(عدة مزودين\)\s*$/, "").trim() || null;
+  const withoutBrand = label.replace(/\s*\((?:TREG|Firecrawl|Context\.dev)\)\s*$/, "");
+  return (withoutBrand.endsWith(MULTI_PROVIDER_SUFFIX_AR) ? withoutBrand.slice(0, -MULTI_PROVIDER_SUFFIX_AR.length) : withoutBrand).trim() || null;
 }
 
 export interface JobLabelSources {
