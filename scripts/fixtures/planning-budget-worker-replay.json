@@ -1,0 +1,10 @@
+[
+  {"id":"youtube-single","world":"youtube","qaFile":"plan-ready-cfc0.json","expected":"card"},
+  {"id":"rumors-r10","world":"rumors","qaFile":"msn_c41586cf9d40986250d0.json","expected":"two-turn-card"},
+  {"id":"rumors-r8","world":"rumors","qaFile":"msn_f91f7e220bbf60fd7c9c.json","expected":"two-turn-card"},
+  {"id":"companies-contacts","world":"b2b","qaFile":"b2b-real-requests.json","mission":"msn_a762247711a7d0333415","expected":"card"},
+  {"id":"measured-rank-facebook","world":"measured","expected":"card"},
+  {"id":"facebook-owner-fallback","world":"fallback","expected":"admissions"},
+  {"id":"facebook-owner-fallback-affordable-comments","world":"fallback","expected":"admissions","fallbackComments":"affordable"},
+  {"id":"dear-employees","world":"dear-child","expected":"admissions"}
+]

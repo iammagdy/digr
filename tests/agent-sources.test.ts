@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PARSERS, PARSER_IDS, describeAgentSource, isAgentSourceId, searchAgentSources, usdPerRowOfParser, WEB_SOURCES } from "../src/lib/agentMission/sources";
 import { checkPublicBusinessUrl, checkPublicReadUrl } from "../src/lib/multiProvider/policy";
 import { isContactSource, requestWantsContacts, verifyContactValue } from "../src/lib/agentMission/contacts";
-import { isMultiStageRequest, planningBudgetUsd } from "../src/lib/agentMission/budget";
+import { isMultiStageUnderstanding, planningBudgetUsd } from "../src/lib/agentMission/budget";
 import { AGENT_PLANNING_BUDGET_MULTI_STAGE_USD, AGENT_PLANNING_BUDGET_USD } from "../src/lib/agentMission/constants";
 
 const ok = (name: keyof typeof PARSERS, url: string) => PARSERS[name].accepts(new URL(url));
@@ -103,9 +103,11 @@ describe("contact fields are verified by code", () => {
 describe("the planning budget", () => {
   it("a multi-stage request gets 0.10 USD, every other 0.05", () => {
     expect(AGENT_PLANNING_BUDGET_MULTI_STAGE_USD).toBe(0.1);
-    expect(planningBudgetUsd("هات ٢٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا")).toBe(AGENT_PLANNING_BUDGET_USD);
-    expect(planningBudgetUsd("عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين بإيميلاتهم وموبايلاتهم")).toBe(AGENT_PLANNING_BUDGET_MULTI_STAGE_USD);
-    expect(planningBudgetUsd("منشورات فيسبوك عن التضخم مع تعليقات كل منشور")).toBe(AGENT_PLANNING_BUDGET_MULTI_STAGE_USD);
-    expect(isMultiStageRequest("تقييمات مطعم أبو طارق")).toBe(true);
+    const single = { key: "posts", platform: "x", capability: "x.search.posts", parent: null, topic: "تعليقات الموظفين" };
+    const child = { key: "comments", platform: "x", capability: "x.post.replies", parent: "posts" };
+    expect(planningBudgetUsd({ steps: [single] })).toBe(AGENT_PLANNING_BUDGET_USD);
+    expect(planningBudgetUsd({ steps: [], people_of_companies: { asked: true } })).toBe(AGENT_PLANNING_BUDGET_MULTI_STAGE_USD);
+    expect(planningBudgetUsd({ steps: [single, child] })).toBe(AGENT_PLANNING_BUDGET_MULTI_STAGE_USD);
+    expect(isMultiStageUnderstanding({ steps: [single] })).toBe(false);
   });
 });

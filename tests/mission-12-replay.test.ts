@@ -6,7 +6,7 @@ import { runPlanning, type RunnerDeps } from "../agent/src/runMission";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { NOT_ADMIN, USER_ID, fakeRecorder } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
-import { GIVE_UP_MIN_SOURCES, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp, type PlanningCallFact } from "../src/lib/agentMission/giveUp";
+import { GIVE_UP_MIN_SOURCES, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp, type PlanningCallFact, type GiveUpUnderstandingInput } from "../src/lib/agentMission/giveUp";
 
 /**
  * FIX MISSION 12 (live retest of 2026-10-30 evening, test account; `missions`, `mission_calls`, `mission_events` read with SELECT). Every moment here is FIXED: no test reads the clock.
@@ -32,7 +32,10 @@ describe("1. YouTube named channels: planning gave up before the channel listing
     { endpoint_id: "contextdev.search", status: "refused" }, { endpoint_id: "firecrawl.search", status: "refused" },
     { endpoint_id: "contextdev.scrape", status: "refused" }, { endpoint_id: "firecrawl.scrape", status: "refused" },
   ];
-  const ask = (calls: PlanningCallFact[], request = REQUEST_YT) => untriedBeforeGiveUp({ request, catalog, access: ACCESS, stats: new Map(), now: Date.parse(FIXED_NOW), calls });
+  const named = { platform: "youtube", capability: "youtube.channel.videos", source: { value: "العربية" } };
+  const topic = { platform: "youtube", capability: "youtube.search.videos", source: null };
+  const ask = (calls: PlanningCallFact[], steps: GiveUpUnderstandingInput["steps"] = [named]) =>
+    untriedBeforeGiveUp({ understanding: { steps }, catalog, access: ACCESS, stats: new Map(), now: Date.parse(FIXED_NOW), calls });
 
   it("the 18:01 run: one source was reached, the channel listings were never called, so a give-up does not stand", () => {
     const r = ask(LIVE_1801);
@@ -59,11 +62,14 @@ describe("1. YouTube named channels: planning gave up before the channel listing
   });
 
   it("a request that names no channel, account or page keeps its behaviour", () => {
-    expect(ask([], "هات ٥٠ فيديو عن حرب إيران وإسرائيل على يوتيوب").applies).toBe(false);
-    expect(ask([], "هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر").applies).toBe(false);
+    expect(ask([], [topic]).applies).toBe(false);
+    expect(ask([], [topic, named]).applies).toBe(true);
   });
 
-  it("the live sequence through the worker: the first give-up is sent back with the channel listings named, and the run is not stuck (a limit of refusals)", async () => {
+  it.each([
+    { mode: "structured handover", planner: true, outcomes: [false, false, false, true] },
+    { mode: "owner-only fallback", planner: false, outcomes: [true] },
+  ])("$mode through the worker uses its named-source information and terminates", async ({ planner, outcomes }) => {
     const store = createMemoryStore();
     store.missions.set("msn_yt", newMission({ id: "msn_yt", user_id: USER_ID, status: "planning", request_text: REQUEST_YT }));
     const rec = fakeRecorder();
@@ -76,12 +82,26 @@ describe("1. YouTube named channels: planning gave up before the channel listing
       giveUp(), giveUp(), giveUp(), giveUp(),
     ]);
     const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog, driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+    if (planner) {
+      deps.plannerModel = async () => ({
+        input: {
+          decision: "plan", understanding_ar: "فيديوهات من القنوات المذكورة وبيانات شركات.",
+          steps: [
+            { key: "videos", ...named, title_ar: "الفيديوهات", source: { kind: "channel", value: "العربية" } },
+            { key: "companies", platform: "companies", capability: "companies.search" },
+          ],
+        },
+        costUsd: 0,
+      });
+    }
     await runPlanning(deps, store.missions.get("msn_yt")!);
     const finishes = driver.results.filter((x) => x.tool === "finish").map((x) => x.result as { ok?: boolean; error?: string });
     expect(GIVE_UP_NO_ROWS_REFUSALS_MAX).toBe(3);
-    expect(finishes.map((x) => x.ok === true)).toEqual([false, false, false, true]);
-    expect(finishes[0].error).toContain("crawl4ai.youtube.channel.videos");
-    expect(finishes[0].error).toContain("do not end yet");
+    expect(finishes.map((x) => x.ok === true)).toEqual(outcomes);
+    if (planner) {
+      expect(finishes[0].error).toContain("crawl4ai.youtube.channel.videos");
+      expect(finishes[0].error).toContain("do not end yet");
+    }
     // the mission ends honestly once the limit of refusals is spent (the same classes as before)
     expect(store.missions.get("msn_yt")!.status).toBe("unserved");
   });

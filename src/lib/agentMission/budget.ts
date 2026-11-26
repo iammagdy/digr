@@ -1,20 +1,36 @@
+import { COMPANIES_PLATFORM, isPeopleOfCompanyStep } from "./childSources";
 import { AGENT_PLANNING_BUDGET_MULTI_STAGE_USD, AGENT_PLANNING_BUDGET_USD } from "./constants";
-import { requestWantsContacts } from "./contacts";
 
-/**
- * The planning (exploration) budget of one mission, in USD of source calls. A request that asks for a parent AND its children (posts and their comments, companies and their employees, a place and its
- * reviews, people and their e-mails or phones) is multi-stage: it needs a sample of every stage, so it gets AGENT_PLANNING_BUDGET_MULTI_STAGE_USD (0.10); every other request keeps AGENT_PLANNING_BUDGET_USD (0.05).
- * Decided by code from the customer's words; the model cannot raise it. An owner cost, never charged to the customer.
- */
-const RELATION_WORDS = /(?:تعليق|تعليقات|ردود|موظف|موظفين|العاملين|مدير|مديري|أشخاص|اشخاص|مراجعات|تقييمات|لكل\s|وجوه|داخل كل|جوه كل|comments?|replies|employees?|people|reviews?|each\s|per\s)/i;
-
-export function isMultiStageRequest(text: unknown): boolean {
-  const t = String(text ?? "");
-  const contacts = requestWantsContacts(t);
-  return contacts.email || contacts.phone || RELATION_WORDS.test(t);
+export interface BudgetStep {
+  key: string;
+  platform: string;
+  capability: string;
+  parent: string | null;
 }
 
-export const planningBudgetUsd = (requestText: unknown): number => (isMultiStageRequest(requestText) ? AGENT_PLANNING_BUDGET_MULTI_STAGE_USD : AGENT_PLANNING_BUDGET_USD);
+export interface BudgetUnderstandingInput {
+  steps: ReadonlyArray<BudgetStep>;
+  people_of_companies?: { asked: boolean } | null;
+}
 
-/** How many stages the request will need (each needs a sample while planning): two for a parent and its children, else one. Decided by code from the customer's words. */
-export const expectedStageCount = (requestText: unknown): number => (isMultiStageRequest(requestText) ? 2 : 1);
+export function implicitCompanyStages(u: BudgetUnderstandingInput) {
+  const asked = u.people_of_companies?.asked === true;
+  return {
+    companies: asked && !u.steps.some((step) => step.parent === null && step.platform === COMPANIES_PLATFORM && !isPeopleOfCompanyStep(step)),
+    people: asked && !u.steps.some((step) => step.parent !== null && isPeopleOfCompanyStep(step)),
+  };
+}
+
+export function expectedStageCount(u: BudgetUnderstandingInput | null | undefined): number {
+  if (!u) return 1;
+  const implicit = implicitCompanyStages(u);
+  return Math.max(1, u.steps.length + Number(implicit.companies) + Number(implicit.people));
+}
+
+export function isMultiStageUnderstanding(u: BudgetUnderstandingInput | null | undefined): boolean {
+  return !!u && (u.people_of_companies?.asked === true || expectedStageCount(u) > 1 || u.steps.some((step) => step.parent !== null));
+}
+
+/** Provider sampling spend is an owner cost. Code chooses the base from the validated request structure. */
+export const planningBudgetUsd = (u: BudgetUnderstandingInput | null | undefined): number =>
+  isMultiStageUnderstanding(u) ? AGENT_PLANNING_BUDGET_MULTI_STAGE_USD : AGENT_PLANNING_BUDGET_USD;

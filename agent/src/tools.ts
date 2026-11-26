@@ -48,7 +48,7 @@ import { isSocialPlatform, redesignActiveFor, redesignTypeOf, type PlatformFlags
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
-import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp } from "../../src/lib/agentMission/giveUp";
+import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp, type GiveUpUnderstandingInput } from "../../src/lib/agentMission/giveUp";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -123,6 +123,7 @@ export const GIVE_UP_REFUSALS_MAX = 2;
 export const PEOPLE_SEND_BACKS_MAX = 3;
 
 export interface ToolContext {
+  plannerUnderstanding?: GiveUpUnderstandingInput | null;
   /** The planner ran for this mission (it understood the request, or could not be read, or kept asking): the customer is NOT asked anything by this path (DT-20261119-03 R2). */
   plannerRan?: boolean;
   /** The planner understood a people step under a companies step (DT-20261118-03 PR-7): catalog_search offers the people sources of a company whatever words are typed. */
@@ -1200,7 +1201,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // NO GIVE-UP BEFORE THE CATALOG WAS REALLY ASKED: no sample gave a row, and fewer than three sources of the request's job were reached (a refused or unavailable call reaches nothing): the untried sources are named, a named channel's own listing first
         if (ctx.phase === "planning" && outcome === "cannot_serve" && state.giveUpNoRowsRefusals < GIVE_UP_NO_ROWS_REFUSALS_MAX) {
-          const found = untriedBeforeGiveUp({ request: askedTextOf(mission), catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
+          const found = untriedBeforeGiveUp({ understanding: ctx.plannerUnderstanding ?? null, catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
           if (found.applies) { state.giveUpNoRowsRefusals += 1; return err(giveUpRefusalText(found)); }
         }
         // rows that were waiting for a review (the budget or a failed call delayed them) are asked once more before the mission ends: a good row is never lost only because it was late

@@ -61,7 +61,17 @@ describe("A1 replay: the planning that followed the customer's answer, with the 
           store = base.store as ReturnType<typeof createMemoryStore>;
           missionId = [...(base.store as ReturnType<typeof createMemoryStore>).missions.keys()][0];
           for (const row of recordedRows(missionId)) void base.store.addCall(row);
-          return base;
+          return {
+            ...base,
+            plannerModel: async () => ({
+              input: {
+                decision: "plan", understanding_ar: "الشركات والمسؤولون فيها وبيانات تواصلهم.",
+                steps: [{ key: "companies", platform: "companies", capability: "companies.search", parent: null }],
+                people_of_companies: { asked: true, contact_kinds: ["email", "phone"] },
+              },
+              costUsd: 0,
+            }),
+          };
         },
       });
     } catch (e) { thrown = e; }

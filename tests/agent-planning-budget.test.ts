@@ -10,13 +10,20 @@ import { customerMissionView } from "../src/lib/agentMission/customerView";
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 const DEAR = "anyapi.facebook.search_posts"; // 0.06606 USD a call: above 0.05, below 0.10
 
-async function planWith(request: string) {
+async function planWith(request: string, multi: boolean) {
   const store = createMemoryStore();
   store.missions.set("msn_b1", newMission({ id: "msn_b1", user_id: USER_ID, request_text: request, status: "planning" }));
   const rec = fakeRecorder();
   const call = vi.fn(async () => tregResult({ output: { data: { items: [{ id: "p1", text: "x", url: "https://f.example/1" }] } } }, 0.06606));
   const driver = createFakeDriver([{ tool: "treg_call", args: { endpoint_id: DEAR, params: { query: "غذاء" }, why: "the only source with the post fields in its description" } }], { stopAfterTerminal: false });
   const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as any, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+  deps.plannerModel = async () => ({
+    input: { decision: "plan", understanding_ar: "جمع البيانات المطلوبة.", steps: [
+      { key: "companies", platform: "companies", capability: "companies.search", parent: null },
+      ...(multi ? [{ key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: "companies" }] : []),
+    ] },
+    costUsd: 0,
+  });
   await runPlanning(deps, store.missions.get("msn_b1")!);
   return { result: driver.results[0].result, call };
 }
@@ -24,10 +31,10 @@ async function planWith(request: string) {
 describe("the planning exploration budget is raised for a multi-stage request (0.10 USD), not for a single-stage one (0.05 USD)", () => {
   it("a call of 0.066 USD is refused when planning a one-stage request and made when planning posts WITH their comments", async () => {
     // (was «هات منشورات فيسبوك عن غذاء»: since the planning budget scales with the platform's cost (owner decision 2026-10-29) a one-stage Facebook request gets enough for its dear source; the 0.05 budget of a one-stage request is asserted on a cheap platform)
-    const single = await planWith("هات تغريدات عن غذاء");
+    const single = await planWith("هات تغريدات عن غذاء", false);
     expect(single.result).toMatchObject({ ok: false, refused: "over_budget" });
     expect(single.call).not.toHaveBeenCalled();
-    const multi = await planWith("هات منشورات فيسبوك عن غذاء مع تعليقات كل منشور");
+    const multi = await planWith("هات منشورات فيسبوك عن غذاء مع تعليقات كل منشور", true);
     expect(multi.result.ok).toBe(true);
     expect(multi.call).toHaveBeenCalledTimes(1);
   });
