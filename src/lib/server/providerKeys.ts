@@ -1,5 +1,6 @@
 import { ProviderKeyCryptoError, decryptProviderKey, last4Of, type ProviderId } from "./providerKeyCrypto";
 import { getTregKeyPool, type PoolKeyRef } from "./tregKeyPool";
+import { PROVIDER_TREG } from "../multiProvider/types";
 
 /**
  * THE ONE place that reads a provider API key. Every call site (worker, chat catalog search, adapters, health
@@ -164,7 +165,7 @@ async function loadFresh(provider: ProviderId): Promise<ResolvedProviderKey> {
 
 /** Async resolver for every provider call. Cached for 30 seconds per server instance (TREG with the key pool ON: the pool's active key, read every 3 seconds). */
 export async function resolveProviderKey(provider: ProviderId, options?: { forceRefresh?: boolean }): Promise<ResolvedProviderKey> {
-  if (provider === "treg") {
+  if (provider === PROVIDER_TREG) {
     const pool = getTregKeyPool();
     if (pool) {
       const choice = await pool.choose();
@@ -202,7 +203,7 @@ export async function getProviderKey(provider: ProviderId): Promise<string> {
  * the environment variable. Callers that matter prime it with resolveProviderKey first.
  */
 export function peekProviderKey(provider: ProviderId): string {
-  if (provider === "treg") {
+  if (provider === PROVIDER_TREG) {
     const held = getTregKeyPool()?.peekKey();
     if (held) return held;
   }

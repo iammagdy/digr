@@ -2,6 +2,7 @@ import { sendPlatformEmail } from "./sendPlatformEmail";
 import { alertTimeAr, ownerAlertRecipient } from "./topupOwnerAlert";
 import { toArabicDigits } from "../arabicDigits";
 import { SITE_URL } from "../site";
+import { BRAND_TREG } from "../multiProvider/types";
 
 /**
  * The admin e-mails of the TREG key pool (docs/proposals/treg-key-pool/README.md section 5). Arabic, short, admin only (so they name the provider, like the admin pages),
@@ -69,14 +70,14 @@ export function buildPoolAlertVars(row: Pick<PoolAlertRow, "problem" | "key_numb
       };
     case "main_failed":
       return {
-        ...base, Subject: "عاجل: المفتاح الرئيسي لـ TREG لا يعمل", Heading: "المفتاح الرئيسي متوقف", Preheader: "لا يوجد مفتاح بعد المفتاح الرئيسي في السلسلة.",
+        ...base, Subject: `عاجل: المفتاح الرئيسي لـ ${BRAND_TREG} لا يعمل`, Heading: "المفتاح الرئيسي متوقف", Preheader: "لا يوجد مفتاح بعد المفتاح الرئيسي في السلسلة.",
         Lead: `المفتاح الرئيسي (${from}) ${why} ولا يوجد مفتاح بعده في السلسلة، وقد تتعطل طلبات العملاء.`,
         DetailOne: "اشحن الحساب أو استبدل المفتاح فورًا من الجدول.", DetailTwo: when,
       };
     case "store_unreadable":
     default:
       return {
-        ...base, Subject: "تنبيه: تعذّرت قراءة مخزن مفاتيح TREG", Heading: "مخزن المفاتيح غير مقروء", Preheader: "استُخدم المفتاح الرئيسي المضبوط في البيئة.",
+        ...base, Subject: `تنبيه: تعذّرت قراءة مخزن مفاتيح ${BRAND_TREG}`, Heading: "مخزن المفاتيح غير مقروء", Preheader: "استُخدم المفتاح الرئيسي المضبوط في البيئة.",
         Lead: `${storeReasonAr(row.reason)}، فاستُخدم المفتاح الرئيسي المضبوط في البيئة (TREG_TOKEN) بدل المفتاح النشط. لم يُستخدم أي مفتاح اختبار.`,
         DetailOne: "تعود المنصة إلى المفتاح النشط تلقائيًا عندما تُقرأ القاعدة من جديد.", DetailTwo: when,
       };

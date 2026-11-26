@@ -7,6 +7,8 @@ import type { TregKeyPool } from "./tregKeyPool";
 import { checkPoolKey, runPoolHealth, type HealthRunResult } from "./tregPoolHealth";
 import { decryptPoolKey, encryptPoolKey } from "./tregPoolCrypto";
 import { runKeyCheck, type KeyCheckDeps, type KeyCheckReport } from "./tregKeyCheck";
+import { BRAND_TREG, PROVIDER_TREG } from "../multiProvider/types";
+import { foldDigits } from "../arabicNormalize";
 
 /**
  * Everything the admin «مجمّع مفاتيح TREG» section reads and does (docs/proposals/treg-key-pool/README.md). Admin only: the route verifies the role first and every SQL
@@ -122,7 +124,7 @@ export async function loadPoolOverview(deps: PoolAdminDeps, options: { refresh?:
     ready: false, rolloutOn: false, activeKeyId: null, generation: 0, minBalanceUsd: 0.01, lastHealthRunAt: null, keys: [], events: [],
     legacy: { source: "none", last4: null }, workerEnvLast4: null, workerSeenAt: null, workerMismatch: false, noticesAr: [], callHealthReady: false,
   };
-  const legacy = await resolveLegacyProviderKey("treg").catch(() => null);
+  const legacy = await resolveLegacyProviderKey(PROVIDER_TREG).catch(() => null);
   empty.legacy = { source: legacy?.source ?? "none", last4: legacy?.last4 ?? null };
 
   let health: HealthRunResult | undefined;
@@ -236,7 +238,7 @@ export async function adoptMainKey(deps: PoolAdminDeps, input: { adminId: string
     if (shape) return { ok: false, reason: "invalid_key", messageAr: shape, status: 400 };
     plain = cleanKey(String(input.key));
   } else {
-    const legacy = await resolveLegacyProviderKey("treg", { forceRefresh: true });
+    const legacy = await resolveLegacyProviderKey(PROVIDER_TREG, { forceRefresh: true });
     if (!legacy.key) return { ok: false, reason: "no_current_key", messageAr: MSG.noMainAvailable, status: 409 };
     plain = legacy.key;
   }
@@ -295,7 +297,7 @@ export async function setPoolRollout(deps: PoolAdminDeps, input: { adminId: stri
 }
 
 export async function setPoolSettings(deps: PoolAdminDeps, input: { adminId: string; minBalanceUsd: unknown }): Promise<PoolActionOutcome> {
-  const usd = Number(String(input.minBalanceUsd ?? "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))));
+  const usd = Number(foldDigits(String(input.minBalanceUsd ?? "")));
   if (!Number.isFinite(usd) || usd < 0 || usd > 10) return { ok: false, reason: "invalid_request", messageAr: "الحد الأدنى للرصيد يجب أن يكون بين ٠ و١٠ دولار.", status: 400 };
   const outcome = fromFunction("settings", await rpc(deps, "admin_set_treg_pool_settings", { p_admin_id: input.adminId, p_min_balance_micro: Math.round(usd * 1_000_000) }), MSG.settingsSaved);
   if (outcome.ok) deps.pool.invalidate();
@@ -363,7 +365,7 @@ async function readMinBalanceMicro(deps: PoolAdminDeps): Promise<number | undefi
 export async function checkPastedKey(deps: KeyCheckAdminDeps, input: { adminId: string; key: unknown }): Promise<CheckOutcome> {
   const shape = validateKeyShape(input.key);
   if (shape) return { ok: false, reason: "invalid_key", messageAr: shape, status: 400 };
-  if (!(await takeCheckSlot(deps, input.adminId, "pasted", "فحص مفتاح TREG ملصوق"))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
+  if (!(await takeCheckSlot(deps, input.adminId, "pasted", `فحص مفتاح ${BRAND_TREG} ملصوق`))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
   const key = cleanKey(String(input.key));
   try {
     const report = await runKeyCheck(key, { client: deps.client, fetchFn: deps.fetchFn, minBalanceMicro: await readMinBalanceMicro(deps), ...deps.check });
@@ -376,7 +378,7 @@ export async function checkPastedKey(deps: KeyCheckAdminDeps, input: { adminId: 
 /** «افحص الآن» of one pool key: the same three steps on the key stored in the pool (read and decrypted on the server, never shown), and the result is recorded on the key. */
 export async function checkPoolKeyNow(deps: KeyCheckAdminDeps, input: { adminId: string; keyId: unknown }): Promise<CheckOutcome> {
   if (!validUuid(input.keyId)) return { ok: false, reason: "invalid_request", messageAr: MSG.invalidRequest, status: 400 };
-  if (!(await takeCheckSlot(deps, input.adminId, "pool", "فحص مفتاح TREG من المجمّع"))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
+  if (!(await takeCheckSlot(deps, input.adminId, "pool", `فحص مفتاح ${BRAND_TREG} من المجمّع`))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
   const enc = await deps.pool.encryptionKey();
   if (!enc) return { ok: false, reason: "encryption_unavailable", messageAr: MSG.encryptionUnavailable, status: 503 };
   const listed = await rpc(deps, "treg_pool_keys_for_check", { p_ids: [input.keyId], p_limit: 1 });

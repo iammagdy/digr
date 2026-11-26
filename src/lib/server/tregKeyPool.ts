@@ -1,6 +1,7 @@
 import { decryptPoolKey, parsePoolEncryptionKey } from "./tregPoolCrypto";
 import { checkProviderKey, extractTregOrgId, fetchTregBalance, type FetchLike } from "./providerStatus";
 import { accountRefusalReason } from "./tregRefusal";
+import { PROVIDER_TREG } from "../multiProvider/types";
 
 /**
  * THE TREG KEY POOL at call time (docs/proposals/treg-key-pool/README.md). One module shared by the website and the Heroku worker; it imports nothing of Next,
@@ -361,7 +362,7 @@ export class TregKeyPool {
     if (running) return running;
     const unknown: PaymentScope = "unconfirmed";
     const p = (async (): Promise<VerdictInfo> => {
-      const { health, body } = await checkProviderKey("treg", key, this.fetchFn, POOL_VERIFY_TIMEOUT_MS);
+      const { health, body } = await checkProviderKey(PROVIDER_TREG, key, this.fetchFn, POOL_VERIFY_TIMEOUT_MS);
       if (!health.ok) return health.httpStatus === 401 || health.httpStatus === 403 ? { verdict: { status: "revoked", reason: `auth_${health.httpStatus}` }, scope: "key" } : { verdict: null, scope: unknown };
       const org = extractTregOrgId(body);
       if (!org) return { verdict: null, scope: unknown };

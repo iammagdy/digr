@@ -1,4 +1,5 @@
 import providerMetadata from "../../../data/capabilities/provider-metadata.json";
+import { PROVIDER_TREG } from "../multiProvider/types";
 
 export interface ReverseLookupMetadata {
   emailOrder: readonly string[];
@@ -21,7 +22,7 @@ export function readReverseLookupConfig(meta: unknown): ReverseLookupMetadata {
   const treg = (meta as { treg?: { reverseLookup?: unknown } } | null | undefined)?.treg;
   const raw = treg?.reverseLookup;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("provider-metadata.json: missing treg.reverseLookup");
+    throw new Error(`provider-metadata.json: missing ${PROVIDER_TREG}.reverseLookup`);
   }
   const obj = raw as Record<string, unknown>;
   return {

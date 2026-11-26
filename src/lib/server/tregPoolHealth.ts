@@ -1,6 +1,7 @@
 import { checkProviderKey, extractProviderAccountEmail, extractTregOrgId, fetchTregBalance, type FetchLike } from "./providerStatus";
 import type { TregKeyPool } from "./tregKeyPool";
 import { decryptPoolKey } from "./tregPoolCrypto";
+import { PROVIDER_TREG } from "../multiProvider/types";
 
 /**
  * The health check of the TREG key pool (docs/proposals/treg-key-pool/README.md). CHEAP, READ-ONLY calls only: the identity read (`GET /auth/me`, no metered cost) and the
@@ -30,9 +31,9 @@ export const CALL_PROVEN_REFUSALS: ReadonlySet<string> = new Set(["org_suspended
 export async function checkPoolKey(key: string, options: { fetchFn?: FetchLike; minBalanceMicro?: number; orgId?: string | null; timeoutMs?: number } = {}): Promise<KeyCheckResult> {
   const fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
   const min = options.minBalanceMicro ?? HEALTH_DEFAULT_MIN_BALANCE_MICRO;
-  let checked = await checkProviderKey("treg", key, fetchFn, options.timeoutMs);
+  let checked = await checkProviderKey(PROVIDER_TREG, key, fetchFn, options.timeoutMs);
   // one more try for a blip, as the provider tab's own check does
-  if (!checked.health.ok && TRANSIENT.has(checked.health.reason)) checked = await checkProviderKey("treg", key, fetchFn, options.timeoutMs);
+  if (!checked.health.ok && TRANSIENT.has(checked.health.reason)) checked = await checkProviderKey(PROVIDER_TREG, key, fetchFn, options.timeoutMs);
   const { health, body } = checked;
   if (!health.ok) {
     if (health.httpStatus === 401 || health.httpStatus === 403) return { status: "revoked", reason: `auth_${health.httpStatus}`, balanceMicro: null, email: null };

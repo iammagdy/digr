@@ -11,8 +11,10 @@ import {
   DEFAULT_LOW_BALANCE_THRESHOLD_USD, checkProviderKey, getProviderAccountEmail, getProviderStatus, invalidateProviderStatusCache, isLowBalance,
   type FetchLike, type ProviderStatusSnapshot,
 } from "./providerStatus";
+import { BRAND_CONTEXTDEV, BRAND_FIRECRAWL, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "../multiProvider/types";
+import { foldDigits } from "../arabicNormalize";
 
-export const PROVIDER_LABEL_AR: Record<ProviderId, string> = { treg: "مزود البيانات", anthropic: "مزود النموذج الذكي", firecrawl: "مزود قراءة المواقع (Firecrawl)", contextdev: "مزود البحث والقراءة (Context.dev)" };
+export const PROVIDER_LABEL_AR: Record<ProviderId, string> = { treg: "مزود البيانات", anthropic: "مزود النموذج الذكي", firecrawl: `مزود قراءة المواقع (${BRAND_FIRECRAWL})`, contextdev: `مزود البحث والقراءة (${BRAND_CONTEXTDEV})` };
 export const isProviderId = (v: unknown): v is ProviderId => typeof v === "string" && (PROVIDER_IDS as readonly string[]).includes(v);
 
 export const MSG = {
@@ -102,7 +104,7 @@ export async function readProviderKeySettings(client: any): Promise<ProviderKeyS
 export function validateSettingsInput(input: { lowBalanceThresholdUsd?: unknown; tregOrgId?: unknown }): { ok: true; value: Partial<ProviderKeySettings> } | { ok: false; messageAr: string } {
   const out: Partial<ProviderKeySettings> = {};
   if (input.lowBalanceThresholdUsd !== undefined) {
-    const t = Number(String(input.lowBalanceThresholdUsd).replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))));
+    const t = Number(foldDigits(String(input.lowBalanceThresholdUsd)));
     if (!Number.isFinite(t) || t < 0 || t > 100000) return { ok: false, messageAr: "حد التنبيه يجب أن يكون رقمًا بين ٠ و١٠٠٠٠٠ دولار." };
     out.lowBalanceThresholdUsd = Math.round(t * 100) / 100;
   }
@@ -120,7 +122,7 @@ export async function saveProviderKeySettings(client: any, patch: Partial<Provid
     const merged = { ...current, ...patch };
     const { error } = await client.from("settings_private").upsert({ key: SETTINGS_KEY, value: merged, updated_at: new Date().toISOString() });
     if (error) return false;
-    invalidateProviderStatusCache("treg");
+    invalidateProviderStatusCache(PROVIDER_TREG);
     return true;
   } catch { return false; }
 }
@@ -270,9 +272,9 @@ function utcStartOfDay(): string {
 
 async function readCap(client: any, provider: ProviderId): Promise<number> {
   // Firecrawl and Context.dev each have their own daily limit (0 until the owner sets one); TREG and the model are exactly as before.
-  if (provider === "firecrawl" || provider === "contextdev") return resolveProviderDailyCapUsd(client, provider);
+  if (provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV) return resolveProviderDailyCapUsd(client, provider);
   const { limits } = await resolveProviderLimits(client);
-  return provider === "treg" ? limits.dailyUsd : limits.llmDailyUsd;
+  return provider === PROVIDER_TREG ? limits.dailyUsd : limits.llmDailyUsd;
 }
 
 async function readSpendAndActivity(client: any, provider: ProviderId): Promise<{ todayUsd: number; activity: ActivityRow[] }> {
@@ -280,7 +282,7 @@ async function readSpendAndActivity(client: any, provider: ProviderId): Promise<
   let todayUsd = 0;
   const activity: ActivityRow[] = [];
   try {
-    if (provider === "treg" || provider === "firecrawl" || provider === "contextdev") {
+    if (provider === PROVIDER_TREG || provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV) {
       // The same two reads for every data provider, each filtered by its OWN provider identifier (for TREG the calls are exactly the ones before).
       const { data: today } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", provider).gte("created_at", since), { orderBy: "id" });
       for (const r of today || []) { const c = Number(r.cost_usd); if (Number.isFinite(c) && c > 0) todayUsd += c; }
@@ -304,7 +306,7 @@ export async function loadProviderTabState(
   const [settings, store] = await Promise.all([readProviderKeySettings(deps.client), readStoreInfo(deps.client, provider)]);
   // the tab's own key section is the LEGACY key (encrypted store, then environment) even while the key pool is ON: the pool has its own section
   const resolved = await resolveLegacyProviderKey(provider, { forceRefresh: options?.forceRefresh });
-  const status = await getProviderStatus(provider, resolved.key, { forceRefresh: options?.forceRefresh, orgIdOverride: provider === "treg" ? settings.tregOrgId : null, fetchFn: deps.fetchFn, now: deps.now });
+  const status = await getProviderStatus(provider, resolved.key, { forceRefresh: options?.forceRefresh, orgIdOverride: provider === PROVIDER_TREG ? settings.tregOrgId : null, fetchFn: deps.fetchFn, now: deps.now });
   const [{ todayUsd, activity }, capUsd] = await Promise.all([readSpendAndActivity(deps.client, provider), readCap(deps.client, provider)]);
   const authRejection = getLastAuthRejection(provider);
   const encryptionConfigured = isEncryptionConfigured();
@@ -317,7 +319,7 @@ export async function loadProviderTabState(
   if (resolved.source === "none") noticesAr.push("لا يوجد أي مفتاح مضبوط لهذا المزود.");
   if (authRejection) noticesAr.push(`رفض المزود المفتاح المستخدم (HTTP ${authRejection.httpStatus}) ${authRejection.count > 1 ? `${authRejection.count} مرات` : "مرة"} على هذا الخادم، آخرها ${authRejection.at}. لم يجرِ أي تبديل تلقائي للمفتاح.`);
   if (provider === "anthropic") noticesAr.push("مزود النموذج الذكي لا يوفّر واجهة لقراءة الرصيد بمفتاح عادي، لذلك لا يظهر رصيد هنا. راجع لوحة المزود مباشرة.");
-  if (provider === "firecrawl" || provider === "contextdev") {
+  if (provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV) {
     noticesAr.push("الرصيد المعروض هو عدد الرصيد (كريدت) كما يرده المزود نفسه بطلب مجاني، وليس رقمًا تقديريًا.");
     if (provider === "contextdev") noticesAr.push("قراءة الرصيد تحتاج مفتاحًا بصلاحية قراءة السجلات (logs:read). مفتاح بدونها يظل مقبولًا ويعمل في البحث والقراءة، لكن لا يُعرض رصيده هنا.");
     if (!capUsd) noticesAr.push("لم يُضبط حد يومي لهذا المزود بعد، لذلك لا يُسمح بأي إنفاق عليه حتى تحدده من قسم الحدود.");
@@ -333,10 +335,10 @@ export async function loadProviderTabState(
     encryptionConfigured,
     envKeyConfigured: envKeyConfigured(provider),
     status,
-    accountEmail: provider === "treg" ? getProviderAccountEmail("treg") : null,
+    accountEmail: provider === PROVIDER_TREG ? getProviderAccountEmail(PROVIDER_TREG) : null,
     authRejection,
     settings,
-    lowBalance: provider === "treg" && isLowBalance(status.balance, settings.lowBalanceThresholdUsd),
+    lowBalance: provider === PROVIDER_TREG && isLowBalance(status.balance, settings.lowBalanceThresholdUsd),
     spend: { todayUsd, capUsd, capKind: provider === "anthropic" ? "llm_daily" : "provider_daily" },
     activity,
     noticesAr,

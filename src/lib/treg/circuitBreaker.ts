@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { TREG_DATA_DIR } from "../multiProvider/types";
 
 export type CircuitState = "closed" | "open" | "half-open";
 
@@ -49,8 +50,8 @@ export function clearResearchRegistryCache(): void {
 export function loadResearchRegistry(): any {
   if (cachedRegistryData) return cachedRegistryData;
   const candidatePaths = [
-    path.resolve(process.cwd(), "data/treg/treg_research_endpoint_registry.json"),
-    path.resolve(__dirname, "../../../data/treg/treg_research_endpoint_registry.json"),
+    path.resolve(process.cwd(), "data", TREG_DATA_DIR, "treg_research_endpoint_registry.json"),
+    path.resolve(__dirname, "../../..", "data", TREG_DATA_DIR, "treg_research_endpoint_registry.json"),
   ];
 
   for (const p of candidatePaths) {
