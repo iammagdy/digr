@@ -1,3 +1,5 @@
+import { normalizeDigits } from "../arabicDigits";
+
 /**
  * THE ONE SYNTACTIC RULE for «this cell holds a contact value» (DT-20261119-06 PART B, Megz D-0117/D-0126). It is the SHAPE of an address or a phone number, never a word list and never a verification verdict. The same function decides
  *  - at ingest (agent/src/items/ingest.ts), BEFORE a native phone/e-mail cell is normalised: a date, a labelled id or any text that is not a phone is not turned into a «phone» by digit-stripping;
@@ -17,7 +19,8 @@ const COUNTRY_DOT = /^\+(?:1|7|[1-9]\d{1,2})[.]\d+$/;
 const REPEATED_DIGIT = /^(\d)\1+$/;
 
 export function phoneShape(raw: unknown, minimumDigits = 7): boolean {
-  const t = String(raw ?? "").trim().replace(/^tel:/i, "");
+  // Arabic-Indic (٠-٩) and Persian (۰-۹) digits are converted to ASCII first so every syntactic rule judges them identically to Latin digits.
+  const t = normalizeDigits(String(raw ?? "")).trim().replace(/^tel:/i, "");
   const digits = t.replace(/\D/g, "");
   if (!/^[+\d(][\d\s().-]*$/.test(t) || digits.length < minimumDigits || digits.length > 15) return false;
   if (DATE.test(t) || REPEATED_DIGIT.test(digits)) return false;
