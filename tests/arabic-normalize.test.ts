@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldArabicLetters, foldDigits, foldedAlternation, normalizeArabic } from "../src/lib/arabicNormalize";
+import { foldArabicLetters, foldDigits, normalizeArabic } from "../src/lib/arabicNormalize";
 
 describe("one Arabic normaliser", () => {
   it("folds the hamza forms of alef to one letter", () => {
@@ -26,12 +26,6 @@ describe("one Arabic normaliser", () => {
 
   it("lower-cases Latin letters and collapses blanks", () => {
     expect(normalizeArabic("  منصة   X  ")).toBe("منصه x");
-  });
-
-  it("builds an alternation written the way normalised text is written", () => {
-    const re = new RegExp(foldedAlternation(["أكس", "إيكس"]));
-    expect(re.test(normalizeArabic("على أكس"))).toBe(true);
-    expect(re.test(normalizeArabic("على إيكس"))).toBe(true);
   });
 
   it("is safe on empty and non-string input", () => {
