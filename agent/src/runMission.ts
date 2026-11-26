@@ -38,6 +38,7 @@ import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCo
 import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
 import { createGateway, tregCallBoundOf } from "./gateway";
+import { ceilToMicroUsd } from "../../src/lib/server/spendGate/bounds";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import type { WorkerSpendGate } from "./spendGateWiring";
 import { spendGateOf, withMissionSpendGate } from "./spendGateKeys";
@@ -786,7 +787,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (plannerRan) calls = await store.listCalls(mission.id);
   const spentUsd = sum(calls, "planning");
   const budgetFacts = planningBudgetFacts(plannerUnderstanding, {
-    ...budgetContext, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, deps.catalog),
+    ...budgetContext, ceilToMicroUsd, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, deps.catalog),
   }, spentUsd);
   const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd });
   const childReserves = budgetFacts.stages.filter((stage) => stage.role === "child").map((stage) => stage.reserveUsd);

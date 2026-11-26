@@ -1,6 +1,5 @@
 import { callEstimateUsd, unitCost } from "../modelPlanner/pricing";
 import { floorMicroUsd } from "../server/callBudget";
-import { ceilToMicroUsd, tregCallBoundUsd } from "../server/spendGate/bounds";
 import { blockedEndpointReason } from "../treg/blockList";
 import { isSellable, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { policyVerdict, type AccountAccess } from "../treg/dataPolicy";
@@ -37,7 +36,11 @@ export interface BudgetContext {
   access: AccountAccess;
   stats: StatsMap;
   now: number;
-  defaultAdmissionUsdOf?: (endpointId: string) => number | null;
+}
+
+interface FundingContext extends BudgetContext {
+  defaultAdmissionUsdOf: (endpointId: string) => number | null;
+  ceilToMicroUsd: (usd: number) => number;
 }
 
 interface BudgetStage {
@@ -106,21 +109,22 @@ interface SampleRoute {
   reserveNeedUsd: number;
 }
 
-function sampleRoutes(stage: BudgetStage, ctx: BudgetContext): SampleRoute[] {
+function sampleRoutes(stage: BudgetStage, ctx: FundingContext): SampleRoute[] {
   return stage.ranked.flatMap((id) => {
     const callUsd = routeCost(id, ctx.catalog);
-    const firstUsd = ctx.defaultAdmissionUsdOf ? ctx.defaultAdmissionUsdOf(id) : tregCallBoundUsd(callUsd);
+    const firstUsd = ctx.defaultAdmissionUsdOf(id);
     if (!Number.isFinite(callUsd) || callUsd <= 0 || firstUsd === null || !Number.isFinite(firstUsd) || firstUsd <= 0) return [];
     return [{
       id, callUsd, firstUsd,
       needUsd: stage.samples * callUsd * AGENT_PLANNING_SAMPLE_MARGIN,
-      reserveNeedUsd: Math.max(firstUsd, ceilToMicroUsd(Math.min(stage.samples, 2) * callUsd * AGENT_PLANNING_SAMPLE_MARGIN)),
+      reserveNeedUsd: Math.max(firstUsd, ctx.ceilToMicroUsd(Math.min(stage.samples, 2) * callUsd * AGENT_PLANNING_SAMPLE_MARGIN)),
     }];
   });
 }
 
 /** Handover funds the first affordable root before keeping room for child samples. */
-export function planningBudgetFacts(u: BudgetUnderstandingInput | null, ctx: BudgetContext, recordedPlanningSpentUsd = 0): PlanningBudgetFacts {
+export function planningBudgetFacts(u: BudgetUnderstandingInput | null, ctx: FundingContext, recordedPlanningSpentUsd = 0): PlanningBudgetFacts {
+  const { ceilToMicroUsd } = ctx;
   const baseUsd = planningBudgetUsd(u);
   const stages = stagesOf(u, ctx).map((stage) => ({ ...stage, routes: sampleRoutes(stage, ctx) }));
   const roots = stages.map((stage) => stage.role === "child" ? undefined : stage.routes.find((route) => route.firstUsd <= capUsd));

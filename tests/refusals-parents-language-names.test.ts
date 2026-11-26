@@ -37,13 +37,21 @@ function setup(responses: Array<TregCallResult | ((o: TregCallOptions) => TregCa
   return { store, money, call, deps, notices };
 }
 const REQUEST = "هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات";
+const noCardView = (m: ReturnType<typeof newMission>) => customerMissionView({
+  mission: {
+    id: m.id, status: m.status, question_ar: m.question_ar, plan_public: m.plan_public,
+    reserved_points: null, unit_price_points: null, delivered_units: null, charged_points: null,
+    summary_ar: m.summary_ar, files: null, created_at: "2026-10-29T08:00:00Z",
+  },
+  events: [],
+});
 const plan = async (steps: FakeStep[], answers: Array<TregCallResult> = []) => {
   const t = setup(answers);
   t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: REQUEST }));
   const driver = createFakeDriver(steps);
   await runPlanning(t.deps(driver), t.store.missions.get("msn_x")!);
   const m = t.store.missions.get("msn_x")!;
-  const view = customerMissionView({ mission: { id: m.id, status: m.status, question_ar: m.question_ar, plan_public: m.plan_public, reserved_points: null, unit_price_points: null, delivered_units: null, charged_points: null, summary_ar: m.summary_ar, files: null, created_at: "2026-10-29T08:00:00Z" }, events: [] });
+  const view = noCardView(m);
   return { ...t, m, view, driver };
 };
 /** What a planning that holds real rows does when it gives up: the first two attempts are sent back by code (owner decision 2026-10-29), the third ends it. */
@@ -144,11 +152,25 @@ describe("A. every no-card end is exactly one of four classes, each with its own
 
 describe("A. the planning does not spend its one budget on one source", () => {
   const ask = (q: string, rows: number): FakeStep => ({ tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: q, max_results: rows }, why: "the fixture source is the one under test" } });
-  const run = async (request: string, steps: FakeStep[], answers: TregCallResult[]) => {
+  const run = async (request: string, steps: FakeStep[], answers: TregCallResult[], parentAndChild = false) => {
     const t = setup(answers);
     t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: request }));
     const driver = createFakeDriver([{ tool: "catalog_search", args: { words: ["posts"], platform: "x", limit: 5 } }, ...steps, ...GIVE_UP_THREE_TIMES("لا أستطيع خدمة هذا الطلب بدقة.")]);
-    await runPlanning(t.deps(driver), t.store.missions.get("msn_x")!);
+    const deps = t.deps(driver);
+    if (parentAndChild) {
+      // A company root hands off the validated two-stage structure to the legacy worker.
+      deps.plannerModel = async () => ({
+        input: {
+          decision: "plan", understanding_ar: "جمع المنشورات والتعليقات.",
+          steps: [
+            { key: "root", platform: "companies", capability: "companies.search" },
+            { key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: "root" },
+          ],
+        },
+        costUsd: 0,
+      });
+    }
+    await runPlanning(deps, t.store.missions.get("msn_x")!);
     return { t, calls: driver.results.filter((x) => x.tool === "treg_call") };
   };
 
@@ -162,13 +184,22 @@ describe("A. the planning does not spend its one budget on one source", () => {
     expect(t.store.missions.get("msn_x")!.status).toBe("unserved");
   });
 
-  it("a parent and its children: the first job cannot spend the budget the next stage's first sample needs (stage_reserved)", async () => {
-    // two calls of 0.025 estimate each: the third (ten rows, 0.05; was five rows) would pass 0.0954 (0.1254, the budget scaled to this platform's cost, less the 0.03 kept for the stage not yet sampled)
-    const { t, calls } = await run(REQUEST, [ask("غلاء", 5), ask("غلاء الأسعار", 5), ask("ارتفاع الأسعار", 10)], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)]);
+  // The first two calls bill $0.05. The third estimate is $0.05 or $0.10.
+  it.each([
+    { reason: "stage_reserved", rows: 10, status: "unserved", sentence: UNSUPPORTED_AR },
+    { reason: "over_budget", rows: 20, status: "failed", sentence: INTERNAL_PLANNING_AR },
+  ])("a parent and its children: $reason refuses the third sample without a charge", async ({ reason, rows, status, sentence }) => {
+    const { t, calls } = await run(REQUEST, [ask("غلاء", 5), ask("غلاء الأسعار", 5), ask("ارتفاع الأسعار", rows)], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)], true);
     expect(calls.map((c) => (c.result as { ok?: boolean }).ok)).toEqual([true, true, false]);
-    expect(calls[2].result).toMatchObject({ refused: "stage_reserved" });
+    expect(calls[2].result).toMatchObject({ refused: reason });
     expect(t.call).toHaveBeenCalledTimes(2);
-    expect((await t.store.listCalls("msn_x")).filter((c) => c.status === "refused").map((c) => c.refused_reason)).toEqual(["stage_reserved:planning"]);
+    expect((await t.store.listCalls("msn_x")).filter((c) => c.status === "refused")).toMatchObject([
+      { refused_reason: `${reason}:planning`, cost_usd: 0 },
+    ]);
+    const mission = t.store.missions.get("msn_x")!;
+    expect(mission).toMatchObject({ status, job_id: null });
+    expect(noCardView(mission).endLineAr).toBe(sentence);
+    expect(t.money.calls).toHaveLength(0);
   });
 });
 

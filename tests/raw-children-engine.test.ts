@@ -11,6 +11,8 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { NOT_ADMIN, USER_ID, fakeRecorder } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
 import type { BudgetUnderstandingInput } from "../src/lib/agentMission/budget";
+import { tregCallBoundOf } from "../agent/src/gateway";
+import { ceilToMicroUsd } from "../src/lib/server/spendGate/bounds";
 import { planningBudgetFacts } from "../src/lib/agentMission/planningBudget";
 import { platformCostNotesAr } from "../src/lib/agentMission/platformNotes";
 import { GIVE_UP_REFUSALS_MAX } from "../agent/src/tools";
@@ -327,7 +329,7 @@ describe("Facebook: a dear platform still reaches a card, with the real price an
 
 describe("the planning budget of a dear platform: sized by code from the sources' prices, a hard cap", () => {
   const catalog = loadTregCatalog();
-  const facts = (u: BudgetUnderstandingInput) => planningBudgetFacts(u, { catalog, access: NOT_ADMIN, stats: new Map(), now: Date.parse("2026-10-29T12:00:00Z") });
+  const facts = (u: BudgetUnderstandingInput) => planningBudgetFacts(u, { catalog, access: NOT_ADMIN, stats: new Map(), now: Date.parse("2026-10-29T12:00:00Z"), ceilToMicroUsd, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, catalog) });
   const facebook = { steps: [
     { key: "posts", platform: "facebook", capability: "facebook.search.posts", parent: null },
     { key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: "posts" },

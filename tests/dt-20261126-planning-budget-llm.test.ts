@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { checkUnderstanding } from "../agent/src/llmPlanner/planner";
 import { tregCallBoundOf } from "../agent/src/gateway";
-import { measuredCalls, measuredUnderstanding, runWorkerReplay } from "../scripts/planning-budget-worker-replay";
+import { ceilToMicroUsd } from "../src/lib/server/spendGate/bounds";
+import { measuredCalls, measuredUnderstanding, runWorkerReplay } from "./tools/planning-budget-worker-replay";
 import { contactSampleCapUsd } from "../src/lib/agentMission/contactSampling";
 import { planningBudgetFacts, webPlanningCeilingUsd } from "../src/lib/agentMission/planningBudget";
 import { statsFromCalls } from "../src/lib/agentMission/sourceRanking";
@@ -13,6 +14,7 @@ const now = Date.parse("2026-11-26T12:00:00Z");
 const context = {
   catalog, access: NOT_ADMIN, now,
   stats: statsFromCalls(measuredCalls(now)),
+  ceilToMicroUsd,
   defaultAdmissionUsdOf: (id: string) => tregCallBoundOf(id, {}, catalog),
 };
 

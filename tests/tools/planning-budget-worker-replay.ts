@@ -1,25 +1,22 @@
-/** Owner-only model replay. Both model modes use local provider transports and an in-memory worker. */
+/** Offline worker replay with scripted model responses, local provider transports and an in-memory store. */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
-import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
-import { createMemoryStore, newMission, type MemoryStore } from "../agent/src/memoryStore";
-import { anthropicPlannerModel } from "../agent/src/llmPlanner/model";
-import type { PlannerModel } from "../agent/src/llmPlanner/planner";
-import { LLM_PLANNER_MODEL } from "../agent/src/llmPlanner/run";
-import { resolveModels } from "../agent/src/modelConfig";
-import { runPlanning, type RunnerDeps } from "../agent/src/runMission";
-import type { CallRow } from "../agent/src/types";
-import { AGENT_PLANNING_LLM_BUDGET_USD } from "../src/lib/agentMission/constants";
-import { settlementCharge } from "../src/lib/agentMission/price";
-import { modelPlanningForTests, setModelPlanningForTests } from "../src/lib/agentMission/testSeam";
-import { loadTregCatalog, type TregCatalog } from "../src/lib/treg/catalog";
-import { callEstimateUsd, unitCost } from "../src/lib/modelPlanner/pricing";
-import { providerCallBound } from "../src/lib/server/spendGate/bounds";
-import type { CallRecorder } from "../src/lib/server/multiProvider/adapterTypes";
+import { createFakeDriver, type FakeStep } from "../../agent/src/fakeDriver";
+import { createMemoryStore, newMission, type MemoryStore } from "../../agent/src/memoryStore";
+import type { PlannerModel } from "../../agent/src/llmPlanner/planner";
+import { resolveModels } from "../../agent/src/modelConfig";
+import { runPlanning, type RunnerDeps } from "../../agent/src/runMission";
+import type { CallRow } from "../../agent/src/types";
+import { settlementCharge } from "../../src/lib/agentMission/price";
+import { modelPlanningForTests, setModelPlanningForTests } from "../../src/lib/agentMission/testSeam";
+import { loadTregCatalog, type TregCatalog } from "../../src/lib/treg/catalog";
+import { callEstimateUsd, unitCost } from "../../src/lib/modelPlanner/pricing";
+import { providerCallBound } from "../../src/lib/server/spendGate/bounds";
+import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
 
 const POSTS = "justoneapi.x.facebook-search-post-v1";
 const COMMENTS = "treg.facebook.post.comments";
@@ -241,24 +238,17 @@ function selectAnswer(options: unknown, expected: string): string {
   throw new Error("The requested take-available answer was not offered");
 }
 
-async function replayDriver(key: string) {
-  const { createSdkDriver } = await import("../agent/src/sdkRuntime");
-  return createSdkDriver({ ANTHROPIC_API_KEY: key, PATH: process.env.PATH, HOME: process.env.HOME });
-}
-
 interface ReplayOptions {
   qa: QaFixture;
   catalog: TregCatalog;
-  key?: string;
   turnLimit?: number;
-  modelRemaining?: () => number;
   priorPlanningUsd?: number;
   unknownWebCharge?: boolean;
   emptyB2B?: boolean;
   inspect?: (store: MemoryStore) => void;
 }
 
-export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turnLimit = 2, modelRemaining, priorPlanningUsd, unknownWebCharge = false, emptyB2B = false, inspect }: ReplayOptions) {
+export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, turnLimit = 2, priorPlanningUsd, unknownWebCharge = false, emptyB2B = false, inspect }: ReplayOptions) {
   const request = qa.turn_texts?.turn1_request_text ?? qa.request_text
     ?? qa.requests?.find((item) => item.mission === spec.mission)?.text ?? (!spec.qaFile ? spec.world === "cheap-web" ? "هات خمس تغريدات عن غلاء الأسعار" : spec.world === "dear-child" ? "عايز شركات وموظفيها" : REQUEST_FB : undefined);
   if (!request) throw new Error(`No request in fixture ${spec.id}`);
@@ -270,9 +260,7 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turn
   const decisions: string[] = [];
   const webQueries: string[] = [];
   const seenTreg = new Map<string, number>();
-  const paidModel = key && spec.expected !== "admissions" ? anthropicPlannerModel(key, LLM_PLANNER_MODEL) : null;
   const fakeDriver = createFakeDriver(legacySteps(spec), { costUsd: 0, stopAfterTerminal: false });
-  const driver = paidModel && spec.world === "b2b" && key ? await replayDriver(key) : fakeDriver;
   const turnOfCall = new Map<string, number>();
   if (priorPlanningUsd !== undefined) {
     const id = `${mission.id}:call_0001`;
@@ -284,13 +272,6 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turn
     await store.addCall(priorCall);
     turnOfCall.set(id, 0);
   }
-  const realDriver: RunnerDeps["driver"] = {
-    run: (input) => {
-      if (driver !== fakeDriver && modelRemaining && modelRemaining() < input.maxBudgetUsd) throw new Error("Replay model budget exhausted before worker call");
-      return driver.run(input);
-    },
-  };
-
   const transportError = (message: string): never => {
     failure.push(message);
     throw new Error(message);
@@ -299,9 +280,9 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, key, turn
   for (let turn = 1; turn <= turnLimit; turn++) {
     const current = (await store.getMission(mission.id))!;
     const fallback = spec.world === "fallback";
-    const model = paidModel ?? scriptedModel(spec.world, qa, turn, emptyB2B);
+    const model = scriptedModel(spec.world, qa, turn, emptyB2B);
     const deps: RunnerDeps = {
-      client, store, catalog, driver: realDriver,
+      client, store, catalog, driver: fakeDriver,
       models: resolveModels({}, {}),
       recorder: rec.recorder, commit: rec.commit, resolveAccess: async () => ACCESS,
       ...((spec.world === "measured" || spec.world === "cheap-web") ? {
@@ -403,19 +384,14 @@ export function compareWorkerReplay(base: ReplayEntry, branch: ReplayEntry) {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    fixtures: { type: "string", default: "scripts/fixtures/planning-budget-worker-replay.json" },
+    fixtures: { type: "string", default: "tests/tools/fixtures/planning-budget-worker-replay.json" },
     "qa-dir": { type: "string", required: true },
     case: { type: "string" }, runs: { type: "string", default: "1" },
     output: { type: "string", required: true }, compare: { type: "string" },
-    offline: { type: "boolean", default: false }, "max-model-usd": { type: "string" },
     "as-of": { type: "string", default: "2026-11-26T12:00:00Z" },
   } });
   const count = Number(values.runs);
   if (!Number.isInteger(count) || count < 1 || count > 5) throw new Error("Runs must be between one and five");
-  const key = values.offline ? undefined : process.env.ANTHROPIC_API_KEY;
-  if (!values.offline && !key) throw new Error("The real-model replay requires the owner model key");
-  const maxModel = Number(values["max-model-usd"]);
-  if (key && (!Number.isFinite(maxModel) || maxModel <= 0)) throw new Error("Set the approved model budget with --max-model-usd");
   const asOf = Date.parse(values["as-of"]!);
   if (!Number.isFinite(asOf)) throw new Error("Use an ISO date for --as-of");
   Date.now = () => asOf;
@@ -428,17 +404,12 @@ async function main() {
   const baseline = values.compare ? readFileSync(values.compare, "utf8").trim().split("\n").map((line) => JSON.parse(line) as ReplayEntry) : [];
   if (values.compare && baseline.length !== count * specs.length) throw new Error("Baseline contains a different number of replay cases");
   const rows: ReplayEntry[] = [];
-  if (key) console.error(JSON.stringify({ runs: count, cases: specs.length, maxModelUsd: maxModel, workerModelCeilingPerInvocationUsd: AGENT_PLANNING_LLM_BUDGET_USD, planningModel: LLM_PLANNER_MODEL }));
-  let modelSpent = 0;
   for (let iteration = 1; iteration <= count; iteration++) {
     for (const spec of specs) {
       if (spec.qaFile && basename(spec.qaFile) !== spec.qaFile) throw new Error("Fixture file must be relative to the QA directory");
       const qaText = spec.qaFile ? readFileSync(resolve(values["qa-dir"]!, spec.qaFile), "utf8") : "{}";
-      if (key && modelSpent >= maxModel) throw new Error("Replay model budget exhausted");
-      const result = await runWorkerReplay(spec, { qa: JSON.parse(qaText), catalog, ...(key ? { key, modelRemaining: () => maxModel - modelSpent } : {}) });
-      modelSpent += result.planning.modelUsd;
-      if (key && modelSpent > maxModel) throw new Error("Replay exceeded its model budget");
-      rows.push({ ...result, iteration, head, fixtures: sha(manifest + qaText + values["as-of"]), catalog: catalogDigest, model: key ? LLM_PLANNER_MODEL : "recorded" });
+      const result = await runWorkerReplay(spec, { qa: JSON.parse(qaText), catalog });
+      rows.push({ ...result, iteration, head, fixtures: sha(manifest + qaText + values["as-of"]), catalog: catalogDigest, model: "recorded" });
       if (values.compare) {
         const before = baseline.find((row) => row.id === spec.id && row.iteration === iteration);
         if (!before) throw new Error(`Missing baseline for ${spec.id} run ${iteration}`);
