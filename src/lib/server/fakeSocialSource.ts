@@ -6,9 +6,6 @@
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "./socialAdapter";
 import { createBuiltInMockAdapter, type ProviderAdapterFn } from "./tregAdapter";
 import { getSocialCapability } from "../socialSources";
-import { isFacebookTopicReport } from "../facebookReport/constants";
-import { runFacebookReportChunk } from "./facebookReportAdapter";
-import { createFakeFacebookCall } from "./fakeFacebookSource";
 
 const VIDEO_ID_PREFIX = "7300000000000";
 
@@ -66,10 +63,7 @@ export function createFakeSocialCall(options: FakeSocialOptions = fakeSocialOpti
 export function createFakeProviderAdapter(options?: FakeSocialOptions, now?: () => number): ProviderAdapterFn {
   const call = createFakeSocialCall(options);
   const other = createBuiltInMockAdapter({});
-  const facebook = createFakeFacebookCall(now);
   return (input) => {
-    // the Facebook topic report runs its REAL collector on a fake Page source (the worker gives it its record store and the model call)
-    if (isFacebookTopicReport(input.capabilitySlug) && input.reportStore) return runFacebookReportChunk(input, { call: facebook, store: input.reportStore, axisModel: input.axisModel });
     return getSocialCapability(input.capabilitySlug) ? runSocialChunk(input, { call }) : other(input);
   };
 }

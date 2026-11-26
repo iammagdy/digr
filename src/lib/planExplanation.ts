@@ -8,8 +8,6 @@ import { countKindOfSlug, countPlainAr, oneMatchedAr, type CountKind } from "./p
  * matches what will run and what will be charged.
  */
 const NOUNS: Array<{ test: RegExp; one: string; many: string }> = [
-  // the Facebook topic report counts delivered COMMENTS (its slug names neither «comment» nor «post» first)
-  { test: /^facebook-topic-report$/, one: "تعليق", many: "تعليق" },
   { test: /compan/i, one: "شركة", many: "شركة" },
   { test: /people|person|decision/i, one: "شخص", many: "شخص" },
   { test: /comment/i, one: "تعليق", many: "تعليق" },
@@ -47,15 +45,10 @@ export interface PlanExplanationInput {
 
 /** Lines for a single-service plan (the card shows several services separately, so they get none of these). */
 export function planExplanationLinesAr(input: PlanExplanationInput): string[] {
-  // The profile and report services count their own unit; every other service counts by the kind of its slug, with the right plural.
-  const kind: CountKind = input.capabilitySlug === "facebook-topic-report" ? "comments" : countKindOfSlug(input.capabilitySlug);
+  // Every service counts by the kind of its slug, with the right plural.
+  const kind: CountKind = countKindOfSlug(input.capabilitySlug);
   const lines: string[] = [];
-  if (input.capabilitySlug === "facebook-topic-report") {
-    // The report: a workbook of data and a separate methodology file; comments are never judged, only the empty, repeated and link-only ones are left out (and not charged).
-    lines.push(`ما ستستلمه: ملف إكسل للبيانات (موجز إحصائي ومنشورات وتعليقات وورقة لكل محور) وملف بي دي إف منفصل للمنهجية والتحليل، فيهما حتى ${countPlainAr(input.targetVolumeMax, "comments")} على منشورات الفترة التي حددتها. لا تُنتقى التعليقات؛ يُحذف منها الفارغ والمكرر وما كان رابطًا فقط، ولا يُحتسب عليك.`);
-  } else {
-    lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه النتائج المطابقة لطلبك، حتى ${countPlainAr(input.targetVolumeMax, kind)}، بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
-  }
+  lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه النتائج المطابقة لطلبك، حتى ${countPlainAr(input.targetVolumeMax, kind)}، بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
   lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${oneMatchedAr(kind)}) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا، والباقي رجع لمحفظتك.`);
   if (!input.countStated) {
     lines.push(`لم تحدد عددًا، فاقترحت عينة من ${countPlainAr(input.targetVolumeMax, kind)}. غيّر العدد من بطاقة الخطة قبل الموافقة إن أردت أكثر.`);

@@ -165,16 +165,16 @@ describe("T7 source guards (DT-20261117-06)", () => {
   const releaseText = readFileSync("src/lib/releaseText.ts", "utf8");
   const adapter = readFileSync("src/lib/server/tregAdapter.ts", "utf8");
   const mission = readFileSync("agent/src/runMission.ts", "utf8");
-  const TRUSTED = ["releaseReason", "switchedOffAr", "PEOPLE_SETTLEMENT_UNAVAILABLE_AR", "capErrorMsg", "emptyErrorAr", "partialCorruptMsg", "mismatchMsg", "reportLostMsg", "uploadFailReason", "avFailReason", "finalCauseAr"];
+  const TRUSTED = ["releaseReason", "switchedOffAr", "PEOPLE_SETTLEMENT_UNAVAILABLE_AR", "capErrorMsg", "emptyErrorAr", "partialCorruptMsg", "mismatchMsg", "uploadFailReason", "avFailReason", "finalCauseAr"];
 
   it("T7 every release call passes a trusted text and the job's own N", () => {
     const calls = [...route.matchAll(/executeReleaseConfirmation\(adminClient, jobId, ([A-Za-z_]+), ([A-Za-z_]+)\)/g)];
-    expect(calls).toHaveLength(11);
+    expect(calls).toHaveLength(10);
     for (const c of calls) {
       expect(TRUSTED).toContain(c[1]);
       expect(c[2]).toBe("claimTargetN");
     }
-    expect(route.match(/executeReleaseConfirmation\(/g)).toHaveLength(12); // the 11 calls and the definition
+    expect(route.match(/executeReleaseConfirmation\(/g)).toHaveLength(11); // the 10 calls and the definition
   });
 
   it("T7 the trusted texts are never built from an error object", () => {

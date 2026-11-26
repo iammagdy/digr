@@ -15,10 +15,10 @@ import { missionDownloadName } from "@/lib/agentMission/fileNames";
 import { csvExportFromWorkbook, packageCsvExport } from "@/lib/server/csvFromExcel";
 import { fileResponseFromBytes, fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
-import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { excelFromCsv } from "@/lib/server/excelFromCsv";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 import { servedPathFor } from "@/lib/server/multiProvider/jobGroupShared";
+import { isRemovedReportPayload, REMOVED_REPORT_ERROR_AR, REMOVED_REPORT_STATUS } from "@/lib/removedReportJob";
 
 export const dynamic = "force-dynamic";
 
@@ -360,16 +360,18 @@ export async function GET(
         parsed.metadata = parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {};
         parsed.metadata.template ||= job.template_slug || job.endpoint_id;
         parsed.metadata.socialKind ||= inferSocialRowKind(job.endpoint_id, job.template_slug, job.capability_slug, job.platform);
+        // A saved result of the removed Facebook topic report cannot be rebuilt into a file: an honest 410 before anything is built or saved.
+        if (isRemovedReportPayload(parsed)) return NextResponse.json({ success: false, error: REMOVED_REPORT_ERROR_AR }, { status: REMOVED_REPORT_STATUS });
         let fileBuf: Buffer | null = null;
         let mimeType = "application/octet-stream";
         if (format === "xlsx") {
-          fileBuf = shapedSpec ? await generateShapedExcelReport(parsed, shapedSpec) : facebookReportOf(parsed) ? await buildFacebookReportExcelFrom(parsed) : await generateExcelReport(parsed);
+          fileBuf = shapedSpec ? await generateShapedExcelReport(parsed, shapedSpec) : await generateExcelReport(parsed);
           mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else if (format === "csv") {
           fileBuf = generateCsvReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "text/csv";
         } else if (format === "pdf") {
-          fileBuf = facebookReportOf(parsed) && !shapedSpec ? await buildFacebookReportPdfFrom(parsed) : await generatePdfReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
+          fileBuf = await generatePdfReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "application/pdf";
         }
         if (fileBuf) {
