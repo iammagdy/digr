@@ -1,3 +1,4 @@
+import { foldArabicIndicDigits } from "./arabicNormalize";
 export interface SupportSettings {
   supportEmail: string;
   whatsappNumber: string;
@@ -14,9 +15,7 @@ export function isValidEmail(value: string): boolean {
 
 /** Digits only, 8 to 15 long, international form without a plus sign (for a wa.me link). Empty means not set. */
 export function normalizeWhatsapp(raw: unknown): string {
-  const digits = String(raw ?? "")
-    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/\D/g, "");
+  const digits = foldArabicIndicDigits(String(raw ?? "")).replace(/\D/g, "");
   return digits.length >= 8 && digits.length <= 15 ? digits : "";
 }
 

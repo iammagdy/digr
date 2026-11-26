@@ -1,13 +1,11 @@
 import { z } from "zod";
 import { CREDIT_VALUE_DEFAULT_E4, MAX_BATCHES, MAX_LINE_CENTS, MAX_LINES, MAX_QUANTITY, MAX_UNIT_CC, RATE_MAX_E4, RATE_MIN_E4, lineCents } from "./money";
 import type { DocView } from "./types";
+import { removeControlAndInvisible } from "../arabicNormalize";
 
 /** User text goes through here before it is stored or printed: no emoji, no hidden direction marks or control characters. */
 export function cleanText(value: string): string {
-  return value
-    .replace(/(?![©®™])\p{Extended_Pictographic}|️|⃣|‍/gu, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F​‎‏‪-‮⁦-⁩﻿]/g, "")
-    .trim();
+  return removeControlAndInvisible(value.replace(/(?![©®™])\p{Extended_Pictographic}|️|⃣|‍/gu, "")).trim();
 }
 
 const text = (max: number) => z.string().max(max).transform(cleanText);

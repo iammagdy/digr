@@ -1,4 +1,5 @@
 import { countriesOfNumber } from "./phoneValidation";
+import { foldDigits } from "../arabicNormalize";
 
 /**
  * ROUND 60: ONE PAID FETCH PER PAGE. The public contact fields of a page (its e-mails, its phone numbers, its links) are read by CODE from the page text bought ONCE, instead of buying the same
@@ -38,8 +39,7 @@ export function siteOf(raw: unknown): string | null {
   return c ? c.split(/[/?:]/)[0] : null;
 }
 
-const ARABIC_DIGITS = /[٠-٩۰-۹]/g;
-const westernDigits = (s: string): string => s.replace(ARABIC_DIGITS, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d) >= 0 ? "٠١٢٣٤٥٦٧٨٩".indexOf(d) : "۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+const westernDigits = (s: string): string => foldDigits(s);
 
 interface MdLink { text: string; target: string; image: boolean }
 /** Every markdown link of a page: «[text](target)» and «<https://…>», images marked. */

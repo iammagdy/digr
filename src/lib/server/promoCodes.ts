@@ -1,6 +1,7 @@
 import { pointsAr } from "../pointsFormat";
 import { isMissingAtomicRpc } from "../../functions/shared/atomicRpc";
 import { toArabicDigits } from "../arabicDigits";
+import { foldDigits } from "../arabicNormalize";
 
 export const PROMO_CODE_PATTERN = /^[A-Z0-9_-]{3,32}$/;
 
@@ -9,9 +10,7 @@ const GENERIC_FAILURE_AR = "تعذر تطبيق الكود الآن. حاول م
 
 /** Codes are typed on a phone: accept Arabic-Indic digits, spaces and lower case. */
 export function normalizePromoCode(raw: unknown): string {
-  const text = String(raw ?? "")
-    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+  const text = foldDigits(String(raw ?? ""))
     .trim()
     .toUpperCase();
   return text;

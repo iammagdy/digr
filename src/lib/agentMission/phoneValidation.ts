@@ -1,6 +1,7 @@
 import { registrableDomain, sameCompanyName, type CompanyIdentity } from "./companyIdentity";
 import { countriesOfCallingDigits, countryOfHostSuffix, countryOfIso3, countryOfValue, iso3OfCountry } from "./places";
 import { verifyContactValue } from "./contacts";
+import { invisibleToSpace } from "../arabicNormalize";
 
 /**
  * PHONES: WHOSE NUMBER IT IS, AND WHETHER IT IS REAL AND LOCAL (live test A1, 2026-11-01). A person row carried a US number (+1 858 254 9559) marked «موثّق» for an Egyptian company. Owner direction (benchmark: 0 of 10 personal phones exist in the sources; the company's head-office phone
@@ -17,7 +18,7 @@ export const PHONE_TYPE_COMPANY_AR = "رقم الشركة";
 export const PHONE_TYPE_COLUMN_AR = "نوع الرقم";
 export const phoneTypeKeyOf = (columnKey: string): string => `${columnKey}_type`;
 
-const text = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
+const text = (v: unknown): string => invisibleToSpace(typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/\s+/g, " ").trim();
 
 // ------------------------------------------------------------------------------------------------ the company's country
 const COUNTRY_KEY = /(^|_)(country|country_code|country_name|nation|countrycode|hq_country|headquarters_country)$/i;

@@ -4,7 +4,6 @@ import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 import { estimateSocialChunkCostUsd, getSocialCapability, socialRowsPerChunk } from "../socialSources";
-import { REPORT_CHUNK_COST_ESTIMATE_USD } from "../facebookReport/constants";
 import { isChainSlug } from "../multiProvider/routes";
 import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../modelPlanner/constants";
 
@@ -165,8 +164,7 @@ export async function resolveJobExecutionSpec(
       params,
       paginationStrategy: "cursor",
       pricingUnit: "call",
-      // (the Facebook topic report reserves its own chunk bound: a chunk may include search calls, see facebookReport/constants)
-      unitCostUsd: socialCapability.topicReport ? Math.max(estimateSocialChunkCostUsd(socialCapability), REPORT_CHUNK_COST_ESTIMATE_USD) : estimateSocialChunkCostUsd(socialCapability),
+      unitCostUsd: estimateSocialChunkCostUsd(socialCapability),
       pageSize: socialRowsPerChunk(),
       outputFormats,
       ...(retryOfJobId ? { retryOfJobId } : {}),

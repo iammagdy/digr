@@ -3,7 +3,6 @@ import { createServerSideClient, createAdminClient } from "@/lib/supabase/server
 import { suspensionBlock } from "@/lib/server/accountSuspension";
 import { generateMethodologyText, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
-import { buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { AGENT_BUCKET } from "@/lib/agentMission/constants";
 import { methodologyMissionOfJob, type MethodologyMission } from "@/lib/agentMission/methodology/missions";
 import { readWorkbookMethodology } from "@/lib/agentMission/methodology/readWorkbook";
@@ -11,6 +10,7 @@ import { buildMethodologyDocument, METHODOLOGY_DOC_TITLE_AR } from "@/lib/agentM
 import { renderMethodologyPdf } from "@/lib/agentMission/methodology/pdf";
 import { fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
+import { isRemovedReportPayload, REMOVED_REPORT_NO_CHARGE_ERROR_AR, REMOVED_REPORT_STATUS } from "@/lib/removedReportJob";
 
 export const dynamic = "force-dynamic";
 
@@ -185,6 +185,9 @@ export async function POST(
         // Fallback
       }
 
+      // A saved result of the removed Facebook topic report has no methodology file to write: refused here, BEFORE anything is built, saved or charged.
+      if (isRemovedReportPayload(rawParsed)) return NextResponse.json({ success: false, error: REMOVED_REPORT_NO_CHARGE_ERROR_AR }, { status: REMOVED_REPORT_STATUS });
+
       const reportPayload = rawParsed && typeof rawParsed === "object"
         ? {
             ...rawParsed,
@@ -205,13 +208,10 @@ export async function POST(
       }
 
       try {
-        // The Facebook topic report has its own methodology and analysis file (the same file its job delivers); every other job keeps the generic one.
-        methodologyPdf = facebookReportOf(reportPayload)
-          ? await buildFacebookReportPdfFrom(reportPayload)
-          : await generatePdfReport({
-              ...reportPayload,
-              metadata: { ...(reportPayload.metadata || {}), methodology: methodologyStatement },
-            });
+        methodologyPdf = await generatePdfReport({
+          ...reportPayload,
+          metadata: { ...(reportPayload.metadata || {}), methodology: methodologyStatement },
+        });
       } catch {
         return NextResponse.json({ success: false, error: "تعذر تجهيز ملف المنهجية؛ لم يتم خصم أي نقاط." }, { status: 503 });
       }

@@ -6,6 +6,7 @@
  *   number   a long digit string (an ID) is masked like a phone; a short number (a row number) is kept
  *   name/text each word reduced to its first letter:  «أحمد محمد علي» -> «أ. م. ع.»
  */
+import { foldDigits, hasArabicLetters } from "../../arabicNormalize";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const firstChar = (s: string): string => Array.from(s)[0] ?? "";
 
@@ -13,11 +14,11 @@ export const looksLikeEmail = (v: string): boolean => EMAIL.test(v.trim());
 
 /** digits of a value, Arabic-Indic and Persian digits included */
 export const digitsOf = (v: string): string =>
-  v.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0)).replace(/\D/g, "");
+  foldDigits(v).replace(/\D/g, "");
 
 export function looksLikePhone(v: string): boolean {
   const t = v.trim();
-  if (t === "" || /[A-Za-zء-ي@]/.test(t)) return false;
+  if (t === "" || /[A-Za-z@]/.test(t) || hasArabicLetters(t)) return false;
   const digits = digitsOf(t);
   return digits.length >= 7 && digits.length <= 13 && digits.length >= t.replace(/[\s+\-().]/g, "").length - 1;
 }

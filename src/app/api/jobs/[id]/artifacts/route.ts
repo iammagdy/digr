@@ -6,7 +6,6 @@ import { applyArtifactEdit, ArtifactEditOperationSchema, type ArtifactResultPayl
 import { artifactVersionRowId } from "@/functions/shared/artifactVersions";
 import { producedFormats, resultsReleasable } from "@/lib/producedFormats";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/functions/shared/fileGenerators";
-import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { customerFileIds } from "@/lib/customerFiles";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 
@@ -299,11 +298,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     };
 
     if (formats.includes("xlsx")) {
-      const buf = facebookReportOf(edited) ? await buildFacebookReportExcelFrom(edited) : await generateExcelReport(edited);
+      const buf = await generateExcelReport(edited);
       await adminClient.storage.from("results").upload(fileIds.xlsx as string, buf, { upsert: true, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     }
     if (formats.includes("pdf")) {
-      const buf = facebookReportOf(edited) ? await buildFacebookReportPdfFrom(edited) : await generatePdfReport(edited);
+      const buf = await generatePdfReport(edited);
       await adminClient.storage.from("results").upload(fileIds.pdf as string, buf, { upsert: true, contentType: "application/pdf" });
     }
     if (formats.includes("csv")) {

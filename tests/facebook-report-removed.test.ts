@@ -1,65 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * THE GATE: the Facebook topic report is offered, planned and priced to customers only when the owner has reviewed at least one usable Page (`ownerReviewed: true` on a
- * registry entry whose status is `ok`; all are false when this was written). With the gate off the capability does not exist for the rest of the platform and every request
- * behaves exactly as before the report was added. Turning it on is one line in the registry.
- *
- * This file forces the gate OFF for the chat tests (whatever the registry holds later); the report's own tests (facebook-report-chat, -worker) force it ON. The last block reads the
- * shipped registry and checks that the gate is exactly «some entry is reviewed and usable», whichever way it stands.
+ * THE REMOVED FACEBOOK TOPIC REPORT (DT-20261126-wl4-ph1b): it was never offered to a customer (the owner had reviewed no Page), and its code is gone. These are the checks the old gate
+ * test made about everything else, kept as they were: no report service exists, and a request that used to be a report candidate is planned and asked exactly as before.
  */
-vi.mock("../src/lib/facebookReport/registry", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/lib/facebookReport/registry")>()), FACEBOOK_REPORT_ENABLED: false }));
-
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import { createChatDb } from "./helpers/chatSession";
 import { SOCIAL_CAPABILITIES, getSocialCapability } from "../src/lib/socialSources";
 import { getPublicCalculatorOptions } from "../src/lib/calculatorPricing";
-import { detectSocialIntent, REPORT_WORDS_RE } from "../src/lib/socialTasks";
+import { detectSocialIntent } from "../src/lib/socialTasks";
 import { SOCIAL_CONTENT_WORDS_RE } from "../src/lib/socialDiscovery";
-import { FACEBOOK_PAGE_REGISTRY, reportEnabledFor, type FacebookPageEntry } from "../src/lib/facebookReport/registry";
-import * as realRegistry from "../src/lib/facebookReport/registry";
-import { FACEBOOK_REPORT_SLUG } from "../src/lib/facebookReport/constants";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
 
-const entry = (over: Partial<FacebookPageEntry> = {}): FacebookPageEntry => ({ ...FACEBOOK_PAGE_REGISTRY[0], ownerReviewed: false, status: "ok", ...over });
+const FACEBOOK_REPORT_SLUG = "facebook-topic-report";
 
-describe("the gate itself: at least one reviewed, usable Page", () => {
-  it("no reviewed Page: off; one reviewed and usable Page: on; a reviewed Page that is not usable does not count", () => {
-    expect(reportEnabledFor([])).toBe(false);
-    expect(reportEnabledFor([entry(), entry({ id: "b" })])).toBe(false);
-    expect(reportEnabledFor([entry(), entry({ id: "b", ownerReviewed: true })])).toBe(true);
-    expect(reportEnabledFor([entry({ ownerReviewed: true, status: "invalid" })])).toBe(false);
-    expect(reportEnabledFor([entry({ ownerReviewed: true, status: "not_public" })])).toBe(false);
-  });
-  it("the shipped registry decides the flag, and turning it on is one line: setting ownerReviewed on one usable Page", () => {
-    // (the module is mocked above, so the real flag is read through the real function over the real data)
-    expect(typeof realRegistry.FACEBOOK_REPORT_ENABLED).toBe("boolean");
-    const shippedGate = reportEnabledFor(FACEBOOK_PAGE_REGISTRY);
-    expect(shippedGate).toBe(FACEBOOK_PAGE_REGISTRY.some((page) => page.ownerReviewed === true && page.status === "ok"));
-    const flipped = FACEBOOK_PAGE_REGISTRY.map((page, i) => (i === 0 ? { ...page, ownerReviewed: true } : page));
-    expect(reportEnabledFor(flipped)).toBe(true);
-    expect(flipped.filter((page, i) => page.ownerReviewed !== FACEBOOK_PAGE_REGISTRY[i].ownerReviewed)).toHaveLength(FACEBOOK_PAGE_REGISTRY[0].ownerReviewed ? 0 : 1);
-  });
-});
-
-describe("gate off: the capability does not exist for customers", () => {
+describe("no report service exists for customers", () => {
   it("it is not a service, not in the calculator, not in the approved catalog, and the report words are not a report request", () => {
     expect(SOCIAL_CAPABILITIES.map((cap) => cap.slug)).not.toContain(FACEBOOK_REPORT_SLUG);
     expect(getSocialCapability(FACEBOOK_REPORT_SLUG)).toBeUndefined();
     expect(getPublicCalculatorOptions().map((option) => option.slug)).not.toContain(FACEBOOK_REPORT_SLUG);
     expect(APPROVED_CAPABILITY_CATALOG.map((capability) => capability.slug)).not.toContain(FACEBOOK_REPORT_SLUG);
     for (const text of ["عايز تقرير عن الترندات الصحية على فيسبوك في مصر", "تحليل ورصد منشورات فيسبوك عن الصحة في مصر", "تقرير عن الترندات الصحية على فيسبوك آخر ٣ شهور"]) {
-      expect(detectSocialIntent(text).report, text).toBeUndefined();
+      expect((detectSocialIntent(text) as any).report, text).toBeUndefined();
     }
     // «تقرير» alone says nothing about social content, as before
-    expect(REPORT_WORDS_RE.test("تقرير")).toBe(true);
     expect(SOCIAL_CONTENT_WORDS_RE.test("تقرير عن شركة على فيسبوك")).toBe(false);
   });
 });
 
-describe("gate off: a request that would match the report falls through to today's behaviour (checked against main's own answers)", () => {
+describe("a request that would have matched the report is planned and asked as on main (checked against main's own answers)", () => {
   async function ask(message: string) {
     setProviderBalanceForTesting(50);
     const db: any = createChatDb();
