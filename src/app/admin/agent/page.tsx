@@ -8,7 +8,6 @@ import { useAdmin } from "@/components/admin/AdminShell";
 import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
 import { RedesignFlagsSection, createFlagController, type FlagBody, type FlagKey, type FlagMode } from "@/components/admin/RedesignFlagsSection";
 import { AcceptancePanel } from "@/components/admin/AcceptancePanel";
-import { ShadowPanel } from "@/components/admin/ShadowPanel";
 import type { PlatformFlags, RedesignFlags } from "@/lib/agentMission/redesignFlagTypes";
 import { startVisiblePolling } from "@/lib/visiblePolling";
 import { ADMIN_OVERVIEW_POLL_MS, adminDetailDelayMs } from "@/lib/agentMission/adminPolling";
@@ -210,9 +209,6 @@ export default function AgentPage() {
 
       {/* LIVE ACCEPTANCE: the test account's scoped Intelligence switches, the L1–L4 scenarios and their spend (docs/intelligence/ACCEPTANCE-WORKFLOW.md) */}
       <AcceptancePanel toast={toast} />
-
-      {/* PHASE 7, ADMIN ONLY AND OFFLINE: today's behaviour next to the proposed Intelligence behaviour (docs/intelligence/PHASE-7-SHADOW-EVALUATION.md) */}
-      <ShadowPanel toast={toast} />
 
       {/* ROUND 14, READ ONLY: the last files whose DESCRIPTION the delivery contract completed (a missing gap line, a precision cell, a mark cell); no row and no value is ever changed by it */}
       <section className={SECTION} data-testid="contract-events" aria-label="ملفات صُحّحت تلقائيًا">

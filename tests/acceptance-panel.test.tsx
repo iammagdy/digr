@@ -103,4 +103,17 @@ describe("the acceptance panel", () => {
     expect([...src.matchAll(/adminFetch[^(]*\("([^"]+)"/g)].map((m) => m[1])).toEqual(["/api/admin/acceptance", "/api/admin/acceptance"]);
     expect(src).not.toMatch(/localStorage|sessionStorage/);
   });
+
+  it("the agent console page renders AcceptancePanel and contract-events, and contains no retired panel (D-0224)", () => {
+    const pageSrc = readFileSync("src/app/admin/agent/page.tsx", "utf8");
+    const retiredPanel = ["Shadow", "Panel"].join("");
+    expect(pageSrc).not.toContain(retiredPanel);
+    expect(pageSrc).toContain("<AcceptancePanel");
+    expect(pageSrc).toContain('data-testid="contract-events"');
+
+    const html = renderToStaticMarkup(createElement(AgentPage as any));
+    expect(html).toContain('data-testid="acceptance-panel"');
+    expect(html).not.toContain("shadow-panel");
+    expect(html).not.toContain("shadow-summary");
+  });
 });

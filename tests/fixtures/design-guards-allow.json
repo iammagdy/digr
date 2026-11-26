@@ -2793,42 +2793,6 @@
       "pattern": "/ی/g"
     },
     {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/[ً-ْـ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/[أإآ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/\\$|USD|دولار|سنت/"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/^[٠-٩\\d]+$/"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/redact.ts",
-      "pattern": "/(?<![A-Za-z_0-9٠-٩۰-۹])\\+?[0-9٠-٩۰-۹][0-9٠-٩۰-۹\\s()-]{5,}[0-9٠-٩۰-۹](?![A-Za-z_])/g"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/redact.ts",
-      "pattern": "/[٠-٩۰-۹]/g"
-    },
-    {
       "file": "src/lib/agentMission/shownWords.ts",
       "pattern": "/[اأإآ]/"
     },
@@ -6325,30 +6289,6 @@
     {
       "file": "src/lib/agentMission/semantic/lexicon.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/auditScenarios.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/auditScenarios.ts",
-      "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "token": "anyapi"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "token": "anyapi.tiktok.search.videos"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "token": "anyapi.x.search.posts"
-    },
-    {
-      "file": "src/lib/agentMission/shadow/compare.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/agentMission/sources.ts",

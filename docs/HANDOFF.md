@@ -241,6 +241,8 @@ A topic of alternatives («… أو … أو …») is now separate concepts. On
 
 ### Phase 7 (14 Nov 2026): admin shadow comparison (PR-7.1)
 
+> **Retired 2026-11-26 (D-0224):** The offline admin shadow comparison panel (`/api/admin/shadow`, `ShadowPanel.tsx`, `agentMission/shadow/**`, `data/shadow/**`, `tests/shadow-phase7.test.ts`) was retired and safely removed in PR DT-20261126-legacy-shadow-retire with zero customer and zero financial impact. The historical evaluation record below is preserved.
+
 * **Report and acceptance report:** `docs/intelligence/PHASE-7-SHADOW-EVALUATION.md` (what is compared, the 25 regression codes and 7 gates, the result, verified improvements, review items, customer journeys not tested, operational risks, requirements before controlled activation, the exclusion free re-run risk).
 * **Baseline verified before any change:** `main` = `02ba17f` (PR #496); Vercel production `dpl_FVdY3Yxagz4VMSUNAXs52vekKToB` READY on it; worker heartbeat `02ba17f`, `active_missions 0`; `agent_settings`: `redesign_flags`, `social_discovery` only.
 * **What it is:** an admin-only, OFFLINE screen (agent console) and API (`/api/admin/shadow`) that put production today (every switch off) next to the proposed behaviour (switches on) on 156 stored cases, with every finding labelled by evidence. It calls no provider or model, reads no switch or table, writes nothing, redacts everything it returns, and changes no customer behaviour.
