@@ -89,7 +89,7 @@ export function createWorker(deps: WorkerDeps) {
       if (bucket === historyBucket) return;
       historyBucket = bucket;
       const at = new Date(bucket * AGENT_HEARTBEAT_HISTORY_EVERY_MS).toISOString().replace(/[:.]/g, "-");
-      const name = `${AGENT_HEARTBEAT_HISTORY_FOLDER}/${at}_${deps.workerId}_r${Math.round(memory.rssMb)}_t${memory.treeRssMb === null ? "x" : Math.round(memory.treeRssMb)}_a${active.size}.json`;
+      const name = `${AGENT_HEARTBEAT_HISTORY_FOLDER}/${at}_${deps.workerId}_r${Math.round(memory.rssMb)}_t${memory.treeRssMb === null ? "na" : Math.round(memory.treeRssMb)}_a${active.size}.json`;
       await deps.store.putNew(AGENT_HEARTBEAT_HISTORY_SPACE, name, JSON.stringify({ worker: deps.workerId, at: now().toISOString(), rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb, active: active.size, version: deps.version }), "application/json");
     } catch (e) {
       historyBucket = -1;
