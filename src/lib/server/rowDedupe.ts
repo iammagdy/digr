@@ -1,4 +1,5 @@
 import { rowIdentity } from "./retryReuse";
+import { foldLetterVariants } from "../arabicNormalize";
 
 /**
  * Identity of a row for de-duplication across pages and chunks. A repeated row must be neither delivered twice nor
@@ -60,12 +61,11 @@ const MIN_POST_TEXT_LETTERS = 8;
 
 /** The text of a post as one comparable string: no links (each copy carries its own short link), marks, spaces, punctuation or emoji; Arabic letter variants unified. */
 export function normalizedPostText(value: unknown): string {
-  return String(value ?? "")
+  return foldLetterVariants(String(value ?? "")
     .normalize("NFKC")
     .replace(URL_IN_TEXT_RE, " ")
     .toLocaleLowerCase()
-    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
-    .replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, ""))
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 

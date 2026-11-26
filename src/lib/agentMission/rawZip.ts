@@ -1,6 +1,7 @@
 import { Zip, ZipDeflate } from "fflate";
 import { toArabicDigits } from "../arabicDigits";
 import { AGENT_BUCKET } from "./constants";
+import { foldArabicComma } from "../arabicNormalize";
 
 /**
  * THE RAW PAGES OF CHOSEN MISSIONS, AS ONE ZIP (docs/FOUNDATION-PLAN.md, section 5, PR 1 «Real responses in»). Admin only (the route checks it).
@@ -42,7 +43,7 @@ export type ParsedIds = { ok: true; ids: string[] } | { ok: false; error: string
 
 /** The admin's list of mission ids (commas, Arabic commas, spaces or new lines between them). Every token must be a mission id; at most forty; repeats count once. */
 export function parseMissionIds(input: unknown): ParsedIds {
-  const tokens = String(input ?? "").split(/[\s,،]+/).filter((t) => t.length > 0);
+  const tokens = foldArabicComma(String(input ?? "")).split(/[\s,]+/).filter((t) => t.length > 0);
   if (tokens.length === 0) return { ok: false, error: RAW_ZIP_ERRORS_AR.noIds };
   if (tokens.length > RAW_ZIP_MAX_MISSIONS) return { ok: false, error: RAW_ZIP_ERRORS_AR.tooMany };
   if (!tokens.every((t) => MISSION_ID.test(t))) return { ok: false, error: RAW_ZIP_ERRORS_AR.badId };

@@ -6,6 +6,7 @@ import { MISSION_TABLE } from "../agentMission/constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../agentMission/addonMarker";
 import { MODEL_PLAN_REQUEST_PARAM } from "../modelPlanner/constants";
 import { EXPLORATION_TABLE, PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT } from "../modelPlanner/exploration";
+import { hasArabicScript } from "../arabicNormalize";
 
 /**
  * THE FAILURES BOARD «لوحة الأعطال» (admin only, read only): every failed or empty operation of the last 7 days, from data that already exists:
@@ -138,7 +139,7 @@ function jobFailure(job: JobRow, mission?: MissionOfJob | null): { kind: Failure
   const wanted = Math.max(0, Number(job.target_volume_max) || 0);
   const status = view.status;
   if (status === "failed" || status === "refused") {
-    const own = typeof job.error_message === "string" && /[؀-ۿ]/.test(job.error_message) ? job.error_message.slice(0, 200) : "";
+    const own = typeof job.error_message === "string" && hasArabicScript(job.error_message) ? job.error_message.slice(0, 200) : "";
     return { kind: delivered > 0 ? "job_partial" : "job_failed", reasonAr: own || "فشل التنفيذ دون سبب مسجّل" };
   }
   if (status === "completed" || status === "done") {

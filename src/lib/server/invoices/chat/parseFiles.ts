@@ -11,6 +11,7 @@ export class AgentInputError extends Error {
 }
 
 import type { ParsedFile as PF, ParsedSheet as PS } from "@/lib/invoices/chat/types";
+import { stripBom } from "@/lib/arabicNormalize";
 export type ParsedSheet = PS;
 export type ParsedFile = PF;
 
@@ -121,7 +122,7 @@ export async function parseXlsx(name: string, bytes: Uint8Array, budget: RowBudg
 
 /** UTF-8 (with or without BOM); a file that is not valid UTF-8 is read as Windows-1256, the usual encoding of Arabic CSV from older Excel. */
 export function decodeCsv(bytes: Uint8Array): string {
-  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^﻿/, ""); }
+  try { return stripBom(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
   catch { return new TextDecoder("windows-1256").decode(bytes); }
 }
 

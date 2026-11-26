@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { stripBom } from "../arabicNormalize";
 
 /**
  * AN EXCEL BUILT FROM A STORED CSV, for an older request that has a CSV and no Excel: the customer is never left without a file, and never offered a CSV. Reading is plain CSV (a leading byte-order mark, quoted cells with doubled quotes, line breaks inside
@@ -6,7 +7,7 @@ import ExcelJS from "exceljs";
  * cell of their column (no leading zero, at most 15 digits) are stored as numbers, links as links. Nothing here touches the stored CSV.
  */
 export function parseCsv(input: string): string[][] {
-  const text = input.replace(/^﻿/, "");
+  const text = stripBom(input);
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";

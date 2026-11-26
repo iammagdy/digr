@@ -77,10 +77,6 @@
       "pattern": "/^\\s*(?:نعم|ايوه|أيوه|ايوة|أيوة|تمام|موافق|ماشي|اوك|أوك|ok|yes)(?![ء-ي\\w])|اجمع المتاح/i"
     },
     {
-      "file": "agent/src/sheetLayout.ts",
-      "pattern": "/^-?[\\d٠-٩][\\d٠-٩.,٫٬]*$/"
-    },
-    {
       "file": "agent/src/threadCounters.ts",
       "pattern": "/ردود التعليقات المسلّمة بحسب عدّاداتها[^؛]*/"
     },
@@ -729,10 +725,6 @@
       "pattern": "/^(?:ال|لل)/"
     },
     {
-      "file": "src/lib/agentMission/companyIdentity.ts",
-      "pattern": "/[​-‏‪-‮⁦-⁩﻿]/g"
-    },
-    {
       "file": "src/lib/agentMission/companyNames.ts",
       "pattern": "/^اسم\\s/"
     },
@@ -767,10 +759,6 @@
     {
       "file": "src/lib/agentMission/companyQuality.ts",
       "pattern": "/^الوصف$/"
-    },
-    {
-      "file": "src/lib/agentMission/contactFinders.ts",
-      "pattern": "/[​-‏‪-‮⁦-⁩﻿]/g"
     },
     {
       "file": "src/lib/agentMission/contactQuestion.ts",
@@ -1877,10 +1865,6 @@
       "pattern": "/[،,]\\s*مع كل تعليق[^.]*\\./"
     },
     {
-      "file": "src/lib/agentMission/pageExtract.ts",
-      "pattern": "/[٠-٩۰-۹]/g"
-    },
-    {
       "file": "src/lib/agentMission/people.ts",
       "pattern": "/(?:e-?mail|mail|بريد|ايميل|إيميل)/i"
     },
@@ -1911,10 +1895,6 @@
     {
       "file": "src/lib/agentMission/peopleCheck.ts",
       "pattern": "/(?:تليفون|هاتف|أرقام|ارقام|موبايل|جوال|محمول)/"
-    },
-    {
-      "file": "src/lib/agentMission/phoneValidation.ts",
-      "pattern": "/[​-‏‪-‮⁦-⁩﻿]/g"
     },
     {
       "file": "src/lib/agentMission/places.ts",
@@ -2227,10 +2207,6 @@
     {
       "file": "src/lib/agentMission/quantity.ts",
       "pattern": "/ئ/g"
-    },
-    {
-      "file": "src/lib/agentMission/rawZip.ts",
-      "pattern": "/[\\s,،]+/"
     },
     {
       "file": "src/lib/agentMission/relativeDates.ts",
@@ -3149,14 +3125,6 @@
       "pattern": "`(?:^|(?<=[^\\\\p{L}\\\\p{N}_@])|(?<=و))@(${HANDLE_CHARS}{2,30})`"
     },
     {
-      "file": "src/lib/coerce.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/coerce.ts",
-      "pattern": "/[۰-۹]/g"
-    },
-    {
       "file": "src/lib/companyRowHygiene.ts",
       "pattern": "/(?:^|\\s)(?:أفضل|أكبر|أهم|أشهر|أبرز)\\s+(?:\\d+\\s+)?(?:\\S+\\s+){0,3}(?:شركات|شركة|مصانع|مؤسسات|موردين|علامات)/u"
     },
@@ -3521,26 +3489,6 @@
       "pattern": "/[۰-۹]/g"
     },
     {
-      "file": "src/lib/invoices/chat/mask.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/invoices/chat/mask.ts",
-      "pattern": "/[۰-۹]/g"
-    },
-    {
-      "file": "src/lib/invoices/chat/mask.ts",
-      "pattern": "/[A-Za-zء-ي@]/"
-    },
-    {
-      "file": "src/lib/invoices/chat/profile.ts",
-      "pattern": "/[^\\s;,،/|<>()\"']+@[^\\s;,،/|<>()\"']+/"
-    },
-    {
-      "file": "src/lib/invoices/chat/profile.ts",
-      "pattern": "/^[\\d٠-٩۰-۹.,\\s]+$/"
-    },
-    {
       "file": "src/lib/invoices/chat/reply.ts",
       "pattern": "/[\\d٠-٩۰-۹$€£٪%]/"
     },
@@ -3571,10 +3519,6 @@
     {
       "file": "src/lib/invoices/money.ts",
       "pattern": "/^\\d{1,3}(?:[,٬]\\d{3})+$/"
-    },
-    {
-      "file": "src/lib/invoices/validate.ts",
-      "pattern": "/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F​‎‏‪-‮⁦-⁩﻿]/g"
     },
     {
       "file": "src/lib/jobProgress.ts",
@@ -4509,10 +4453,6 @@
       "pattern": "/ى/gu"
     },
     {
-      "file": "src/lib/server/excelFromCsv.ts",
-      "pattern": "/^﻿/"
-    },
-    {
       "file": "src/lib/server/exclusionFileParser.ts",
       "pattern": "/^الرابط$/i"
     },
@@ -4543,14 +4483,6 @@
     {
       "file": "src/lib/server/exclusionFileParser.ts",
       "pattern": "/الموقع\\s*(?:الإلكتروني|الالكتروني|الرسمي)?/i"
-    },
-    {
-      "file": "src/lib/server/failureBoard.ts",
-      "pattern": "/[؀-ۿ]/"
-    },
-    {
-      "file": "src/lib/server/invoices/chat/parseFiles.ts",
-      "pattern": "/^﻿/"
     },
     {
       "file": "src/lib/server/jobTimings.ts",
@@ -4611,14 +4543,6 @@
     {
       "file": "src/lib/server/negativeListEngine.ts",
       "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/server/promoCodes.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/server/promoCodes.ts",
-      "pattern": "/[۰-۹]/g"
     },
     {
       "file": "src/lib/server/providerLimits.ts",
@@ -4901,18 +4825,6 @@
       "pattern": "/^(en|english|انجليزي|الانجليزيه|الإنجليزية)/"
     },
     {
-      "file": "src/lib/server/rowDedupe.ts",
-      "pattern": "/[أإآٱ]/g"
-    },
-    {
-      "file": "src/lib/server/rowDedupe.ts",
-      "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/server/rowDedupe.ts",
-      "pattern": "/ى/g"
-    },
-    {
       "file": "src/lib/server/rowReviewAdvisor.ts",
       "pattern": "/الدولة المطلوبة\\s*:\\s*([^\\s]+)/"
     },
@@ -5191,10 +5103,6 @@
     {
       "file": "src/lib/socialTasks.ts",
       "pattern": "`(?<![\\\\p{L}\\\\d])[وب]?(?:لكل|كل)\\\\s*${PER_ITEM_NOUN}\\\\s*(?:(?:يكون|تكون|يبقى|بيبقى|ليكون)\\\\s*)?(?:معاه\\\\S*|فيه\\\\S*|عليه\\\\S*|ليه\\\\S*|عنده\\\\S*|معه\\\\S*|به)?\\\\s*[بو]?(${PER_ITEM_NUMBER})\\\\s*${PER_ITEM_COMMENT}`"
-    },
-    {
-      "file": "src/lib/supportContact.ts",
-      "pattern": "/[٠-٩]/g"
     },
     {
       "file": "src/lib/templateForms.ts",

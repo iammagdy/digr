@@ -4,6 +4,7 @@
  * boolean or number, and the text forms, and answers `undefined` for anything else: a value that cannot be read is NEVER turned into a guess.
  * Pure module: no server imports.
  */
+import { foldDigits } from "./arabicNormalize";
 
 /** A boolean from `true`/`false`, `1`/`0`, and the text «true»/«false»/«1»/«0»/«yes»/«no» in any letter case (blanks around it ignored). Anything else: undefined. */
 export function toBool(value: unknown): boolean | undefined {
@@ -25,9 +26,7 @@ export function isTrueFlag(value: unknown): boolean {
 export function toNumber(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (typeof value !== "string") return undefined;
-  const text = value
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+  const text = foldDigits(value)
     .replace(/[,\s]/g, "")
     .trim();
   if (!/^-?\d+(?:\.\d+)?$/.test(text)) return undefined;
