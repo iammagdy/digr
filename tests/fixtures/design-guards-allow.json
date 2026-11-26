@@ -5423,10 +5423,6 @@
   ],
   "treg_tokens": [
     {
-      "file": "agent/src/companyPeopleRecovery.ts",
-      "token": "x"
-    },
-    {
       "file": "agent/src/compiled.ts",
       "token": "youtube"
     },
@@ -5447,18 +5443,6 @@
       "token": "treg"
     },
     {
-      "file": "agent/src/gateway.ts",
-      "token": "you"
-    },
-    {
-      "file": "agent/src/llmPlanner/planner.ts",
-      "token": "you"
-    },
-    {
-      "file": "agent/src/llmPlanner/prompts.ts",
-      "token": "you"
-    },
-    {
       "file": "agent/src/main.ts",
       "token": "firecrawl"
     },
@@ -5471,22 +5455,6 @@
       "token": "x"
     },
     {
-      "file": "agent/src/namesAr.ts",
-      "token": "you"
-    },
-    {
-      "file": "agent/src/nudge.ts",
-      "token": "you"
-    },
-    {
-      "file": "agent/src/researchSpec.ts",
-      "token": "you"
-    },
-    {
-      "file": "agent/src/review.ts",
-      "token": "you"
-    },
-    {
       "file": "agent/src/runMission.ts",
       "token": "firecrawl"
     },
@@ -5495,16 +5463,8 @@
       "token": "treg"
     },
     {
-      "file": "agent/src/tools.ts",
-      "token": "you"
-    },
-    {
       "file": "agent/src/webGateway.ts",
       "token": "firecrawl"
-    },
-    {
-      "file": "agent/src/worker.ts",
-      "token": "x"
     },
     {
       "file": "src/app/admin/finance/page.tsx",
@@ -5812,14 +5772,6 @@
     },
     {
       "file": "src/functions/shared/systemPrompt.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/functions/shared/systemPrompt.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/functions/shared/systemPrompt.ts",
       "token": "youtube"
     },
     {
@@ -5852,10 +5804,6 @@
     },
     {
       "file": "src/lib/agentMission/capabilities/prompt.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/prompt.ts",
       "token": "youtube"
     },
     {
@@ -5889,10 +5837,6 @@
     {
       "file": "src/lib/agentMission/chatTurn.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/conversationModel.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/agentMission/conversationModel.ts",
@@ -5973,10 +5917,6 @@
     {
       "file": "src/lib/agentMission/foundation/compilePlan.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/discovery/plan.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/agentMission/foundation/discovery/roleGrammar.ts",
@@ -6155,24 +6095,12 @@
       "token": "youtube.youtube.video.detail"
     },
     {
-      "file": "src/lib/agentMission/foundation/understand.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/lib/agentMission/messageType.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/agentMission/namedRoutes.ts",
       "token": "youtube"
     },
     {
       "file": "src/lib/agentMission/overLimit.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/plan.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/agentMission/planningBudget.ts",
@@ -6237,10 +6165,6 @@
     {
       "file": "src/lib/agentMission/semantic/lexicon.ts",
       "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/lexicon.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/agentMission/semantic/lexicon.ts",
@@ -6415,14 +6339,6 @@
       "token": "x"
     },
     {
-      "file": "src/lib/invoices/assist.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/lib/invoices/chat/prompt.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/landingDemos.ts",
       "token": "x"
     },
@@ -6431,20 +6347,12 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/messageDraft.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/missionEstimate.ts",
       "token": "x"
     },
     {
       "file": "src/lib/missionEstimate.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/modelPlanner/manager.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/modelPlanner/planner.ts",
@@ -6459,32 +6367,12 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/modelPlanner/planner.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/planner.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/lib/modelPlanner/tools.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/tools.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/modelPlanner/tools.ts",
       "token": "youtube"
     },
     {
       "file": "src/lib/modelPlanner/validate.ts",
       "token": "x"
-    },
-    {
-      "file": "src/lib/modelPlanner/validate.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/modelPlanner/validate.ts",
@@ -6607,14 +6495,6 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/server/companyRelevanceReview.ts",
-      "token": "you"
-    },
-    {
-      "file": "src/lib/server/facebookReportAxisModel.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/server/fakeFacebookSource.ts",
       "token": "anyapi"
     },
@@ -6719,10 +6599,6 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/server/multiProvider/planRouting.ts",
-      "token": "you"
-    },
-    {
       "file": "src/lib/server/multiProvider/providerCaps.ts",
       "token": "firecrawl"
     },
@@ -6801,10 +6677,6 @@
     {
       "file": "src/lib/server/researchRelevanceGate.ts",
       "token": "icypeas"
-    },
-    {
-      "file": "src/lib/server/rowReviewAdvisor.ts",
-      "token": "you"
     },
     {
       "file": "src/lib/server/socialAdapter.ts",
@@ -6945,10 +6817,6 @@
     {
       "file": "src/lib/socialDiscovery.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/socialDiscoveryCard.ts",
-      "token": "x"
     },
     {
       "file": "src/lib/socialSources.ts",

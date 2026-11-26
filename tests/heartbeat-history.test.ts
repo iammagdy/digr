@@ -35,12 +35,12 @@ describe("the worker keeps a short heartbeat history without any SQL", () => {
     expect(store.heartbeats.length).toBeGreaterThan(2);
   });
 
-  it("a tree that cannot be measured is written as «x»; a store that refuses the object never stops the heartbeat", async () => {
+  it("a tree that cannot be measured is written as «na»; a store that refuses the object never stops the heartbeat", async () => {
     const store = createMemoryStore();
     const clock = { t: Date.parse("2026-10-29T05:00:00Z") };
     const w = worker(store, clock, { rssMb: 200, treeRssMb: null as unknown as number });
     await w.heartbeat();
-    expect((await store.listFiles("_worker", "heartbeat"))[0].name).toContain("_r200_tx_a0.json");
+    expect((await store.listFiles("_worker", "heartbeat"))[0].name).toContain("_r200_tna_a0.json");
     const broken = createMemoryStore();
     broken.putNew = async () => { throw new Error("storage down"); };
     clock.t += 600_000;

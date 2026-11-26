@@ -164,6 +164,9 @@ export function getSourceFiles(rootDirs: string[] = ["src", "agent/src"], baseDi
   return result.sort();
 }
 
+const PROSE_SHORT_TOKEN_MAX = 3;
+const PROSE_WHITESPACE = /\s/;
+
 const ARABIC_LETTERS_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
 export function scanSourceCode(
@@ -268,6 +271,8 @@ export function scanSourceCode(
         } else if (catalog.providerQuickRegex.test(lower)) {
           const provTokens = lower.split(/[^a-z0-9_-]+/).filter(Boolean);
           for (const tok of provTokens) {
+            // K4 (D-0232): inside PROSE (a literal that contains whitespace) a provider token of 3 characters or fewer is an ordinary word («you», «x» as a letter), not an id.
+            if (tok.length <= PROSE_SHORT_TOKEN_MAX && PROSE_WHITESPACE.test(text)) continue;
             if (catalog.providers.has(tok)) {
               checkAndAdd(node, "treg_token", `Hardcoded provider ID: "${tok}"`, tok);
             }
