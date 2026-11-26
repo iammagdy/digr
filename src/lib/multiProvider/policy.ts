@@ -9,6 +9,7 @@
  * caller and handed in as text).
  */
 
+import { normalizeDigits } from "../arabicDigits";
 import { cleanCompanyName, cleanMarkdownText } from "../companyRowHygiene";
 
 /** The only keys a collected row may carry. Anything else is dropped before a row leaves the chain. */
@@ -257,7 +258,7 @@ const PHONE_RE = /(?:\+|00)?\d[\d\s().-]{6,18}\d/g;
 /** Digits only, with a leading + kept; null when the length is not that of a phone number (7 to 15 digits). */
 export function normalizePhone(raw: string): string | null {
   // «(0)» after the country code is the national trunk zero, which an international number leaves out («+20 (0)22…» is +2022…): it is dropped, not kept as a digit.
-  const trimmed = raw.trim().replace(/\(\s*0\s*\)/g, "");
+  const trimmed = normalizeDigits(raw).trim().replace(/\(\s*0\s*\)/g, "");
   const plus = /^(?:\+|00)/.test(trimmed);
   const digits = trimmed.replace(/^(?:\+|00)/, "").replace(/\D/g, "");
   if (digits.length < 7 || digits.length > 15) return null;
