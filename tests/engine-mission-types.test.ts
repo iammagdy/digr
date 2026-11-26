@@ -59,7 +59,7 @@ async function assertOneNumber(r: ReplayResult, expected: { delivered: number; p
   const noun = itemNounOfPlan(r.plannedPlan);
   const line = moneyLineAr({ reservedPoints: Number(r.mission.reserved_points), chargedPoints: Number(r.mission.charged_points), delivered: expected.delivered, noun });
   expect(line).toMatch(/^خُصم [٠-٩]+ نقطة مقابل /);
-  expect(r.finalView.resultLinesAr[r.finalView.resultLinesAr.length - 1]).toBe(`${line}.`);
+  expect(r.finalView.resultLinesAr).toContain(`${line}.`);
   const notice = buildMissionNotice(r.notices[0].kind, r.notices[0].facts, missionTitleAr({ plan: r.plannedPlan, requestText: "" }));
   expect(notice.email!.detail1).toMatch(/^خُصم [٠-٩]+ نقطة مقابل /);
   expect(notice.email!.preheader).not.toMatch(/خُصم|نقطة/);

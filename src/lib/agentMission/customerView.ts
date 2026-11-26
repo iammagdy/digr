@@ -590,6 +590,17 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; /**
     if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun, ...(isFreeRerunEvents(input.events) ? { free: true } : {}) })}.`);
   }
 
+  if (delivered !== null && delivered > 0 && (phase === "done" || phase === "partial")) {
+    for (const e of events) {
+      if (e.kind === "result" && typeof e.counts?.filter_unconfirmed === "number" && e.counts.filter_unconfirmed > 0 && e.message_ar) {
+        const checked = checkCustomerText(e.message_ar, { maxChars: 600 });
+        if (checked.issues.length === 0 && !resultLinesAr.includes(checked.text)) {
+          resultLinesAr.push(checked.text);
+        }
+      }
+    }
+  }
+
   const rawSummary = mission.summary_ar ? fixFileWordingAr(mission.summary_ar, plan?.stages) : null;
   const summaryCheck = rawSummary ? checkCustomerText(rawSummary, { maxChars: 600 }) : null;
   const summaryMatchesCardNumbers = (text: string): boolean => {

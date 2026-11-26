@@ -7,6 +7,8 @@ import { isPlaceEvidenceKey, placeEntry, placeKeysOfValues, placeLabelsAr, place
 import { matchesAnyNamedSource } from "./namedSources";
 import { normalizeText } from "./relevance";
 import { parseRelativeAge, rangeOverlaps } from "./relativeDates";
+import { coerceItemNoun, countAr, itemNounOf, GENERIC_ITEM_NOUN } from "./itemNoun";
+import { checkCustomerText } from "./text";
 
 /**
  * EVERY PROMISE OF THE PLAN CARD IS A CHECK IN CODE. The card says «دون الردود»، «باللغة العربية فقط»، «آخر ٣٠ يومًا»، «من حسابات محددة»، «في القاهرة»: each of those is a typed FILTER on the stage that code applies to every mapped item BEFORE it is saved
@@ -485,4 +487,157 @@ export function defaultLanguageOf(...texts: Array<string | null | undefined>): "
   if (ar >= 3 && ar >= la) return "ar";
   if (la >= 6 && ar === 0) return "en";
   return null;
+}
+
+// ------------------------------------------------------------------------------------------------- D-0214 Delivery Note from Structured Row Facts
+
+export interface FilterConfirmationStage {
+  key: string;
+  deliver?: boolean;
+  parent_key?: string | null;
+  filters?: ReadonlyArray<StageFilter>;
+  item_noun_ar?: string | null;
+  columns?: ReadonlyArray<{ key: string }>;
+  relevance?: { text_columns?: string[] };
+  engine?: {
+    source_listing?: boolean;
+    parent_binding?: { fallbacks?: unknown[] } | null;
+  } | null;
+}
+
+export function isFilterConfirmedOnRow(
+  f: StageFilter,
+  r: Record<string, unknown>,
+  ctx: { textKey: string | null; listing?: boolean; now: number }
+): boolean {
+  const hasVal = (k?: string | null): boolean =>
+    Boolean(k && r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "");
+  const nonEmptyAuthor = (k?: string | null): boolean =>
+    Boolean(k && r[k] !== undefined && r[k] !== null && String(r[k]).trim().replace(/^@/, "") !== "");
+
+  switch (f.kind) {
+    case "period":
+      return Boolean(f.field && hasVal(f.field) && (parseMoment(r[f.field]) !== null || parseRelativeAge(r[f.field], ctx.now) !== null));
+    case "language":
+      return (Boolean(f.field && langCodeOf(r[f.field]) !== null)) || (arabicShare(ctx.textKey ? String(r[ctx.textKey] ?? "") : "") !== null);
+    case "account":
+      return f.exact === true ? hasVal(f.field) : ctx.listing === true ? true : [f.field, ...(f.fields ?? [])].some(nonEmptyAuthor);
+    case "place": {
+      if (f.by_source === true) return true;
+      const places = f.places && f.places.length > 0 ? f.places : placeKeysOfValues(f.values ?? []);
+      if (places.length > 0) {
+        const fields = f.fields && f.fields.length > 0 ? f.fields : [...new Set([...(f.field ? [f.field] : []), ...Object.keys(r).filter((k) => isPlaceEvidenceKey(k))])];
+        return placeVerdict(places, r, fields, { bySource: false }) !== "no_evidence";
+      }
+      return hasVal(f.field);
+    }
+    case "exclude_replies":
+      return hasVal(f.field) || (ctx.textKey !== null && hasVal(ctx.textKey));
+    case "exclude_reposts":
+      return hasVal(f.field) || (ctx.textKey !== null && hasVal(ctx.textKey));
+    case "exclude_government":
+      return (f.fields ?? (f.field ? [f.field] : [])).some(hasVal);
+    case "media":
+      return Boolean(f.media) && itemProvesMedia(f.media!, r, f.fields ?? (f.field ? [f.field] : []));
+    default:
+      return true;
+  }
+}
+
+export function unconfirmedFilterNotices(input: {
+  stages: ReadonlyArray<FilterConfirmationStage>;
+  rowsByStage: Readonly<Record<string, ReadonlyArray<Record<string, unknown>>>>;
+  provenanceByStage?: Readonly<Record<string, ReadonlyMap<string, "rule" | "model" | "legacy" | undefined>>>;
+  rawStages?: ReadonlySet<string>;
+  isCompiled?: boolean;
+  periodGate?: boolean;
+  now?: number;
+}): { lines: string[]; unconfirmedTotal: number } {
+  const now = input.now ?? Date.now();
+  const rawStages = input.rawStages;
+  const isCompiled = input.isCompiled === true;
+  const periodGate = input.periodGate === true;
+  const provenanceByStage = input.provenanceByStage;
+
+  const lines: string[] = [];
+  let unconfirmedTotal = 0;
+
+  for (const st of input.stages) {
+    if (st.deliver !== true) continue;
+    const deliveredRows = input.rowsByStage[st.key] ?? [];
+    if (deliveredRows.length === 0) continue;
+
+    const isChild = st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "";
+    let activeFilters = (st.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
+
+    if (rawStages?.has(st.key) && !isChild && isCompiled) {
+      activeFilters = activeFilters.filter((f) => (f.kind === "account" && f.exact === true) || (f.kind === "period" && periodGate));
+    }
+
+    if (activeFilters.length === 0) continue;
+
+    const textKey = st.relevance?.text_columns?.[0] ?? st.columns?.find((c) => TEXT_KEY.test(c.key))?.key ?? (deliveredRows[0] ? Object.keys(deliveredRows[0]).find((k) => TEXT_KEY.test(k)) : null) ?? null;
+    const ctx = { textKey, listing: st.engine?.source_listing === true, now };
+    const provMap = provenanceByStage?.[st.key];
+
+    for (const f of activeFilters) {
+      let unconfirmed = 0;
+      for (const r of deliveredRows) {
+        if (provMap) {
+          const by = provMap.get(String(r.id ?? ""));
+          if (!by || by === "legacy") {
+            unconfirmed += 1;
+            continue;
+          }
+        }
+        if (!isFilterConfirmedOnRow(f, r, ctx)) {
+          unconfirmed += 1;
+        }
+      }
+
+      if (unconfirmed > 0) {
+        unconfirmedTotal += unconfirmed;
+        const noun = coerceItemNoun(st.item_noun_ar) ?? (typeof st.item_noun_ar === "string" && st.item_noun_ar.trim() ? itemNounOf(st.item_noun_ar) : null) ?? GENERIC_ITEM_NOUN;
+        const n = unconfirmed;
+        const p = n === 1 && !noun.feminine ? "ه" : "ها";
+        let sentence = "";
+
+        switch (f.kind) {
+          case "period":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد من تاريخ${p}.`;
+            break;
+          case "language":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد من لغت${p}.`;
+            break;
+          case "account":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد من مصدر${p}.`;
+            break;
+          case "place":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد من مكان${p}.`;
+            break;
+          case "exclude_replies":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد هل ${n === 1 ? (noun.feminine ? "هي" : "هو") : "هي"} ${n === 1 ? "رد" : "ردود"} أم لا.`;
+            break;
+          case "exclude_reposts":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد هل ${n === 1 ? (noun.feminine ? "هي" : "هو") : "هي"} إعادة نشر أم لا.`;
+            break;
+          case "exclude_government":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد هل ${n === 1 ? (noun.feminine ? "تخص" : "يخص") : "تخص"} جهة حكومية أم لا.`;
+            break;
+          case "media":
+            sentence = `فيه ${countAr(n, noun)} ما قدرناش نتأكد هل ${n === 1 ? (noun.feminine ? "فيها" : "فيه") : "فيها"} ${f.media === "image" ? "صورة" : "فيديو"} أم لا.`;
+            break;
+        }
+
+        if (sentence) {
+          const checked = checkCustomerText(sentence, { maxChars: 600 });
+          if (checked.issues.length === 0 && !lines.includes(checked.text)) {
+            lines.push(checked.text);
+          }
+        }
+      }
+    }
+  }
+
+  return { lines, unconfirmedTotal };
 }

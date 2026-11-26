@@ -31,7 +31,8 @@ import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } f
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
-import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
+import { FILTER_REASONS, isEnabled, unconfirmedFilterNotices, type FilterReason } from "../../src/lib/agentMission/filters";
+import { MARKS_KEY } from "../../src/lib/agentMission/rawMarks";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
 import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCompanyEvidence } from "../../src/lib/agentMission/companyQuality";
 import { executionPageReuse } from "./pageReuse";
@@ -1477,6 +1478,24 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
   let workbook: Awaited<ReturnType<typeof buildMissionFiles>> | null = null;
   let qualityLine: string | null = null;
   let parentFixedRows = 0;
+
+  const rawStages = new Set(plan.stages.filter((s) => (rowsByStage[s.key] ?? []).some((r) => r[MARKS_KEY] !== undefined)).map((s) => s.key));
+  const provenanceByStage: Record<string, ReadonlyMap<string, "rule" | "model" | "legacy" | undefined>> = {};
+  for (const s of plan.stages) {
+    const m = new Map<string, "rule" | "model" | "legacy" | undefined>();
+    for (const [id, it] of snap.stage(s.key).items) m.set(id, it.by);
+    provenanceByStage[s.key] = m;
+  }
+  const filterNotes = unconfirmedFilterNotices({
+    stages: plan.stages,
+    rowsByStage,
+    provenanceByStage,
+    rawStages,
+    isCompiled: plan.compiled?.by === "compiler",
+    periodGate: plan.compiled?.period_gate === true,
+    now: Date.now(),
+  });
+
   if (builtCount > 0) {
     let incompleteCells: Array<{ stage: string; rowId: string; column: string }> = [];
     if (plan.contact_steps && plan.contact_steps.length > 0) {
@@ -1494,6 +1513,7 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
         snap,
         reviewStop: checked.stop,
         ...(incompleteCells.length > 0 ? { incompleteCells } : {}),
+        filterNotesAr: filterNotes.lines,
       }),
       companyMailboxesOf(plan, snap),
       {
@@ -1516,7 +1536,7 @@ async function prepareExecutionDelivery(deps: RunnerDeps, mission: MissionRecord
     if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
   }
   return {
-    plan, approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows,
+    plan, approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows, filterNotes,
     preparation: { workbook, notes: { date: new Date().toISOString(), llm: a.llm, executionTregUsd: a.executionTregUsd, summary: a.summary, outputError: a.outputError, costUsd: spent } },
   };
 }
@@ -1600,7 +1620,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     await acknowledgeDelivery(deps, mission, plan, reserve, receipt);
     return;
   }
-  const { approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows } = built.context;
+  const { approvedPlan, snap, flags, rowsByStage, hadOpenReplies, openGap, builtCount, checked, qualityLine, parentFixedRows, filterNotes } = built.context;
   plan = built.context.plan;
   const jobId = receipt.job_id;
   const llm = a.llm;
@@ -1722,6 +1742,9 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (reviewFailedOurs) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّرت مراجعة العناصر آليًا فلم يُسلَّم شيء.", counts: { adm_flag: 1, adm_pending: checked.pending, adm_review_failed_calls: checked.failedCalls } });
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage[s.key] ?? 0) : rowsByStage[s.key].length);
+  if (delivered > 0 && !ourFailure && filterNotes && filterNotes.lines.length > 0) {
+    await store.addEvent(mission.id, { kind: "result", message_ar: filterNotes.lines.join(" "), counts: { filter_unconfirmed: filterNotes.unconfirmedTotal } });
+  }
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
   const noticeStages = plan.stages
@@ -1745,7 +1768,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
         ...(epNoun ? { item_noun_ar: epNoun } : {}),
       };
     });
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}), ...(delivered > 0 && !ourFailure && filterNotes && filterNotes.lines.length > 0 ? { filterNotesAr: filterNotes.lines } : {}) });
   // STAGE 4, S1 (behind DIGER_STAGE4_VERSIONS): version 1 of the delivered file, AFTER the file is stored and the mission is settled and told. Never throws, never changes the mission, never touches a money value (agent/src/stage4/firstVersion.ts).
   if (receipt.csv_path && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }

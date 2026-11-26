@@ -9,7 +9,7 @@ import { PEOPLE_FALLBACK_LINE_AR, PEOPLE_PLATFORM, acceptedLinks, childStepSourc
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { alternateFinderSourcesOf, companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, profileLookupSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
 import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMission/taskContracts";
-import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES, WEB_SOURCES } from "../../src/lib/agentMission/sources";
+import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES, WEB_SOURCES, PARSERS, type ParserName, WEB_PROVIDERS, type WebProvider } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { smallChildPlanningSampleParams } from "../../src/lib/agentMission/pageLimit";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall, type SavedEndpointCallDetail } from "../../src/lib/agentMission/plan";
@@ -175,20 +175,6 @@ export interface ToolContext {
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
-/** The phrases of a summary that admit the rows were not filtered (normalised Arabic: no diacritics, ta marbuta as ha). */
-const UNFILTERED_ADMISSION = {
-  test: (text: string): boolean => {
-    const ar = "[\\u0621-\\u064A]";
-    const patterns = [
-      new RegExp(`(?:لم|لا)\\s+[تي]?(?:صف|فلتر)(?:ي|ت|ا|وا)?(?!${ar})`),
-      /(?:لم|لا)\s+(?:تتم|يتم|تجر|يجر)\s+(?:ال)?(?:تصفيه|فلتره)/,
-      new RegExp(`غير\\s+م?(?:صف|فلتر)(?:ي|ه|ات|اه|ا)?(?!${ar})`),
-      /(?:بدون|دون)\s+(?:ال)?(?:تصفيه|فلتره|فلتر)/,
-      /(?:قد\s+)?(?:تشمل|تتضمن|تحتوي|تضم)\s+(?:علي\s+)?(?:بعض\s+)?(?:ردود|اسماء\s+مشابهه|اشخاص\s+اخر)/,
-    ];
-    return patterns.some((r) => r.test(text));
-  },
-};
 const pathOfFile = (id: string) => (id.startsWith("call_") ? `raw/${id}.json` : `out/${id}.json`);
 const ROWS_PATH = (stageKey: string) => `rows/${stageKey}.json`;
 /** The rows of a stage that did not match the request (never delivered, never charged): kept with the reason for the review sheet of the files. */
@@ -260,6 +246,7 @@ function rejectPlan(state: RunState, message: string, issues: ReadonlyArray<stri
 function createPlanCoordinator(ctx: ToolContext) {
   const { store, mission, state } = ctx;
   const runSandbox = ctx.sandbox ?? ((code: string, inputs: Record<string, unknown>) => runInSandbox(code, inputs));
+  const excludedParentAssumptions = new Set<string>();
 
   const loadEvidenceMap = async (stagesList: any[]): Promise<Map<string, string | null>> => {
     const ids = new Set<string>();
@@ -407,8 +394,7 @@ function createPlanCoordinator(ctx: ToolContext) {
         });
       }
       if (derived && finalized.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
-        const stripped = (t: string) => t.replace(/[\u064B-\u0652]/g, "");
-        finalized.assumptions_ar = (finalized.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
+        finalized.assumptions_ar = (finalized.assumptions_ar ?? []).filter((l) => !excludedParentAssumptions.has(l) && !excludedParentAssumptions.has(checkCustomerText(l, { maxChars: 160 }).text));
         if (finalized.assumptions_ar.length === 0) delete finalized.assumptions_ar;
         if (!(finalized.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) finalized.notes_ar = [...(finalized.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
       }
@@ -448,7 +434,7 @@ function createPlanCoordinator(ctx: ToolContext) {
     });
   };
 
-  return { loadEvidenceMap, makeBuildContext, recoverFromSaved };
+  return { loadEvidenceMap, makeBuildContext, recoverFromSaved, excludedParentAssumptions };
 }
 
 /** Shared entry point for runMission.ts when the SDK ends without proposing or finishing cleanly. */
@@ -541,18 +527,47 @@ export function cheaperSameJobMessage(ctx: Pick<ToolContext, "catalog" | "access
  * and gave nothing or failed. Not for a sentence (`why`), and never a second, dearer call for an input Context.dev already answered.
  * The execution phase follows the approved plan and is not changed here.
  */
-export function dearerWebProviderMessage(ctx: Pick<ToolContext, "phase" | "stats" | "now" | "state">, avail: WebAvailability, op: "search" | "scrape", provider: "firecrawl" | "contextdev", input: unknown): string | null {
-  if (ctx.phase !== "planning" || provider !== "firecrawl" || !avail.contextdev) return null;
-  const cheap = `contextdev.${op}`;
+export function dearerWebProviderMessage(ctx: Pick<ToolContext, "phase" | "stats" | "now" | "state">, avail: WebAvailability, op: "search" | "scrape", provider: WebProvider | string, input: unknown): string | null {
+  if (ctx.phase !== "planning") return null;
   const price = (id: string) => WEB_SOURCES.find((s) => s.id === id)?.usdPerCall ?? null;
-  const [mine, theirs] = [price(`firecrawl.${op}`), price(cheap)];
-  if (mine === null || theirs === null || theirs >= mine) return null; // never assumed: only a documented cheaper price triggers the rule
-  if (sourceHealth(ctx.stats?.get(cheap), ctx.now ?? Date.now()).state !== "ok") return null;
+  const myId = `${provider}.${op}`;
+  const mine = price(myId);
+  if (mine === null) return null;
+
+  const alternatives = WEB_PROVIDERS.filter((p) => p !== provider && avail[p]);
+  let cheaperCandidate: { provider: WebProvider; id: string; price: number } | null = null;
+  for (const alt of alternatives) {
+    const altId = `${alt}.${op}`;
+    const altPrice = price(altId);
+    if (altPrice === null || altPrice >= mine) continue;
+    if (sourceHealth(ctx.stats?.get(altId), ctx.now ?? Date.now()).state !== "ok") continue;
+    if (!cheaperCandidate || altPrice < cheaperCandidate.price) {
+      cheaperCandidate = { provider: alt as WebProvider, id: altId, price: altPrice };
+    }
+  }
+  if (!cheaperCandidate) return null;
+
+  const cheap = cheaperCandidate.id;
+  const cheapProvider = cheaperCandidate.provider;
+  const theirs = cheaperCandidate.price;
+
   const key = webInputKey(input);
   const same = (ctx.state.webOutcomes.get(cheap) ?? []).filter((o) => o.key === key);
   if (same.some((o) => o.rows === 0)) return null;
-  if (same.some((o) => o.rows > 0)) return `contextdev.${op} already answered this same ${op === "search" ? "query" : "page"} in this run: a second, dearer call for it is not made. Use the rows you have`;
-  return `contextdev.${op} does the same job for about ${theirs.toFixed(5)} USD a call (firecrawl.${op}: ${mine.toFixed(5)}). Use provider "contextdev" first; firecrawl is used for this ${op === "search" ? "query" : "page"} only after contextdev gave nothing or failed for it (a sentence in \`why\` does not excuse the dearer provider)`;
+  if (same.some((o) => o.rows > 0)) return `${cheap} already answered this same ${op === "search" ? "query" : "page"} in this run: a second, dearer call for it is not made. Use the rows you have`;
+  return `${cheap} does the same job for about ${theirs.toFixed(5)} USD a call (${myId}: ${mine.toFixed(5)}). Use provider "${cheapProvider}" first; ${provider} is used for this ${op === "search" ? "query" : "page"} only after ${cheapProvider} gave nothing or failed for it (a sentence in \`why\` does not excuse the dearer provider)`;
+}
+
+export function platformHintFromCatalog(catalog?: TregCatalog): string {
+  const platforms = Array.from(
+    new Set(
+      (catalog?.endpoints ?? [])
+        .map((e) => (typeof e.platform === "string" ? e.platform.trim() : ""))
+        .filter((p) => p.length > 0),
+    ),
+  ).sort();
+  const examples = platforms.slice(0, 2).map((p) => `"${p}"`).join(" or ");
+  return examples.length > 0 ? `Platform filter, e.g. ${examples}` : "Platform filter";
 }
 
 /** The input that identifies a web search or read: the query (with its country) or the page address, normalized. */
@@ -706,7 +721,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       phases: ["planning", "execution"],
       params: {
         words: { type: "string[]", description: "English keywords, e.g. [\"tweets\", \"search\"]" },
-        platform: { type: "string", description: "Platform filter, e.g. \"x\" or \"youtube\"", optional: true },
+        platform: { type: "string", description: platformHintFromCatalog(ctx.catalog), optional: true },
         limit: { type: "number", description: "At most this many candidates (1 to 10)", optional: true },
       },
       handler: async (a) => {
@@ -1021,6 +1036,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، الأحدث أولًا». A language, a period, a place or «replies left out» written here is a PROMISE: write it only when the stage has that filter (code refuses it otherwise). The customer reads them on the plan card and may change them before approving.", optional: true },
+        assumption_kinds: { type: "string[]", description: "Optional tags for assumptions_ar: e.g. parent_fallback_exclusion", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones for COMPANIES (no people stage in the plan): ONE Arabic sentence saying honestly why. When the plan has a people stage, the e-mail and phone finder steps are added to it by code: never write that they may not be filled", optional: true },
         unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it (and neither saved people rows nor an estimate apply): [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step (including an estimated people stage), do not pass this.", optional: true },
         stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver (true for every stage whose rows the customer receives: at least one; false only for a helper stage whose rows are not in the file), columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from or uses an estimate), measured_by:[call ids, or [] for an estimated people stage], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
@@ -1101,6 +1117,16 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             : companiesOnlyProposal
               ? [{ reason_ar: "اكتفى الطلب بالشركات فقط بناءً على توضيحك." }]
               : undefined;
+        const assumptionsIn: string[] = Array.isArray(a.assumptions_ar) ? a.assumptions_ar : [];
+        const kindsIn: string[] = Array.isArray(a.assumption_kinds) ? a.assumption_kinds : [];
+        coord.excludedParentAssumptions.clear();
+        assumptionsIn.forEach((line, idx) => {
+          if (kindsIn[idx] === "parent_fallback_exclusion") {
+            const str = String(line);
+            coord.excludedParentAssumptions.add(str);
+            coord.excludedParentAssumptions.add(checkCustomerText(str, { maxChars: 160 }).text);
+          }
+        });
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(unservedSteps !== undefined ? { unserved_steps: unservedSteps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         const candidate = checked.ok ? checked.plan : checked.overCapPlan;
         if (!candidate) {
@@ -1177,8 +1203,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const found = untriedBeforeGiveUp({ request: askedTextOf(mission), catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
           if (found.applies) { state.giveUpNoRowsRefusals += 1; return err(giveUpRefusalText(found)); }
         }
-        // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
-        if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");
         // rows that were waiting for a review (the budget or a failed call delayed them) are asked once more before the mission ends: a good row is never lost only because it was late
         if (outcome === "delivered" && ctx.plan && ctx.review) {
           const items = await getItems();
@@ -1231,7 +1255,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
 
 
 /** The web providers with a key: what the run resolved, or both when a caller gave a web gateway and no answer (tests, an older caller). */
-const webAvailableOf = (ctx: ToolContext): WebAvailability => ctx.webAvailable ?? { firecrawl: true, contextdev: true };
+const webAvailableOf = (ctx: ToolContext): WebAvailability =>
+  ctx.webAvailable ?? (Object.fromEntries(WEB_PROVIDERS.map((p) => [p, true])) as WebAvailability);
 
 /** The web tools: ONE gateway tool for the page parsers (parser name + URL), and the web search, page scrape and people search of the providers. Same rules as treg_call, in the gateway. */
 function webTools(ctx: ToolContext): ToolSpec[] {
@@ -1256,7 +1281,7 @@ function webTools(ctx: ToolContext): ToolSpec[] {
   const tools: ToolSpec[] = [
     {
       name: "parse_page",
-      description: "Read ONE public page with a pre-built parser and get its ROWS (no crawling, one parser per call). Parsers: google-maps (businesses of a search or a place), google-maps-reviews (reviews of a place, up to 1,000; optional sort and limit), google-play and google-play-reviews (up to 200), app-store and app-store-reviews (up to 500), instagram-profile, instagram-post (top comments), instagram-feed (hashtag, keyword or location URL), tiktok-profile, tiktok-video, tiktok-feed (profile, hashtag or search URL), tiktok-comments (the first 20 only: use the catalog's comment sources for more), tiktok-followers, tiktok-following, tiktok-user-search (top 10), g2-reviews (25), emails, phone-numbers and links (of the ONE page you give: open the company's own site, then its contact page via links). There is no X, Facebook or YouTube parser: those stay on the catalog. Public pages only, read only. The full answer is saved as { rows, data }; you get a shape digest and the first rows.",
+      description: "Read ONE public page with a pre-built parser and get its ROWS (no crawling, one parser per call). Parsers: google-maps (businesses of a search or a place), google-maps-reviews (reviews of a place, up to 1,000; optional sort and limit), google-play and google-play-reviews (up to 200), app-store and app-store-reviews (up to 500), instagram-profile, instagram-post (top comments), instagram-feed (hashtag, keyword or location URL), tiktok-profile, tiktok-video, tiktok-feed (profile, hashtag or search URL), tiktok-comments (the first 20 only: use the catalog's comment sources for more), tiktok-followers, tiktok-following, tiktok-user-search (top 10), g2-reviews (25), emails, phone-numbers and links (of the ONE page you give: open the company's own site, then its contact page via links). Other platforms stay on the catalog. Public pages only, read only. The full answer is saved as { rows, data }; you get a shape digest and the first rows.",
       phases: ["planning", "execution"],
       params: {
         parser: { type: "string", description: "The parser name, e.g. \"instagram-feed\"" },
@@ -1266,24 +1291,25 @@ function webTools(ctx: ToolContext): ToolSpec[] {
         why,
       },
       handler: async (a) => {
-        const name = String(a.parser ?? "").trim();
-        const id = `contextdev.parse.${name}`;
+        const name = String(a.parser ?? "").trim() as ParserName;
+        const parserSpec = PARSERS[name];
+        const id = parserSpec?.id ?? `contextdev.parse.${name}`;
         return guard(id, a.why) ?? done(id, await web.parsePage({ parser: a.parser, url: a.url, sort: a.sort, limit: a.limit, why: a.why }) as Record<string, any>);
       },
     },
     {
       name: "web_search",
-      description: "Search the public web (Firecrawl or Context.dev): the title, address and description of up to 30 results. Use it to find a company's website or a place's page; then read the page with parse_page or web_scrape.",
+      description: "Search the public web: the title, address and description of up to 30 results. Use it to find a company's website or a place's page; then read the page with parse_page or web_scrape.",
       phases: ["planning", "execution"],
       params: {
-        provider: { type: "string", description: "\"contextdev\" (cheaper) or \"firecrawl\"" },
+        provider: { type: "string", description: WEB_PROVIDERS.map((p) => `"${p}"`).join(" or ") },
         query: { type: "string", description: "The search words" },
         limit: { type: "number", description: "10, 20 or 30 results", optional: true },
         country: { type: "string", description: "Two-letter country code", optional: true },
         why,
       },
       handler: async (a) => {
-        const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
+        const provider = (usableSearchProvider(a.provider, avail) ?? WEB_PROVIDERS.find((p) => avail[p]) ?? WEB_PROVIDERS[0]) as WebProvider;
         const id = `${provider}.search`;
         const dearer = dearerWebProviderMessage(ctx, avail, "search", provider, a);
         if (dearer) return { ok: false, refused: "choose_cheapest", message: dearer };
@@ -1292,11 +1318,11 @@ function webTools(ctx: ToolContext): ToolSpec[] {
     },
     {
       name: "web_scrape",
-      description: "Read ONE public page as text with its links (Firecrawl or Context.dev). The full text and links are saved; process them with run_code. For the e-mails or phones of a page prefer parse_page with the emails / phone-numbers parser.",
+      description: "Read ONE public page as text with its links. The full text and links are saved; process them with run_code. For the e-mails or phones of a page prefer parse_page with the emails / phone-numbers parser.",
       phases: ["planning", "execution"],
-      params: { provider: { type: "string", description: "\"contextdev\" (cheaper) or \"firecrawl\"" }, url: { type: "string", description: "A public page" }, why },
+      params: { provider: { type: "string", description: WEB_PROVIDERS.map((p) => `"${p}"`).join(" or ") }, url: { type: "string", description: "A public page" }, why },
       handler: async (a) => {
-        const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
+        const provider = (usableSearchProvider(a.provider, avail) ?? WEB_PROVIDERS.find((p) => avail[p]) ?? WEB_PROVIDERS[0]) as WebProvider;
         const id = `${provider}.scrape`;
         const dearer = dearerWebProviderMessage(ctx, avail, "scrape", provider, a);
         if (dearer) return { ok: false, refused: "choose_cheapest", message: dearer };
@@ -1312,7 +1338,7 @@ function webTools(ctx: ToolContext): ToolSpec[] {
     },
   ];
   // a tool whose provider has no key is not offered at all: the parsers and the people search are Context.dev's, the search and the scrape need either provider
-  return tools.filter((t) => (t.name === "web_search" || t.name === "web_scrape" ? avail.firecrawl || avail.contextdev : avail.contextdev));
+  return tools.filter((t) => (t.name === "web_search" || t.name === "web_scrape" ? WEB_PROVIDERS.some((p) => avail[p]) : Boolean(avail.contextdev)));
 }
 
 export const TOOL_NAMES = ["catalog_search", "describe_endpoint", "treg_call", "parse_page", "web_search", "web_scrape", "people_search", "collect_pages", "run_code", "report_progress", "ask_question", "propose_plan", "save_rows", "finish"] as const;

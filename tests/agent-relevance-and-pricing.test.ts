@@ -546,20 +546,17 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
 });
 
 // ---------------------------------------------------------------------------------------------- the rest
-describe("rows the agent itself calls unfiltered are never delivered", () => {
+describe("finish never refuses delivery based on summary wording (D-0213)", () => {
   const run = async (summary: string) => {
     const h = makeHarness({ phase: "execution" });
     const tools = Object.fromEntries(buildTools(h.ctx).map((t) => [t.name, t]));
     return tools.finish.handler({ outcome: "delivered", summary_ar: summary }) as Promise<Record<string, any>>;
   };
-  it("the summary of the real run («النتائج تشمل ردودًا وأسماء مشابهة ولم تُصفَّ») is refused; an honest summary passes", async () => {
-    for (const bad of ["سُلّمت ٣٠٠ تغريدة، النتائج تشمل ردودًا وأسماء مشابهة ولم تُصفَّ.", "النتائج غير مصفّاة وقد تتضمن أشخاصًا آخرين.", "تمت العملية بدون تصفية للنتائج.", "لم تتم تصفية الردود."]) {
-      const r = await run(bad);
-      expect(r.ok, bad).toBe(false);
-      expect(String(r.error)).toContain("NOT filtered");
+  it("the summary of the real run («النتائج تشمل ردودًا وأسماء مشابهة ولم تُصفَّ») passes; an honest summary passes", async () => {
+    for (const text of ["سُلّمت ٣٠٠ تغريدة، النتائج تشمل ردودًا وأسماء مشابهة ولم تُصفَّ.", "النتائج غير مصفّاة وقد تتضمن أشخاصًا آخرين.", "تمت العملية بدون تصفية للنتائج.", "لم تتم تصفية الردود.", "سُلّمت ٣٠٠ تغريدة كلها عن محمد صلاح لاعب كرة القدم.", "لم أجد صفحات إضافية في المصدر."]) {
+      const r = await run(text);
+      expect(r.ok, text).toBe(true);
     }
-    expect((await run("سُلّمت ٣٠٠ تغريدة كلها عن محمد صلاح لاعب كرة القدم.")).ok).toBe(true);
-    expect((await run("لم أجد صفحات إضافية في المصدر.")).ok).toBe(true);
   });
 });
 

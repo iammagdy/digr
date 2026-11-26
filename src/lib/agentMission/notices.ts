@@ -45,6 +45,7 @@ export interface MissionNoticeFacts {
   stages?: ReadonlyArray<NoticeStageCount>;
   /** A free re-run by the Diger team: the money line says nothing was paid. */
   free?: boolean;
+  filterNotesAr?: ReadonlyArray<string>;
 }
 
 export interface MissionNotice {
@@ -185,6 +186,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
 
   if (kind === "completed" || kind === "partial") {
     const partial = kind === "partial";
+    const filterNote = (f.filterNotesAr ?? []).map((s) => customerSafeText(s, "")).filter(Boolean).join(" ");
     const subject = boundedSubject(t, partial ? " — تسليم جزئي" : " — النتائج جاهزة");
     const preheader = partial
       ? fitPreheader(`تم تسليم ${counts.deliveredSummary}، والملفات متاحة للتحميل.`, "تم تسليم جزء من طلبك، والملفات متاحة للتحميل.", subject)
@@ -197,8 +199,8 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
       : `تم استخراج ${counts.deliveredSummary} بنجاح وفق شروط طلبك. يمكنك الآن تنزيل ملف الإكسل ومراجعة البيانات.`;
     const title = partial ? `«${t}»: تسليم جزئي (${counts.deliveredSummary})` : `«${t}»: النتائج جاهزة`;
     return {
-      kind, title, body: `${lead} ${money}`, link: REQUESTS,
-      email: { subject, preheader, heading, lead, detail1: money, detail2: "", buttonLabel: "افتح طلبك وحمّل الملفات" },
+      kind, title, body: `${lead} ${money}${filterNote ? ` ${filterNote}` : ""}`, link: REQUESTS,
+      email: { subject, preheader, heading, lead, detail1: money, detail2: filterNote, buttonLabel: "افتح طلبك وحمّل الملفات" },
     };
   }
 
