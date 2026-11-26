@@ -1,6 +1,7 @@
 import writeActions from "../../../data/treg/treg_write_actions.json";
 import catalogIndex from "../../../data/treg/treg_catalog_index.json";
 import { categoryOf } from "./dataPolicy";
+import dataPolicy from "../../../data/treg/data_policy.json";
 
 /**
  * The hard block list for the data gateway. Enforced in code at the one place every gateway call passes (`executeTregCall`), whatever the plan, the model or a
@@ -20,7 +21,7 @@ import { categoryOf } from "./dataPolicy";
 export type EndpointBlockReason = "write_action" | "own_account" | "paused_provider" | "policy_blocked" | "not_sellable";
 
 /** Providers that are paused: every endpoint of these providers is blocked by NAME (the snapshot carries only a count of paused endpoints, not their ids). */
-export const PAUSED_PROVIDERS: readonly string[] = ["apollo", "datagma"];
+export const PAUSED_PROVIDERS: readonly string[] = dataPolicy.pausedProviders;
 const PAUSED_SET: ReadonlySet<string> = new Set(PAUSED_PROVIDERS);
 
 const WRITE_IDS: ReadonlySet<string> = new Set((writeActions as Array<{ id: string }>).map((e) => e.id));

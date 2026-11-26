@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { CallsLogRow } from "./adminCallsLog";
+import { BRAND_CONTEXTDEV, BRAND_FIRECRAWL, BRAND_TREG, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "../multiProvider/types";
 
 /**
  * CSV and XLSX of the CURRENT FILTERED calls log (admin only). One column list, one text neutralizer, two writers.
@@ -13,7 +14,7 @@ export const EXPORT_COLUMNS = [
   "الوحدات", "التكلفة (USD)", "الحالة", "المدة (مللي ثانية)", "تقدير غير مؤكد",
 ] as const;
 
-const PROVIDER_NAME: Record<string, string> = { treg: "TREG", firecrawl: "Firecrawl", contextdev: "Context.dev" };
+const PROVIDER_NAME: Record<string, string> = { [PROVIDER_TREG]: BRAND_TREG, [PROVIDER_FIRECRAWL]: BRAND_FIRECRAWL, [PROVIDER_CONTEXTDEV]: BRAND_CONTEXTDEV };
 const STATUS_AR: Record<string, string> = { success: "نجح", failed: "فشل", empty: "بلا نتيجة" };
 export const UNAVAILABLE_AR = "غير متاح";
 
@@ -27,7 +28,7 @@ export function neutralizeCell(value: string): string {
 type Cell = string | number;
 
 /** TREG key pool: a column «المفتاح» is added only when the filtered rows carry pool marks (otherwise the file is exactly what it always was). */
-export const KEY_COLUMN = "المفتاح (TREG)";
+export const KEY_COLUMN = `المفتاح (${BRAND_TREG})`;
 const hasKeyMarks = (rows: CallsLogRow[]): boolean => rows.some((r) => typeof r.keyNumber === "number");
 const keyCell = (r: CallsLogRow): string => (typeof r.keyNumber === "number" ? neutralizeCell(`#${r.keyNumber} ${r.keyLabel ?? ""}`.trim()) : "");
 

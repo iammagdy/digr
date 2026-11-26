@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ProviderId } from "./providerKeyCrypto";
+import { FIRECRAWL_CREDIT_USAGE_URL, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG, TREG_DEFAULT_BASE_URL } from "../multiProvider/types";
 
 /** A short one-way fingerprint of a key, so cached readings belong to the key that was read (never the key itself; 48 bits of a SHA-256). */
 export const keyFingerprint = (key: string): string => createHash("sha256").update(key).digest("hex").slice(0, 12);
@@ -64,8 +65,8 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 type FetchFn = FetchLike;
 
 export function tregBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = (env.TREG_BASE_URL || "https://treg.to").trim().replace(/\/$/, "");
-  try { return new URL(raw).protocol === "https:" ? raw : "https://treg.to"; } catch { return "https://treg.to"; }
+  const raw = (env.TREG_BASE_URL || TREG_DEFAULT_BASE_URL).trim().replace(/\/$/, "");
+  try { return new URL(raw).protocol === "https:" ? raw : TREG_DEFAULT_BASE_URL; } catch { return TREG_DEFAULT_BASE_URL; }
 }
 
 function classOf(status: number): StatusClass {
@@ -104,8 +105,8 @@ export const noKeyHealth = (): HealthResult => ({ ok: false, reason: "no_key", h
 /** Real authenticated call. Also used, unchanged, to validate a candidate key before saving it. */
 export async function checkProviderKey(provider: ProviderId, key: string, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<{ health: HealthResult; body: unknown }> {
   if (!key) return { health: noKeyHealth(), body: null };
-  if (provider === "treg") return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
-  if (provider === "firecrawl") return timedGet("https://api.firecrawl.dev/v2/team/credit-usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs);
+  if (provider === PROVIDER_TREG) return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
+  if (provider === PROVIDER_FIRECRAWL) return timedGet(FIRECRAWL_CREDIT_USAGE_URL, { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs);
   if (provider === "contextdev") return contextDevCheck(await timedGet("https://api.context.dev/v1/org/usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs));
   return timedGet("https://api.anthropic.com/v1/models?limit=1", { "x-api-key": key, "anthropic-version": "2023-06-01", Accept: "application/json" }, fetchFn, timeoutMs);
 }
@@ -193,8 +194,8 @@ export function parseContextDevCredits(body: unknown): { credits: number; usedTh
 }
 
 /** The real credit count of a credit-priced provider from the health call's own answer, or why none is shown. */
-function creditBalanceFrom(provider: "firecrawl" | "contextdev", body: unknown, checkedAt: string): BalanceResult {
-  if (provider === "firecrawl") {
+function creditBalanceFrom(provider: typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV, body: unknown, checkedAt: string): BalanceResult {
+  if (provider === PROVIDER_FIRECRAWL) {
     const p = parseFirecrawlCredits(body);
     return p ? { available: true, credits: p.credits, planCredits: p.planCredits, periodEndsAt: p.periodEndsAt, checkedAt } : { available: false, unavailableReason: "unreadable", checkedAt };
   }
@@ -276,7 +277,7 @@ export async function getProviderStatus(
   let balance: BalanceResult;
   if (provider === "anthropic") {
     balance = { available: false, unavailableReason: "no_balance_api", checkedAt: health.checkedAt };
-  } else if (provider === "firecrawl" || provider === "contextdev") {
+  } else if (provider === PROVIDER_FIRECRAWL || provider === PROVIDER_CONTEXTDEV) {
     balance = !health.ok ? { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt }
       : health.reason === "missing_scope" ? { available: false, unavailableReason: "missing_scope", checkedAt: health.checkedAt }
       : creditBalanceFrom(provider, body, health.checkedAt);
@@ -286,12 +287,12 @@ export async function getProviderStatus(
     const fetched = await fetchTregBalanceWithBody(key, options?.orgIdOverride || extractTregOrgId(body), fetchFn, timeoutMs);
     balance = fetched.result;
     // The account's e-mail comes only from what these two answers already carry: the identity answer first, then the balance answer.
-    if (provider === "treg") accountEmails.set(provider, extractProviderAccountEmail(body) ?? extractProviderAccountEmail(fetched.body));
+    if (provider === PROVIDER_TREG) accountEmails.set(provider, extractProviderAccountEmail(body) ?? extractProviderAccountEmail(fetched.body));
   }
-  if (provider === "treg" && !health.ok) accountEmails.set(provider, null);
+  if (provider === PROVIDER_TREG && !health.ok) accountEmails.set(provider, null);
   const snapshot: ProviderStatusSnapshot = { provider, health, balance, cachedAt: new Date(now()).toISOString(), cacheTtlMs: STATUS_CACHE_TTL_MS };
   statusCache.set(cacheKey, { at: now(), snapshot });
-  if (provider === "treg" && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now(), fp: keyFingerprint(key) };
+  if (provider === PROVIDER_TREG && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now(), fp: keyFingerprint(key) };
   return snapshot;
 }
 
