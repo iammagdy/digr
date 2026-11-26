@@ -7337,38 +7337,6 @@
     {
       "file": "src/lib/treg/reverseOrder.ts",
       "token": "treg"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "anyapi"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "anyapi.x.search.posts"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "anyapi.youtube.comment_replies"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "tikhub"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "tikhub.x.youtube-web-search-channel"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "tikhub.youtube.video.comments"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/walletEstimate.ts",
-      "token": "youtube"
     }
   ],
   "srv_paths": [],
