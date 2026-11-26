@@ -4677,10 +4677,6 @@
       "pattern": "/[۰-۹]/g"
     },
     {
-      "file": "src/lib/server/promptTokenBreakdown.ts",
-      "pattern": "/[؀-ۿݐ-ݿ]/g"
-    },
-    {
       "file": "src/lib/server/providerKeyAdmin.ts",
       "pattern": "/[٠-٩]/g"
     },
