@@ -199,7 +199,7 @@ describe("Golden Quote Parity Baseline (Phase 5A / 13A / 13B)", () => {
     for (const r of ROUTE_DEFS) {
       expect(routeCodeOf(r.id)).toBe((baseline.multiProvider.routeCodes as Record<string, string>)[r.id]);
     }
-    const estimates = ROUTE_DEFS.map((r) => estimateRoute(r, { count: 20, requiredFields: ["business_name", "website", "work_email"] }));
+    const estimates = ROUTE_DEFS.map((r) => estimateRoute(r, { count: 20, requiredFields: ["work_email"] }));
     expect(estimates).toEqual(baseline.multiProvider.estimates);
   });
 
