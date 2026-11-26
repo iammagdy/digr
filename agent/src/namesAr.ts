@@ -5,6 +5,7 @@ import { activityArabic, titleArabic } from "../../src/lib/agentMission/titleLex
 import type { ItemStore, Op, Row } from "./items/itemStore";
 import { llmCostFromUsage, type TokenUsage } from "./llmCost";
 import type { ReviewCall } from "./review";
+import { foldArabicIndicDigits, hasArabicScript, isArabicScriptWord } from "../../src/lib/arabicNormalize";
 
 /**
  * THE ARABIC SPELLING OF THE DELIVERED PEOPLE'S NAMES (audit 2026-11 reference A column 7, owner decision 3: «اسم صانع القرار» in Arabic with the English in brackets). ONE small batched model request per mission (the same Messages API call the review uses, so no new
@@ -32,10 +33,14 @@ const TAG: Record<"title" | "activity", string> = { title: "[job title] ", activ
 export const namesPrompt = (items: ReadonlyArray<NamesItem>): string => `Names:\n${items.map((it, i) => { const kind = typeof it === "string" ? "name" : it.kind; const text = typeof it === "string" ? it : it.text; return `${i + 1}. ${kind === "name" ? "" : TAG[kind]}${clip(text.replace(/\s+/g, " "))}`; }).join("\n")}`;
 
 /** An Arabic spelling that can be shown: Arabic letters (and spaces, hyphens, apostrophes), two to six words, no Latin letter or digit. */
-export const isArabicName = (s: unknown): s is string => typeof s === "string" && /^[؀-ۿ]+(?:[ \-'’][؀-ۿ]+){0,5}$/.test(s.trim()) && !/[A-Za-z0-9٠-٩]/.test(s) && s.trim().length >= 2;
+const arabicWords = (t: string, separator: RegExp, max: number): boolean => {
+  const parts = t.split(separator);
+  return parts.length <= max && parts.every((p) => isArabicScriptWord(p));
+};
+export const isArabicName = (s: unknown): s is string => typeof s === "string" && arabicWords(s.trim(), /[ \-'’]/, 6) && !/[A-Za-z0-9]/.test(foldArabicIndicDigits(s)) && s.trim().length >= 2;
 
 /** An Arabic job title or activity that can be shown: Arabic words (and «و», hyphens, slashes, commas), one to eight words, no Latin letter or digit. */
-export const isArabicText = (s: unknown): s is string => typeof s === "string" && /^[؀-ۿ]+(?:[ \-/،,][؀-ۿ]+){0,7}$/.test(s.trim()) && !/[A-Za-z0-9٠-٩]/.test(s) && s.trim().length >= 2;
+export const isArabicText = (s: unknown): s is string => typeof s === "string" && arabicWords(s.trim(), /[ \-/,]/, 8) && !/[A-Za-z0-9]/.test(foldArabicIndicDigits(s)) && s.trim().length >= 2;
 
 /** The array out of the model's answer: exactly `n` items (an item that is not a usable Arabic spelling becomes ""), or null when the answer is not an array of `n` strings. */
 export function parseNames(text: string, n: number, kinds?: ReadonlyArray<"name" | "title" | "activity">): string[] | null {
@@ -62,7 +67,7 @@ export async function runNamesStep(deps: { items: ItemStore; plan: { stages: Rea
   const names: Work[] = [];
   const titles = new Map<string, Work>();
   const activities = new Map<string, Work>();
-  const latinOnly = (v: unknown): v is string => typeof v === "string" && /[A-Za-z]/.test(v) && !/[؀-ۿ]/.test(v);
+  const latinOnly = (v: unknown): v is string => typeof v === "string" && /[A-Za-z]/.test(v) && !hasArabicScript(v);
   const stagesTouched = new Set<string>();
   for (const stage of deps.plan.stages) {
     if (!stage.deliver || stage.parent_key === null || stage.role_preference?.role !== "manager") continue;

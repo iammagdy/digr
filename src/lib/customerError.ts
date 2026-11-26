@@ -3,6 +3,7 @@
  * message) is never shown: it becomes one Arabic sentence, and a safe reason code goes to the console instead.
  */
 import { START_UNKNOWN_AR, startFailureText, type StartedJobState } from "./startFailure";
+import { hasArabicScript } from "./arabicNormalize";
 
 
 /** For the chat, where a turn never spends anything. */
@@ -27,7 +28,7 @@ export function isCustomerSafeArabic(text: unknown): text is string {
   if (typeof text !== "string") return false;
   const value = text.trim();
   if (!value || value.length > 400) return false;
-  if (!/[؀-ۿ]/.test(value)) return false;
+  if (!hasArabicScript(value)) return false;
   if (/[A-Za-z]/.test(value)) return false;
   if (/undefined|null|NaN|\[object/i.test(value)) return false;
   return true;

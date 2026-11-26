@@ -1,5 +1,6 @@
 import { itemNounOf, GENERIC_ITEM_NOUN, knownItemNoun } from "./itemNoun";
 import { normalizeText } from "./relevance";
+import { blankListPunctuation } from "../arabicNormalize";
 
 /**
  * THE ITEMS OF A CHILD STAGE ARE RAW. Diger serves researchers who analyse data: the comments of a post, the replies, the reviews of a place and the employees of a company are delivered exactly as the source gives them, in the
@@ -29,7 +30,7 @@ export function childRuleLinesAr(stages: ReadonlyArray<{ key: string; title_ar: 
 export function titleNamesParent(childTitle: string, parentTitle: string): boolean {
   const parentNoun = itemNounOf(parentTitle);
   if (parentNoun.key === GENERIC_ITEM_NOUN.key) return true;
-  const words = normalizeText(childTitle).replace(/[«»"،,.:؛]/g, " ").split(/\s+/).filter(Boolean);
+  const words = blankListPunctuation(normalizeText(childTitle)).split(/\s+/).filter(Boolean);
   return words.some((w) => knownItemNoun(w)?.key === parentNoun.key);
 }
 

@@ -30,6 +30,7 @@ import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 import type { LiveData } from "@/lib/agentMission/stage2/livePoller";
 import { liveProgressOf, phoneCollectLine } from "@/lib/agentMission/stage2/singleCounter";
 import { counterAr } from "@/lib/agentMission/stage2/counterWording";
+import { foldDigits } from "@/lib/arabicNormalize";
 
 /**
  * THE MISSION CARD of the chat: what the agent will deliver, in plain Arabic and in one place. It draws ONE answer of /api/missions/<id> (the customer's own mission): a summary sentence, the
@@ -174,7 +175,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     acting.current = true;
     // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
     const shownText = text;
-    if (action === "answer" && typeof text === "string" && /^\s*[\d٠-٩۰-۹]+\s*$/.test(text)) text = String(countInputValue(text));
+    if (action === "answer" && typeof text === "string" && /^\s*\d+\s*$/.test(foldDigits(text))) text = String(countInputValue(text));
     setBusy(true);
     setPendingAction(action);
     setPendingText(action === "answer" && typeof shownText === "string" ? shownText : null);

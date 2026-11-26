@@ -180,6 +180,7 @@ const COLUMN_TITLES: Record<string, string> = {
 const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link", "likes", "comments_count", "replies_count", "shares", "views", "language", "country"];
 
 import { impersonalAr } from "../../../src/lib/agentMission/roles";
+import { foldArabicIndicDigits, foldSeparatorMarks, isArabicComma, trimEdges } from "../../../src/lib/arabicNormalize";
 export { impersonalAr };
 
 /** What the card says in place of the name of a source the customer did not write (DT-20261118-09 S2: «خرائط جوجل», «لينكدإن» reached the card of a customer who had named no source). */
@@ -892,7 +893,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
   deps.onUnderstanding?.(u);
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
-  await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400, said) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");
+  await say(customerSafe(`فهمنا طلبك: ${trimEdges(u.understanding_ar, isSentenceTail, "end")}.`, 400, said) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");
 
   // 2-4. EVERY STEP, parents first (the model's order already is: a parent must be an earlier step)
   const built = new Map<string, BuiltStep>();
@@ -2232,10 +2233,12 @@ export async function scoutYield(
   return { found: ids.size, exhausted: ids.size < a.requested, sets };
 }
 
-const ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩";
 /** The numbers written in a text, with Arabic-Indic digits and separators read as plain integers. */
+/** A character a sentence may end with: a full stop, the Arabic comma, or a blank. */
+const isSentenceTail = (c: string): boolean => c === "." || isArabicComma(c) || /\s/.test(c);
+
 export function numbersWritten(text: string): Set<string> {
-  const plain = String(text ?? "").replace(/[٠-٩]/g, (d) => String(ARABIC_INDIC.indexOf(d))).replace(/(\d)[٬,](?=\d{3})/g, "$1");
+  const plain = foldSeparatorMarks(foldArabicIndicDigits(String(text ?? ""))).replace(/(\d),(?=\d{3})/g, "$1");
   return new Set((plain.match(/\d+/g) ?? []).map((n) => String(Number(n))));
 }
 
@@ -2954,7 +2957,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: listed?.settings ?? pricingSettings as MissionPricingSettings | undefined });
   const counts = stages.filter((s) => s.deliver).map((s) => `${s.title_ar}: ${toArabicDigits(s.planned_rows)}`).join("، ");
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability, said)))].join(" و");
-  const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300, said) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
+  const understood = customerSafe(trimEdges(impersonalAr(u.understanding_ar), isSentenceTail, "end"), 300, said) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
   const widened = listed ? stages.some((s) => s.engine?.alternatives?.length) : steps.some((b) => b.option.more.length > 0 || b.second !== undefined || (b.webFallbacks?.length ?? 0) > 0);
   notes.push(widened

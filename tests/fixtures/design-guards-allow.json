@@ -21,40 +21,8 @@
       "pattern": "/^﻿/"
     },
     {
-      "file": "agent/src/llmPlanner/planner.ts",
-      "pattern": "/(\\d)[٬,](?=\\d{3})/g"
-    },
-    {
-      "file": "agent/src/llmPlanner/planner.ts",
-      "pattern": "/[.،\\s]+$/u"
-    },
-    {
-      "file": "agent/src/llmPlanner/planner.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
       "file": "agent/src/methodology.ts",
       "pattern": "/[.،\\s]+$/"
-    },
-    {
-      "file": "agent/src/namesAr.ts",
-      "pattern": "/[؀-ۿ]/"
-    },
-    {
-      "file": "agent/src/namesAr.ts",
-      "pattern": "/[A-Za-z0-9٠-٩]/"
-    },
-    {
-      "file": "agent/src/namesAr.ts",
-      "pattern": "/^[؀-ۿ]+(?:[ \\-'’][؀-ۿ]+){0,5}$/"
-    },
-    {
-      "file": "agent/src/namesAr.ts",
-      "pattern": "/^[؀-ۿ]+(?:[ \\-/،,][؀-ۿ]+){0,7}$/"
-    },
-    {
-      "file": "agent/src/repliesShortfall.ts",
-      "pattern": "/^لأن /"
     },
     {
       "file": "agent/src/researchJudge.ts",
@@ -126,19 +94,11 @@
     },
     {
       "file": "src/components/mission/AgentMissionCard.tsx",
-      "pattern": "/^\\s*[\\d٠-٩۰-۹]+\\s*$/"
-    },
-    {
-      "file": "src/components/mission/AgentMissionCard.tsx",
       "pattern": "/المستخدم|الحساب/"
     },
     {
       "file": "src/components/mission/AgentMissionCard.tsx",
       "pattern": "/رصيد/"
-    },
-    {
-      "file": "src/components/mission/AskCard.tsx",
-      "pattern": "/[٬,\\s]/g"
     },
     {
       "file": "src/components/mission/MethodologyOffer.tsx",
@@ -699,10 +659,6 @@
     {
       "file": "src/lib/agentMission/chatTurn.ts",
       "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/agentMission/childItems.ts",
-      "pattern": "/[«»\"،,.:؛]/g"
     },
     {
       "file": "src/lib/agentMission/childSources.ts",
@@ -1639,14 +1595,6 @@
     {
       "file": "src/lib/agentMission/messageType.ts",
       "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/agentMission/methodology/pdf.ts",
-      "pattern": "/[٠-٩]+(?:[٬٫:/.\\-][٠-٩]+)*٪?/gu"
-    },
-    {
-      "file": "src/lib/agentMission/methodology/pdf.ts",
-      "pattern": "/^[٠-٩٬٫٪ .:-]+$/u"
     },
     {
       "file": "src/lib/agentMission/methodology/readWorkbook.ts",
@@ -2606,35 +2554,7 @@
     },
     {
       "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/[اأإآ]/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/[هة]/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/[يى]/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
       "pattern": "/^(?:[وف]?(?:بال|كال|لل|ال|[لبك]))/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/ال$/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/لال/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "/لل$/"
-    },
-    {
-      "file": "src/lib/agentMission/shownWords.ts",
-      "pattern": "`(?<![ء-ي])([وف]?(?:بال|كال|لل|ال|[لبك])?)${label.trim().split(/\\s+/).map((w) => [...w].map(letterPattern).join(\"\")).join(\"\\\\s+\")}(?![ء-ي])`"
     },
     {
       "file": "src/lib/agentMission/stage2/liveSheetView.ts",
@@ -2817,14 +2737,6 @@
       "pattern": "/تريغ|تريج|فاير\\s?كراول|كونتكست\\s?(?:دوت)?\\s?دي?\\s?في?|ابولو|أبولو|داتاجم|أبيفاي|ابيفاي/"
     },
     {
-      "file": "src/lib/agentMission/titleLexicon.ts",
-      "pattern": "/[​-‏‪-‮﻿]/g"
-    },
-    {
-      "file": "src/lib/agentMission/titleLexicon.ts",
-      "pattern": "/[؀-ۿ]/"
-    },
-    {
       "file": "src/lib/agentMission/topicMeaning.ts",
       "pattern": "/(?:^|[\\s#_])(?:ب)?(?:ال)?ذكاء[\\s_]*(?:ال)?اصطناعي|(?:^|[\\s#_])ai(?=$|[\\s#_.,؛،!؟?])|(?:^|[\\s#_])(?:chat[\\s_]*gpt|شات[\\s_]*جي[\\s_]*بي[\\s_]*تي)/"
     },
@@ -2939,6 +2851,22 @@
     {
       "file": "src/lib/arabicNormalize.ts",
       "pattern": "/(?<![\\w@./-])(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:\\/[^\\s\"'<>)\\]،]*)?/gi"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/^[؀-ۿ]+$/"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/^[ء-يً-ْ\\s]+$/"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[٠-٩]+(?:[٬٫:/.\\-][٠-٩]+)*٪?/gu"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/^[٠-٩٬٫٪ .:-]+$/u"
     },
     {
       "file": "src/lib/arabicNumbers.ts",
@@ -3153,10 +3081,6 @@
       "pattern": "/^(?:[-–—]+|n\\/?a|null|undefined|غير متاح)$/i"
     },
     {
-      "file": "src/lib/customerError.ts",
-      "pattern": "/[؀-ۿ]/"
-    },
-    {
       "file": "src/lib/customerFacingAssistantCopy.ts",
       "pattern": "/أقرب خدمة متاحة/i"
     },
@@ -3319,18 +3243,6 @@
     {
       "file": "src/lib/fileSpec.ts",
       "pattern": "`فلتر(?:ها|ه)?\\\\s+${FILE_WORDS}(?:على|حسب|ب)\\\\s+([^،,.!؟?\\\\n]+)`"
-    },
-    {
-      "file": "src/lib/greetingName.ts",
-      "pattern": "/[ء-ي]/"
-    },
-    {
-      "file": "src/lib/greetingName.ts",
-      "pattern": "/^[ء-يً-ْ\\s]+$/"
-    },
-    {
-      "file": "src/lib/industryLabels.ts",
-      "pattern": "/[؀-ۿ]/u"
     },
     {
       "file": "src/lib/invoices/assist.ts",
@@ -3619,14 +3531,6 @@
     {
       "file": "src/lib/multiProvider/policy.ts",
       "pattern": "/team|leadership|management|الفريق|الإدارة/i"
-    },
-    {
-      "file": "src/lib/notificationText.ts",
-      "pattern": "/[\\s:،.\\-–—]+$/u"
-    },
-    {
-      "file": "src/lib/notificationText.ts",
-      "pattern": "/^[\\s:،.\\-–—]+/u"
     },
     {
       "file": "src/lib/planCounts.ts",
