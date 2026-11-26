@@ -1,6 +1,6 @@
 # Phase T: Delivery Filter Notices & Tool Guards Wave 2 (D-0213 & D-0214)
 
-- **PR:** Draft PR on `team/DT-20261125-wordlist-wave2-phaseT`
+- **PR:** #692 (merged cd44d3fb).
 
 ## Overview
 Phase T v2 implements customer delivery filter notices (D-0214), removes unfiltered admission finish refusals (D-0213), and completes Phase T tool guard cleanups:
@@ -21,7 +21,7 @@ Phase T v2 implements customer delivery filter notices (D-0214), removes unfilte
    - Made `dearerWebProviderMessage`, `webAvailableOf`, and `webTools` dynamic using `WEB_SOURCES`, `WEB_PROVIDERS`, and `PARSERS`.
    - Eliminated hardcoded provider literals (`firecrawl`, `x`, `youtube`) and regexes from `agent/src/tools.ts` (0 AST violations).
 5. **Allow-List Sync & Monotonic Ceiling:**
-   - Synced allow-list: `arabic_regex` 1398 -> 1392 (-6), `treg_tokens` 503 -> 500 (-3).
+   - Synced allow-list (counted on main 9b588cb4 after the rebase): `arabic_regex` 1381 -> 1375 (-6), `treg_tokens` 461 -> 458 (-3).
    - Lowered `ALLOW_LIST_CEILING` in `tests/design-guards-allow-monotonic.test.ts`.
 
 ## Evidence & Verifications
