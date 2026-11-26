@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkUnderstanding } from "../agent/src/llmPlanner/planner";
 import { tregCallBoundOf } from "../agent/src/gateway";
 import { ceilToMicroUsd } from "../src/lib/server/spendGate/bounds";
-import { measuredCalls, measuredUnderstanding, runWorkerReplay } from "./tools/planning-budget-worker-replay";
+import { measuredCalls, measuredUnderstanding, runWorkerReplay, xNewsUnderstanding } from "./tools/planning-budget-worker-replay";
 import { contactSampleCapUsd } from "../src/lib/agentMission/contactSampling";
 import { planningBudgetFacts, webPlanningCeilingUsd } from "../src/lib/agentMission/planningBudget";
 import { statsFromCalls } from "../src/lib/agentMission/sourceRanking";
@@ -40,6 +40,41 @@ describe("planning USD admissions and exact customer card parity", () => {
     const handover = planningBudgetFacts(checked.value, context);
     expect(handover.budgetUsd).toBe(0.1254);
     expect(handover.stages[1]).toMatchObject({ callUsd: 0.00188, reserveUsd: 0.03 });
+  });
+
+  it("D-0235 caps the validated X-news web ceiling at $0.20", () => {
+    const checked = checkUnderstanding(xNewsUnderstanding, catalog, NOT_ADMIN);
+    if (!checked.ok) throw new Error("X-news fixture must validate");
+    expect(webPlanningCeilingUsd(checked.value, { ...context, stats: new Map() })).toBe(0.20);
+  });
+
+  const xNewsReplay = { id: "x-news-web-envelope", world: "x-news", expected: "admissions" } as const;
+  it.each([
+    { name: "fresh planning", priorPlanningUsd: undefined, billedUsd: 0.09 },
+    { name: "$0.03 already recorded", priorPlanningUsd: 0.03, billedUsd: 0.12 },
+  ])("D-0235 delivers one X-news item with $name", async ({ priorPlanningUsd, billedUsd }) => {
+    const out = await runWorkerReplay(xNewsReplay, { qa: {}, catalog, priorPlanningUsd });
+    expect(out.webQueries).toHaveLength(3);
+    expect(out.calls.filter(({ turn }) => turn === 1)).toMatchObject([
+      { status: "empty", billedUsd: 0.03 },
+      { status: "ok", rows: 1, billedUsd: 0.03 },
+      { status: "empty", billedUsd: 0.03 },
+    ]);
+    expect(out.planning.billedUsd).toBe(billedUsd);
+    expect(out.status).toEqual(["plan_ready"]);
+    expect(out.card?.[3]).toBe(1);
+  });
+
+  it("D-0235 refuses a resumed X-news sample that would cross the per-request cap", async () => {
+    const out = await runWorkerReplay(xNewsReplay, { qa: {}, catalog, priorPlanningUsd: 0.15 });
+    expect(out.webQueries).toHaveLength(1);
+    expect(out.calls.filter(({ turn }) => turn === 1)).toMatchObject([
+      { status: "empty", billedUsd: 0.03 },
+      { status: "refused", reason: "over_budget:planning", billedUsd: 0, reservedUsd: null },
+    ]);
+    expect(out.planning.billedUsd).toBe(0.18);
+    expect(out.status).toEqual(["unserved"]);
+    expect(out.card).toBeNull();
   });
 
   it.each([

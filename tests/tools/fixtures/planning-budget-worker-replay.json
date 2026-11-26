@@ -6,5 +6,6 @@
   {"id":"measured-rank-facebook","world":"measured","expected":"card"},
   {"id":"facebook-owner-fallback","world":"fallback","expected":"admissions"},
   {"id":"facebook-owner-fallback-affordable-comments","world":"fallback","expected":"admissions","fallbackComments":"affordable"},
-  {"id":"dear-employees","world":"dear-child","expected":"admissions"}
+  {"id":"dear-employees","world":"dear-child","expected":"admissions"},
+  {"id":"x-news-web-envelope","world":"x-news","expected":"admissions"}
 ]

@@ -33,7 +33,7 @@ const ACCESS = { isAdmin: false, verifiedBusiness: false };
 const sha = (contents: string) => createHash("sha256").update(contents).digest("hex");
 const usd = (n: number) => Number(n.toFixed(6));
 
-type World = "youtube" | "rumors" | "b2b" | "measured" | "fallback" | "dear-child" | "cheap-web";
+type World = "x-news" | "youtube" | "rumors" | "b2b" | "measured" | "fallback" | "dear-child" | "cheap-web";
 type Expected = "card" | "two-turn-card" | "admissions";
 export interface ReplayCase {
   id: string;
@@ -54,6 +54,18 @@ interface QaFixture {
 const COMPANY_STEP = { key: "companies", platform: "companies", capability: "companies.search", title_ar: "شركات البرمجيات", count: { total: 3 } };
 const PEOPLE_STEP = { key: "people", platform: "companies", capability: "companies.employees", parent: "companies", title_ar: "مديرو الشركات", count: { per_parent: 1 } };
 const CONTACTS = { asked: true, title_ar: "المدير", per_company: 1, per_company_text: "مدير", contact_kinds: ["email", "phone"] };
+
+const NEWS_TOPIC = "الطاقة الشمسية";
+const NEWS_ALTERNATE = "مشروعات الطاقة الشمسية";
+const NEWS_REQUEST = "هات ٥ أخبار عن الطاقة الشمسية على إكس";
+
+export const xNewsUnderstanding = {
+  decision: "plan", understanding_ar: "أخبار الطاقة الشمسية على إكس.", accepts_available: true,
+  steps: [{
+    key: "news", platform: "x", capability: "x.search.news", title_ar: "أخبار الطاقة الشمسية",
+    count: { total: 5 }, topic: NEWS_TOPIC, search_terms: [NEWS_ALTERNATE],
+  }],
+};
 
 export const measuredUnderstanding = {
   decision: "plan", understanding_ar: "منشورات عن غلاء الأسعار وتعليقاتها.", accepts_available: true,
@@ -140,6 +152,7 @@ function scriptedModel(world: World, qa: QaFixture, turn: number, emptyB2B: bool
     switch (tool.name) {
       case "request_plan":
         if (world === "measured") input = measuredUnderstanding;
+        else if (world === "x-news") input = xNewsUnderstanding;
         else if (world === "b2b") input = emptyB2B
           ? { decision: "cannot", understanding_ar: "شركات البرمجيات ومديروها.", steps: [], people_of_companies: CONTACTS }
           : { decision: "plan", understanding_ar: "شركات البرمجيات ومديروها.", steps: [COMPANY_STEP, PEOPLE_STEP], people_of_companies: CONTACTS };
@@ -158,6 +171,13 @@ function scriptedModel(world: World, qa: QaFixture, turn: number, emptyB2B: bool
         }
         break;
       case "tool_choice": {
+        if (world === "x-news") {
+          input = { options: [{
+            endpoint_id: WEB, params: { query: NEWS_TOPIC, limit: 30 },
+            more_params: [{ query: NEWS_ALTERNATE, limit: 30 }],
+          }] };
+          break;
+        }
         const child = user.includes('"key":"comments"');
         const endpoint_id = world === "measured" ? (child ? COMMENTS : POSTS) : world === "youtube" ? YOUTUBE : X;
         const params = world === "measured" ? (child ? {} : { keyword: PHRASES[0] })
@@ -250,7 +270,7 @@ interface ReplayOptions {
 
 export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, turnLimit = 2, priorPlanningUsd, unknownWebCharge = false, emptyB2B = false, inspect }: ReplayOptions) {
   const request = qa.turn_texts?.turn1_request_text ?? qa.request_text
-    ?? qa.requests?.find((item) => item.mission === spec.mission)?.text ?? (!spec.qaFile ? spec.world === "cheap-web" ? "هات خمس تغريدات عن غلاء الأسعار" : spec.world === "dear-child" ? "عايز شركات وموظفيها" : REQUEST_FB : undefined);
+    ?? qa.requests?.find((item) => item.mission === spec.mission)?.text ?? (!spec.qaFile ? spec.world === "x-news" ? NEWS_REQUEST : spec.world === "cheap-web" ? "هات خمس تغريدات عن غلاء الأسعار" : spec.world === "dear-child" ? "عايز شركات وموظفيها" : REQUEST_FB : undefined);
   if (!request) throw new Error(`No request in fixture ${spec.id}`);
   const mission = newMission({ id: spec.id, user_id: "replay-user", status: "planning", request_text: request });
   const store = createMemoryStore([mission]);
@@ -285,16 +305,16 @@ export async function runWorkerReplay(spec: ReplayCase, { qa, catalog, turnLimit
       client, store, catalog, driver: fakeDriver,
       models: resolveModels({}, {}),
       recorder: rec.recorder, commit: rec.commit, resolveAccess: async () => ACCESS,
-      ...((spec.world === "measured" || spec.world === "cheap-web") ? {
+      ...((spec.world === "measured" || spec.world === "cheap-web" || spec.world === "x-news") ? {
         providerKey: async (provider) => provider === "firecrawl" ? "fixture-key" : null,
         fetchFn: async (url, init) => {
           if (new URL(String(url)).pathname !== "/v2/search") transportError("Unexpected web operation");
           const query = String(JSON.parse(String(init?.body)).query);
           webQueries.push(query);
           if (unknownWebCharge) throw new Error("Fixture transport timed out");
-          const rows = query === PHRASES[4]
-            ? [{ url: "https://news.example/1", title: "غلاء الأسعار في مصر", description: "تكلفة المعيشة في مصر" }]
-            : [];
+          const rows = spec.world === "x-news"
+            ? query === NEWS_ALTERNATE ? [{ url: "https://news.example/solar", title: "مشروعات الطاقة الشمسية", description: "افتتاح محطة جديدة للطاقة الشمسية" }] : []
+            : query === PHRASES[4] ? [{ url: "https://news.example/1", title: "غلاء الأسعار في مصر", description: "تكلفة المعيشة في مصر" }] : [];
           return Response.json({ success: true, creditsUsed: 6, data: { web: rows } });
         },
       } : {}),
@@ -378,6 +398,13 @@ export function compareWorkerReplay(base: ReplayEntry, branch: ReplayEntry) {
   const admissionChanged = JSON.stringify(admissions(base)) !== JSON.stringify(admissions(branch));
   const cardChanged = JSON.stringify([base.status, base.card, base.settlement]) !== JSON.stringify([branch.status, branch.card, branch.settlement]);
   if (base.expected !== "admissions" && (cardChanged || !base.card || !branch.card)) throw new Error(`${base.id} card/settlement drift: ${JSON.stringify({ base: base.card, branch: branch.card, baselineSettlement: base.settlement, branchSettlement: branch.settlement })}`);
+  if (base.id === "x-news-web-envelope") {
+    if (!admissionChanged || base.status.at(-1) !== "unserved" || base.card !== null || base.webQueries.length !== 1 || base.planning.billedUsd !== 0.03
+      || !base.calls.some((call) => call.endpoint === WEB && call.reason === "over_budget:planning" && call.billedUsd === 0)
+      || branch.status.at(-1) !== "plan_ready" || branch.card?.[3] !== 1 || branch.webQueries.length !== 3 || branch.planning.billedUsd !== 0.09) {
+      throw new Error("D-0235 X-news admission and card outcome drift");
+    }
+  }
   if (base.id === "measured-rank-facebook" && (admissionChanged || branch.webQueries.length !== 5)) throw new Error("Measured-rank web admission drift");
   return { id: base.id, iteration: base.iteration, admissionChanged, ...(admissionChanged ? { base: admissions(base), branch: admissions(branch) } : {}) };
 }
