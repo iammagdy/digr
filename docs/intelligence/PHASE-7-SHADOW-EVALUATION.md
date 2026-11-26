@@ -1,5 +1,7 @@
 # Phase 7: regression and shadow evaluation (PR-7.1), 14 Nov 2026
 
+> **Retired 2026-11-26 (D-0224):** This offline admin shadow evaluation panel and its underlying engine (`agentMission/shadow/**`, `/api/admin/shadow`) were retired on 26 Nov 2026 (decision D-0224). All code and routes were safely removed. The historical evaluation record and regression dimensions documented below are preserved.
+
 **Reference documents:** `DIGER_INTELLIGENCE_AUDIT.md` (historical; chapters 10 «production preservation», 11 «evaluation», 14 PR-7.1), `PHASE-5-3-AND-6.md`, `PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md`, `../capabilities/sync-2026-11-14.md`.
 
 **Starting point (read-only, verified before any change):** `main` = `02ba17f` (PR #496); Vercel production `dpl_FVdY3Yxagz4VMSUNAXs52vekKToB` READY on it; worker heartbeat `02ba17f`, `active_missions 0`; `agent_settings` keys `redesign_flags`, `social_discovery` only (no Intelligence switch set); `credit_ledger` 1,247 rows; no queued or running job, no queued, planning, approved or executing mission. Open PRs: #481 and old drafts; none touched.
