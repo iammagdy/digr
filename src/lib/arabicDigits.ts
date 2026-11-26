@@ -1,8 +1,8 @@
+import { foldDigits } from "./arabicNormalize";
+
 /** Arabic-Indic (٠-٩) and Persian (۰-۹) digits → ASCII. Used for every numeric field, client and server. */
 export function normalizeDigits(input: string): string {
-  return input
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+  return foldDigits(input);
 }
 
 /** ASCII digits → Arabic-Indic, locale-independent (same output on server and client). */

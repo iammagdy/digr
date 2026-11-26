@@ -2725,74 +2725,6 @@
       "pattern": "/^[ء-ي]+$/"
     },
     {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/٫/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/٬/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/([a-z0-9])(?=[ء-ي])/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/([ء-ي])(?=[a-z0-9])/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/([ء-ي])\\1{2,}/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/[ً-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/[​-‏‪-‮⁠-⁩﻿­]/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/[۰-۹]/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/[أإآٱ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ـ/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/پ/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ڤ/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ک/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/agentMission/semantic/normalizeArabic.ts",
-      "pattern": "/ی/g"
-    },
-    {
       "file": "src/lib/agentMission/shownWords.ts",
       "pattern": "/[اأإآ]/"
     },
@@ -3057,18 +2989,6 @@
       "pattern": "/فيديو|بوست|منشور|ريلز|ريل|تيك\\s*توك|انستجرام|انستا|فيسبوك|يوتيوب|تغريد|reels|tiktok/"
     },
     {
-      "file": "src/lib/arabicDigits.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/arabicDigits.ts",
-      "pattern": "/[۰-۹]/g"
-    },
-    {
-      "file": "src/lib/arabicNormalize.ts",
-      "pattern": "/[ؐ-ًؚ-ٰٟۖ-ۭ]/g"
-    },
-    {
       "file": "src/lib/arabicNormalize.ts",
       "pattern": "/[٠-٩]/g"
     },
@@ -3091,6 +3011,46 @@
     {
       "file": "src/lib/arabicNormalize.ts",
       "pattern": "/ى/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[ً-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[ؐ-ؚ۝۞ۥۦ۩]/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[٫٬]/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[ڤپکی]/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[ؤئ]/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[؀-ۿ]/"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/[ء-ي]/"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/([ء-ي])\\1{2,}/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/([ء-ي])(?=[a-z0-9])/g"
+    },
+    {
+      "file": "src/lib/arabicNormalize.ts",
+      "pattern": "/([a-z0-9])(?=[ء-ي])/g"
     },
     {
       "file": "src/lib/arabicNumbers.ts",

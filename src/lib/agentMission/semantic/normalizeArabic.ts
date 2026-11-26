@@ -10,6 +10,8 @@
  * The ORIGINAL text is never touched, replaced or stored by this module: every function returns a new value and the caller keeps the input for display and audit. Idempotent: `normalizeArabic(normalizeArabic(x)) === normalizeArabic(x)`.
  */
 
+import { collapseElongation, foldDigits, foldLetterVariants, foldPersianLetters, foldSeparatorMarks, splitScriptBoundary, stripCoreDiacritics, stripInvisible, stripTatweel } from "../../arabicNormalize";
+
 /** The longest text read (the same ceiling as the existing classifier). */
 export const SEMANTIC_MAX_CHARS = 2000;
 
@@ -28,24 +30,20 @@ export const NORMALIZATION_STEPS: readonly NormalizationStep[] = [
   { id: "limit", why: "Reads at most the first 2,000 characters (a bound, like the existing classifier).", apply: (t) => t.slice(0, SEMANTIC_MAX_CHARS) },
   // NFKC maps the Arabic presentation forms (U+FB50–FDFF, U+FE70–FEFF: what a PDF, a screenshot copy or a voice tool may paste) and full-width Latin letters and digits to the ordinary characters
   { id: "unicode_nfkc", why: "Unicode NFKC: presentation forms and full-width characters become their ordinary letters.", apply: (t) => t.normalize("NFKC") },
-  { id: "invisible", why: "Removes zero-width and bidirectional control characters that a voice or paste tool leaves inside words.", apply: (t) => t.replace(/[​-‏‪-‮⁠-⁩﻿­]/g, "") },
-  { id: "diacritics", why: "Removes optional Arabic diacritics (tashkeel, dagger alef, Quranic marks): they never change which word is meant in a request.", apply: (t) => t.replace(/[ً-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g, "") },
-  { id: "tatweel", why: "Removes the stretching character ـ (كــومنتات → كومنتات).", apply: (t) => t.replace(/ـ/g, "") },
+  { id: "invisible", why: "Removes zero-width and bidirectional control characters that a voice or paste tool leaves inside words.", apply: (t) => stripInvisible(t) },
+  { id: "diacritics", why: "Removes optional Arabic diacritics (tashkeel, dagger alef, Quranic marks): they never change which word is meant in a request.", apply: (t) => stripCoreDiacritics(t) },
+  { id: "tatweel", why: "Removes the stretching character ـ (كــومنتات → كومنتات).", apply: (t) => stripTatweel(t) },
   {
     id: "digits",
     why: "Arabic-Indic (٠-٩) and Persian (۰-۹) digits become Western digits; the Arabic decimal and thousands separators become . and , .",
-    apply: (t) => t
-      .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-      .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
-      .replace(/٫/g, ".")
-      .replace(/٬/g, ","),
+    apply: (t) => foldSeparatorMarks(foldDigits(t)),
   },
   { id: "case", why: "Latin letters are compared in lower case.", apply: (t) => t.toLowerCase() },
   // a real Arabic word never repeats one letter three times; a voice transcript or a stretched typing does («كومنتااات», «تعليقاااات»). Latin runs are cut to two (a legitimate double letter stays).
-  { id: "elongation", why: "A letter repeated three times or more is cut (Arabic to one, Latin to two): stretched typing and voice artifacts.", apply: (t) => t.replace(/([ء-ي])\1{2,}/g, "$1").replace(/([a-z])\1{2,}/g, "$1$1") },
+  { id: "elongation", why: "A letter repeated three times or more is cut (Arabic to one, Latin to two): stretched typing and voice artifacts.", apply: (t) => collapseElongation(t) },
   { id: "links", why: "A link is one token (its words are not read as vocabulary).", apply: (t) => t.replace(/(?:https?:\/\/|www\.)\S+/gi, " url ") },
   // «بtiktok» / «٥٠شركة» (no space between a script or a digit and the next): the two sides become separate tokens
-  { id: "script_boundary", why: "A space is put between an Arabic letter and a Latin letter or a digit stuck to it.", apply: (t) => t.replace(/([ء-ي])(?=[a-z0-9])/g, "$1 ").replace(/([a-z0-9])(?=[ء-ي])/g, "$1 ") },
+  { id: "script_boundary", why: "A space is put between an Arabic letter and a Latin letter or a digit stuck to it.", apply: (t) => splitScriptBoundary(t) },
   { id: "separators", why: "A . or , between two digits is kept (5.5, 1,000).", apply: (t) => t.replace(/(?<=\d)\.(?=\d)/g, DOT).replace(/(?<=\d),(?=\d)/g, COMMA) },
   { id: "punctuation", why: "Every character that is not a letter, a digit or a protected separator becomes a space (punctuation, quotes, brackets, emoji, symbols).", apply: (t) => t.replace(/[^\p{L}\p{N}]/gu, " ") },
   { id: "restore_separators", why: "The protected separators come back.", apply: (t) => t.replace(new RegExp(DOT, "g"), ".").replace(new RegExp(COMMA, "g"), ",") },
@@ -76,14 +74,7 @@ export function explainNormalization(raw: unknown): string[] {
 
 /** The letters folded for COMPARISON only (never for display or storage): hamza forms of alef, alef maqsura, ta marbuta, and the Persian/Arabic variants of letters Egyptians type on a phone (ڤ for V, پ for P, ک for K, ی for Y). */
 export function matchKey(token: string): string {
-  return token
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/ڤ/g, "ف")
-    .replace(/پ/g, "ب")
-    .replace(/ک/g, "ك")
-    .replace(/ی/g, "ي");
+  return foldPersianLetters(foldLetterVariants(token));
 }
 
 export interface SemanticText {
