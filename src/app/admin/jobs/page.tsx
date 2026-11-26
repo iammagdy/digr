@@ -6,7 +6,6 @@ import { formatAr } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { tint } from "@/components/admin/format";
 import { dayLabel } from "@/lib/dayLabel";
-import { RoutingTracePanel } from "@/components/admin/RoutingTracePanel";
 import { JobDiagnosticPanel } from "@/components/admin/JobDiagnosticPanel";
 import { ADMIN_JOB_STATE_LABEL_AR, type AdminJobState } from "@/lib/server/adminJobState";
 import { HIDE_TEST_ACCOUNTS_LABEL_AR } from "@/lib/server/adminTestAccounts";
@@ -131,7 +130,6 @@ export default function AdminJobsPage() {
               <span dir="ltr" className="text-right">{formatAr(j.held)} / {formatAr(j.charged)}</span>
               <span>{j.costUsd == null ? "—" : usd(j.costUsd)}</span>
               <span><span className="whitespace-nowrap rounded-full px-2.5 py-[3px] text-[11px] font-semibold" style={{ background: tint(color === "var(--goldT)" ? "var(--gold)" : color, 14), color }}>{label}</span></span>
-              {j.chain && <RoutingTracePanel jobId={j.id} />}
               {ENDED_NEEDS_DIAGNOSTIC.includes(j.status) && <JobDiagnosticPanel jobId={j.id} />}
             </div>
           );

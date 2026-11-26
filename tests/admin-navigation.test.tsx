@@ -21,7 +21,7 @@ vi.mock("../src/lib/adminApi", () => ({ adminFetch: vi.fn(async () => providers)
 /** Every admin address that existed before the reorganisation, written out here on purpose: the menu may move things, an address may not disappear. */
 const OLD_ROUTES = [
   "/admin", "/admin/users", "/admin/topups", "/admin/jobs", "/admin/visitors", "/admin/operations", "/admin/finance", "/admin/promo-codes", "/admin/support",
-  "/admin/providers", "/admin/calls-log", "/admin/audit", "/admin/requests", "/admin/conference", "/admin/reverse-lookup", "/admin/planner-selftest",
+  "/admin/providers", "/admin/calls-log", "/admin/audit", "/admin/requests", "/admin/conference", "/admin/reverse-lookup",
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ];
 /** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
@@ -48,10 +48,10 @@ describe("every old admin address still opens its page", () => {
   });
 
   it("the menu list produces exactly the old addresses and nothing was lost from it", () => {
-    // CHANGED (DT-20261118-06, the menu gains «الرسائل والحملات»: 21 -> 22 pages; DT-20261123-admin-provider-updates adds «تحديثات المزوّدين»: 22 -> 23 pages; every old address is still required)
+    // CHANGED (DT-20261118-06, the menu gains «الرسائل والحملات»: 21 -> 22 pages; DT-20261123-admin-provider-updates adds «تحديثات المزوّدين»: 22 -> 23 pages; DT-20261126-legacy-admin-retire retires «فحص المخطط»: 23 -> 22 pages; every old address is still required)
     expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES, ...MENU_ONLY_ROUTES].sort());
     expect([...ADMIN_LEGACY_ROUTES].sort()).toEqual([...OLD_ROUTES].sort()); // the legacy list itself never changes
-    expect(ADMIN_PAGES).toHaveLength(23);
+    expect(ADMIN_PAGES).toHaveLength(22);
   });
 
   it("no redirect was added that could send an old address somewhere else", () => {
