@@ -21403,6 +21403,28 @@
      "waterfall": true
     }
    ]
+  },
+  "walletEstimateSlots": {
+   "youtube-comments": {
+    "discovery": {
+     "endpointId": "tikhub.x.youtube-web-search-channel",
+     "rowsPerPage": 30
+    },
+    "comments": {
+     "endpointId": "tikhub.youtube.video.comments",
+     "rowsPerPage": 20
+    },
+    "replies": {
+     "endpointId": "anyapi.youtube.comment_replies",
+     "rowsPerPage": 10
+    }
+   },
+   "x-posts": {
+    "posts": {
+     "endpointId": "anyapi.x.search.posts",
+     "rowsPerPage": 20
+    }
+   }
   }
  },
  "web": {

@@ -2,14 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BELOW_MINIMUM_AR, CAPACITY_NOTE_AR, WALLET_REPLIES_SHARE, minimumOrderPoints, walletCapacityOf } from "../src/lib/walletEstimate";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
-import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { checkCustomerText } from "../src/lib/agentMission/text";
+import walletCosts from "../data/treg/wallet_estimate_costs.json";
 
 /**
  * ROUND 14, item 6: THE WALLET'S ESTIMATE. Live: with 113 points «رصيدك يكفي تقريبًا لـ ٤١٠ تعليق يوتيوب، ٩٦٤ منشور إكس، ٣٥ شركة». Real orders: 20 X tweets cost 200 points, 101 YouTube items cost 97 of a hold of 242; the minimum order is 200 points (the price rule's own minimum).
- * The estimate now comes from `priceMissionByCode` (the plan card's price function, read only, `price.ts` untouched) with the verified cards' cost per row.
+ * The estimate now comes from `priceMissionByCode` (the plan card's price function, read only, `price.ts` untouched) with the generated cost-per-row snapshot.
  */
-const costPerRow = (id: string) => { const c = cardOf(id)!; return c.costUsdPerPage / Math.max(1, c.page.observedRowsPerPage); };
 
 describe("below the minimum order there is no estimate, and the page says so", () => {
   it("the minimum is the price rule's own 200 points", () => { expect(minimumOrderPoints()).toBe(200); });
@@ -26,11 +25,11 @@ describe("below the minimum order there is no estimate, and the page says so", (
 
 describe("what is promised is what the plan card's price rule holds", () => {
   const yt = (n: number) => priceMissionByCode([
-    { rows: 2, costPerRowUsd: costPerRow("tikhub.x.youtube-web-search-channel"), deliver: true },
-    { rows: n, costPerRowUsd: costPerRow("tikhub.youtube.video.comments"), deliver: true },
-    { rows: Math.ceil(n * WALLET_REPLIES_SHARE), costPerRowUsd: costPerRow("anyapi.youtube.comment_replies"), deliver: true, codeOnly: true },
+    { rows: 2, costPerRowUsd: walletCosts.discoveryUsdPerRow, deliver: true },
+    { rows: n, costPerRowUsd: walletCosts.commentsUsdPerRow, deliver: true },
+    { rows: Math.ceil(n * WALLET_REPLIES_SHARE), costPerRowUsd: walletCosts.repliesUsdPerRow, deliver: true, codeOnly: true },
   ]).reservePoints;
-  const x = (n: number) => priceMissionByCode([{ rows: n, costPerRowUsd: costPerRow("anyapi.x.search.posts"), deliver: true }]).reservePoints;
+  const x = (n: number) => priceMissionByCode([{ rows: n, costPerRowUsd: walletCosts.postsUsdPerRow, deliver: true }]).reservePoints;
   it.each([200, 242, 500, 1000, 5000])("with %i points each chip is the LARGEST request whose hold fits, by the same function", (points) => {
     const cap = walletCapacityOf(points);
     if (cap.kind !== "ok") throw new Error("expected an estimate");

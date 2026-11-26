@@ -1,9 +1,8 @@
 import { priceMissionByCode, type StagePriceInput } from "./agentMission/price";
 import { toArabicDigits } from "./arabicDigits";
 import { AGENT_MAX_DELIVERED_ROWS } from "./agentMission/constants";
-// the cards are DATA files (no catalog, no node module): this module is imported by a page that runs in the browser
-import { X_CARDS } from "./agentMission/foundation/toolCards/x";
-import { YOUTUBE_CARDS } from "./agentMission/foundation/toolCards/youtube";
+// pure numeric snapshot generated from treg_catalog_sellable.json + treg.walletEstimateSlots: browser-safe, zero provider tokens or endpoint IDs
+import walletCosts from "../../data/treg/wallet_estimate_costs.json";
 
 /**
  * THE WALLET'S «رصيدك يكفي تقريبًا لـ» (round 14). Live: with 113 points the wallet promised «٤١٠ تعليق يوتيوب، ٩٦٤ منشور إكس، ٣٥ شركة», while a real order costs at least 200 points (the minimum of the mission price rule: 20 X tweets cost 200, 101 YouTube items cost 97 of a plan whose
@@ -18,8 +17,18 @@ export const WALLET_REPLIES_SHARE = 0.25;
 /** The most rows one job may deliver (the engine's own limit): an estimate never promises more than one request can bring. */
 const MAX_ROWS = AGENT_MAX_DELIVERED_ROWS;
 
-const CARDS = [...YOUTUBE_CARDS, ...X_CARDS];
-const costPerRow = (endpointId: string): number => { const c = CARDS.find((x) => x.endpointId === endpointId); return c ? c.costUsdPerPage / Math.max(1, c.page.observedRowsPerPage) : 0; };
+function positiveCost(key: keyof typeof walletCosts): number {
+  const v = walletCosts[key];
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+    throw new Error(`Invalid wallet_estimate_costs.json.${key}`);
+  }
+  return v;
+}
+
+const DISCOVERY_USD_PER_ROW = positiveCost("discoveryUsdPerRow");
+const COMMENTS_USD_PER_ROW = positiveCost("commentsUsdPerRow");
+const REPLIES_USD_PER_ROW = positiveCost("repliesUsdPerRow");
+const POSTS_USD_PER_ROW = positiveCost("postsUsdPerRow");
 
 interface Shape { id: string; labelAr: string; stages: (n: number) => StagePriceInput[]; countOf: (n: number) => number }
 const SHAPES: ReadonlyArray<Shape> = [
@@ -27,13 +36,13 @@ const SHAPES: ReadonlyArray<Shape> = [
     id: "youtube-comments", labelAr: "تعليق يوتيوب",
     // a request for comments: the two videos' own search, the comments, and the replies that come with them (code-only: the model plans nothing for them)
     stages: (n) => [
-      { rows: 2, costPerRowUsd: costPerRow("tikhub.x.youtube-web-search-channel"), deliver: true },
-      { rows: n, costPerRowUsd: costPerRow("tikhub.youtube.video.comments"), deliver: true },
-      { rows: Math.ceil(n * WALLET_REPLIES_SHARE), costPerRowUsd: costPerRow("anyapi.youtube.comment_replies"), deliver: true, codeOnly: true },
+      { rows: 2, costPerRowUsd: DISCOVERY_USD_PER_ROW, deliver: true },
+      { rows: n, costPerRowUsd: COMMENTS_USD_PER_ROW, deliver: true },
+      { rows: Math.ceil(n * WALLET_REPLIES_SHARE), costPerRowUsd: REPLIES_USD_PER_ROW, deliver: true, codeOnly: true },
     ],
     countOf: (n) => n,
   },
-  { id: "x-posts", labelAr: "منشور إكس", stages: (n) => [{ rows: n, costPerRowUsd: costPerRow("anyapi.x.search.posts"), deliver: true }], countOf: (n) => n },
+  { id: "x-posts", labelAr: "منشور إكس", stages: (n) => [{ rows: n, costPerRowUsd: POSTS_USD_PER_ROW, deliver: true }], countOf: (n) => n },
 ];
 
 /** The hold of a request of n rows; a request above the job's own cap is not an order at all (it is split into several), so it never fits. */
