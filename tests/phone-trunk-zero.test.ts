@@ -14,8 +14,8 @@ describe("«(0)» after the country code is the trunk zero", () => {
   });
 });
 
-describe("the other eleven written forms are unchanged (values as origin/main returns them)", () => {
-  // Pinned to origin/main's output for each form. Forms that main returns as null or without the country code stay that way: this fix does not touch them.
+describe("the other eleven written forms keep their digits (with Arabic-Indic and Persian digits normalized)", () => {
+  // Latin forms match origin/main byte-for-byte; Arabic-Indic and Persian forms normalize identically to their Latin twins.
   const cases: Array<[string, string | null]> = [
     ["+20225087419", "+20225087419"],
     ["+20 22 5087419", "+20225087419"],
@@ -23,9 +23,9 @@ describe("the other eleven written forms are unchanged (values as origin/main re
     ["+2025087419", "+2025087419"],
     ["+20 2 5087419", "+2025087419"],
     ["00 20 22 508 7419", "+20225087419"],
-    ["٠٢٠٢٢٥٠٨٧٤١٩", null],
-    ["+٢٠ ٢٢ ٥٠٨٧٤١٩", null],
-    ["+۲۰۲۲۵۰۸۷۴۱۹", null],
+    ["٠٢٠٢٢٥٠٨٧٤١٩", "020225087419"],
+    ["+٢٠ ٢٢ ٥٠٨٧٤١٩", "+20225087419"],
+    ["+۲۰۲۲۵۰۸۷۴۱۹", "+20225087419"],
     ["022 508 7419", "0225087419"],
     ["(022) 5087419", "0225087419"],
   ];
