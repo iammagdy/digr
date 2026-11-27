@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { CONFIRM_PHRASE, STAGES, checkLedger, safetyProblems, stagePassed, Recorder, percentile } from "../scripts/pressure/lib";
-import { runStage, main, type Config } from "../scripts/pressure/run";
+import { describe, expect, it, vi } from "vitest";
+import { CONFIRM_PHRASE, checkLedger, safetyProblems, stagePassed, Recorder, percentile } from "../scripts/pressure/lib";
+import { main } from "../scripts/pressure/run";
 
 const good = { base: "https://diger-abc123-iam-magdy.vercel.app", testDatabaseUrl: "https://testprojectref.supabase.co", confirm: CONFIRM_PHRASE, stage: 50, allow500: false };
 
@@ -81,86 +81,25 @@ describe("the verdict of a stage", () => {
   });
 });
 
-/** A stand-in for the preview and the test database, in memory: the real script runs against it. */
-function standIn(options: { doubleReserve?: boolean } = {}) {
-  const base = "https://stand-in.vercel.app";
-  const db = "https://standin.supabase.co";
-  const ledger: any[] = [];
-  const jobs = new Map<string, { polls: number; user: string }>();
-  const seen: string[] = [];
-  let users = 0;
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  const fetchImpl = (async (url: any, init: any = {}) => {
-    const u = String(url);
-    seen.push(`${init.method || "GET"} ${u.replace(base, "").replace(db, "DB").split("?")[0]}`);
-    const auth = String(init.headers?.authorization || "");
-    const user = auth.replace("Bearer ", "");
-    if (u.startsWith(`${db}/auth/v1/admin/users`)) return json({ id: `user_${users++}` });
-    if (u.startsWith(`${db}/auth/v1/token`)) return json({ access_token: JSON.parse(init.body).email });
-    if (u.startsWith(`${base}/api/busy-status`)) return json({ busy: false });
-    if (u.startsWith(`${base}/api/wallet/redeem`)) { ledger.push({ id: `top_${user}`, user_id: user, delta: 1000, type: "topup", job_id: null }); return json({ success: true }); }
-    if (u.startsWith(`${base}/api/wallet/balance`)) return json({ success: true, balance: 1000 });
-    if (u.startsWith(`${base}/api/chat/accept-quote`)) {
-      const jobId = `job_${user}`;
-      jobs.set(jobId, { polls: 0, user });
-      ledger.push({ id: `res_${jobId}`, user_id: user, delta: -300, type: "reserve", job_id: jobId });
-      if (options.doubleReserve) ledger.push({ id: `res2_${jobId}`, user_id: user, delta: -300, type: "reserve", job_id: jobId });
-      return json({ success: true, jobId });
-    }
-    if (u.startsWith(`${base}/api/chat`)) {
-      const message = JSON.parse(init.body).message as string;
-      return json({ success: true, conversationId: `conv_${user}`, ...(message.includes("تعليق") ? { planQuote: { quoteId: `q_${user}`, planHash: "h".repeat(64) } } : {}) });
-    }
-    if (u.startsWith(`${db}/rest/v1/jobs`)) {
-      const id = /id=eq\.([^&]+)/.exec(u)![1];
-      const job = jobs.get(id)!;
-      job.polls += 1;
-      if (job.polls >= 2) ledger.push({ id: `chg_${id}_${job.polls}`, user_id: job.user, delta: -120, type: "charge", job_id: id });
-      return json([{ status: job.polls >= 2 ? "completed" : "running", delivered_units: 30 }]);
-    }
-    if (u.includes("/nudge") || u.includes("/data") || u.includes("/download")) return json({ success: true });
-    if (u.startsWith(`${db}/rest/v1/credit_ledger`)) {
-      const offset = Number(/offset=(\d+)/.exec(u)![1]);
-      const wanted = new Set(decodeURIComponent(/user_id=in\.\(([^)]*)\)/.exec(u)![1]).split(","));
-      const relevant = ledger.filter((entry) => true);
-      return json(relevant.slice(offset, offset + 1000));
-    }
-    return json({}, 404);
-  }) as typeof fetch;
-  return { fetchImpl, ledger, seen, base, db };
-}
-
-describe("the staged script, run against an in-memory stand-in of the preview and the test database", () => {
-  const config = (s: ReturnType<typeof standIn>): Config => ({ base: s.base, dbUrl: s.db, anonKey: "anon", serviceKey: "service", promoCode: "PROMO", bypass: undefined, stage: 50, out: "unused.json" });
-  const deps = (s: ReturnType<typeof standIn>) => ({ fetch: s.fetchImpl, sleep: async () => undefined, signInPerMinute: 1_000_000, thinkMs: 0, pollMs: 0 });
-
-  it("stage 50: 50 visitors, a quarter start a mission, the ledger is clean and the stage passes", async () => {
-    const s = standIn();
-    const result = await runStage(config(s), deps(s));
-    expect(result.visitors).toBe(50);
-    expect(result.jobs).toBe(Math.round(STAGES[50].visitors * STAGES[50].missionShare));
-    expect(result.failedVisitors).toBe(0);
-    expect(result.summary.chat_turn.count).toBe(50 * STAGES[50].chatTurns);
-    expect(result.summary.accept_quote.count).toBe(result.jobs);
-    expect(result.summary.results_view.count).toBe(result.jobs);
-    expect(result.summary.download_xlsx.count).toBe(result.jobs);
-    expect(result.ledger.ok).toBe(true);
-    expect(result.verdict.passed).toBe(true);
-  });
-
-  it("a second reserve for one job is found and fails the stage", async () => {
-    const s = standIn({ doubleReserve: true });
-    const result = await runStage(config(s), deps(s));
-    expect(result.ledger.ok).toBe(false);
-    expect(result.ledger.problems.join(" ")).toContain("2 reserves");
-    expect(result.verdict.passed).toBe(false);
-  });
-
-  it("never prints or sends a key where it does not belong: the service key goes only to the test database", async () => {
-    const s = standIn();
-    const sent: Array<{ url: string; auth: string }> = [];
-    const wrapped = (async (url: any, init: any = {}) => { sent.push({ url: String(url), auth: String(init.headers?.authorization || "") + String(init.headers?.apikey || "") }); return s.fetchImpl(url, init); }) as typeof fetch;
-    await runStage(config(s), { ...deps(s), fetch: wrapped });
-    for (const call of sent.filter((entry) => entry.auth.includes("service"))) expect(call.url.startsWith(s.db)).toBe(true);
-  });
+it("a valid preview cannot start the retired pressure run or send a key", async () => {
+  const before = process.argv;
+  const request = vi.fn();
+  const report = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.stubGlobal("fetch", request);
+  process.argv = ["node", "run.ts", "--stage", "50", "--base", good.base];
+  try {
+    expect(await main({
+      PRESSURE_TEST_CONFIRM: CONFIRM_PHRASE,
+      TEST_SUPABASE_URL: good.testDatabaseUrl,
+      TEST_SUPABASE_ANON_KEY: "example-anon",
+      TEST_SUPABASE_SERVICE_ROLE_KEY: "example-service",
+      PRESSURE_PROMO_CODE: "example-code",
+    })).toBe(2);
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("retired chat quote actions"));
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    process.argv = before;
+    report.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });

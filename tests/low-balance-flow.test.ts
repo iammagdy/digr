@@ -5,7 +5,6 @@ vi.mock("../src/functions/shared/catalogClient", () => ({
   getCachedCatalogEndpoints: vi.fn(() => []),
 }));
 
-import { readFileSync } from "node:fs";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import {
@@ -71,13 +70,7 @@ describe("7. low balance: the states", () => {
     expect(text).toContain("اضغط موافقة");
   });
 
-  it("the chat page announces it once per plan, only when the plan was short and no job is running", () => {
-    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toContain("announcedTopupFor");
-    expect(page).toContain("lastPlan.isAffordable");
-    expect(page).toContain("topupContinuationMessageAr");
-    expect(page).toContain("if (balanceValue === null || activeJob) return;");
-  });
+
 });
 
 describe("7. low balance inside the real chat handler (offline)", () => {

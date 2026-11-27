@@ -110,7 +110,7 @@ describe("a channel mission through the chat (model stubbed to throw)", () => {
   });
 });
 
-describe("the plan card shows a mission's own steps and can be approved when complete", () => {
+describe("the plan card shows a mission's own steps and keeps the historical details", () => {
   const quote: PlanQuoteData = {
     quoteId: "q_m1",
     summaryAr: "سحب تعليقات أعلى ١٠ فيديوهات مشاهدة لكل قناة",
@@ -120,11 +120,11 @@ describe("the plan card shows a mission's own steps and can be approved when com
   };
   const render = () => renderToStaticMarkup(createElement(PlanQuoteCard, { quote, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available: 5000, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {} } as any));
 
-  it("renders the mission steps, not the generic ones, and offers approval", () => {
+  it("renders the mission steps, not the generic ones, and has no legacy approval", () => {
     const html = render();
     expect(html).toContain('data-testid="mission-steps"');
     expect(html).toContain("أحدث ٣٠ فيديو متاحًا");
     expect(html).not.toContain("خطوات التنفيذ المنهجية");
-    expect(html).toContain("أوافق وابدأ البحث");
+    expect(html).not.toContain("أوافق وابدأ البحث");
   });
 });

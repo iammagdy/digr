@@ -23,12 +23,8 @@ describe("quote approval state", () => {
     expect(getQuoteApprovalState("unknown", futureExpiry, now).canApprove).toBe(false);
   });
 
-  it("gates the approval button on current stored quote status and reports inactive quotes", () => {
-    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
+  it("restores historical quotes with current stored status and handles missing status", () => {
     const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(card).toContain("!locked && !low && approvalState.canApprove");
-    expect(card).toContain("approvalState.inactiveStatus");
-    expect(card).toContain("هذا العرض لم يعد صالحاً للموافقة");
     expect(chatPage).toMatch(/\.from\("plans_quotes"\)\s+\.select\("id, status"\)/);
     expect(chatPage).toContain('status: quoteStatusById.get(quoteId) || "unknown"');
   });

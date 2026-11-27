@@ -93,7 +93,7 @@ describe("A6: the owner's exact conversation, offline", () => {
     expect(first.contentAr).not.toMatch(STARTED);
     expect(JSON.stringify(first.planQuote)).not.toMatch(STARTED);
 
-    // 2. Approval (accept-quote succeeds): the page appends the started message, then the worker's completion line.
+    // 2. In the historical conversation after approval: the page appends the started message, then the worker's completion line.
     const conversationId = first.conversationId;
     const userRow = tables.__rows("messages").find((row: any) => row.role === "user" && row.conversationId === conversationId);
     await tables.updateRow({ tableId: "messages", rowId: userRow.$id, data: { requestStatus: "accepted", requestQuoteId: first.planQuote.quoteId } });
@@ -188,10 +188,9 @@ describe("A2: «جارٍ سحب البيانات» appears only after an explici
       return statSync(full).isDirectory() ? walk(full) : /\.(ts|tsx)$/.test(name) ? [full] : [];
     });
 
-  it("the sentence has exactly one source and exactly one place that shows it", () => {
+  it("the quote-only wording has one historical source and no live caller", () => {
     const users = walk("src").filter((file) => readFileSync(file, "utf8").includes("postApprovalMessageAr"));
     expect(users.map((file) => file.replaceAll("\\", "/")).sort()).toEqual([
-      "src/app/dashboard/chat/page.tsx",
       "src/lib/postApproval.ts",
     ]);
     // No server code, plan text, system prompt or other component spells the phrase out.
@@ -199,32 +198,5 @@ describe("A2: «جارٍ سحب البيانات» appears only after an explici
     expect(spelledOut.map((file) => file.replaceAll("\\", "/"))).toEqual(["src/lib/postApproval.ts"]);
   });
 
-  it("it is shown only inside the approval handler, after accept-quote succeeded, and that handler runs only from the plan card's approve button", () => {
-    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    const handler = page.slice(page.indexOf("async function handleStartExecution("), page.indexOf("// Download File Handler"));
-    expect(handler).toContain('fetch("/api/chat/accept-quote"');
-    expect(handler).toContain("explicitApproval: true");
-    const accepted = handler.indexOf("if (!res.ok || !data.success)");
-    expect(accepted).toBeGreaterThan(-1);
-    expect(handler.indexOf("content: postApprovalMessageAr(data.driverMode)")).toBeGreaterThan(accepted);
-    // The throw on failure comes first, so a refused approval never reaches the message.
-    expect(handler.slice(accepted, accepted + 160)).toContain("throw new Error");
-    // The only use in the page, and the only caller of the handler is the card's onStart.
-    expect(page.match(/postApprovalMessageAr/g)!.length).toBe(2); // import + the one push
-    expect(page.match(/handleStartExecution/g)!.length).toBe(2); // definition + onStart wiring
-    expect(page).toContain("onStart={handleStartExecution}");
-    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-    expect(card.match(/onStart\(quote\)/g)!.length).toBe(1);
-    expect(card).toContain("onClick={() => onStart(quote)}");
-  });
 
-  it("the accept-quote route refuses a request that is not an explicit approval", () => {
-    const route = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    const guard = route.indexOf("if (!hasExplicitQuoteApproval(body))");
-    expect(guard).toBeGreaterThan(-1);
-    // The refusal returns before anything is accepted, reserved or dispatched.
-    expect(route.slice(guard, guard + 220)).toContain("status: 400");
-    expect(guard).toBeLessThan(route.indexOf("acceptQuoteSupabase("));
-    expect(guard).toBeLessThan(route.indexOf("dispatchWorkerChunk("));
-  });
 });

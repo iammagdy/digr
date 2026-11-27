@@ -18,9 +18,6 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
-import { topupContinuationMessageAr } from "@/lib/lowBalance";
-import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
-import { approximateTotalPoints, remainingUnits, sampleRestMessageAr } from "@/lib/sampleFirst";
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
 import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
 import type { LivePreviewSample } from "@/lib/liveJobView";
@@ -33,16 +30,15 @@ import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE, customerFacingMessageText
 import { openJobHref } from "@/lib/requestLinks";
 import { PARTIAL_SENTENCE_AR } from "@/lib/jobs/requestStatus";
 import { isUntitledConversation, titleFromFirstRequest } from "@/lib/conversationTitleFromRequest";
-import { postApprovalMessageAr } from "@/lib/postApproval";
 import { resolvePlanningPending } from "@/lib/planningClient";
-import { closePageLineAr, normalizeDriverMode } from "@/lib/driverMode";
+import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
 import { getSlowFactor } from "@/lib/degradedClient";
 import BusyBanner from "@/components/BusyBanner";
 import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
-import { countPlainAr, planCountLineAr } from "@/lib/planCounts";
+import { countPlainAr } from "@/lib/planCounts";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
 import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
@@ -54,8 +50,6 @@ import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "@/lib/consultantCopy";
-import { buildCompanyPlanEditOperations, buildGenericCountryEditOperations, buildPeoplePlanEditOperations, planCountryParamKeys } from "@/lib/companyPlanEdits";
-import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { buildChatTimeline } from "@/lib/chatTimeline";
@@ -78,8 +72,7 @@ import { MissionPlanMobileBar, MissionPlanSheet, MissionPlanSidePanel } from "@/
 import { useMissionPanel } from "@/hooks/useMissionPanel";
 import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestId } from "@/lib/missionPanelState";
 import { TURN_TIMEOUT_MS, WAIT_BASE_AR, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
-import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
-import { startFailureText, type StartedJobState } from "@/lib/startFailure";
+import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse } from "@/lib/customerError";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -146,7 +139,6 @@ interface MessageItem {
   /** The request is a mission of the agent: the card draws it (see components/mission/AgentMissionCard.tsx). */
   agentMissionId?: string;
   /** After a delivered sample: the offer to quote the rest (a new quote on the remaining volume, without the sample's rows). */
-  sampleRest?: { sampleQuoteId: string; fullVolume: number };
   /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
   fileShape?: { spec: Record<string, unknown>; descriptionAr: string; jobId?: string };
   clarificationQuestions?: string[];
@@ -236,7 +228,6 @@ export default function ChatWorkspacePage() {
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
   // Active Job & Canvas Data
-  const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJobState | null>(null);
   const driverMode = useDriverMode();
   const methodologyPurchased = Boolean(activeJob?.jobId && methodologyBoughtJobs[activeJob.jobId]);
@@ -360,8 +351,8 @@ export default function ChatWorkspacePage() {
 
   // 2. Shared balance (sidebar, header and wallet read the same ledger sum)
   const { balance: userBalance, refresh: loadBalance } = useBalance();
-  const { notice: promoNotice, dismiss: dismissPromoNotice } = usePendingPromo(Boolean(user?.emailVerification), () => { void loadBalance(); });
   const creditValue = useCreditValue();
+  const { notice: promoNotice, dismiss: dismissPromoNotice } = usePendingPromo(Boolean(user?.emailVerification), () => { void loadBalance(); });
   const llmEnabled = useLlmEnabled();
   const router = useRouter();
 
@@ -1127,244 +1118,6 @@ export default function ChatWorkspacePage() {
     } catch {}
   }
 
-  // Save Direct Plan Edits
-  async function handleSaveDirectEdit(
-    currentQuote: PlanQuoteData,
-    newLimit: number,
-    newParam: string,
-    newFormats: string[],
-    newCountry?: string,
-    newIndustry?: string,
-    exploration?: { fullVolume: number; fullQuotedPoints: number },
-    pointsCap?: number
-  ) {
-    const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "company-research", params: {} };
-    const slug = primaryItem.capabilitySlug;
-
-    const operations: any[] = [
-      { action: "set_limit", capabilitySlug: slug, targetVolumeMax: Math.max(1, Number(newLimit) || 1) },
-      { action: "set_formats", formats: newFormats },
-    ];
-
-    const cleanVal = typeof newParam === "string" ? newParam.trim() : "";
-    const isProfile = slug.includes("profile") || slug.includes("user");
-    const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
-    if (isCompany) {
-      const params = (primaryItem.params || {}) as Record<string, unknown>;
-      operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || "", {
-        keyword: extractParamDisplayString(params, currentQuote.summaryAr, false),
-        country: typeof params.country === "string" ? params.country : typeof params.location === "string" ? params.location : "",
-        industry: typeof params.industry === "string" ? params.industry : "",
-      }));
-    } else if (slug.includes("people")) {
-      // Decision makers: the country (ISO code) and the job title, each under the parameter the service reads.
-      operations.push(...buildPeoplePlanEditOperations(slug, cleanVal, newCountry || ""));
-    } else {
-      // Any other plan that carries a country or location parameter (a social region filter, a service with its own location): the edited country
-      // replaces it, in the form the parameter already uses, whether or not the topic field changed.
-      if (newCountry && planCountryParamKeys(primaryItem.params as Record<string, unknown>).length > 0) {
-        operations.push(...buildGenericCountryEditOperations(slug, newCountry, primaryItem.params as Record<string, unknown>));
-      }
-    }
-    if (!isCompany && !slug.includes("people") && cleanVal && cleanVal !== "[object Object]") {
-      const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
-      // An X account plan (a channel, no keyword) is edited through its account, a link included; writing the field as a keyword or a link made it another kind of search.
-      const isAccountPlan = slug === "social-x-posts" && Boolean(primaryItem.params && typeof (primaryItem.params as Record<string, unknown>).channel === "string" && !("query" in primaryItem.params) && !("keyword" in primaryItem.params));
-
-      if (isProfile) {
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: "username",
-          value: cleanVal.replace(/^@/, "").trim(),
-        });
-      } else if (isPostOrUrl && !isAccountPlan && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
-        const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: urlKey,
-          value: cleanVal,
-        });
-      } else {
-        const paramKey = isAccountPlan ? "channel" : primaryItem.params && "keyword" in primaryItem.params ? "keyword" : "query";
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: paramKey,
-          value: cleanVal,
-        });
-      }
-    }
-
-    const jwtToken = await getAccessToken();
-
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-
-    const res = await fetch("/api/chat/edit-plan", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        quoteId: currentQuote.quoteId,
-        operations,
-        jwt: jwtToken,
-        ...(exploration ? { exploration } : {}),
-        ...(pointsCap && pointsCap > 0 ? { pointsCap } : {}),
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || "فشل تحديث الخطة وعرض السعر");
-    }
-
-    const updatedQuote: PlanQuoteData = data.planQuote || data.quote;
-    if (!updatedQuote) {
-      throw new Error("لم يتم استلام تفاصيل عرض السعر المحدث.");
-    }
-
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.planQuote?.quoteId === currentQuote.quoteId) {
-          return {
-            ...msg,
-            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: ${planCountLineAr(updatedQuote.items, updatedQuote.targetVolumeMax)}\n• التكلفة الإجمالية: ${pointsAr(updatedQuote.quotedPoints)}`,
-            planQuote: updatedQuote,
-          };
-        }
-        return msg;
-      })
-    );
-  }
-
-  // «استكشاف أولًا»: swap the plan for a small priced sample of itself, so the full volume is decided with facts.
-  async function handleExplore(quote: PlanQuoteData) {
-    const offer = quote.explorationOffer;
-    if (!offer) return;
-    try {
-      await handleSaveDirectEdit(
-        quote, offer.sampleUnits, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx"],
-        undefined, undefined, { fullVolume: offer.fullUnits, fullQuotedPoints: quote.quotedPoints },
-      );
-    } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_explore_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تجهيز الاستكشاف. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
-    }
-  }
-
-  // Start Job Execution
-  /** Whether the job of a quote exists (its reserve is made in the same step, so no job means nothing is held). */
-  async function lookupQuoteJobState(quoteId: string): Promise<StartedJobState> {
-    const jobId = getJobIdForQuote(quoteId);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const { data, error } = await createClient().from("jobs").select("id").eq("id", jobId).maybeSingle();
-        if (error) return "unknown";
-        if (data?.id) return "exists";
-      } catch {
-        return "unknown";
-      }
-      // The request may still be finishing on the server: look again before saying it did not start.
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-    return "none";
-  }
-
-  async function handleStartExecution(quote: PlanQuoteData) {
-    if (startingQuoteId || !user) return;
-    setStartingQuoteId(quote.quoteId);
-
-    try {
-      let data: any;
-      try {
-        const jwtToken = await getAccessToken();
-
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-
-        const res = await fetch("/api/chat/accept-quote", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            quoteId: quote.quoteId,
-            expectedPlanHash: quote.planHash,
-            explicitApproval: true,
-            jwt: jwtToken,
-          }),
-        });
-
-        data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || "فشل بدء تنفيذ الخطة");
-        }
-      } catch (err: any) {
-        // A dropped answer is not a failed start: the job of the quote is looked up first, and only the truth is said.
-        const deliberate = customerFacingFailure(err).text !== TEMPORARY_FAILURE_AR;
-        const jobState = deliberate ? "unknown" : await lookupQuoteJobState(quote.quoteId);
-        const text = startFailureText({ deliberateText: deliberate ? customerFacingFailure(err).text : null, jobState });
-        if (text !== null) {
-          setMessages((prev) => [
-            ...prev,
-            { id: `err_start_${Date.now()}`, role: "assistant", content: text, createdAt: new Date().toISOString() },
-          ]);
-          return;
-        }
-        // The request did start; only the answer was lost. It is shown as started, and its real progress comes from its own events.
-        data = { success: true, jobId: getJobIdForQuote(quote.quoteId), workerDispatch: { started: true }, reservedCredits: quote.quotedPoints };
-      }
-
-      loadBalance();
-      if (quote.exploration) explorationByJob.current.set(data.jobId, quote);
-      setRestPlanQuoteId(null);
-
-      setActiveJob({
-        jobId: data.jobId,
-        status: data.workerDispatch?.started ? "running" : "queued",
-        templateSlug: quote.items?.[0]?.capabilitySlug || "tiktok-profile",
-        rowsCollected: 0,
-        reservedCredits: data.reservedCredits,
-        requestedRows: quote.targetVolumeMax,
-        events: [
-          {
-            $id: `init_${Date.now()}`,
-            textAr: "تم قبول الطلب وجارٍ بدء التنفيذ...",
-            kind: "info",
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      });
-      setCanvasOpen(true);
-      // An approved mission keeps its plan panel next to the results panel (pinned): the stages, their states and their reasons stay in view instead of the panel folding away.
-      if ((quote as any).modelPlanned) changeMissionPanel({ expanded: true, pinned: true });
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `start_${Date.now()}`,
-          role: "assistant",
-          content: postApprovalMessageAr(data.driverMode),
-          // «keep the page open» disappears when the job ends; «you can close the page» (the driver is live) stays: a job that ends in seconds must not erase what the customer was told
-          progressNotice: normalizeDriverMode(data.driverMode) !== "cron",
-          jobId: data.jobId,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } catch (err: any) {
-      // Only the display of an accepted request can fail here: it is not a failed start, so the balance is not blamed.
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err_start_${Date.now()}`,
-          role: "assistant",
-          content: startFailureMessageAr(err),
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setStartingQuoteId(null);
-    }
-  }
-
   // Download File Handler
   async function handleDownload(ext: "xlsx" | "pdf" | "csv", spec?: FileSpec, jobIdOverride?: string) {
     const downloadJobId = jobIdOverride || activeJob?.jobId;
@@ -1637,20 +1390,6 @@ export default function ChatWorkspacePage() {
 
   /* ── wiring for the design's states ─────────────────────────────────── */
 
-  // «تحديث السعر»: the server recomputes the quote (same plan). An expired quote is never accepted server-side.
-  async function handleRefreshQuote(quote: PlanQuoteData) {
-    try {
-      await handleSaveDirectEdit(quote, quote.targetVolumeMax, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]);
-    } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_refresh_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تحديث السعر. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
-    }
-  }
-
-  // «اشحن {الفرق} والعودة هنا»
-  function handleTopupShort(shortEgp: number) {
-    const back = conversationId ? `/dashboard/chat?c=${conversationId}` : "/dashboard/chat";
-    router.push(`/dashboard/topup?amount=${shortEgp}&return=${encodeURIComponent(back)}`);
-  }
 
   // A question typed on the landing page is sent as the first message, then forgotten.
   const pendingHandled = useRef(false);
@@ -1772,75 +1511,6 @@ export default function ChatWorkspacePage() {
   const jobFinished = Boolean(activeJob && isTerminalJobStatus(activeJob.status) && activeJob.status !== "failed");
   const balanceValue = userBalance.status === "ready" ? userBalance.value : null;
 
-  // After an approved top-up the same plan becomes affordable: say so here, once per plan, and keep it approvable.
-  const announcedTopupFor = useRef(new Set<string>());
-  // Sample («استكشاف») runs: when one finishes, explain what its numbers mean for the full plan, once.
-  const explorationByJob = useRef(new Map<string, PlanQuoteData>());
-  const explorationAnnounced = useRef(new Set<string>());
-  useEffect(() => {
-    if (!activeJob || !jobFinished || activeJob.review === undefined) return;
-    const sample = explorationByJob.current.get(activeJob.jobId);
-    if (!sample?.exploration || explorationAnnounced.current.has(activeJob.jobId)) return;
-    explorationAnnounced.current.add(activeJob.jobId);
-    const estimate = estimateFromSample({
-      delivered: activeJob.rowsCollected,
-      requested: activeJob.requestedRows || sample.targetVolumeMax,
-      rows: extractedRecords as unknown as Array<Record<string, any>>,
-      fullUnits: sample.exploration.fullVolume,
-      unitPricePoints: sample.unitPricePoints,
-    });
-    // The rest of the request: what came, what is left (without the rows already delivered) and the approximate total with the sample.
-    const left = remainingUnits(sample.exploration.fullVolume, activeJob.rowsCollected);
-    const offerRest = !estimate.sourceExhausted && left > 0;
-    const content = offerRest
-      ? sampleRestMessageAr({
-          deliveredInSample: activeJob.rowsCollected,
-          sampleChargedPoints: activeJob.chargedCredits ?? 0,
-          remainingUnits: left,
-          approximateTotalPoints: approximateTotalPoints({ sampleChargedPoints: activeJob.chargedCredits ?? 0, remainingUnits: left, unitPricePoints: sample.unitPricePoints }),
-        })
-      : explorationResultMessageAr(estimate, sample.exploration.fullVolume);
-    setMessages((prev) => [...prev, {
-      id: `explore_done_${activeJob.jobId}`, role: "assistant", content, createdAt: new Date().toISOString(),
-      ...(offerRest ? { sampleRest: { sampleQuoteId: sample.quoteId, fullVolume: sample.exploration!.fullVolume } } : {}),
-    }]);
-  }, [activeJob, jobFinished, extractedRecords]);
-
-  // «اطلب الباقي»: a new quote on the remaining volume, excluding the sample's rows. Nothing is reserved until it is approved.
-  const [requestingRest, setRequestingRest] = useState(false);
-  // The plan for the rest of a request is open for approval while the sample's results are still on screen.
-  const [restPlanQuoteId, setRestPlanQuoteId] = useState<string | null>(null);
-  async function handleRequestRest(sampleQuoteId: string, fullVolume: number) {
-    if (requestingRest || !user) return;
-    setRequestingRest(true);
-    try {
-      const jwtToken = await getAccessToken();
-      const res = await fetch("/api/chat/sample-remainder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}) },
-        body: JSON.stringify({ sampleQuoteId, fullVolume }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر تجهيز الباقي حالياً. حاول مرة أخرى.");
-      const planQuote: PlanQuoteData | undefined = data.planQuote || data.quote;
-      // The sample's results stay open; the panel switches to the new plan until it is approved (its own run replaces the sample's).
-      if (planQuote?.quoteId) { setRestPlanQuoteId(planQuote.quoteId); setCanvasOpen(true); }
-      setMessages((prev) => [...prev, { id: `rest_${planQuote?.quoteId || Date.now()}`, role: "assistant", content: String(data.messageAr || ""), ...(planQuote ? { planQuote } : {}), createdAt: new Date().toISOString() }]);
-    } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_rest_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تجهيز الباقي حالياً. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
-    } finally {
-      setRequestingRest(false);
-    }
-  }
-  useEffect(() => {
-    if (balanceValue === null || activeJob) return;
-    const lastPlan = [...messages].reverse().find((m) => m.planQuote)?.planQuote;
-    if (!lastPlan || lastPlan.isAffordable || announcedTopupFor.current.has(lastPlan.quoteId)) return;
-    const text = topupContinuationMessageAr({ balance: balanceValue, quotedPoints: lastPlan.quotedPoints });
-    if (!text) return;
-    announcedTopupFor.current.add(lastPlan.quoteId);
-    setMessages((prev) => [...prev, { id: `topup_ok_${lastPlan.quoteId}`, role: "assistant", content: text, createdAt: new Date().toISOString() }]);
-  }, [balanceValue, messages, activeJob]);
   // The real profile name only. The e-mail prefix that the account hook falls back to is not a name (owner decision D2).
   const firstName = String(user?.user_metadata?.name || user?.user_metadata?.full_name || "").trim().split(/\s+/)[0] || "";
   const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
@@ -1913,17 +1583,6 @@ export default function ChatWorkspacePage() {
             <span className="text-xs font-light text-fnt">{m.fileShape.descriptionAr}</span>
           </div>
         )}
-        {m.sampleRest && (
-          <button
-            type="button"
-            data-testid="request-rest-btn"
-            disabled={requestingRest}
-            onClick={() => void handleRequestRest(m.sampleRest!.sampleQuoteId, m.sampleRest!.fullVolume)}
-            className="mt-2 min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
-          >
-            {requestingRest ? "جارٍ تجهيز الباقي..." : "اطلب الباقي"}
-          </button>
-        )}
         {m.planQuote && !canvasOpen && (
           <button
             type="button"
@@ -1973,17 +1632,9 @@ export default function ChatWorkspacePage() {
     <PlanQuoteCard
       quote={quote}
       conversationTitle={conversationTitle}
-      onStart={handleStartExecution}
-      onSaveEdit={(q, limit, param, formats, country, industry, cap) => handleSaveDirectEdit(q, limit, param, formats, country, industry, undefined, cap)}
-      onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${countPlainAr(units, "records")} تناسب رصيدي المتاح`)}
-      isStarting={startingQuoteId === quote.quoteId}
-      sending={loading}
       available={balanceValue}
       creditValue={creditValue}
-      onTopupShort={handleTopupShort}
-      onExplore={handleExplore}
       onOpenPrevious={({ jobId, conversationId: previousConversationId }) => (previousConversationId ? void handleOpenConversation(previousConversationId, jobId) : window.location.assign(openJobHref({ jobId })))}
-      onRefresh={handleRefreshQuote}
       locked={locked}
     />
   );
@@ -1997,7 +1648,7 @@ export default function ChatWorkspacePage() {
   const panelShowsPlan = shouldShowPlanPanel({
     latestQuote: latestPlanQuote ? { quoteId: latestPlanQuote.quoteId, status: latestPlanQuote.status, expiresAt: latestPlanQuote.expiresAt } : null,
     activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,
-    restPlanQuoteId,
+    restPlanQuoteId: null,
     jobIdForQuote: getJobIdForQuote,
   });
 

@@ -229,12 +229,10 @@ describe("point 2: the editor never holds the validation sentence, and a saved e
   const noCountry = quote({ items: [{ capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية", query: { keyword: { include: ["electrical"] } } }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 3.168 }] });
 
   it("ROOT CAUSE: the editor started from the placeholder «يلزم تحديد الدولة» and the method step wrote it into its sentence", () => {
-    const html = render(noCountry, { initiallyEditing: true });
+    const html = render(noCountry);
     expect(inputValues(html).join("|")).not.toMatch(PLACEHOLDER);
     expect(stepsOf(html)).not.toMatch(PLACEHOLDER);
     expect(stepsOf(html)).toContain("الكهرباء والطاقة الكهربائية");
-    // the country field is empty and asks for a value; saving it empty is refused in words
-    expect(html).toMatch(/id="pq-country-q_card"[^>]*value=""/);
     expect(planEditScopeError({ country: "", industry: "الكهرباء", needsCountry: true, needsIndustry: true })).toBe("اكتب الدولة قبل حفظ التعديل.");
     expect(planEditScopeError({ country: "يلزم تحديد الدولة", industry: "الكهرباء", needsCountry: true, needsIndustry: true })).toBe("اكتب الدولة قبل حفظ التعديل.");
     expect(planEditScopeError({ country: "كوكب المريخ", industry: "الكهرباء", needsCountry: true, needsIndustry: true })).toContain("لم أتعرف على هذه الدولة");
@@ -275,12 +273,11 @@ describe("point 2: the editor never holds the validation sentence, and a saved e
     // the generic phrase of an untouched field is never written as a title
     expect(buildPeoplePlanEditOperations("professional-people-search", "صناع القرار والمهنيون", "ألمانيا").map((op) => op.key)).toEqual(["country"]);
     const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toContain("buildPeoplePlanEditOperations(slug, cleanVal, newCountry || \"\")");
   });
 
   it("the card of a decision-makers plan without a country has the same empty field and no placeholder in its steps", () => {
     const people = quote({ items: [{ capabilitySlug: "professional-people-search", params: { q: "مديرين", limit: 5 }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 9 }] });
-    const html = render(people, { initiallyEditing: true });
+    const html = render(people);
     expect(stepsOf(html)).toContain("البحث عن صناع القرار والمهنيين ضمن المصادر المتاحة.");
     expect(stepsOf(html)).not.toMatch(PLACEHOLDER);
     expect(inputValues(html).join("|")).not.toMatch(PLACEHOLDER);
@@ -296,33 +293,12 @@ describe("point 28: one activity name in the summary, the chip, the field and th
     expect(q.summaryAr).toContain(label);
     const chip = planScopeRows(q.items as any).find((c) => c.label.includes("النشاط"));
     expect(chip?.value).toBe(label);
-    const html = render(q, { initiallyEditing: true });
+    const html = render(q);
     expect(stepsOf(html)).toContain(label);
-    expect(inputValues(html)).toContain(label);
     expect(stepsOf(html)).not.toMatch(PLACEHOLDER);
   });
 });
 
-describe("the edit mode of the plan card", () => {
-  it("shows ONE «إلغاء» and no approve button under the open editor; the approve button is back when it is closed", () => {
-    const open = render(quote(), { initiallyEditing: true });
-    expect((open.match(/>إلغاء</g) || []).length).toBe(1);
-    expect(open).not.toContain("إلغاء التعديل");
-    expect(open).not.toContain("أوافق وابدأ البحث");
-    expect(open).toContain("حفظ التعديل");
-    const closed = render(quote());
-    expect(closed).toContain("أوافق وابدأ البحث");
-    expect(closed).toContain("تعديل الخطة");
-    expect(closed).not.toContain("حفظ التعديل");
-  });
-
-  it("with a balance that does not cover the plan, the open editor still has one «إلغاء» and no second edit toggle", () => {
-    const html = render(quote(), { initiallyEditing: true, available: 3 });
-    expect((html.match(/>إلغاء</g) || []).length).toBe(1);
-    expect(html).not.toContain("إلغاء التعديل");
-    expect(html).not.toContain(">تعديل الخطة<");
-  });
-});
 
 describe("point 4: one sentence says why the price or the title differs from the earlier plan", () => {
   const companies = { unitPricePoints: 3.168, items: [{ capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية" } }] };
@@ -344,11 +320,11 @@ describe("point 4: one sentence says why the price or the title differs from the
     expect(previousPlanQuoteOf([{ role: "user" }])).toBeNull();
   });
 
-  it("the card shows the sentence before the approve button, and only while the plan can still be approved", () => {
+  it("the stored change note is shown before the retirement notice", () => {
     const note = "تغيّر سعر السجل عن الخطة السابقة لأن تفاصيل طلبك تغيّرت.";
     const html = render(quote({ changeNoteAr: note }));
     expect(html).toContain(note);
-    expect(html.indexOf(note)).toBeLessThan(html.indexOf("أوافق وابدأ البحث"));
+    expect(html.indexOf(note)).toBeLessThan(html.indexOf("العرض ده قديم ومبقاش متاح"));
     expect(render(quote({ changeNoteAr: note }), { locked: true })).not.toContain(note);
   });
 });
@@ -389,13 +365,13 @@ describe("point 7: «عندك نفس الطلب ده» before approving an ident
     expect(await findRecentDuplicateRequest({ from: () => { throw new Error("db down"); } }, { userId: "u1", planHash: "hash1" })).toBeNull();
   });
 
-  it("the card warns with the sentence and a button that opens the old result, and approving stays possible", () => {
+  it("the card warns with the sentence and a button that opens the old result, on a historical card", () => {
     const opened: unknown[] = [];
     const html = render(quote({ duplicateOf: { jobId: "job_old", conversationId: "conv_old", deliveredUnits: 5, completedAt: null } }), { onOpenPrevious: (p: unknown) => opened.push(p) });
     expect(html).toContain("عندك نفس الطلب ده.");
     expect(html).toContain("افتح النتيجة القديمة");
-    expect(html.indexOf("عندك نفس الطلب ده.")).toBeLessThan(html.indexOf("أوافق وابدأ البحث"));
-    expect(html).toContain("أوافق وابدأ البحث");
+    expect(html.indexOf("عندك نفس الطلب ده.")).toBeLessThan(html.indexOf("العرض ده قديم ومبقاش متاح"));
+    expect(html).not.toContain("أوافق وابدأ البحث");
     expect(render(quote())).not.toContain("عندك نفس الطلب ده");
     const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(page).toContain("handleOpenConversation(previousConversationId, jobId)");

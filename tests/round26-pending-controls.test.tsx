@@ -128,16 +128,6 @@ describe("the chat's own controls", () => {
     expect(source).toMatch(/disabled=\{loading\}[^>]*>\s*\{loading \? "جارٍ الإرسال…" : "إعادة المحاولة الآن"\}/);
     expect(source).toMatch(/disabled=\{loading\}[^>]*>\s*\{loading \? "جارٍ الإرسال…" : "إعادة إرسال الإجابات الآن"\}/);
   });
-  it("16. the plan card of the chat: the «smaller plan», «sample first» and «refresh the price» buttons wait for the server (a label and disabled), like «أوافق»", () => {
-    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-    expect(card).toMatch(/data-testid="edit-plan-downscaled-btn"[\s\S]{0,400}disabled=\{quote\.isDependent \|\| sending\}/);
-    expect(card).toMatch(/\{sending \? "جارٍ الإرسال…" : /);
-    expect(card).toMatch(/data-testid="explore-first-btn"[\s\S]{0,300}disabled=\{isStarting \|\| quote\.isDependent \|\| exploring \|\| sending\}/);
-    expect(card).toContain('"جارٍ التجهيز…"');
-    expect(card).toContain("جارٍ التحديث…");
-    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toMatch(/sending=\{loading\}/);
-  });
   it("17. the open-missions list: the cancel of a waiting request says «جارٍ الإلغاء…» while it is on its way", () => {
     const item = { id: "msn_1", status: "plan_ready", stateAr: "تنتظر اعتمادك", requestText: "طلب", createdAt: "2026-11-04T12:00:00.000Z", cancellable: true, conversationId: null } as any;
     const html = renderToStaticMarkup(createElement(OpenMissionsList, { items: [item], busyId: "msn_1", error: "", onCancel: () => {}, defaultOpen: true }));

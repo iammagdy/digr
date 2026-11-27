@@ -1,29 +1,16 @@
 import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { createAdminClient } from "../src/lib/supabase/server";
+import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
 
-/**
- * Many approvals at the same moment (the conference room). The route, the accept function and the history update are the real ones;
- * the database function is a stand-in that follows accept_quote_atomic as deployed (quote must be «quoted», one job per quote id,
- * active-job limit counts queued/running, the reserve equals the quote total) and is atomic by construction (no await between its check
- * and its write), so what these tests prove is the ROUTE'S behaviour under concurrency: it never asks for a second reserve, never
- * starts a second job for one quote and never lets the stand-in's balance go negative. The real database locks are SQL and are not
- * exercised here (see docs/CONFERENCE_READINESS.md, "not verified").
- */
+// The legacy DAL is exercised directly against a stand-in for its atomic SQL boundary.
 const state = vi.hoisted(() => ({
-  user: { id: "user_1", email: "a@b.c", email_confirmed_at: "2026-10-01T00:00:00Z", user_metadata: {} } as any,
   quotes: [] as any[],
   jobs: [] as any[],
   ledger: [] as any[],
-  messages: [] as any[],
-  dispatched: [] as string[],
-  events: [] as any[],
-  dispatch: "ok" as "ok" | "http_503" | "html" | "timeout" | "throws" | "auth",
-  recordFailureThrows: false,
 }));
 
 vi.mock("../src/lib/supabase/server", () => ({
-  createServerSideClient: vi.fn(async () => ({ auth: { getUser: vi.fn(async () => ({ data: { user: state.user }, error: null })) } })),
   createAdminClient: vi.fn(() => ({
     from: (table: string) => {
       if (table === "plans_quotes") {
@@ -36,22 +23,9 @@ vi.mock("../src/lib/supabase/server", () => ({
           }),
         };
       }
-      if (table === "messages") {
-        return {
-          update: (patch: any) => ({
-            eq: (c1: string, v1: string) => ({
-              eq: async (c2: string, v2: string) => {
-                for (const m of state.messages) if (m[c1] === v1 && m[c2] === v2) Object.assign(m, patch);
-                return { error: null };
-              },
-            }),
-          }),
-        };
-      }
-      return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }), insert: async (row: any) => { if (table === "job_events") state.events.push(row); return { error: null }; } };
+      throw new Error(`Unexpected table: ${table}`);
     },
     rpc: async (name: string, args: any) => {
-      if (name === "record_chunk_failure" && state.recordFailureThrows) throw new Error("rpc down");
       if (name !== "accept_quote_atomic") return { data: { success: true }, error: null };
       const q = state.quotes.find((item) => item.id === args.p_quote_id);
       if (!q) return { data: { success: false, error: "quote_not_found" }, error: null };
@@ -73,28 +47,13 @@ vi.mock("../src/lib/supabase/server", () => ({
   })),
 }));
 
-vi.mock("../src/lib/server/workerDispatch", () => ({
-  dispatchWorkerChunk: vi.fn(async (_base: string, jobId: string) => {
-    state.dispatched.push(jobId);
-    if (state.dispatch === "throws") throw new Error("socket closed");
-    if (state.dispatch === "timeout") throw Object.assign(new Error("timed out"), { name: "TimeoutError" });
-    if (state.dispatch === "http_503") return { started: false, status: 503, body: {}, failureCode: "worker_http_error" };
-    if (state.dispatch === "html") return { started: false, status: 200, body: {}, failureCode: "protection_redirect" };
-    if (state.dispatch === "auth") return { started: false, status: 401, body: {}, failureCode: "worker_auth_rejected" };
-    return { started: true, status: 200, body: {} };
-  }),
-}));
-vi.mock("../src/lib/server/jobNotices", async (importOriginal) => ({ ...(await importOriginal<any>()), sendJobNotice: vi.fn(async () => undefined) }));
-
-
 const HASH = "a".repeat(64);
 const future = () => new Date(Date.now() + 20 * 60_000).toISOString();
 const item = { capabilitySlug: "social-tiktok-comments", endpointId: AGENT_CAPABILITY_SLUG, unitPricePoints: 6, targetVolumeMin: 1, targetVolumeMax: 30, unitCostUsd: 0.001, params: { query: "كرة القدم" } };
 
-async function approve(quoteId: string) {
-  const { POST } = await import("../src/app/api/chat/accept-quote/route");
-  const res = await POST(new NextRequest("http://127.0.0.1:3000/api/chat/accept-quote", { method: "POST", body: JSON.stringify({ quoteId, expectedPlanHash: HASH, explicitApproval: true }) }));
-  return { status: res.status, json: await res.json() };
+async function approve(quoteId: string, userId = "user_1") {
+  const result = await acceptQuoteSupabase(createAdminClient(), { userId, quoteId, expectedPlanHash: HASH });
+  return { status: result.statusCode ?? 200, json: { ...result, error: result.errorAr } };
 }
 
 async function approveMany(quoteIds: string[]) {
@@ -112,11 +71,6 @@ describe("approvals at the same moment", () => {
     state.quotes = [];
     state.jobs = [];
     state.ledger = [];
-    state.messages = [];
-    state.dispatched = [];
-    state.events = [];
-    state.dispatch = "ok";
-    state.recordFailureThrows = false;
   });
   afterEach(() => { process.env = { ...env }; });
 
@@ -127,7 +81,6 @@ describe("approvals at the same moment", () => {
     // exactly one approval starts the job; the other nineteen are told it was already started (409), none reserves again
     expect(results.filter((r) => r.status === 200 && r.json.success === true)).toHaveLength(1);
     expect(results.filter((r) => r.status === 409)).toHaveLength(19);
-    expect(state.dispatched).toEqual(["job_quote_q_one"]);
     const reserves = state.ledger.filter((row) => row.type === "reserve");
     expect(reserves).toHaveLength(1);
     expect(reserves[0]).toMatchObject({ id: "res_job_quote_q_one", delta: -207 });
@@ -155,17 +108,13 @@ describe("approvals at the same moment", () => {
     const users = Array.from({ length: 20 }, (_u, i) => `user_${i + 10}`);
     state.quotes = users.map((u) => quoteRow(`q_${u}`, u));
     state.ledger = users.map((u) => credit(u, 300));
-    const results = await Promise.all(users.map(async (u) => {
-      state.user = { ...state.user, id: u };
-      return approve(`q_${u}`);
-    }));
-    // The route reads the signed-in user per request; the shared stand-in user is switched before each call, so the strongest claim
-    // here is about the money: no account ever holds more than one reserve per quote and no balance is negative.
+    const results = await Promise.all(users.map((u) => approve(`q_${u}`, u)));
+    // Each request's own account reaches the atomic boundary.
     for (const u of users) {
       const mine = state.ledger.filter((row) => row.user_id === u);
-      expect(mine.filter((row) => row.type === "reserve").length).toBeLessThanOrEqual(1);
+      expect(mine.filter((row) => row.type === "reserve")).toHaveLength(1);
       expect(mine.reduce((sum, row) => sum + row.delta, 0)).toBeGreaterThanOrEqual(0);
     }
-    expect(results.every((r) => r.status === 200 || r.status === 403 || r.status === 429)).toBe(true);
+    expect(results.every((r) => r.status === 200)).toBe(true);
   });
 });

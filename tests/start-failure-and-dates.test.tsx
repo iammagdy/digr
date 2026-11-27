@@ -44,18 +44,6 @@ describe("the sentence after a start that did not come back", () => {
     expect(startFailureEventAr("something new").message).toContain("رمز السبب ١٠");
   });
 
-  it("the chat page looks the job up before it says anything and never blames the balance on its own", () => {
-    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toContain("const jobState = deliberate ? \"unknown\" : await lookupQuoteJobState(quote.quoteId);");
-    expect(page).toContain("if (text !== null) {");
-    // The request did start (its job exists): the page continues with the normal started path, not with an error.
-    expect(page).toContain("data = { success: true, jobId: getJobIdForQuote(quote.quoteId), workerDispatch: { started: true }, reservedCredits: quote.quotedPoints };");
-    // Only an error while showing an accepted request reaches the last catch, and it does not blame the balance.
-    expect(page.match(/startFailureMessageAr\(err\)/g)).toHaveLength(1);
-    const lookup = page.slice(page.indexOf("async function lookupQuoteJobState"), page.indexOf("async function handleStartExecution"));
-    expect(lookup).toContain('.from("jobs").select("id").eq("id", jobId)');
-    expect(lookup).toContain("attempt < 3");
-  });
 });
 
 describe("dates in the data preview are in Arabic-Indic digits (display only)", () => {

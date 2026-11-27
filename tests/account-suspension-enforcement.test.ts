@@ -47,9 +47,6 @@ describe("the shared customer sign-in helpers refuse a suspended account", () =>
 describe("the routes that sign the customer in themselves check the ban right after the sign-in", () => {
   it.each([
     "src/app/api/chat/route.ts",
-    "src/app/api/chat/accept-quote/route.ts",
-    "src/app/api/chat/sample-remainder/route.ts",
-    "src/app/api/chat/edit-plan/route.ts",
     "src/app/api/topup/submit/route.ts",
     // Gate 1 P1-1: the methodology purchase spends points; the artifacts edit is a charged change of a request
     "src/app/api/jobs/[id]/methodology/route.ts",

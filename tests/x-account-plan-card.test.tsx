@@ -47,11 +47,7 @@ describe("the card of an X account plan reads the account, never a topic", () =>
     for (const topicPhrase of ["البحث عن", "حول «", "فرز النتائج حسب صلتها", "حسب الصلة", "الموضوع المطلوب", "موضوع المحتوى", "على المنصة المحددة"]) {
       expect(html, topicPhrase).not.toContain(topicPhrase);
     }
-    // the editor (opened) asks for the account, with the account in the field
-    const editing = render(quote, { initiallyEditing: true });
-    expect(editing).toContain("اسم الحساب");
-    expect(editing).not.toContain("موضوع المحتوى / الاستعلام");
-    expect(inputValues(editing)).toContain("@elonmusk");
+
   });
 
   it("the scope row of the plan is «الحساب: @elonmusk», not a topic", async () => {

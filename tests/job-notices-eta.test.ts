@@ -112,13 +112,6 @@ describe("the notices of a long job", () => {
     expect(await insertJobNotice({ from: () => { throw new Error("down"); } }, "u1", jobStalledNotice())).toBe(false);
   });
 
-  it("the start notice is sent on acceptance only when the first chunk started and the job is long; it never fails the acceptance", () => {
-    const route = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    expect(route).toContain("shouldSendStartedNotice({ workerStarted: Boolean(workerDispatch.started), volume, isLongJob: isLongJob(volume), isModelPlanned, driver: driverNow })"); // a model-planned job (a mission or a single stage) also gets the in-site notice while the background driver is live
-    const block = route.slice(route.indexOf("A large request is announced in-app"), route.indexOf("return NextResponse.json({\n      success: true,"));
-    expect(block).toContain("} catch {");
-    expect(block).not.toMatch(/throw|return NextResponse/);
-  });
 });
 
 /* ---------------------------------------------------------------- the watchdog */

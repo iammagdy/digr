@@ -70,7 +70,9 @@ describe("the plan editor's count field", () => {
   });
   it("what the customer types is shown in Arabic-Indic digits whatever the keyboard", () => {
     const src = readFileSync("src/components/mission/PlanEditor.tsx", "utf8");
-    expect(src).toMatch(/data-testid="agent-edit-count"/);
+    const countInput = src.split("\n").find((line) => line.includes('data-testid="agent-edit-count"'));
+    expect(countInput).toContain('inputMode="numeric"');
+    expect(countInput).not.toContain('type="number"');
     expect(src).toContain("displayDigitsAr(e.target.value)");
   });
 });
@@ -80,15 +82,5 @@ describe("the free-text answer of the question card", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
     expect(card).toContain("onReply(displayDigitsAr(e.target.value))");
     expect(card).toContain("countInputValue(");
-  });
-});
-
-describe("the older plan card's limit field", () => {
-  it("is a text field with numeric keyboard (a number field draws Latin digits), shown in Arabic-Indic digits, parsed from any digit kind", () => {
-    const src = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-    expect(src).not.toMatch(/id=\{`pq-limit-\$\{quote\.quoteId\}`\} type="number"/);
-    expect(src).toContain("value={toArabicDigits(editLimit)}");
-    expect(src).toContain("countInputValue(e.target.value)");
-    expect(src).toContain("displayDigitsAr(e.target.value)");
   });
 });

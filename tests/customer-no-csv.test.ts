@@ -240,10 +240,9 @@ describe("what the customer is told and shown", () => {
     }
     const llm = readFileSync("src/functions/shared/llmClient.ts", "utf8");
     expect(llm).not.toContain("ملف CSV، وملف PDF");
-    // the plan card's chips and editor list the Excel and the PDF only
+    // Historical chips still filter the stored list before rendering.
     const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-    expect(card).toContain('{["xlsx", "pdf"].map((f) => (');
-    expect(card).toContain("withoutCsvFormat(");
+    expect(card).toContain('{withoutCsvFormat(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf"]).map(');
   });
 
   it("the customer's file buttons of the three surfaces come from one function that drops the CSV", () => {

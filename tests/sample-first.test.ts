@@ -1,6 +1,5 @@
-import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   SAMPLE_MAX_POINTS,
   SAMPLE_MIN_POINTS,
@@ -15,7 +14,6 @@ import {
 } from "../src/lib/sampleFirst";
 import { MAX_EXCLUDED_ROW_KEYS, buildRemainderPlan, dedupeKindForCapability } from "../src/lib/server/sampleRemainder";
 import { dedupeIdentityFor, dedupeRows } from "../src/lib/server/rowDedupe";
-import { getJobIdForQuote } from "../src/lib/md5";
 
 const comment = (id: string) => ({ comment_id: id, text: `تعليق ${id}` });
 const quote = (over: Record<string, unknown> = {}) => ({ items: [{ capabilitySlug: "social-youtube-comments", params: { query: "القهوة" } }], targetVolumeMax: 1000, unitPricePoints: 9, ...over });
@@ -156,119 +154,5 @@ describe("the worker drops the rows a sample delivered", () => {
     const seeded = worker.slice(worker.indexOf("const seen = new Set<string>();"), worker.indexOf("// Rows reused from a failed earlier run are already accepted rows of this job."));
     expect(seeded).toContain("seen.add(key)");
     expect(worker).toContain("duplicateExcludedCount += 1; return false;");
-  });
-});
-
-/* ---------------------------------------------------------------- the route */
-
-const state = vi.hoisted(() => ({
-  user: { id: "u1" } as { id: string } | null,
-  quote: null as any,
-  job: null as any,
-  files: new Map<string, string>(),
-  inserted: [] as any[],
-  rpcCalls: [] as string[],
-  createdPlans: [] as any[],
-}));
-
-vi.mock("../src/lib/supabase/server", () => ({
-  createServerSideClient: vi.fn(async () => ({ auth: { getUser: vi.fn(async () => ({ data: { user: state.user }, error: null })) } })),
-  createAdminClient: vi.fn(() => ({
-    rpc: vi.fn(async (name: string) => { state.rpcCalls.push(name); return { data: null, error: null }; }),
-    storage: { from: () => ({ download: async (path: string) => (state.files.has(path) ? { data: new Blob([state.files.get(path)!]), error: null } : { data: null, error: { message: "nf" } }) }) },
-    from: (table: string) => {
-      const api: any = {
-        select: () => api, eq: () => api,
-        maybeSingle: async () => ({ data: table === "plans_quotes" ? state.quote : table === "jobs" ? state.job : null, error: null }),
-        insert: async (row: any) => { state.inserted.push({ table, row }); return { error: null }; },
-      };
-      return api;
-    },
-  })),
-}));
-vi.mock("../src/functions/shared/planManager", () => ({
-  createAndSaveManagedQuote: vi.fn(async (_db: any, input: any) => {
-    state.createdPlans.push(input.plan);
-    return { quoteId: "q_rest_1", planHash: "h", summaryAr: input.plan.summaryAr, items: input.plan.items, targetVolumeMax: input.plan.items[0].targetVolumeMax, unitPricePoints: 9, expectedPoints: 100, quotedPoints: 115, isAffordable: true, userBalance: input.userBalance, outputFormats: input.plan.outputFormats, expiresAt: new Date(Date.now() + 3600_000).toISOString(), status: "proposed" };
-  }),
-}));
-vi.mock("../src/functions/shared/capabilityRegistry", () => ({ getEnabledCapabilitiesWithCoreServices: vi.fn(async () => []), getCatalogCapabilities: vi.fn(async () => []) }));
-vi.mock("../src/lib/supabase/ledger", () => ({ calculateBalance: vi.fn(async () => 5000) }));
-
-const QUOTE_ID = "q_sample_1";
-function request(body: Record<string, unknown>) {
-  const { NextRequest } = require("next/server");
-  return new NextRequest("http://localhost/api/chat/sample-remainder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-}
-
-describe("POST /api/chat/sample-remainder", () => {
-  beforeEach(() => {
-    state.user = { id: "u1" };
-    state.quote = { id: QUOTE_ID, user_id: "u1", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "social-youtube-comments", params: { query: "القهوة" }, targetVolumeMin: 1, targetVolumeMax: 1000, unitPricePoints: 9 }] };
-    state.job = { id: getJobIdForQuote(QUOTE_ID), user_id: "u1", status: "completed", delivered_units: 28, charged_credits: 252, unit_price: 9 };
-    state.files = new Map([[`u1/${getJobIdForQuote(QUOTE_ID)}/data.json`, JSON.stringify({ rows: Array.from({ length: 28 }, (_, i) => comment(`c${i + 1}`)) })]]);
-    state.inserted = [];
-    state.rpcCalls = [];
-    state.createdPlans = [];
-  });
-
-  it("builds the rest on the remaining volume without the sample's rows, as a NEW quote, with no reserve, no ledger and no refund", async () => {
-    const { POST } = await import("../src/app/api/chat/sample-remainder/route");
-    const res = await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 2000 }));
-    const data = await res.json();
-    expect(res.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(state.createdPlans).toHaveLength(1);
-    expect(state.createdPlans[0].items[0]).toMatchObject({ targetVolumeMax: 1972 });
-    expect(state.createdPlans[0].items[0].params.excludeRowKeys).toHaveLength(28);
-    expect(data.planQuote.afterSample).toMatchObject({ deliveredInSample: 28, sampleChargedPoints: 252, remainingUnits: 1972 });
-    expect(data.planQuote.status).toBe("quoted");
-    // nothing is reserved, charged or refunded here: the only writes are the new assistant message
-    expect(state.rpcCalls).toEqual([]);
-    expect(state.inserted.map((i) => i.table)).toEqual(["messages"]);
-    expect(state.inserted[0].row.quote.quoteId).toBe("q_rest_1");
-    expect(JSON.stringify(state.inserted)).not.toMatch(/credit_ledger|refund|reserve_|release_|settle_|chg_|res_|rel_/i);
-    expect(data.messageAr).toContain("الإجمالي التقريبي مع العينة");
-  });
-
-  it("refuses without a session, for another customer's sample, and before the sample is delivered", async () => {
-    const { POST } = await import("../src/app/api/chat/sample-remainder/route");
-    state.user = null;
-    expect((await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 2000 }))).status).toBe(401);
-    state.user = { id: "u2" };
-    expect((await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 2000 }))).status).toBe(403);
-    state.user = { id: "u1" };
-    state.job = { ...state.job, status: "running" };
-    expect((await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 2000 }))).status).toBe(409);
-    expect(state.createdPlans).toHaveLength(0);
-    expect(state.rpcCalls).toEqual([]);
-  });
-
-  it("creates no quote when the sample already delivered everything", async () => {
-    const { POST } = await import("../src/app/api/chat/sample-remainder/route");
-    const res = await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 28 }));
-    const data = await res.json();
-    expect(data).toMatchObject({ success: true, remaining: 0 });
-    expect(state.createdPlans).toHaveLength(0);
-    expect(state.inserted).toHaveLength(0);
-  });
-
-  it("rejects a malformed request", async () => {
-    const { POST } = await import("../src/app/api/chat/sample-remainder/route");
-    expect((await POST(request({ sampleQuoteId: "", fullVolume: 5 }))).status).toBe(400);
-    expect((await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 0 }))).status).toBe(400);
-    expect((await POST(request({ sampleQuoteId: QUOTE_ID, fullVolume: 1.5 }))).status).toBe(400);
-  });
-});
-
-describe("the chat offers the rest after the sample", () => {
-  const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-  const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-  it("shows «اطلب الباقي» under the delivered-sample message, and the new plan states the total with the sample", () => {
-    expect(page).toContain('data-testid="request-rest-btn"');
-    expect(page).toContain("sampleRestMessageAr({");
-    expect(page).toContain("setRestPlanQuoteId(planQuote.quoteId)");
-    expect(card).toContain('data-testid="plan-after-sample"');
-    expect(card).toContain("الإجمالي التقريبي مع العينة");
   });
 });

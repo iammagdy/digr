@@ -1,5 +1,7 @@
 # Pressure test runbook (for the owner)
 
+> Status after D-0248 step B. The legacy execution command is disabled. The configuration dry-run still works. The original procedure below records the retired test setup. An offline agent-worker fixture is required before enabling execution again.
+
 A staged test of 50, 100, 250 and 500 virtual visitors against a **preview deployment** that uses a **fake data provider** and a **separate test database**. It is run by the owner. It is never run by an agent and never against `diger.tech`.
 
 What it proves: that a room of phones can sign in, chat, get a plan, approve it, have the long jobs run in chunks, see the results and download a file, without a crash, without a double reserve, a double charge, a charge above the reserve or a negative balance. What it cannot prove: how the real provider, the real model or the real sign-in limits of the live project behave (see section 7).

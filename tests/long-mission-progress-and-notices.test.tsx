@@ -418,7 +418,6 @@ describe("«you can close the page» only with the always-on driver", () => {
     expect(page).toContain("closePageLineAr(driverMode)");
     expect(page).toContain("useDriverMode()");
     expect(page).not.toContain("تقدر تقفل الصفحة");
-    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8")).toContain("driverMode: await liveDriverMode(adminClient)");
     expect(readFileSync("src/hooks/useDriverMode.ts", "utf8")).toContain('useState<DriverMode>(cached ?? "tab")');
   });
 });

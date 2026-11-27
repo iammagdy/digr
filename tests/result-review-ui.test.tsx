@@ -66,7 +66,8 @@ describe("result review UI contracts (release branch)", () => {
     expect(page).toContain("motion-reduce:animate-none");
     expect(sidebar).toContain('aria-current={n.active ? "page" : undefined}');
     expect(quote).toContain("focus-visible:outline-2");
-    expect(quote).toContain("motion-safe:animate-spin motion-reduce:animate-none");
+    const missionCard = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
+    expect(missionCard).toContain("motion-safe:animate-spin motion-reduce:animate-none");
   });
 
   it("keeps the account menu readable when the desktop sidebar is collapsed", () => {
