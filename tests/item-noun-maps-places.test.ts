@@ -27,12 +27,12 @@ describe("the 14 Google Maps / local endpoints count places", () => {
     expect(overlay["treg.web.search"].item_noun_ar.singular).toBe("مقال");
     expect(overlay["treg.google.serp.organic"].item_noun_ar.singular).toBe("مقال");
   });
-  it("the rest of the overlay is untouched: same 3306 keys, the noun counts changed only by these 14", () => {
+  it("the rest of the overlay is untouched: same 3306 keys, with the B3 reviewed labels distribution", () => {
     const counts: Record<string, number> = {};
     for (const v of Object.values(overlay)) counts[v.item_noun_ar.singular] = (counts[v.item_noun_ar.singular] ?? 0) + 1;
     expect(Object.keys(overlay)).toHaveLength(3306);
-    expect(counts["مقال"]).toBe(340 - 14);
-    expect(counts["مكان"]).toBe(3 + 14);
-    expect(counts["تغريدة"]).toBe(1572);
+    expect(counts["مقال"]).toBe(113);
+    expect(counts["مكان"]).toBe(48);
+    expect(counts["تغريدة"]).toBe(42);
   });
 });
