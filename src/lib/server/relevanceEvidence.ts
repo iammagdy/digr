@@ -7,6 +7,8 @@
  * come from the request, so there is no per-sector word list to grow. Deterministic and offline.
  */
 
+import { EVIDENCE_ENDINGS, FOLD_TOPIC, isMarkOrTatweel, mapCodePoints, removeCodePoints, startsWithConjunctionWord, stripEvidenceAgentPrefix, stripEvidenceArticle, stripEvidenceClitic } from "../arabicUnits";
+
 /** Fields that describe what the company does. `industry` (the source label) is deliberately NOT here. */
 export const EVIDENCE_FIELDS = ["company_name", "name", "description", "specialties", "keywords", "tagline", "summary", "industry_description"] as const;
 
@@ -47,18 +49,13 @@ export function keywordPhrases(keywords: unknown[]): string[][] {
 }
 
 const ARABIC_LETTERS = /[\u0621-\u064A]/;
-const ARABIC_DIACRITICS = /[\u064B-\u065F\u0670\u0640]/g;
 
 /** Words that name a kind of business, not the activity: dropped from the customer's Arabic activity words. */
 const ARABIC_STOP_STEMS = new Set(["شرك", "مؤسس", "خدم", "قطاع", "مجال", "صناع", "اعمال", "نشاط", "منشا"]);
 
 /** Letters folded so the usual spelling variants meet: alef forms, ya/alef-maqsura, ta marbuta, no diacritics or tatweel. */
 export function normalizeArabic(text: string): string {
-  return String(text || "")
-    .replace(ARABIC_DIACRITICS, "")
-    .replace(/[\u0623\u0625\u0622\u0671]/g, "\u0627")
-    .replace(/\u0649/g, "\u064A")
-    .replace(/\u0629/g, "\u0647");
+  return mapCodePoints(removeCodePoints(String(text || ""), isMarkOrTatweel), FOLD_TOPIC);
 }
 
 /**
@@ -68,15 +65,15 @@ export function normalizeArabic(text: string): string {
  */
 export function stemArabic(word: string): string {
   let token = normalizeArabic(word).replace(/[^\u0621-\u064A]/g, "");
-  token = token.replace(/^(?:وال|بال|كال|فال|لل|ال)/, "");
-  if (token.length > 4) token = token.replace(/^[وبلف]/, "");
+  token = stripEvidenceArticle(token);
+  if (token.length > 4) token = stripEvidenceClitic(token);
   // up to two endings: «عقاريون» is «عقاري» + «ون», and «عقاري» is «عقار» + «ي»
   for (let pass = 0; pass < 2; pass += 1) {
-    const suffix = ["ات", "ون", "ين", "ان", "يه", "ها", "ه", "ي"].find((ending) => token.length - ending.length >= 3 && token.endsWith(ending));
+    const suffix = EVIDENCE_ENDINGS.find((ending) => token.length - ending.length >= 3 && token.endsWith(ending));
     if (!suffix) break;
     token = token.slice(0, token.length - suffix.length);
   }
-  if (token.length >= 4) token = token.replace(/^[مت]/, "");
+  if (token.length >= 4) token = stripEvidenceAgentPrefix(token);
   if (token.length === 4) token = token.replace(/^(.{2})\u064A(.)$/, "$1$2");
   return token;
 }
@@ -93,7 +90,7 @@ export function arabicKeywordPhrases(keywords: unknown[]): string[][] {
     let current: string[] = [];
     const flush = () => { if (current.length > 0) phrases.push([...new Set(current)]); current = []; };
     for (const token of arabicTokens(keyword)) {
-      if (/^و.{3,}/.test(token) && !/^وال?$/.test(token)) flush();
+      if (startsWithConjunctionWord(token)) flush();
       const stem = stemArabic(token);
       if (stem.length >= 3 && !ARABIC_STOP_STEMS.has(stem)) current.push(stem);
     }
