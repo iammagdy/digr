@@ -298,6 +298,7 @@ export function parseShapeModelAnswer(text: string): ShapeModelOutput | null {
     return changesSomething ? { type: "shape_file", replyAr: "تمام", spec: spec.data } : { type: "answer_question", answerAr: SHAPE_NOT_UNDERSTOOD_AR };
   }
   if (data.kind === "answer") {
+    if (typeof data.answerAr !== "string") return null;
     const checked = checkCustomerText(data.answerAr, { maxChars: 300 });
     // a shaping answer needs no number: a digit in it (a price, a count of points) is never shown
     if (checked.issues.length > 0 || hasDigit(checked.text)) return { type: "answer_question", answerAr: SHAPE_NOT_UNDERSTOOD_AR };
@@ -349,7 +350,12 @@ export async function runShapeModel(input: { text: string; columns: DatasetColum
   if (!result.ok) return failed(true);
   const tokens = { inputTokens: Math.max(0, Number(result.usage?.inputTokens) || 0), outputTokens: Math.max(0, Number(result.usage?.outputTokens) || 0) };
   if (result.truncated) return failed(true, tokens);
-  const output = parseShapeModelAnswer(result.text);
+  let output: ShapeModelOutput | null = null;
+  try {
+    output = parseShapeModelAnswer(result.text);
+  } catch {
+    output = null;
+  }
   if (!output) return failed(true, tokens);
   return {
     output,

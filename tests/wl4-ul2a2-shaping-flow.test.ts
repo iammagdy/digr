@@ -37,24 +37,34 @@ const SORT_BY_NAME = { kind: "shape", spec: { sortBy: [{ column: "اسم الش�
 
 afterEach(() => setChatModelForTesting(null));
 
-async function session(shapeAnswers: any[] = [json({ kind: "cant" })]) {
+async function session(
+  shapeAnswers: any[] = [json({ kind: "cant" })],
+  options: { conversationId?: string; brief?: Record<string, unknown> } = {},
+) {
+  const conversationId = options.conversationId ?? "c_ul2a2";
   const db = createChatDb();
+  const rpcSpy = vi.fn(async () => ({ data: null, error: null }));
+  (db as any).rpc = rpcSpy;
   const handler = new ChatHandler(db as any);
-  await db.createRow({ tableId: "conversations", rowId: "c_ul2a2", data: { userId: "u_ul2a2", title: "x", status: "active", totalTokens: 0 } });
+  await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "u_ul2a2", title: "x", status: "active", totalTokens: 0 } });
+  if (options.brief) {
+    await db.createRow({ tableId: "notes", rowId: `brief_${conversationId}`, data: { conversationId, contentMarkdown: JSON.stringify(options.brief) } });
+  }
   const legacy = vi.fn(async () => { throw new Error("the legacy planning model must never be asked about a turn on the delivered file"); });
   (handler as any).llm.executeTurn = legacy;
   const queue = [...shapeAnswers];
   const shapeModel = vi.fn(async () => (queue.length > 1 ? queue.shift() : queue[0])) as unknown as ChatModelCall & ReturnType<typeof vi.fn>;
   setChatModelForTesting(shapeModel);
-  const send = (message: string, resultColumns: DatasetColumn[] | undefined = columns) => handler.handleUserMessage({ userId: "u_ul2a2", conversationId: "c_ul2a2", message, userBalance: 5000, ...(resultColumns ? { resultColumns } : {}) }) as Promise<any>;
-  return { db, handler, legacy, shapeModel, send };
+  const send = (message: string, resultColumns: DatasetColumn[] | undefined = columns) => handler.handleUserMessage({ userId: "u_ul2a2", conversationId, message, userBalance: 5000, ...(resultColumns ? { resultColumns } : {}) }) as Promise<any>;
+  return { db, rpcSpy, handler, legacy, shapeModel, send };
 }
 const rowsOf = (db: ReturnType<typeof createChatDb>, table: string) => (db.store.get(table) || []) as any[];
-function expectNothingPaid(db: ReturnType<typeof createChatDb>, res: any) {
+function expectNothingPaid(db: ReturnType<typeof createChatDb>, res: any, rpcSpy?: ReturnType<typeof vi.fn>) {
   expect(res.planQuote).toBeUndefined();
   expect(res.revisionQuote).toBeUndefined();
   expect(res.agentMission).toBeUndefined();
   for (const table of ["credit_ledger", "jobs", "plans_quotes", "job_events", "agent_missions"]) expect(rowsOf(db, table), table).toHaveLength(0);
+  if (rpcSpy) expect(rpcSpy).not.toHaveBeenCalled();
 }
 
 describe("1) a text the code cannot read, columns sent → one constrained call, a valid spec on the real columns", () => {
@@ -241,5 +251,82 @@ describe("6) the legacy planning model is never reached from the shaping branch"
       expect(res.contentAr, text).toBeTruthy();
       expect(legacy, `${text} / ${JSON.stringify(answers)}`).not.toHaveBeenCalled();
     }
+  });
+
+  it("hostile propose_plan from the shaping model: fixed refusal sentence, zero quotes, zero jobs, zero ledger rows, zero money RPCs", async () => {
+    const { db, rpcSpy, send, legacy } = await session([json({ kind: "propose_plan", summaryAr: "خطة" })], { conversationId: "c_ul2a2_hostile_plan" });
+    const res = await send(UNREADABLE);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(res.outputType).toBe("answer_question");
+    expect(res.contentAr).toBe(SHAPE_MODEL_FAILED_AR);
+    expectNothingPaid(db, res, rpcSpy);
+  });
+});
+
+describe("7) G2 regression guards (P0-1, P0-2, P0-3): no legacy planner retry, no card->plan promotion, no crash on malformed answerAr", () => {
+  it("P0-1: a truncated shaping sentence ending with «:» never calls the legacy planner and becomes the fixed shaping reply", async () => {
+    const { db, rpcSpy, shapeModel, legacy, send } = await session(
+      [json({ kind: "answer", answerAr: "يمكنك اختيار الترتيب:" })],
+      { conversationId: "c_ul2a2_p01" },
+    );
+    const res = await send(UNREADABLE);
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(res.outputType).toBe("answer_question");
+    expect(res.clarificationItems ?? []).toHaveLength(0);
+    expect(res.contentAr).toBe(SHAPE_NOT_UNDERSTOOD_AR);
+    expectNothingPaid(db, res, rpcSpy);
+  });
+
+  it("P0-2a: answer to a model-built filter card (shape_filter_column_required) with a complete prior brief stays a plain answer and never enters priced planning", async () => {
+    const priorBrief = { platforms: ["facebook"], topics: ["مطاعم في مصر"], targetVolume: 50 };
+    const { db, rpcSpy, shapeModel, legacy, send } = await session(
+      [json({ kind: "shape", spec: { filters: [{ column: "المحافظة", op: "equals", value: "القاهرة" }] } })],
+      { conversationId: "c_ul2a2_p02_filter", brief: priorBrief },
+    );
+    const cardRes = await send("فلتر الملف حسب المحافظة على القاهرة ثم رتب بالاسم");
+    expect(cardRes.outputType).toBe("ask_clarification");
+    expect(cardRes.clarificationItems[0].id).toBe("shape_filter_column_required");
+
+    const answerRes = await send(JSON.stringify({
+      type: "clarification_answers",
+      answers: [{ questionId: "shape_filter_column_required", question: "؟", value: "المدينة" }],
+    }));
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(answerRes.outputType).toBe("answer_question");
+    expectNothingPaid(db, answerRes, rpcSpy);
+  });
+
+  it("P0-2b: stale shaping sort-column card answer with a complete prior brief stays a plain answer and never enters priced planning", async () => {
+    const priorBrief = { platforms: ["facebook"], topics: ["مطاعم في مصر"], targetVolume: 50 };
+    const { db, rpcSpy, shapeModel, legacy, send } = await session(
+      [],
+      { conversationId: "c_ul2a2_p02_stale", brief: priorBrief },
+    );
+    const res = await send(JSON.stringify({
+      type: "clarification_answers",
+      answers: [{ questionId: "shape_sort_asc_required", question: "؟", value: "المحافظة" }],
+    }));
+    expect(shapeModel).not.toHaveBeenCalled();
+    expect(legacy).not.toHaveBeenCalled();
+    expect(res.outputType).toBe("answer_question");
+    expectNothingPaid(db, res, rpcSpy);
+  });
+
+  it("P0-3: malformed JSON object answerAr from the shaping model never throws (no HTTP 500), returns the fixed fallback sentence, and keeps the response usage record", async () => {
+    const { db, rpcSpy, shapeModel, legacy, send } = await session(
+      [{ ok: true as const, text: '{"kind":"answer","answerAr":{"toString":null}}', usage: { inputTokens: 321, outputTokens: 45 } }],
+      { conversationId: "c_ul2a2_p03" },
+    );
+    const res = await send(UNREADABLE);
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(res.outputType).toBe("answer_question");
+    expect(res.contentAr).toBe(SHAPE_MODEL_FAILED_AR);
+    expectNothingPaid(db, res, rpcSpy);
+    const usage = rowsOf(db, "llm_usage");
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ inputTokens: 321, outputTokens: 45 });
   });
 });

@@ -3168,7 +3168,7 @@ export class ChatHandler {
       let answerCandidate = getEffectiveAnswerText(output);
       const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
 
-      if (isEndingColon(answerCandidate) && !hasActiveTool(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
+      if (!isFileShapingTurn && isEndingColon(answerCandidate) && !hasActiveTool(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         // Retry once inside the turn
         loopMessages.push({
           role: "system",
@@ -3180,8 +3180,13 @@ export class ChatHandler {
       }
 
       if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
-        // Still ending with colon and no tool call came: build discovery card in code
-        fallbackToDiscovery(answerCandidate || undefined, true);
+        if (isFileShapingTurn) {
+          output = { type: "answer_question", answerAr: SHAPE_NOT_UNDERSTOOD_AR } as any;
+          finalContentAr = SHAPE_NOT_UNDERSTOOD_AR;
+        } else {
+          // Still ending with colon and no tool call came: build discovery card in code
+          fallbackToDiscovery(answerCandidate || undefined, true);
+        }
       }
       tPlanLlmMs = Date.now() - tLlmStart;
 
@@ -3418,7 +3423,7 @@ export class ChatHandler {
               ? llmResult.textBlockAr
               : clarification.contentAr,
           );
-        } else if (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume))) {
+        } else if (!isFileShapingTurn && !shapeAnswer && (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume)))) {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
           output = buildAutoPlanProposal(brief, validationCaps, message) as any;
@@ -3433,7 +3438,7 @@ export class ChatHandler {
         }
       } else if (output.type === "answer_question") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
-        if ((isPhase2 || isCardAnswer) && brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume)) {
+        if (!isFileShapingTurn && !shapeAnswer && (isPhase2 || isCardAnswer) && brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume)) {
           output = buildAutoPlanProposal(brief, validationCaps, message) as any;
           // A company or people request with no allowed source live comes back as a plain answer, not a plan.
           if (output.type === "answer_question") finalContentAr = (output as any).answerAr;
