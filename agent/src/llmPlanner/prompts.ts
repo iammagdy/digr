@@ -3,6 +3,8 @@
  * reads one real page, and prices. There are no word rules here: everything the model needs to know about a tool is the catalog's own description of it.
  */
 
+import { UNIT_NOUN_SINGULARS } from "../../../src/lib/agentMission/itemNoun";
+
 export const UNDERSTAND_TOOL = "request_plan";
 export const TOOL_CHOICE_TOOL = "tool_choice";
 export const FIELD_MAP_TOOL = "field_map";
@@ -114,6 +116,7 @@ Rules:
 - A child step: "parent_input" names the input that takes the parent item, and "from_field" which field of the parent sample item fills it (choose the field whose value the input expects: an id, a link, a handle). Do not put the parent's value in params.
 - Give up to 6 options across distinct tools in the candidates, best first: cover distinct sub-providers with their simplest query or account-posts tools first, then cheaper or alternative tools. Do not offer multiple options for the same tool.
 - Filter language and source criteria: Structured B2B tools and tools whose documentation or input notes use English expect English filter values (e.g., location_city: "Cairo" rather than "القاهرة", industry: "software" rather than "برمجيات", and standard country codes like "EG"). Emit filter values and query terms in the language the tool expects, according to its note and input documentation.
+- "unit_noun": what ONE item (one row) of this step's answer is, the singular word chosen from the list in the schema. It is the word the customer will see counted («٥ أماكن», «٣ شركات»), so it describes the row of the tool you chose (its "item" description and fields), not the platform and not the topic: a map search that lists businesses gives «مكان», a list of companies «شركة», a list of posts «منشور». When a row is not clearly one of the listed things write «عنصر»; never write a wrong specific word.
 - Dates: "YYYY-MM-DD" unless the input note says otherwise.
 - Match nested object fields and exact scalar, array, boolean and enum types declared in inputs: for an input with fields, pass an object matching its schema; for an array, pass a list; for a boolean, pass true or false; for an enum, use only allowed values.`;
 
@@ -136,8 +139,9 @@ export const TOOL_CHOICE_SCHEMA: Record<string, unknown> = {
         required: ["endpoint_id", "params_json"],
       },
     },
+    unit_noun: { type: "string", enum: [...UNIT_NOUN_SINGULARS], description: "what ONE item (one row) of this step's answer is, the singular word from the list; «عنصر» when a row is not clearly one of the others" },
   },
-  required: ["options"],
+  required: ["options", "unit_noun"],
 };
 
 export const FIELD_MAP_SYSTEM = `You map the items of a real API answer to the columns of a customer's data file. You are given the tool, what the items are, and sample items exactly as the source returned them (or, for large items, every field as [path] = example). For each standard column give the PATH inside an item (a list of keys; array positions as numbers written as strings, e.g. ["author","username"] or ["images","0","url"]) or omit it when the item has no such field. Only paths that exist in the samples.

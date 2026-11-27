@@ -22,7 +22,7 @@ import { PLATFORM_AR } from "../../../src/lib/agentMission/platformLabels";
 export { PLATFORM_AR };
 import { COMPANIES_LABEL_AR, isPeopleNoun, isPeopleOfCompanyStep, peopleOfCompaniesAskOf, type PeopleOfCompaniesAsk } from "../../../src/lib/agentMission/childSources";
 import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quantity";
-import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN } from "../../../src/lib/agentMission/itemNoun";
+import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN, itemNounStored, unitNounBySingular } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
 import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
@@ -131,7 +131,7 @@ export interface LlmPlannerInput {
 }
 
 export interface UnderstoodStep {
-  key: string; title_ar: string; platform: string; capability: string; parent: string | null; deliver: boolean;
+  key: string; title_ar: string; /** The singular unit word the planning model wrote for ONE row of this step, in the answer of its tool choice (a noun of the closed table); absent until the tool is chosen, and when the model wrote none or one outside the table. */ unit_noun?: string | null; platform: string; capability: string; parent: string | null; deliver: boolean;
   count: { total: number | null; per_parent: number | null; all: boolean };
   source: { kind: string; value: string } | null; topic: string | null; search_terms: string[]; period: { from: string; to: string } | null;
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
@@ -745,6 +745,9 @@ export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyAr
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample, deps.catalog), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   const options = checkOptions(choice, candidates, parentSample !== null);
+  // the model's unit noun for this step: kept only when it is EXACTLY a noun of the closed table (never guessed, never read from the customer's words); a later answer without one keeps an earlier valid one
+  const unit = unitNounBySingular(isObj(choice) ? choice.unit_noun : null);
+  if (unit) step.unit_noun = unit.singular;
   if (step.parent && (step.count.total !== null || step.count.per_parent !== null) && options.length > 1) {
     const prefIdx = options.findIndex((o) => {
       const cfg = missionPageOf(o.endpoint.id);
@@ -2262,7 +2265,7 @@ export function scoutFallbackAr(
     const candidateEp = catalog
       ? candidatesFor(catalog, access ?? null, f.step.platform, f.step.capability, 1).find((c) => !needsMissingSession(c))
       : undefined;
-    const fromMeta = coerceItemNoun(
+    const fromMeta = unitNounBySingular(f.step.unit_noun) ?? coerceItemNoun(
       f.builtStep?.option.endpoint.item_noun_ar ??
       candidateEp?.item_noun_ar ??
       (f as any).endpoint?.item_noun_ar ??
@@ -2378,6 +2381,7 @@ export function priceStageForOption(arg: {
     title_ar: b.step.title_ar,
     endpoint_id: b.option.endpoint.id,
     capability: b.step.capability,
+    ...(unitNounBySingular(b.step.unit_noun) ? { unit_noun_ar: itemNounStored(unitNounBySingular(b.step.unit_noun)!) } : {}),
     expected_rows: rows,
     planned_rows: rows,
     parent_key: null,
@@ -2414,7 +2418,7 @@ export function buildCatalogWideningFacts(
   const candidateEp = catalog
     ? candidatesFor(catalog, access, first.step.platform, first.step.capability, 1).find((c) => !needsMissingSession(c))
     : undefined;
-  const fromMeta = coerceItemNoun(
+  const fromMeta = unitNounBySingular(first.step.unit_noun) ?? coerceItemNoun(
     first.builtStep?.option.endpoint.item_noun_ar ??
     candidateEp?.item_noun_ar ??
     (first as any).endpoint?.item_noun_ar ??
@@ -2921,6 +2925,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     const funding = listed ? sealedFunding(b, alternatives, listed.catalog) : undefined;
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
+      ...(unitNounBySingular(s.unit_noun) ? { unit_noun_ar: itemNounStored(unitNounBySingular(s.unit_noun)!) } : {}),
       expected_rows: planned, planned_rows: planned, parent_key: s.parent, ...(perParent !== undefined ? { per_parent_rows: perParent } : {}),
       ...(s.parent && s.count.all ? { children_cap_per_parent: perParent } : {}),
       deliver: s.deliver, columns: b.columns, sample_rows: b.sampleRows.slice(0, 3), measured_by: b.callIds, measured_from_calls: b.callIds, measured_cost_per_row_usd: costPerRow,

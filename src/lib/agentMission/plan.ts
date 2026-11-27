@@ -92,6 +92,8 @@ export interface ProposedStage {
   key: string;
   title_ar: string;
   endpoint_id: string;
+  /** The unit noun of ONE row of this stage in its stored forms (`itemNounStored`): the word the planning model wrote when it chose the tool, a noun of the closed table. Absent on a stage planned before the model wrote it and on a stage code builds itself. It outranks every other reading of the stage's noun (the title's words, the endpoint's overlay noun). */
+  unit_noun_ar?: { singular: string; dual: string; dual_gen: string; plural: string; tamyiz: string; feminine: boolean };
   /** Round 4: the rows of the next candidates of the parent's listing (the best not chosen), kept beside the pinned rows: when a pinned parent gives no child from any tool, the next one takes its place (the live Facebook post whose comments came back empty twice). Set by code only. */
   spare_rows?: Array<Record<string, unknown>>;
   /** Fields of the mapped item kept on the stored row beside the columns, never shown (the tokens a replies tool needs from the comment's own row: Facebook's feedback_id and expansion_token). Set by code only. */
@@ -1303,6 +1305,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         links_whole: true,
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(epNoun ? { item_noun_ar: epNoun } : (s as any).item_noun_ar ? { item_noun_ar: (s as any).item_noun_ar } : {}),
+        ...(s.unit_noun_ar ? { unit_noun_ar: s.unit_noun_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
         ...(s.children_open && !s.per_parent_asked ? { children_open: true } : {}),

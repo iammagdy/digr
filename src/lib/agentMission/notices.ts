@@ -3,7 +3,7 @@ import { pointsAr } from "../pointsFormat";
 import { customerSafeText } from "./text";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 import { fitArabicWords, missionTitleAr } from "./fileNames";
-import { CONTACT_ITEM_NOUN, countAr, coerceItemNoun, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounFromCapability, itemNounOf, knownItemNoun, type ItemNoun } from "./itemNoun";
+import { CONTACT_ITEM_NOUN, countAr, coerceItemNoun, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounFromCapability, itemNounOf, knownItemNoun, specificModelUnitNoun, type ItemNoun } from "./itemNoun";
 import { FREE_RERUN_MONEY_LINE_AR, heldPointsOf } from "./moneyText";
 
 /**
@@ -23,6 +23,8 @@ export interface NoticeStageCount {
   capability?: string | null;
   platform?: string | null;
   item_noun_ar?: unknown;
+  /** The unit noun the planning model wrote for the stage (stored shape): outranks the title's words and the endpoint's noun. */
+  unit_noun_ar?: unknown;
 }
 
 export interface MissionNoticeFacts {
@@ -81,6 +83,8 @@ function stageNounOf(s: NoticeStageCount, parentNoun?: ItemNoun): ItemNoun {
     if (byHint) return byHint;
     if (s.noun === GENERIC_ITEM_NOUN.singular) return GENERIC_ITEM_NOUN;
   }
+  const byModel = specificModelUnitNoun(s.unit_noun_ar);
+  if (byModel && !(s.parentKey && s.isContacts !== false && parentNoun && byModel.key === parentNoun.key)) return byModel;
   const n = itemNounOf(s.titleAr);
   if (s.isPeople) {
     return n.key !== GENERIC_ITEM_NOUN.key ? n : (knownItemNoun("شخص") ?? n);

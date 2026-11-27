@@ -1784,6 +1784,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
         ...(epCap ? { capability: epCap } : {}),
         ...(ep?.platform ? { platform: ep.platform } : {}),
         ...(epNoun ? { item_noun_ar: epNoun } : {}),
+        ...(s.unit_noun_ar ? { unit_noun_ar: s.unit_noun_ar } : {}),
       };
     });
   await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: settled.releasedPoints, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(noticeStages.length > 0 ? { stages: noticeStages } : {}), ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}), ...(delivered > 0 && !ourFailure && filterNotes && filterNotes.lines.length > 0 ? { filterNotesAr: filterNotes.lines } : {}) });
