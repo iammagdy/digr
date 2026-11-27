@@ -9,6 +9,7 @@ import { ProviderTab, type ProviderView } from "@/components/admin/ProviderTab";
 import { parseProvidersQuery, providersQuery, providerViews, type ProviderTabId } from "@/components/admin/providerViews";
 import { SubTabs } from "@/components/admin/ui";
 import { tint } from "@/components/admin/format";
+import { BRAND_CONTEXTDEV, BRAND_FIRECRAWL, BRAND_TREG, PROVIDER_ANTHROPIC, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 const LLM_P: Record<string, { label: string; modelEnv: string; defaultModel: string }> = {
   anthropic: { label: "Anthropic", modelEnv: "ANTHROPIC_MODEL", defaultModel: "claude-haiku-5-5" },
@@ -33,10 +34,10 @@ type TabId = ProviderTabId;
 
 export default function AdminProvidersPage() {
   const { providers: shellProviders, refresh, toast, isMobile } = useAdmin();
-  const [tab, setTabState] = useState<TabId>("treg");
+  const [tab, setTabState] = useState<TabId>(PROVIDER_TREG);
   const [view, setViewState] = useState<ProviderView>("status");
   const [p, setP] = useState<ProviderStatus | null>(shellProviders);
-  const [confirm, setConfirm] = useState<"llm" | "treg" | null>(null);
+  const [confirm, setConfirm] = useState<"llm" | typeof PROVIDER_TREG | null>(null);
   const [model, setModel] = useState("");
   const [tregUrl, setTregUrl] = useState("");
   const [smoke, setSmoke] = useState<"idle" | "run" | { ok: boolean; msg: string }>("idle");
@@ -82,7 +83,7 @@ export default function AdminProvidersPage() {
   const lp = LLM_P[L.provider] ?? LLM_P.fake;
 
   const toggleLlm = async () => { if (L.enabled) setConfirm("llm"); else if (await save([{ key: "LLM_ENABLED", value: "true" }], "تم تشغيل المساعد الذكي")) setP({ ...p, llm: { ...L, enabled: true } }); };
-  const toggleTreg = async () => { if (T.live) setConfirm("treg"); else if (await save([{ key: "TREG_LIVE", value: "true" }], "تم تشغيل الجمع المباشر")) setP({ ...p, treg: { ...T, live: true } }); };
+  const toggleTreg = async () => { if (T.live) setConfirm(PROVIDER_TREG); else if (await save([{ key: "TREG_LIVE", value: "true" }], "تم تشغيل الجمع المباشر")) setP({ ...p, treg: { ...T, live: true } }); };
 
   const runSmoke = async () => {
     if (smoke === "run") return;
@@ -95,7 +96,7 @@ export default function AdminProvidersPage() {
     } catch (e) { setSmoke({ ok: false, msg: e instanceof Error ? e.message : "تعذّر الفحص" }); }
   };
 
-  const confirmBox = (which: "llm" | "treg", text: string, onOff: () => void) => confirm === which && (
+  const confirmBox = (which: "llm" | typeof PROVIDER_TREG, text: string, onOff: () => void) => confirm === which && (
     <div className="flex flex-col gap-2.5 rounded-[14px] px-3.5 py-3" style={{ background: tint("var(--bad)", 10), animation: "up .25s both" }}>
       <p className="m-0 text-[13px] leading-[1.8] text-bad">{text}</p>
       <div className="flex gap-2">
@@ -114,7 +115,7 @@ export default function AdminProvidersPage() {
         </div>
         <Switch on={T.live} onClick={toggleTreg} label="تشغيل الجمع المباشر" />
       </div>
-      {confirmBox("treg", "إيقاف الجمع المباشر يوقف جمع البيانات على المنصة كلها، وأي مهمة جديدة سترجع رصيدها للمستخدم. متأكد؟", async () => { setConfirm(null); if (await save([{ key: "TREG_LIVE", value: "false" }], "تم إيقاف الجمع المباشر")) setP({ ...p, treg: { ...T, live: false } }); })}
+      {confirmBox(PROVIDER_TREG, "إيقاف الجمع المباشر يوقف جمع البيانات على المنصة كلها، وأي مهمة جديدة سترجع رصيدها للمستخدم. متأكد؟", async () => { setConfirm(null); if (await save([{ key: "TREG_LIVE", value: "false" }], "تم إيقاف الجمع المباشر")) setP({ ...p, treg: { ...T, live: false } }); })}
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-semibold text-mut">عنوان الخدمة</span>
         <input type="text" dir="ltr" value={tregUrl || T.baseUrl} onChange={(e) => setTregUrl(e.target.value)} onBlur={() => { const v = (tregUrl || T.baseUrl).trim(); if (v && v !== T.baseUrl) void save([{ key: "TREG_BASE_URL", value: v }], "تم حفظ عنوان الخدمة"); }} className={FIELD} style={MONO} />
@@ -154,12 +155,12 @@ export default function AdminProvidersPage() {
     </section>
   );
 
-  const tabs: Array<[TabId, string]> = [["treg", "TREG: مزود البيانات"], ["firecrawl", "Firecrawl: مزود قراءة المواقع"], ["contextdev", "Context.dev: مزود البحث والقراءة"], ["anthropic", "مزود النموذج الذكي"]];
+  const tabs: Array<[TabId, string]> = [[PROVIDER_TREG, `${BRAND_TREG}: مزود البيانات`], [PROVIDER_FIRECRAWL, `${BRAND_FIRECRAWL}: مزود قراءة المواقع`], [PROVIDER_CONTEXTDEV, `${BRAND_CONTEXTDEV}: مزود البحث والقراءة`], [PROVIDER_ANTHROPIC, "مزود النموذج الذكي"]];
 
   const viewsFor = providerViews(tab);
-  const panel = (t: TabId) => t === "treg"
-    ? <ProviderTab key="treg" provider="treg" view={view} onChanged={refresh}>{tregControls}</ProviderTab>
-    : t === "firecrawl" || t === "contextdev"
+  const panel = (t: TabId) => t === PROVIDER_TREG
+    ? <ProviderTab key={PROVIDER_TREG} provider={PROVIDER_TREG} view={view} onChanged={refresh}>{tregControls}</ProviderTab>
+    : t === PROVIDER_FIRECRAWL || t === PROVIDER_CONTEXTDEV
     ? <ProviderTab key={t} provider={t} view={view} onChanged={refresh} />
     : <ProviderTab key="anthropic" provider="anthropic" view={view} onChanged={refresh}>{llmControls}</ProviderTab>;
 

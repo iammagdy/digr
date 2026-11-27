@@ -81,10 +81,6 @@
       "pattern": "/ردود التعليقات المسلّمة بحسب عدّاداتها[^؛]*/"
     },
     {
-      "file": "src/app/admin/agent/page.tsx",
-      "pattern": "/[\\s,،]+/"
-    },
-    {
       "file": "src/app/admin/reverse-lookup/page.tsx",
       "pattern": "/محدودة/"
     },
@@ -103,14 +99,6 @@
     {
       "file": "src/app/dashboard/requests/page.tsx",
       "pattern": "/مراقب\\s*المهام\\s*\\(?Watchdog\\)?/gi"
-    },
-    {
-      "file": "src/components/admin/ConfirmDialog.tsx",
-      "pattern": "/[\\s,٬]/g"
-    },
-    {
-      "file": "src/components/admin/invoices/InvoiceSheet.tsx",
-      "pattern": "/\\d|٠|١|٢|٣|٤|٥|٦|٧|٨|٩/"
     },
     {
       "file": "src/components/admin/MessageComposer.tsx",
@@ -5231,14 +5219,6 @@
       "token": "treg"
     },
     {
-      "file": "src/app/admin/providers/page.tsx",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/app/admin/providers/page.tsx",
-      "token": "treg"
-    },
-    {
       "file": "src/app/api/admin/finance/route.ts",
       "token": "treg"
     },
@@ -5251,27 +5231,7 @@
       "token": "youtube"
     },
     {
-      "file": "src/app/api/admin/provider-balance/route.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/app/api/admin/provider-keys/route.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/app/api/admin/provider-limits/route.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/app/api/admin/providers/route.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/app/api/admin/stats/route.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/app/api/admin/treg-keys/route.ts",
       "token": "treg"
     },
     {
@@ -5297,58 +5257,6 @@
     {
       "file": "src/app/dashboard/chat/page.tsx",
       "token": "youtube"
-    },
-    {
-      "file": "src/components/admin/AllCallsLog.tsx",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/components/admin/AllCallsLog.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/AttentionCard.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/OverviewCards.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/ProviderCallLog.tsx",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/components/admin/ProviderCallLog.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/ProviderLimitsPanel.tsx",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/components/admin/ProviderLimitsPanel.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/ProviderTab.tsx",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/components/admin/ProviderTab.tsx",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/providerViews.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/components/admin/providerViews.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/components/admin/TregKeyPool.tsx",
-      "token": "treg"
     },
     {
       "file": "src/functions/shared/capabilityRegistry.ts",

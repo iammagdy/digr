@@ -12,6 +12,7 @@ import { EGP, agoAr, initials, tint } from "./format";
 import { Card, CardSkeleton, EmptyState, ErrorState, Meter, StatTile, StatusBadge, TrendBars, deltaAr, type MeterLevel } from "./ui";
 import type { VisitorsResponse } from "./visitorFormat";
 import { UserSheet } from "./UserSheet";
+import { BRAND_TREG } from "@/lib/multiProvider/types";
 
 /**
  * THE OVERVIEW (DT-20261118-06 §3.2), phone first. Each card reads its own source and has its own skeleton, empty sentence and error with «أعد المحاولة»:
@@ -143,7 +144,7 @@ export function OverviewView(props: OverviewViewProps) {
         </SlotCard>
       </Section>
       <Section id="money" span="min-[900px]:col-span-8">
-        <SlotCard slot={slots.stats} title="الإيرادات والتكاليف" sub="شحن معتمد مقابل تكلفة المزودين (TREG + النماذج)" testId="money-card" height={330} onRetry={() => onRetry("stats")}>
+        <SlotCard slot={slots.stats} title="الإيرادات والتكاليف" sub={`شحن معتمد مقابل تكلفة المزودين (${BRAND_TREG} + النماذج)`} testId="money-card" height={330} onRetry={() => onRetry("stats")}>
           {(s) => <MoneyBody s={s} range={range} isMobile={isMobile} now={now} />}
         </SlotCard>
       </Section>

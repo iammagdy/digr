@@ -11,6 +11,7 @@ import { AcceptancePanel } from "@/components/admin/AcceptancePanel";
 import type { PlatformFlags, RedesignFlags } from "@/lib/agentMission/redesignFlagTypes";
 import { startVisiblePolling } from "@/lib/visiblePolling";
 import { ADMIN_OVERVIEW_POLL_MS, adminDetailDelayMs } from "@/lib/agentMission/adminPolling";
+import { foldArabicComma } from "@/lib/arabicNormalize";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
@@ -68,7 +69,7 @@ export default function AgentPage() {
   const [rawIds, setRawIds] = useState("");
   const [rawBusy, setRawBusy] = useState(false);
   async function downloadRawZip() {
-    const ids = rawIds.split(/[\s,،]+/).filter((t) => t.length > 0).join(",");
+    const ids = foldArabicComma(rawIds).split(/[\s,]+/).filter((t) => t.length > 0).join(",");
     if (!ids) return;
     setRawBusy(true);
     try {

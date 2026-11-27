@@ -5,6 +5,7 @@ import { createAdminClient } from "../../../../lib/supabase/server";
 import { resolveProviderKey } from "../../../../lib/server/providerKeys";
 import { getProviderAccountEmail, getProviderStatus } from "../../../../lib/server/providerStatus";
 import { readProviderKeySettings } from "../../../../lib/server/providerKeyAdmin";
+import { PROVIDER_TREG } from "../../../../lib/multiProvider/types";
 
 export const dynamic = "force-dynamic";
 
@@ -23,8 +24,8 @@ export async function GET(req: NextRequest) {
   // The figure below is the platform's own estimate (configured credit minus recorded spend). The real balance is
   // read from the provider with an authenticated call and returned separately.
   const settings = sbAdmin ? await readProviderKeySettings(sbAdmin) : null;
-  const key = await resolveProviderKey("treg");
-  const real = await getProviderStatus("treg", key.key, { forceRefresh, orgIdOverride: settings?.tregOrgId ?? null });
+  const key = await resolveProviderKey(PROVIDER_TREG);
+  const real = await getProviderStatus(PROVIDER_TREG, key.key, { forceRefresh, orgIdOverride: settings?.tregOrgId ?? null });
   return NextResponse.json({
     real_balance: {
       available: real.balance.available,
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
     },
     health: real.health,
     // The connected account's e-mail as the provider's own answer gave it (this route is admin-only); null when it had none.
-    account_email: getProviderAccountEmail("treg"),
+    account_email: getProviderAccountEmail(PROVIDER_TREG),
     available_balance_is_estimate: true,
     available_balance_usd: status.availableBalanceUsd,
     today_spend_usd: status.todaySpendUsd,

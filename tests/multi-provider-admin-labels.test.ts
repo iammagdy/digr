@@ -19,6 +19,9 @@ vi.mock("../src/lib/adminApi", () => ({ adminFetch: vi.fn(async () => providers)
 
 const ROOT = path.resolve(__dirname, "..");
 const LABELS = { treg: "TREG: مزود البيانات", firecrawl: "Firecrawl: مزود قراءة المواقع", contextdev: "Context.dev: مزود البحث والقراءة" } as const;
+// D-0232: the admin page writes each label as `${BRAND_X}: …` (the brand names live in the identity file), so the SOURCE holds this form instead of the rendered text
+const BRAND_OF = { treg: "BRAND_TREG", firecrawl: "BRAND_FIRECRAWL", contextdev: "BRAND_CONTEXTDEV" } as const;
+const SOURCE_FORMS = Object.entries(LABELS).map(([id, label]) => label.replace(/^[^:]+/, "${" + BRAND_OF[id as keyof typeof BRAND_OF] + "}"));
 
 describe("admin tab «مزودو الخدمة»: every provider is named", () => {
   it("renders one tab per provider, in this order, each labelled with the provider's name", async () => {
@@ -62,7 +65,7 @@ describe("no customer route, page or component names a provider or carries an ad
   it("none contains Firecrawl or Context.dev (any spelling), nor any admin tab label", () => {
     const offenders = customer.filter((f) => {
       const text = readFileSync(path.join(ROOT, f), "utf8");
-      return /firecrawl|context\.?dev|contextdev/i.test(text) || Object.values(LABELS).some((label) => text.includes(label));
+      return /firecrawl|context\.?dev|contextdev/i.test(text) || Object.values(LABELS).some((label) => text.includes(label)) || SOURCE_FORMS.some((form) => text.includes(form));
     });
     expect(offenders).toEqual([]);
   });
@@ -76,7 +79,7 @@ describe("no customer route, page or component names a provider or carries an ad
   });
 
   it("the labels live only in the admin page (and its contract test)", () => {
-    const holders = walk(path.join(ROOT, "src")).map(rel).filter((f) => Object.values(LABELS).some((label) => readFileSync(path.join(ROOT, f), "utf8").includes(label)));
+    const holders = walk(path.join(ROOT, "src")).map(rel).filter((f) => SOURCE_FORMS.some((form) => readFileSync(path.join(ROOT, f), "utf8").includes(form)));
     expect(holders).toEqual(["src/app/admin/providers/page.tsx"]);
   });
 });

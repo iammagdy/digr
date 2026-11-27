@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { loadProviderLimitsState, saveProviderLimits } from "@/lib/server/providerLimitsAdmin";
 import { resolveAllProviderDailyCaps, readProviderSpendToday } from "@/lib/server/multiProvider/providerCaps";
+import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL } from "@/lib/multiProvider/types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     const client = createAdminClient();
     const state = await loadProviderLimitsState(client, { forceRefresh: true });
     // The daily limits of the two extra data providers, beside the state above (which is exactly what it was): their own cap and today's recorded spend.
-    const [caps, firecrawlToday, contextdevToday] = await Promise.all([resolveAllProviderDailyCaps(client), readProviderSpendToday(client, "firecrawl"), readProviderSpendToday(client, "contextdev")]);
+    const [caps, firecrawlToday, contextdevToday] = await Promise.all([resolveAllProviderDailyCaps(client), readProviderSpendToday(client, PROVIDER_FIRECRAWL), readProviderSpendToday(client, PROVIDER_CONTEXTDEV)]);
     const extra = {
       firecrawl: { dailyUsd: caps.firecrawl, todayUsd: firecrawlToday },
       contextdev: { dailyUsd: caps.contextdev, todayUsd: contextdevToday },

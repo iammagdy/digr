@@ -10,14 +10,15 @@ import { ProviderCallLog } from "./ProviderCallLog";
 import { JobCell } from "./JobCell";
 import { TregKeyPool } from "./TregKeyPool";
 import type { ActivityJobRow } from "@/lib/server/adminCallsLog";
+import { PROVIDER_ANTHROPIC, PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "@/lib/multiProvider/types";
 
-type Provider = "treg" | "anthropic" | "firecrawl" | "contextdev";
+type Provider = typeof PROVIDER_TREG | typeof PROVIDER_ANTHROPIC | typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV;
 /** The short views of one provider; without `view` every section is shown (the old single long page). */
 export type ProviderView = "status" | "keys" | "limits" | "calls";
 /** The providers that collect data (the model provider has no call log of this kind). */
-const isDataProvider = (p: Provider): p is "treg" | "firecrawl" | "contextdev" => p !== "anthropic";
+const isDataProvider = (p: Provider): p is typeof PROVIDER_TREG | typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV => p !== PROVIDER_ANTHROPIC;
 /** Providers that sell credits: the balance is the provider's own credit count, not dollars. */
-const isCreditProvider = (p: Provider) => p === "firecrawl" || p === "contextdev";
+const isCreditProvider = (p: Provider) => p === PROVIDER_FIRECRAWL || p === PROVIDER_CONTEXTDEV;
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text-sm text-ink outline-none text-left";
@@ -151,14 +152,14 @@ export function ProviderTab({ provider, view, onChanged, children }: { provider:
 
       {/* Real balance (data provider only: the model provider has no balance API for a regular key) */}
       <section className={SECTION} aria-label="الرصيد">
-        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" || isCreditProvider(provider) ? "الرصيد لدى المزود" : "الرصيد"}</h3>
+        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === PROVIDER_TREG || isCreditProvider(provider) ? "الرصيد لدى المزود" : "الرصيد"}</h3>
         {isCreditProvider(provider) ? (
           b.available && typeof b.credits === "number" ? (
             <div className="flex flex-col gap-1" data-testid="provider-credits">
               <p className="m-0 text-[28px] font-semibold text-ink">{formatAr(b.credits)} <span className="text-[13px] font-normal text-mut">رصيد (كريدت)</span></p>
               {typeof b.planCredits === "number" && <p className="m-0 text-xs text-mut">رصيد الباقة: {formatAr(b.planCredits)}</p>}
               {typeof b.creditsUsedThisPeriod === "number" && <p className="m-0 text-xs text-mut">المستهلك في الفترة الحالية: {formatAr(b.creditsUsedThisPeriod)}</p>}
-              {b.periodEndsAt && <p className="m-0 text-xs text-mut">{provider === "firecrawl" ? "نهاية الفترة الحالية" : "موعد التجديد القادم"}: {dateTimeAr(b.periodEndsAt)}</p>}
+              {b.periodEndsAt && <p className="m-0 text-xs text-mut">{provider === PROVIDER_FIRECRAWL ? "نهاية الفترة الحالية" : "موعد التجديد القادم"}: {dateTimeAr(b.periodEndsAt)}</p>}
               <p className="m-0 text-xs text-mut">جُلب من المزود: {dateTimeAr(b.checkedAt)} · {agoAr(b.checkedAt)}</p>
             </div>
           ) : (
@@ -178,8 +179,8 @@ export function ProviderTab({ provider, view, onChanged, children }: { provider:
         ) : (
           <p className="m-0 text-[13px] leading-[1.8] text-mut">{BALANCE_UNAVAILABLE_AR[b.unavailableReason ?? "check_failed"]}</p>
         )}
-        {provider === "treg" && <AccountEmailLine email={state.accountEmail} />}
-        {provider === "treg" && (
+        {provider === PROVIDER_TREG && <AccountEmailLine email={state.accountEmail} />}
+        {provider === PROVIDER_TREG && (
           <div className="flex flex-col gap-2 border-t border-ln pt-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-mut">حد تنبيه الرصيد المنخفض (دولار)</span>
@@ -196,8 +197,8 @@ export function ProviderTab({ provider, view, onChanged, children }: { provider:
 
       {/* Platform's own recorded spend today (read-only) against the cap */}
       <section className={SECTION} aria-label="استهلاك اليوم">
-        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" ? "استهلاك المنصة من المزود اليوم" : isCreditProvider(provider) ? "استهلاك المنصة من هذا المزود اليوم" : "إنفاق النموذج الذكي اليوم"}</h3>
-        <p className="m-0 text-[13px] text-ink">{usd(state.spend.todayUsd)} من {state.spend.capUsd == null ? "—" : usd(state.spend.capUsd)} <span className="text-mut">({provider === "treg" || isCreditProvider(provider) ? "السقف اليومي للمزود" : "السقف اليومي العام"})</span></p>
+        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === PROVIDER_TREG ? "استهلاك المنصة من المزود اليوم" : isCreditProvider(provider) ? "استهلاك المنصة من هذا المزود اليوم" : "إنفاق النموذج الذكي اليوم"}</h3>
+        <p className="m-0 text-[13px] text-ink">{usd(state.spend.todayUsd)} من {state.spend.capUsd == null ? "—" : usd(state.spend.capUsd)} <span className="text-mut">({provider === PROVIDER_TREG || isCreditProvider(provider) ? "السقف اليومي للمزود" : "السقف اليومي العام"})</span></p>
         <div className="h-2 overflow-hidden rounded-full bg-sf2" role="progressbar" aria-valuenow={Math.round(capPct)} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full rounded-full" style={{ width: `${capPct}%`, background: capPct >= 90 ? "var(--bad)" : "var(--gold)" }} />
         </div>
@@ -207,15 +208,15 @@ export function ProviderTab({ provider, view, onChanged, children }: { provider:
       {children}
       </>}
 
-      {show("limits") && <ProviderLimitsPanel provider={provider} balanceUsd={provider === "treg" && b.available && typeof b.balanceUsd === "number" ? b.balanceUsd : null} onSaved={() => { void load(true); onChanged?.(); }} />}
+      {show("limits") && <ProviderLimitsPanel provider={provider} balanceUsd={provider === PROVIDER_TREG && b.available && typeof b.balanceUsd === "number" ? b.balanceUsd : null} onSaved={() => { void load(true); onChanged?.(); }} />}
 
       {/* The TREG key pool (docs/proposals/treg-key-pool): many keys, one active, a fallback chain ending at the main key; OFF until the admin turns it on */}
-      {show("keys") && provider === "treg" && <TregKeyPool />}
+      {show("keys") && provider === PROVIDER_TREG && <TregKeyPool />}
 
       {/* Key management: masked only, validated before saving, one-step rollback */}
       {show("keys") && <section className={SECTION} aria-label="المفتاح">
         <h3 className="m-0 text-[15px] font-semibold text-ink">مفتاح الوصول</h3>
-        {provider === "treg" && <p className="m-0 text-[11px] leading-[1.7] text-fnt">هذا هو المفتاح الذي تستخدمه المنصة عندما يكون المجمّع أعلاه مغلقًا، ومنه يُنسخ المفتاح الرئيسي عند اعتماده.</p>}
+        {provider === PROVIDER_TREG && <p className="m-0 text-[11px] leading-[1.7] text-fnt">هذا هو المفتاح الذي تستخدمه المنصة عندما يكون المجمّع أعلاه مغلقًا، ومنه يُنسخ المفتاح الرئيسي عند اعتماده.</p>}
         <div className="flex min-h-[46px] items-center gap-2 rounded-xl border border-ln bg-sf ps-3.5 pe-3.5">
           <span dir="ltr" className="flex-1 text-left text-sm text-ink" style={MONO}>{state.maskedKey}</span>
           <span className="text-[11px] text-mut">المصدر: {SOURCE_AR[state.keySource]}</span>

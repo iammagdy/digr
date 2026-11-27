@@ -7,6 +7,7 @@ import type { CallLogResult, CallLogRow, CallLogStatus } from "@/lib/server/mult
 import type { CallRowContext } from "@/lib/server/adminCallsLog";
 import { JobCell, NOT_RECORDED } from "./JobCell";
 import { dateTimeAr, tint } from "./format";
+import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG } from "@/lib/multiProvider/types";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text-sm text-ink outline-none text-left";
@@ -24,7 +25,7 @@ const usd = (n: number) => `${toArabicDigits(n.toFixed(6).replace(/0+$/, "").rep
  * The API call log of one provider (admin only, read only): newest first, 25 per page, filters by date and status, today's and the total
  * cost read from the platform's own cost table. A field the database does not know yet shows «غير متاح»; nothing is invented.
  */
-export function ProviderCallLog({ provider }: { provider: "treg" | "firecrawl" | "contextdev" }) {
+export function ProviderCallLog({ provider }: { provider: typeof PROVIDER_TREG | typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV }) {
   const [log, setLog] = useState<CallLogResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
