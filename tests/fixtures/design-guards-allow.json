@@ -5272,10 +5272,6 @@
     },
     {
       "file": "src/lib/agentMission/capabilities/prompt.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/prompt.ts",
       "token": "x"
     },
     {

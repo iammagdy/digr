@@ -1,5 +1,6 @@
 import { PLATFORM_AR, operationLabelAr, type CapabilityDiscovery } from "./discover";
 import { OPERATIONS, type CapabilityRegistry, type Operation } from "./registry";
+import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL } from "../../multiProvider/types";
 
 /**
  * WHAT THE MODELS ARE TOLD ABOUT THE CAPABILITIES (docs/UNIFIED-CAPABILITY-DISCOVERY.md), built by code from the registry and the discovery, never by a model.
@@ -63,10 +64,10 @@ export const OBJECTIVE_PROMPT_LINES: readonly string[] = [
  * ids are called with treg_call / collect_pages; the web providers' ids with their own tools.
  */
 export function toolHint(id: string): string | null {
-  if (id.startsWith("contextdev.parse.")) return `parse_page {parser:"${id.slice("contextdev.parse.".length)}", url}`;
-  if (id === "firecrawl.search" || id === "contextdev.search") return `web_search {provider:"${id.split(".")[0]}", query}`;
-  if (id === "firecrawl.scrape" || id === "contextdev.scrape") return `web_scrape {provider:"${id.split(".")[0]}", url}`;
-  if (id === "contextdev.people.search") return "people_search {query}";
+  if (id.startsWith(`${PROVIDER_CONTEXTDEV}.parse.`)) return `parse_page {parser:"${id.slice(`${PROVIDER_CONTEXTDEV}.parse.`.length)}", url}`;
+  if (id === `${PROVIDER_FIRECRAWL}.search` || id === `${PROVIDER_CONTEXTDEV}.search`) return `web_search {provider:"${id.split(".")[0]}", query}`;
+  if (id === `${PROVIDER_FIRECRAWL}.scrape` || id === `${PROVIDER_CONTEXTDEV}.scrape`) return `web_scrape {provider:"${id.split(".")[0]}", url}`;
+  if (id === `${PROVIDER_CONTEXTDEV}.people.search`) return "people_search {query}";
   return null;
 }
 
