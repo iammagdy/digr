@@ -1,0 +1,41 @@
+{
+  "tiktok": {
+    "idPrecedence": 1,
+    "idMarkers": ["tiktok"],
+    "hosts": ["^(?:.*\\.)?tiktok\\.com$"],
+    "linkIdentity": [{ "path": "/(?:video|photo)/(\\d+)", "key": "tiktok:video:$1" }],
+    "postKindsInterchangeable": true
+  },
+  "x": {
+    "idPrecedence": 5,
+    "idMarkers": ["twitter", "(?:^|\\.)x\\.(?:x\\.)?(?:search|user|post|tweet|timeline)"],
+    "hosts": ["^(?:.*\\.)?(?:x|twitter)\\.com$"],
+    "linkIdentity": [{ "path": "/status(?:es)?/(\\d+)", "key": "x:status:$1" }],
+    "postKindsInterchangeable": true
+  },
+  "instagram": {
+    "idPrecedence": 3,
+    "idMarkers": ["instagram"],
+    "hosts": ["^(?:.*\\.)?instagram\\.com$"],
+    "linkIdentity": [{ "path": "/(?:p|reel|reels|tv)/([\\w-]+)", "key": "instagram:media:$1" }],
+    "postKindsInterchangeable": true
+  },
+  "facebook": {
+    "idPrecedence": 4,
+    "idMarkers": ["facebook"],
+    "hosts": ["^(?:.*\\.)?facebook\\.com$|^fb\\.com$"],
+    "linkIdentity": [],
+    "postKindsInterchangeable": true
+  },
+  "youtube": {
+    "idPrecedence": 2,
+    "idMarkers": ["youtube"],
+    "hosts": ["^(?:.*\\.)?(?:youtube\\.com|youtu\\.be)$"],
+    "linkIdentity": [
+      { "query": "v", "key": "youtube:video:$1" },
+      { "host": "^youtu\\.be$", "path": "^/(.+)$", "key": "youtube:video:$1" },
+      { "path": "/(?:shorts|live|embed)/([\\w-]+)", "key": "youtube:video:$1" }
+    ],
+    "postKindsInterchangeable": false
+  }
+}

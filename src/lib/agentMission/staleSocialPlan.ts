@@ -1,5 +1,5 @@
 import type { PricedPlan } from "./plan";
-import { platformOfStages } from "./redesignFlagTypes";
+import { platformOfStages } from "./platformOfStages";
 
 /**
  * PR B (round 18), THE APPROVAL GUARD. A social plan that the plan compiler did not build (it was planned by the old model pipeline, which is deleted) is never approved: it would be carried out by the old engine. It is refused BEFORE anything is reserved (a read of the stored plan, no money function is called),

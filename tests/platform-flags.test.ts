@@ -11,7 +11,8 @@ vi.mock("../src/lib/server/adminAuth", () => ({
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: () => state.client, createServerSideClient: vi.fn() }));
 
 import { POST as agentPOST } from "../src/app/api/admin/agent/route";
-import { SOCIAL_PLATFORMS, readPlatformFlags, redesignActiveFor, platformOfStages } from "../src/lib/agentMission/redesignFlagTypes";
+import { SOCIAL_PLATFORMS, readPlatformFlags, redesignActiveFor } from "../src/lib/agentMission/redesignFlagTypes";
+import { platformOfStages } from "../src/lib/agentMission/platformOfStages";
 import { normalizeRedesignFlags } from "../src/lib/agentMission/redesignFlags";
 import { redesignStagesOf, anyRedesignFlag } from "../agent/src/redesign";
 import { loadOverview } from "../src/lib/agentMission/adminActions";

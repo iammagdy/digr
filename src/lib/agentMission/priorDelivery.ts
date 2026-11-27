@@ -1,3 +1,4 @@
+import { linkIdentityOf, platformOfHost } from "./platformFacts";
 import { createHash } from "node:crypto";
 import { toArabicDigits } from "../arabicDigits";
 
@@ -29,7 +30,6 @@ export interface PriorDeliverySnapshot { v: 1; missions: string[]; items: number
 /** What the APPROVED plan records: the digest of the exact snapshot, the missions and the items it excludes. Never the identities themselves (the plan text reaches models). */
 export interface PlanPriorDelivery { digest: string; missions: number; items: number; running?: number; unreadable?: number }
 
-const PLATFORM_HOSTS: Array<[RegExp, string]> = [[/^(?:.*\.)?(?:x|twitter)\.com$/, "x"], [/^(?:.*\.)?tiktok\.com$/, "tiktok"], [/^(?:.*\.)?instagram\.com$/, "instagram"], [/^(?:.*\.)?facebook\.com$|^fb\.com$/, "facebook"], [/^(?:.*\.)?(?:youtube\.com|youtu\.be)$/, "youtube"]];
 
 /** The canonical identity of an item's link, or null. A post has one identity however its link is written (x.com or twitter.com, with or without www, a query string, a trailing slash, another spelling of the author's handle). */
 export function canonicalLinkOf(value: unknown): string | null {
@@ -37,15 +37,10 @@ export function canonicalLinkOf(value: unknown): string | null {
   let u: URL;
   try { u = new URL(value.trim()); } catch { return null; }
   const host = u.hostname.toLowerCase().replace(/^(?:www|m|mobile|web)\./, "");
-  const platform = PLATFORM_HOSTS.find(([re]) => re.test(host))?.[1] ?? null;
+  const platform = platformOfHost(host);
   const path = u.pathname.replace(/\/+$/, "");
-  if (platform === "x") { const m = /\/status(?:es)?\/(\d+)/.exec(path); if (m) return `x:status:${m[1]}`; }
-  if (platform === "tiktok") { const m = /\/(?:video|photo)\/(\d+)/.exec(path); if (m) return `tiktok:video:${m[1]}`; }
-  if (platform === "youtube") {
-    const v = u.searchParams.get("v") ?? (host === "youtu.be" ? path.slice(1) : (/\/(?:shorts|live|embed)\/([\w-]+)/.exec(path)?.[1] ?? null));
-    if (v) return `youtube:video:${v}`;
-  }
-  if (platform === "instagram") { const m = /\/(?:p|reel|reels|tv)\/([\w-]+)/.exec(path); if (m) return `instagram:media:${m[1]}`; }
+  // how a link of this platform names ONE item (data/treg/platform_facts.json: its link rules); any other link is its host and path
+  if (platform !== null) { const identity = linkIdentityOf(platform, u, host, path); if (identity !== null) return identity; }
   return `url:${host}${path}`;
 }
 

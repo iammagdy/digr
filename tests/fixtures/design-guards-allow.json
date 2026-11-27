@@ -5080,10 +5080,6 @@
     },
     {
       "file": "src/lib/agentMission/capabilities/prompt.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/prompt.ts",
       "token": "youtube"
     },
     {
@@ -5147,19 +5143,7 @@
       "token": "youtube"
     },
     {
-      "file": "src/lib/agentMission/namedRoutes.ts",
-      "token": "youtube"
-    },
-    {
       "file": "src/lib/agentMission/overLimit.ts",
-      "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/priorDelivery.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/priorDelivery.ts",
       "token": "youtube"
     },
     {

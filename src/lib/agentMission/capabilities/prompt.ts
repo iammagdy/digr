@@ -1,3 +1,4 @@
+import { SOCIAL_PLATFORMS } from "../redesignFlagTypes";
 import { PLATFORM_AR, operationLabelAr, type CapabilityDiscovery } from "./discover";
 import { OPERATIONS, type CapabilityRegistry, type Operation } from "./registry";
 import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL } from "../../multiProvider/types";
@@ -8,7 +9,7 @@ import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL } from "../../multiProvider/typ
  *     discovery question asks only what decides which of them fits the customer's goal;
  *   - the PLANNING model (the model-planned path): the validated candidates of each stage, by id, in the code's rank order, with what they take, give, page and cost; a plan stage with any other id is refused by code.
  */
-const SOCIAL_ORDER = ["tiktok", "x", "instagram", "facebook", "youtube"];
+const SOCIAL_ORDER: ReadonlyArray<string> = SOCIAL_PLATFORMS;
 
 /** The operations with at least one usable capability, as Arabic lines (one per operation; social operations list their platforms). */
 export function availableKindsAr(registry: CapabilityRegistry): string[] {

@@ -3,6 +3,8 @@ import { redesignActive, type RedesignFlags, type RedesignType } from "./redesig
 
 // The pure constants and readers live in redesignFlagTypes.ts (no catalog, no file access), so the admin screen can import them without pulling the server code into the browser bundle.
 export * from "./redesignFlagTypes";
+// the platform of a plan's stages reads the platform facts (data), so it is not in the light module above; the old import path stays
+export { platformOfStages } from "./platformOfStages";
 
 export type BuiltBy = "code" | "model";
 
