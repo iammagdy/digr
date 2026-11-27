@@ -1,7 +1,8 @@
 import { isSellable, type CatalogEndpoint, type EndpointAdapterContract, type EndpointQuerySyntax, type TregCatalog } from "../../treg/catalog";
 import { expectedCost, priorRowsPerCall } from "../sourceRanking";
 import { canExpress, toolProfile } from "../toolProfile";
-import { CONTEXTDEV_PARSE_USD_ESTIMATE, PARSERS, WEB_SOURCES, type ParserName } from "../sources";
+import { CONTEXTDEV_PARSE_USD_ESTIMATE, PARSERS, WEB_SOURCES, type ParserName, type WebProvider } from "../sources";
+import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL, PROVIDER_TREG, type DataProviderId } from "../../multiProvider/types";
 import { TOOL_CARDS } from "../foundation/toolCards";
 import type { CardRole, ToolCard } from "../foundation/toolCards/types";
 
@@ -16,7 +17,7 @@ import type { CardRole, ToolCard } from "../foundation/toolCards/types";
  * express, its price per row, whether it touches private personal data, and whether it is available to this account now (sellable, not blocked, permitted by the account's data policy, the provider's key present, its daily cap above 0).
  * An endpoint whose capability string matches no operation below is not a candidate at all: nothing outside this list can be planned through discovery. Pure; never throws.
  */
-export type CapabilityProvider = "treg" | "firecrawl" | "contextdev";
+export type CapabilityProvider = DataProviderId;
 
 export const OPERATIONS = [
   "social.parents",
@@ -220,14 +221,14 @@ export interface RegistryAvailability {
   /** The account's data policy and the block list, as the gateway applies them (a catalog id the account may not call is not available). */
   isAllowed: (endpointId: string) => boolean;
   /** Whether the worker has a key for each web provider (webAvailability.ts). Absent: unknown, counted as present (the gateway still refuses a call it cannot make). */
-  webKeys?: Partial<Record<"firecrawl" | "contextdev", boolean>>;
+  webKeys?: Partial<Record<WebProvider, boolean>>;
   /** The provider's daily cap in USD (admin page, provider limits). 0 = spend nothing. Absent: unknown (the recorder still refuses a call over the cap). */
-  dailyCapUsd?: Partial<Record<"firecrawl" | "contextdev", number>>;
+  dailyCapUsd?: Partial<Record<WebProvider, number>>;
   /**
    * Phase 2 (task 2.2): what each provider has ALREADY SPENT today against its daily cap, read once before planning (`readProviderSpendToday`, read only). A provider whose cap is used up is unavailable for the rest of the day: a plan
    * is never built on a source the recorder will refuse at the first call. TREG included (its cap is `providerLimits.dailyUsd`). Absent or null: unknown (the recorder still refuses at call time).
    */
-  spentTodayUsd?: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>>;
+  spentTodayUsd?: Partial<Record<DataProviderId, number | null>>;
   /** TREG's own daily cap in USD, with `spentTodayUsd.treg`. Absent: unknown. */
   tregDailyCapUsd?: number;
   /**
@@ -248,7 +249,7 @@ function capUnavailable(cap: number | undefined, spent: number | null | undefine
   return null;
 }
 
-function webUnavailable(provider: "firecrawl" | "contextdev", a: RegistryAvailability): Capability["unavailable"] {
+function webUnavailable(provider: WebProvider, a: RegistryAvailability): Capability["unavailable"] {
   if (a.webKeys && a.webKeys[provider] === false) return "provider_key_missing";
   return capUnavailable(a.dailyCapUsd?.[provider], a.spentTodayUsd?.[provider]);
 }
@@ -305,11 +306,11 @@ const PARSER_CAPABILITIES: Partial<Record<ParserName, Array<{ operation: Operati
 };
 
 const WEB_CAPABILITIES: Record<string, { operation: Operation; takes: InputClass[]; outputs: OutputClass[]; pagination: boolean; country: boolean; maxRows: number }> = {
-  "firecrawl.search": { operation: "web.search", takes: ["query"], outputs: ["url", "name", "text"], pagination: false, country: true, maxRows: 100 },
-  "contextdev.search": { operation: "web.search", takes: ["query"], outputs: ["url", "name", "text"], pagination: false, country: true, maxRows: 100 },
-  "firecrawl.scrape": { operation: "web.read", takes: ["url", "domain"], outputs: ["url", "text"], pagination: false, country: false, maxRows: 1 },
-  "contextdev.scrape": { operation: "web.read", takes: ["url", "domain"], outputs: ["url", "text"], pagination: false, country: false, maxRows: 1 },
-  "contextdev.people.search": { operation: "people.discover", takes: ["query"], outputs: ["name", "title", "company", "url"], pagination: true, country: true, maxRows: 10 },
+  [`${PROVIDER_FIRECRAWL}.search`]: { operation: "web.search", takes: ["query"], outputs: ["url", "name", "text"], pagination: false, country: true, maxRows: 100 },
+  [`${PROVIDER_CONTEXTDEV}.search`]: { operation: "web.search", takes: ["query"], outputs: ["url", "name", "text"], pagination: false, country: true, maxRows: 100 },
+  [`${PROVIDER_FIRECRAWL}.scrape`]: { operation: "web.read", takes: ["url", "domain"], outputs: ["url", "text"], pagination: false, country: false, maxRows: 1 },
+  [`${PROVIDER_CONTEXTDEV}.scrape`]: { operation: "web.read", takes: ["url", "domain"], outputs: ["url", "text"], pagination: false, country: false, maxRows: 1 },
+  [`${PROVIDER_CONTEXTDEV}.people.search`]: { operation: "people.discover", takes: ["query"], outputs: ["name", "title", "company", "url"], pagination: true, country: true, maxRows: 10 },
 };
 
 /**
@@ -342,7 +343,7 @@ function cardCapability(card: ToolCard, e: CatalogEndpoint, operation: Operation
   if (card.mapping.kind === "fields" && card.mapping.linkTemplate) outputs.push("url");
   const rows = Math.max(1, card.page.observedRowsPerPage);
   return {
-    id: card.endpointId, provider: "treg", operation, platform: card.platform, takes, outputs: [...new Set(outputs)], outputsKnown: card.status === "verified",
+    id: card.endpointId, provider: PROVIDER_TREG, operation, platform: card.platform, takes, outputs: [...new Set(outputs)], outputsKnown: card.status === "verified",
     pagination: card.inputs.cursor !== null, maxRowsPerCall: rows,
     // a query that takes `since:` / `until:` / `lang:` operators carries the period and the language itself (the X search card)
     filters: { date: Boolean(card.inputs.period) || card.inputs.query?.operators === true, country: Boolean(card.inputs.country), language: card.inputs.query?.operators === true },
@@ -399,7 +400,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
     const tregCap = capUnavailable(availability.tregDailyCapUsd, availability.spentTodayUsd?.treg);
     all.push({
       id: e.id,
-      provider: "treg",
+      provider: PROVIDER_TREG,
       operation,
       platform: operation.startsWith("social.") ? platformOf : operation.startsWith("places.") ? "google_maps" : operation.startsWith("web.") ? "web" : operation.startsWith("apps.") ? platformOf.replace("-", "_") : e.platform ?? null,
       takes: takesOf(e, operation),
@@ -435,8 +436,8 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
   for (const p of Object.values(PARSERS)) {
     for (const spec of PARSER_CAPABILITIES[p.name] ?? []) {
       all.push({
-        id: p.id, provider: "contextdev", operation: spec.operation, platform: p.platform, takes: spec.takes, outputs: spec.outputs, outputsKnown: true, pagination: spec.pagination, maxRowsPerCall: p.rowsPerCall,
-        filters: { date: false, country: false, language: false }, usdPerRow: CONTEXTDEV_PARSE_USD_ESTIMATE / Math.max(1, p.rowsPerCall), privacy: "public", unavailable: webUnavailable("contextdev", availability), summary: p.summary.slice(0, 160), limits: p.note,
+        id: p.id, provider: PROVIDER_CONTEXTDEV, operation: spec.operation, platform: p.platform, takes: spec.takes, outputs: spec.outputs, outputsKnown: true, pagination: spec.pagination, maxRowsPerCall: p.rowsPerCall,
+        filters: { date: false, country: false, language: false }, usdPerRow: CONTEXTDEV_PARSE_USD_ESTIMATE / Math.max(1, p.rowsPerCall), privacy: "public", unavailable: webUnavailable(PROVIDER_CONTEXTDEV, availability), summary: p.summary.slice(0, 160), limits: p.note,
         // no credit cost per parser is documented: the base scrape credit × a USD-per-credit figure read on 2026-10-22 (sources.ts)
         access: "direct", pricing: { unit: "call", usd: CONTEXTDEV_PARSE_USD_ESTIMATE, basis: "estimated", billedOnFailure: null },
       });
@@ -447,7 +448,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
     if (!spec) continue;
     all.push({
       id: s.id, provider: s.provider as CapabilityProvider, operation: spec.operation, platform: spec.operation === "people.discover" ? "people" : "web", takes: spec.takes, outputs: spec.outputs, outputsKnown: true, pagination: spec.pagination, maxRowsPerCall: spec.maxRows,
-      filters: { date: false, country: spec.country, language: false }, usdPerRow: s.usdPerCall / Math.max(1, s.rowsPerCall), privacy: "public", unavailable: webUnavailable(s.provider as "firecrawl" | "contextdev", availability), summary: s.summary.slice(0, 160),
+      filters: { date: false, country: spec.country, language: false }, usdPerRow: s.usdPerCall / Math.max(1, s.rowsPerCall), privacy: "public", unavailable: webUnavailable(s.provider as WebProvider, availability), summary: s.summary.slice(0, 160),
       limits: spec.operation === "people.discover" ? "no e-mail and no phone" : spec.operation === "web.read" ? "one public page per call" : null,
       // documented credits × a USD-per-credit figure read on 2026-10-22 that depends on the plan (multiProvider/catalog.ts): an estimate, not a verified price
       access: "direct", pricing: { unit: "call", usd: s.usdPerCall, basis: "estimated", billedOnFailure: null },

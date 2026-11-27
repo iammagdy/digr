@@ -1,3 +1,4 @@
+import { PROVIDER_CONTEXTDEV, PROVIDER_FIRECRAWL } from "../multiProvider/types";
 import { CONTEXTDEV_USD_PER_CREDIT, FIRECRAWL_USD_PER_CREDIT } from "../multiProvider/catalog";
 import rawWebSources from "../../../data/capabilities/web-sources.json";
 import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
@@ -310,7 +311,7 @@ export function describeAgentSource(id: string): (SourceCandidate & { how: strin
   };
 }
 
-export type WebProvider = "firecrawl" | "contextdev";
+export type WebProvider = typeof PROVIDER_FIRECRAWL | typeof PROVIDER_CONTEXTDEV;
 
 function getSessionRestrictedSources(): Record<string, { param: string; allowed: RegExp; message: string }> {
   const map: Record<string, { param: string; allowed: RegExp; message: string }> = {};

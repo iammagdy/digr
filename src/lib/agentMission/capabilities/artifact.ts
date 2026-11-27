@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CatalogEndpoint, TregCatalog } from "../../treg/catalog";
 import { BROKEN_MIN_ATTEMPTS, evidenceOf, levelRank, LIVE_MIN_CALLS_WITH_ROWS, LIVE_MIN_SHARE, type CapabilityEvidence, type EvidenceFacts, type MeasuredCalls, type VerificationLevel } from "./evidence";
 import type { Capability, CapabilityRegistry, Operation } from "./registry";
+import { PROVIDER_TREG } from "../../multiProvider/types";
 
 /**
  * PHASE 3, THE REVIEWABLE REGISTRY ARTIFACT (`data/capabilities/registry.json`; audit §7.2, PR-3.1). The SAME registry discovery uses (`buildCapabilityRegistry`), written out with its evidence, pricing provenance, reliability and
@@ -91,8 +92,8 @@ const round = (n: number | null): number | null => (n === null || !Number.isFini
 export function buildRegistryArtifact(inp: ArtifactInputs): RegistryArtifact {
   const entries: ArtifactEntry[] = [];
   for (const c of inp.registry.all) {
-    const e = c.provider === "treg" ? inp.catalog.byId.get(c.id) ?? null : null;
-    const policy = c.provider === "treg" ? inp.policyOf(c.id) : "public";
+    const e = c.provider === PROVIDER_TREG ? inp.catalog.byId.get(c.id) ?? null : null;
+    const policy = c.provider === PROVIDER_TREG ? inp.policyOf(c.id) : "public";
     const card = inp.cards.get(c.id) ?? null;
     const measured = inp.measured.get(c.id) ?? null;
     const verification = evidenceOf(c, { card, measured, reviewedProduction: inp.reviewedProduction.has(c.id), deprecated: inp.deprecated.get(c.id) ?? null, policy });
