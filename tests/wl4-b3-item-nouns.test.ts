@@ -61,6 +61,12 @@ describe("what the labels say about real endpoints (anchors read by a person)", 
     expect(nounOf("companyenrich.geo.cities.search")).toBe("عنصر");
     expect(nounOf("companyenrich.companies.enrich.bulk.status")).toBe("عنصر");
   });
+  it("B3 fix: conversations are «عنصر», telegram search is «منشور», spotify artist is «عنصر»", () => {
+    expect(nounOf("x.x.get-chat-conversations")).toBe("عنصر");
+    expect(nounOf("x.x.get-chat-conversation")).toBe("عنصر");
+    expect(nounOf("tikhub.x.telegram-web-fetch-channel-search")).toBe("منشور");
+    expect(nounOf("scrapecreators.x.v1-spotify-artist")).toBe("عنصر");
+  });
   it("a count reads in the noun's own Arabic form", () => {
     const n = coerceItemNoun(overlay["treg.google.serp.maps"].item_noun_ar)!;
     expect(countAr(5, n)).toBe("٥ أماكن");

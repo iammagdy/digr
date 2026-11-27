@@ -19774,11 +19774,11 @@
   },
   "scrapecreators.x.v1-spotify-artist": {
     "item_noun_ar": {
-      "singular": "حساب",
-      "dual": "حسابان",
-      "dual_gen": "حسابين",
-      "plural": "حسابات",
-      "tamyiz": "حسابًا",
+      "singular": "عنصر",
+      "dual": "عنصران",
+      "dual_gen": "عنصرين",
+      "plural": "عناصر",
+      "tamyiz": "عنصرًا",
       "feminine": false
     }
   },
@@ -20754,12 +20754,12 @@
   },
   "tikhub.x.telegram-web-fetch-channel-search": {
     "item_noun_ar": {
-      "singular": "قناة",
-      "dual": "قناتان",
-      "dual_gen": "قناتين",
-      "plural": "قنوات",
-      "tamyiz": "قناة",
-      "feminine": true
+      "singular": "منشور",
+      "dual": "منشوران",
+      "dual_gen": "منشورين",
+      "plural": "منشورات",
+      "tamyiz": "منشورًا",
+      "feminine": false
     }
   },
   "tikhub.x.telegram-web-fetch-similar-channels": {
@@ -29004,12 +29004,12 @@
   },
   "x.x.get-chat-conversation": {
     "item_noun_ar": {
-      "singular": "رسالة",
-      "dual": "رسالتان",
-      "dual_gen": "رسالتين",
-      "plural": "رسائل",
-      "tamyiz": "رسالة",
-      "feminine": true
+      "singular": "عنصر",
+      "dual": "عنصران",
+      "dual_gen": "عنصرين",
+      "plural": "عناصر",
+      "tamyiz": "عنصرًا",
+      "feminine": false
     }
   },
   "x.x.get-chat-conversation-events": {
@@ -29024,12 +29024,12 @@
   },
   "x.x.get-chat-conversations": {
     "item_noun_ar": {
-      "singular": "رسالة",
-      "dual": "رسالتان",
-      "dual_gen": "رسالتين",
-      "plural": "رسائل",
-      "tamyiz": "رسالة",
-      "feminine": true
+      "singular": "عنصر",
+      "dual": "عنصران",
+      "dual_gen": "عنصرين",
+      "plural": "عناصر",
+      "tamyiz": "عنصرًا",
+      "feminine": false
     }
   },
   "x.x.chat-media-download": {
