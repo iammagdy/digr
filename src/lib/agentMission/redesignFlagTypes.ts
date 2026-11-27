@@ -64,20 +64,3 @@ export function redesignActiveFor(flags: RedesignFlags, platformFlags: PlatformF
   }
   return redesignActive(flags, type, who);
 }
-
-/** The platform a plan is on, from the STRUCTURE of its stages: the capability the code stored, else the platform words of the tool's own id (never a title). The first stage that names one decides. */
-export function platformOfStages(stages: ReadonlyArray<{ capability?: string; endpoint_id?: string }>): SocialPlatform | null {
-  for (const st of stages) {
-    const cap = typeof st.capability === "string" ? st.capability.split(".")[0] : "";
-    if (isSocialPlatform(cap)) return cap;
-    const id = String(st.endpoint_id ?? "").toLowerCase();
-    if (!id) continue;
-    if (id.includes("tiktok")) return "tiktok";
-    if (id.includes("youtube")) return "youtube";
-    if (id.includes("instagram")) return "instagram";
-    if (id.includes("facebook")) return "facebook";
-    // the `x` between a vendor and a job («tikhub.x.…») is a namespace marker, not the platform: X is a tweet search, an X user or an X post, or a twitter word
-    if (id.includes("twitter") || /(?:^|\.)x\.(?:x\.)?(?:search|user|post|tweet|timeline)/.test(id)) return "x";
-  }
-  return null;
-}

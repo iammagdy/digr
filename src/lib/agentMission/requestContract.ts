@@ -1,7 +1,8 @@
 import { NUMBER_WORDS_SRC, numberOfWord } from "./arabicNumberWords";
 import { conditionsOfRequest } from "./requestConditions";
 import { GAP_CHOICE_LINE_AR, gapLinesAr } from "./gapLines";
-import { platformOfStages, type SocialPlatform } from "./redesignFlagTypes";
+import { type SocialPlatform } from "./redesignFlagTypes";
+import { platformOfStages } from "./platformOfStages";
 import { readConditions } from "./semantic/conditions";
 import { emptyFillReport, platformFromAnswer, platformWithReading, topicWithoutConditions, topicWithReading, type FillReport } from "./semantic/contractFill";
 import { interpretRequest } from "./semantic/interpret";

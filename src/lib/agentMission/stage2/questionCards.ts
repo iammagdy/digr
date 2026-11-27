@@ -3,6 +3,7 @@ import { cairoDayEndExclusiveMs, cairoDayStartMs } from "../cairoTime";
 import type { Ask } from "../foundation/ask";
 import { AGENT_MAX_QUESTIONS, COUNT_OPTIONS_AR, COUNT_QUESTION_AR, PARENT_WORD_AR, PER_PARENT_OPTIONS_AR, PER_PARENT_QUESTION_AR } from "../foundation/countChoice";
 import { isRecurringEvent, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR } from "../foundation/occurrence";
+import { platformLacksCommentsStage } from "../foundation/toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 import { applyAskEdit, type AskEditRejection } from "./askCard";
 
@@ -93,8 +94,8 @@ export function answerQuestionCard(ask: Ask, card: QuestionCard, answer: Questio
       if (!known(answer.option)) return { ok: false, reason: "unknown_choice" };
       const platform = answer.option as SocialPlatform;
       const next: Ask = { ...structuredClone(ask), platform, parentKind: PARENT_KIND_OF[platform] };
-      // X has no comments stage: the replies of a tweet are what a customer calls its comments
-      if (platform === "x" && next.comments !== "none") { next.replies = next.replies !== "none" ? next.replies : next.comments; next.comments = "none"; next.commentsPerParent = null; }
+      // a platform with no comments stage (X today: its tool cards read a post search and the replies of a post): the replies of a post are what a customer calls its comments
+      if (platformLacksCommentsStage(platform) && next.comments !== "none") { next.replies = next.replies !== "none" ? next.replies : next.comments; next.comments = "none"; next.commentsPerParent = null; }
       return { ok: true, ask: next };
     }
     case "count": {

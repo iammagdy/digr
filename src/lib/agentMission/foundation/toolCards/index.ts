@@ -23,3 +23,13 @@ export const cardOf = (endpointId: string, cards: ReadonlyArray<ToolCard> = TOOL
 export function cardsFor(platform: SocialPlatform, role: CardRole, options: { catalogOnly?: boolean; cards?: ReadonlyArray<ToolCard> } = {}): ToolCard[] {
   return (options.cards ?? TOOL_CARDS).filter((c) => c.platform === platform && c.role === role && (c.status === "verified" || (c.status === "catalog_only" && options.catalogOnly === true)));
 }
+
+/**
+ * True when a platform HAS tool cards but none of them reads comments: its children are the replies of its parents, there is no comments stage (X today: its cards are a tweet search and the replies of a tweet). The ask card
+ * offers and checks the comments field by this FACT of the cards, not by the platform's name; no platform (null) is not such a platform.
+ */
+export function platformLacksCommentsStage(platform: SocialPlatform | null, cards: ReadonlyArray<ToolCard> = TOOL_CARDS): boolean {
+  if (platform === null) return false;
+  const own = cards.filter((c) => c.platform === platform);
+  return own.length > 0 && !own.some((c) => c.role === "video.comments" || c.role === "post.comments");
+}

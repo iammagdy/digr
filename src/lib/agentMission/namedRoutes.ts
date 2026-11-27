@@ -1,5 +1,6 @@
 import type { CatalogEndpoint, TregCatalog } from "../treg/catalog";
 import { rankEndpoints } from "./sourceRanking";
+import { postKindsInterchangeableOn } from "./platformFacts";
 
 /**
  * SOURCES THAT TAKE THE SOURCE ITSELF. A customer who names a channel, a page or an account («من قنوات العربية واليوم السابع وبي بي سي نيوز») wants the items of THOSE sources. A keyword search over a whole platform finds them only by luck: the live YouTube
@@ -11,12 +12,12 @@ import { rankEndpoints } from "./sourceRanking";
  */
 const SEARCH_CAPABILITY = /^([a-z0-9-]+)\.search\.([a-z_]+)$/;
 const OWN_CAPABILITY = /^([a-z0-9-]+)\.(?:channel|user|page|profile|account)\.([a-z_]+)$/;
-/** The items of these kinds are interchangeable between a platform's keyword search and its account listing (a post search and an account's posts), except on YouTube, where a channel's «posts» are community posts, not videos. */
+/** The items of these kinds are interchangeable between a platform's keyword search and its account listing (a post search and an account's posts), except where the platform's own facts say they are not (YouTube: a channel's «posts» are community posts, not videos). */
 const POST_LIKE = new Set(["posts", "videos", "reels"]);
 /** The inputs that take the source itself: a channel, a handle, a user name, an account, a page. */
 const SOURCE_INPUT = /^(?:channel|channel_?id|channel_?name|channel_?url|handle|user_?name|screen_?name|user|user_?id|sec_?uid|unique_?id|account|profile|profile_?url|page|page_?id|page_?url|url)$/i;
 
-const sameKind = (platform: string, search: string, own: string): boolean => search === own || (platform !== "youtube" && POST_LIKE.has(search) && POST_LIKE.has(own));
+export const sameKind = (platform: string, search: string, own: string): boolean => search === own || (postKindsInterchangeableOn(platform) && POST_LIKE.has(search) && POST_LIKE.has(own));
 
 /** The input of an endpoint that takes the source (channel, handle, user, page), or null. */
 export const sourceInputOf = (e: CatalogEndpoint): string | null => e.inputs.find((i) => SOURCE_INPUT.test(i.name) && (i.type === "string" || i.type === "str" || i.type === "integer"))?.name ?? null;

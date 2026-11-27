@@ -8,7 +8,7 @@ import type { Ask } from "../foundation/ask";
 import { compilePlan, type CompileInput, type CompileResult } from "../foundation/compilePlan";
 import { fitToBudget } from "../foundation/budgetFit";
 import { PARENT_WORD_AR } from "../foundation/countChoice";
-import { COUNTRY_AR, type ToolCard } from "../foundation/toolCards";
+import { COUNTRY_AR, platformLacksCommentsStage, type ToolCard } from "../foundation/toolCards";
 
 /**
  * STAGE 2, THE «فهمنا طلبك» CARD (docs/STAGE-2.md, FOUNDATION-PLAN PR 4). The Ask the compiler reads (F1) shown to the customer BEFORE approval as typed fields, each with its Arabic label
@@ -141,7 +141,7 @@ export function askCardView(ask: Ask, poolCard?: ToolCard): AskCardView {
     { key: "country", labelAr: "الدولة", valueAr: ask.country ? COUNTRY_AR[ask.country] ?? "دولة غير معروفة" : ask.clarify?.some((c) => c.field === "country") ? "نحتاج توضيح الدولة قبل الخطة" : "أي دولة", customerWords: false, editable: true, input: { kind: "choice", options: COUNTRY_OPTIONS }, scope: scope("country", { field: "country", value: null }) },
     { key: "language", labelAr: "اللغة", valueAr: ask.language === "ar" ? "العربية" : ask.language === "en" ? "الإنجليزية" : ask.clarify?.some((c) => c.field === "language") ? "نحتاج توضيح اللغة قبل الخطة" : "أي لغة", customerWords: false, editable: true, input: { kind: "choice", options: LANGUAGE_OPTIONS }, scope: scope("language", { field: "language", value: null }) },
     { key: "order", labelAr: "الترتيب", valueAr: ask.order === "newest" ? "الأحدث" : "الأكثر تعليقًا", customerWords: false, editable: true, input: { kind: "choice", options: ORDER_OPTIONS }, scope: scope("order", { field: "order", value: ask.order }) },
-    { key: "comments", labelAr: "التعليقات", valueAr: commentsValue(ask), customerWords: false, editable: ask.platform !== "x", input: { kind: "choice", options: COMMENTS_OPTIONS }, scope: "recompile" },
+    { key: "comments", labelAr: "التعليقات", valueAr: commentsValue(ask), customerWords: false, editable: !platformLacksCommentsStage(ask.platform), input: { kind: "choice", options: COMMENTS_OPTIONS }, scope: "recompile" },
     { key: "commentsPerParent", labelAr: `التعليقات من كل ${parentEach(ask)}`, valueAr: ask.commentsPerParent !== null ? toArabicDigits(ask.commentsPerParent) : "غير محدد", customerWords: false, editable: commentsOn, input: { kind: "number", min: 1, max: COMMENTS_PER_PARENT_MAX }, scope: "recompile" },
     { key: "replies", labelAr: "الردود", valueAr: repliesValue(ask), customerWords: false, editable: true, input: { kind: "choice", options: REPLIES_OPTIONS }, scope: "recompile" },
     { key: "repliesPerComment", labelAr: "الردود على كل تعليق", valueAr: ask.repliesPerComment !== null ? toArabicDigits(ask.repliesPerComment) : "غير محدد", customerWords: false, editable: repliesOn, input: { kind: "number", min: 1, max: AGENT_REPLIES_PER_COMMENT_MAX }, scope: "recompile" },
@@ -235,14 +235,14 @@ export function applyAskEdit(ask: Ask, edit: AskEdit, ctx: { nowMs: number }): A
     case "comments": {
       const v = edit.value as unknown;
       if (v !== "none" && v !== "some" && v !== "all") return reject("unknown_choice");
-      if (v !== "none" && ask.platform === "x") return reject("not_offered");
+      if (v !== "none" && platformLacksCommentsStage(ask.platform)) return reject("not_offered");
       next.comments = v;
       if (v !== "some") { next.commentsPerParent = null; next.commentsBare = null; }
       const { comments: _total, ...rest } = next.edits;
       void _total;
       next.edits = rest;
       // the replies of a platform's comments hang on the comments: no comments, no replies (X's replies hang on the tweets and stay)
-      if (v === "none" && ask.platform !== "x") { next.replies = "none"; next.repliesPerComment = null; const { replies: _r, ...r2 } = next.edits; void _r; next.edits = r2; }
+      if (v === "none" && !platformLacksCommentsStage(ask.platform)) { next.replies = "none"; next.repliesPerComment = null; const { replies: _r, ...r2 } = next.edits; void _r; next.edits = r2; }
       return { ok: true, ask: next };
     }
     case "commentsPerParent": {
@@ -260,7 +260,7 @@ export function applyAskEdit(ask: Ask, edit: AskEdit, ctx: { nowMs: number }): A
     case "replies": {
       const v = edit.value as unknown;
       if (v !== "none" && v !== "some" && v !== "all") return reject("unknown_choice");
-      if (v !== "none" && ask.comments === "none" && ask.platform !== "x") return reject("comments_not_asked");
+      if (v !== "none" && ask.comments === "none" && !platformLacksCommentsStage(ask.platform)) return reject("comments_not_asked");
       next.replies = v;
       if (v !== "some") next.repliesPerComment = null;
       const { replies: _r, ...rest } = next.edits;
