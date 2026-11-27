@@ -14,8 +14,8 @@ import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyNoDataAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased, jobHasSavedData } from "../../lib/server/methodologyPurchase";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
-import { looksLikeFileShapingRequest } from "../../lib/fileSpec";
-import { REVISION_UNAVAILABLE_AR, SHAPE_NOT_UNDERSTOOD_AR, buildCodeShapeOutputs, editArtifactAsShape, isFileShapingTurnFor, isShapingQuestionCard, neverAPlanAnswer, parseShapeSpec, readShapingTurn, runShapeModel, sanitizeResultColumns, shapeFileReply, shapingBlockedReplyFor, validateShapedOutput } from "../../lib/shapeTurn";
+import { isInternalColumnKey, looksLikeFileShapingRequest } from "../../lib/fileSpec";
+import { REVISION_UNAVAILABLE_AR, SHAPE_NOT_UNDERSTOOD_AR, buildCodeShapeOutputs, buildUnclearShapeReply, editArtifactAsShape, isFileShapingTurnFor, isShapingQuestionCard, neverAPlanAnswer, parseShapeSpec, readShapingTurn, routeFileTurn, runClosestColumns, runShapeModel, sanitizeResultColumns, shapeFileReply, shapingBlockedReplyFor, validateShapedOutput } from "../../lib/shapeTurn";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr, recordNounAr, unitPriceLineAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
@@ -118,7 +118,8 @@ import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig
 import { advancePlanningSession, sessionRequestOf, startPlanningSession } from "../../lib/modelPlanner/planningSession";
 import { persistPlannedAnswer, shapePlannedAnswer } from "../../lib/modelPlanner/plannedAnswer";
 import { plannerCostUsd } from "../../lib/modelPlanner/transport";
-import { agentChatTurn } from "../../lib/agentMission/chatTurn";
+import { agentChatTurn, prepareAgentTurn, type PreparedAgentTurn } from "../../lib/agentMission/chatTurn";
+import { chatModelName } from "../../lib/agentMission/chatModel";
 import { pairRoleOf } from "../../lib/planFit";
 import { handlesInText, videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
@@ -1574,8 +1575,8 @@ export class ChatHandler {
   }
 
   /** One chat turn answered by the AGENT (see `agentChat`): a mission is created for the customer; the page draws its card. Never calls a model or a source itself. */
-  private async answerWithAgent(ctx: { calculatorPlanOnly?: true; sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
-    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle, ...(ctx.exclusionFile ? { exclusionFile: ctx.exclusionFile } : {}) });
+  private async answerWithAgent(ctx: { calculatorPlanOnly?: true; /** UL2a-2b: the turn was already read (the one chat-model decision made); not read again */ prepared?: PreparedAgentTurn | null; sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
+    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle, ...(ctx.exclusionFile ? { exclusionFile: ctx.exclusionFile } : {}), ...(ctx.prepared ? { prepared: ctx.prepared } : {}) });
     ctx.turn.model = "agent";
     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
     const scope = ctx.calculatorPlanOnly
@@ -2021,8 +2022,8 @@ export class ChatHandler {
     // Only a message about the file, with a delivered result to shape; a research request that merely names a layout ("... ملف لكل منصة") is not one.
     // The answer to a shaping question is about the file whatever else is known (its id proves the context); any other message
     // needs a delivered result to shape.
-    const isFileShapingTurn = isFileShapingTurnFor({ shapeAnswer, looksShaping, shapingText, columnCount: shapingColumns.length, hasDeliveredResultJob: Boolean(deliveredResultJobId) });
-    const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
+    let isFileShapingTurn = isFileShapingTurnFor({ shapeAnswer, looksShaping, shapingText, columnCount: shapingColumns.length, hasDeliveredResultJob: Boolean(deliveredResultJobId) });
+    let isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
     const hasPlatform = brief.platforms && brief.platforms.length > 0;
@@ -2162,6 +2163,40 @@ export class ChatHandler {
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
         turnStats: currentTurnStats(),
       };
+    }
+
+    // UL2a-2b: WHO DECIDES that this turn is about the delivered file. While the result file is open on the page (its real columns were sent) and the agent serves the chat, the turn is read ONCE by the chat model
+    // (the call the agent's turn makes anyway, handed on to it below): it says whether the message is about the shape of that file, about it but not clear, or neither. The word reader answers only when no decision was asked for or
+    // the model's call failed (today's behaviour). A card answer to one of our shaping questions is code, never asked.
+    let preparedAgentTurn: PreparedAgentTurn | null = null;
+    let unclearFileTurn = false;
+    /** The chat model's name when its decision was logged on this turn (the usage row then names it, even when the answer was built by code). */
+    let decisionModel: string | null = null;
+    if (this.agentChat?.enabled && sb && !isTestSearchScenario && !shapeAnswer && shapingColumns.length > 0) {
+      preparedAgentTurn = await prepareAgentTurn({ sb, userId, conversationId, userMsgId, assistantMsgId, message, conversationTitle: currentConversationTitle, exclusionFile: brief.exclusionFile ?? null }, { columns: shapingColumns.filter((c) => !isInternalColumnKey(c.key)).map((c) => c.titleAr) });
+      if (preparedAgentTurn) {
+        const routed = routeFileTurn({ readerSaysShaping: isFileShapingTurn, decision: preparedAgentTurn.decision });
+        isFileShapingTurn = routed.shaping;
+        unclearFileTurn = routed.unclear;
+        isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
+        // the tokens of the decision belong to the turn only when it ends as a file turn (a data request or a question keeps today's accounting: the agent's turn)
+        const decided = preparedAgentTurn.decision;
+        if (routed.by === "model" && routed.shaping && decided.usage && (decided.usage.inputTokens > 0 || decided.usage.outputTokens > 0)) {
+          turn.model = chatModelName();
+          decisionModel = turn.model;
+          turn.usage.calls += 1;
+          turn.usage.inputTokens += decided.usage.inputTokens;
+          turn.usage.outputTokens += decided.usage.outputTokens;
+          turn.usage.costUsd += plannerCostUsd({ inputTokens: decided.usage.inputTokens, outputTokens: decided.usage.outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0 });
+        }
+      }
+    }
+
+    // The word reader decided (no decision was asked, or the model's call failed or could not be read): counted, so the share of turns the fallback routes can be read from the logs (D-0250).
+    // Only when it matters: a decision was asked and failed, or no decision was asked and the reader says «file turn» (a card answer is code, not a fallback).
+    const readerDecided = preparedAgentTurn === null ? isFileShapingTurn && !shapeAnswer : preparedAgentTurn.decision.source !== "model";
+    if (readerDecided) {
+      console.info(JSON.stringify({ tag: "file_turn_fallback", asked: preparedAgentTurn !== null, shaping: isFileShapingTurn, ...(preparedAgentTurn?.decision.failure ? { failure: preparedAgentTurn.decision.failure } : {}) }));
     }
 
     // A delivered result whose columns cannot be read right now: answered by code, nothing is guessed or charged.
@@ -2681,7 +2716,7 @@ export class ChatHandler {
       // The AGENT takes every turn when it is on (the rollback constant is AGENT_SERVES_CHAT) except a greeting (answered by the code above) and a file-shaping turn (answered by code below): a general question about the service is a chat turn of the agent, whose model names its kind and writes its reply under the code guard (conversationModel.ts), never a plan (DT-20261126-wl4-ul2a-1).
       if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting) {
         currentStep = "agent_mission";
-        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null });
+        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null, prepared: preparedAgentTurn });
       }
 
       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.
@@ -2962,10 +2997,14 @@ export class ChatHandler {
       const shapeBuilt = buildCodeShapeOutputs({ isFileShapingTurn, isCardAnswer, isTestSearchScenario, testScenario, shapingText, shapingColumns, shapeAnswer, message, rawUserHistoryTexts });
       const { shapeSpec, shapeAnswerOutput, shapeIgnoredNames, fileEditOutput } = shapeBuilt;
       let shapeQuestionIssued = false;
+      // UL2a-2b: the model said the message is about the file but not what is wanted: ONE question (it comes last in `codeBuiltOutput`: anything code can read or answer wins) with options built from the real columns (or a plain sentence when it was asked just before)
+      const unclearBuilt = unclearFileTurn
+        ? buildUnclearShapeReply({ columns: shapingColumns, previousAssistantText: preparedAgentTurn?.assistantQuestion ?? null })
+        : null;
       const methodologyOutput: any = asksMethodology && !isTestSearchScenario && !testScenario
         ? { type: "answer_question", answerAr: methodologyJobId ? (methodologyBought ? methodologyPurchasedAr() : methodologyNoData ? methodologyNoDataAr() : methodologyAnswerAr()) : methodologyUnavailableAr() }
         : null;
-      const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? methodologyOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
+      const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? methodologyOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null) ?? unclearBuilt?.output ?? null;
       // A shaping request the code could not read is answered by the ONE constrained shaping call (src/lib/shapeTurn.ts): a file spec, one short sentence, or «cannot». The legacy planning model
       // is never asked about a turn on the delivered file, so such a turn can never plan, search, quote or start a job.
       const shapeModelRun = !codeBuiltOutput && isFileShapingTurn ? await runShapeModel({ text: shapingText, columns: shapingColumns }) : null;
@@ -2977,7 +3016,7 @@ export class ChatHandler {
         "";
 
       let llmResult = codeBuiltOutput
-        ? ({ output: codeBuiltOutput, inputTokens: 0, outputTokens: 0, costUsd: 0, model: "deterministic", promptVersion: fastPlanOutput ? "intent-1" : "shape-1", textBlockAr: "" } as LlmCallResult)
+        ? ({ output: codeBuiltOutput, inputTokens: 0, outputTokens: 0, costUsd: 0, model: decisionModel ?? "deterministic", promptVersion: fastPlanOutput ? "intent-1" : "shape-1", textBlockAr: "" } as LlmCallResult)
         : shapeModelRun
         ? ({ output: shapeModelRun.output, inputTokens: shapeModelRun.inputTokens, outputTokens: shapeModelRun.outputTokens, costUsd: shapeModelRun.costUsd, model: shapeModelRun.model, promptVersion: "shape-2", textBlockAr: "" } as LlmCallResult)
         : await this.llm.executeTurn({
@@ -3275,10 +3314,34 @@ export class ChatHandler {
       // A sort, a filter or a column choice is file shaping (free, no model-built file); the paid-revision card is retired.
       { const asShape = editArtifactAsShape(output as any, shapingColumns.length); if (asShape) output = asShape; }
 
+      // UL2a-2b: the one question of an unclear file request (see unclearBuilt)
+      if (unclearBuilt?.kind === "question" && output === unclearBuilt.output) {
+        shapeQuestionIssued = true;
+        clarificationItemsList = [unclearBuilt.item];
+        clarificationQuestionsList = unclearBuilt.questions;
+        finalContentAr = unclearBuilt.finalContentAr;
+      }
+
       // 7f. File shaping: the spec is checked against the real columns of the delivered result. An unknown column is never
       // guessed: the customer is told which columns exist and asked ONE question.
       {
-        const checkedShape = validateShapedOutput(output as any, shapingColumns);
+        let checkedShape = validateShapedOutput(output as any, shapingColumns);
+        // UL2a-2b (C5): a column the file does not have is said by name; when the columns nearest to it are not known yet (a request read by code) ONE small model call finds them
+        // (a failure keeps the list as it was). Its tokens are added to this turn's usage row (the model name replaces «deterministic» only when it really spent tokens); nothing is charged to the customer.
+        // Only for a request that CODE read (a request the shaping model read asks for its nearest columns in its own answer).
+        if (checkedShape && checkedShape.kind !== "ok" && checkedShape.missing.length > 0 && !checkedShape.closestUsed && !shapeModelRun) {
+          const closestRun = await runClosestColumns({ missing: checkedShape.missing, columns: shapingColumns });
+          if (closestRun.inputTokens + closestRun.outputTokens > 0) {
+            modelCallCount++;
+            turnUsage.calls += 1;
+            turnUsage.inputTokens += closestRun.inputTokens;
+            turnUsage.outputTokens += closestRun.outputTokens;
+            turnUsage.costUsd += closestRun.costUsd;
+            if (llmResult.model === "deterministic") llmResult = { ...llmResult, model: closestRun.model };
+            turn.model = turn.model || closestRun.model;
+          }
+          if (closestRun.closest.length > 0) checkedShape = validateShapedOutput(output as any, shapingColumns, { closest: closestRun.closest });
+        }
         if (checkedShape?.kind === "ok") {
           (output as any).spec = checkedShape.spec;
         } else if (checkedShape?.kind === "question") {

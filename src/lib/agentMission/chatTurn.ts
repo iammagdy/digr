@@ -45,6 +45,43 @@ export interface AgentChatTurnInput {
   conversationTitle?: string | null;
   /** PHASE 5.3: the exclusion file the chat server parsed and kept in this conversation's brief (chatHandler `brief.exclusionFile`; never a field the customer's browser sends). Absent: no file. */
   exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null;
+  /** UL2a-2b: the turn was already read (`prepareAgentTurn`, by the handler, to learn whether it is about the open result file): the reads and the ONE chat-model call are not made again. */
+  prepared?: PreparedAgentTurn | null;
+}
+
+/** UL2a-2b: what `agentChatTurn` reads and decides before it acts: everything it needs from the database and the ONE decision of the chat model. */
+export interface PreparedAgentTurn {
+  mode: { enabled: boolean; semantic: boolean; registry: any };
+  open: OpenRequest | null;
+  balancePoints: number | null;
+  priorState: { brief: ResearchBrief | null; group: any };
+  prior: ResearchBrief | null;
+  customerTurns: string[];
+  assistantQuestion: string | null;
+  decision: Decision;
+}
+
+/** The chat's own button messages and a typed approval are decided by code, with no read and no model call: nothing to prepare. */
+export const turnNeedsNoDecision = (message: string): boolean => isTypedApprovalMessage(message) || isRetrySamePlanMessage(message) || isReviewPlanMessage(message);
+
+/**
+ * THE READS AND THE ONE DECISION OF A CHAT TURN, exactly as `agentChatTurn` made them inline (same order, same calls). With `openResult` (the page's open result file: its real column titles) the same one call also says whether the message
+ * is about how that file should look (`decision.fileTurn`). Null for the messages above.
+ */
+export async function prepareAgentTurn(input: AgentChatTurnInput, openResult?: { columns: string[] }): Promise<PreparedAgentTurn | null> {
+  const { sb } = input;
+  if (turnNeedsNoDecision(input.message)) return null;
+  // LLM-FIRST PLANNER (llm_planner_v1, on unless the owner set it false): the worker's planning model reads the customer's own messages and asks what it needs on the card; the chat does not re-check the
+  // request with word rules (the brief's consistency checks, the capability gate), which asked again and again for what the customer had already written. Privacy and the open request's handling stay.
+  const plannerOn = llmPlannerOnValue(await readSettingValue(sb, LLM_PLANNER_SETTING_KEY));
+  const mode = plannerOn ? { enabled: false, semantic: false, registry: null } : await readBriefMode(sb, input.userId);
+  const [open, balancePoints, history, priorState] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve({ brief: null, group: null })]);
+  const prior = priorState.brief;
+  // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
+  const customerTurns = [...(open?.requestText ? [open.requestText] : []), ...history.filter((m) => m.role === "user").map((m) => m.content), input.message];
+  const assistantQuestion = [...history].reverse().find((m) => m.role === "assistant")?.content ?? null;
+  const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(openResult && openResult.columns.length > 0 ? { openResult } : {}), ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }), ...(mode.registry ? { capabilityLines: chatCapabilityLines(mode.registry) } : {}) } } : {}) });
+  return { mode, open, balancePoints, priorState, prior, customerTurns, assistantQuestion, decision };
 }
 
 export type AgentChatTurnResult = (
@@ -347,16 +384,7 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
   if (!isRetrySamePlanMessage(input.message) && !isReviewPlanMessage(input.message)) {
     // In LLM-first turn flow, account and trust intents are classified by decideTurn
     // and served with canonical checked copy directly by code.
-    // LLM-FIRST PLANNER (llm_planner_v1, on unless the owner set it false): the worker's planning model reads the customer's own messages and asks what it needs on the card; the chat does not re-check the
-    // request with word rules (the brief's consistency checks, the capability gate), which asked again and again for what the customer had already written. Privacy and the open request's handling stay.
-    const plannerOn = llmPlannerOnValue(await readSettingValue(sb, LLM_PLANNER_SETTING_KEY));
-    const mode = plannerOn ? { enabled: false, semantic: false, registry: null } : await readBriefMode(sb, input.userId);
-    const [open, balancePoints, history, priorState] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve({ brief: null, group: null })]);
-    const prior = priorState.brief;
-    // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
-    const customerTurns = [...(open?.requestText ? [open.requestText] : []), ...history.filter((m) => m.role === "user").map((m) => m.content), input.message];
-    const assistantQuestion = [...history].reverse().find((m) => m.role === "assistant")?.content ?? null;
-    const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }), ...(mode.registry ? { capabilityLines: chatCapabilityLines(mode.registry) } : {}) } } : {}) });
+    const { mode, open, balancePoints, priorState, prior, customerTurns, assistantQuestion, decision } = (input.prepared ?? (await prepareAgentTurn(input)))!;
     const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off", ...(mode.registry ? { registry: mode.registry } : {}), ...(priorState.group ? { priorGroup: priorState.group } : {}) };
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));

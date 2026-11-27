@@ -1,0 +1,338 @@
+[
+ {
+  "kind": "A-clear-shaping",
+  "text": "رتب النتائج حسب المدينة تنازلياً",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "رتب الملف حسب المدينة",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "رتبها حسب اسم الشركة تصاعدي",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "قسّم الملف شيت لكل مدينة",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "قسّم الملف شيت لكل محافظة",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "فلتر الملف على المدينة يساوي القاهرة",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "فلتر النتائج على اسم الشركة يحتوي Nile",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "سيب الأعمدة اسم الشركة والمدينة فقط",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "اعرض الأعمدة اسم الشركة، المدينة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "احذف التكرار من الملف",
+  "reader": true,
+  "route": "shape:edit-answer"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "عدل اتجاه الشيت من اليمين لليسار",
+  "reader": true,
+  "route": "shape:edit-answer"
+ },
+ {
+  "kind": "A-clear-shaping",
+  "text": "رتب الملف حسب المحافظة",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "قسّم الملف زي ما تحب",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "قسّم الملف بالطريقة اللي تحبها",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "قسّم الملف لشيتات حسب أنسب عمود",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "شيت لكل مدينة ورتب بالاسم",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "فلتر النتائج على القاهرة",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "B-reader-accepts-code-cannot",
+  "text": "قسّم الملف حسب المدينة ورتبه حسب اسم الشركة",
+  "reader": true,
+  "route": "shape:model"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "رتبهم زي ما تحب",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "نسق الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "خليه شيتات",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "عدل الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "خلي الملف أحلى",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "رتب الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "رتبلي الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "نظم الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "غير شكل الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "ممكن تعدل الملف شوية",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "عايز الملف أحلى شوية",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "مش عاجبني ترتيب الملف",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "قسّمهم",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "C-vague-shaping",
+  "text": "خلي الأعمدة أقل",
+  "reader": true,
+  "route": "shape:code"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "عايز ٥٠ شركة مقاولات في مصر",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "هات لي تعليقات تيك توك عن الكهرباء",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "عايز مطاعم في دبي",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "ابحث عن شركات كهرباء في السعودية",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "هات ١٠٠ منشور من إكس عن الشائعات",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "عايز أرقام تليفونات صيدليات في القاهرة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "هات لي ١٠٠ شركة في دبي وقسمهم شيت لكل مدينة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "جمع بيانات شركات في مصر مع شيت لكل محافظة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "عايز فيديوهات يوتيوب عن التسويق",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "هات شركات مقاولات في مصر ورتب النتائج حسب الاسم",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "عايز بيانات تانية زي دي بس لشركات في الأردن",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "D-new-data-request",
+  "text": "كمّل وهات غيرهم",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "انت بتعمل ايه؟",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "ما هي خدماتك",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "كيف تعمل المنصة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "بكام الخدمة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "الملف ده بيتحمل ازاي؟",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "E-general-question",
+  "text": "فين رصيدي",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "عايز تعديل",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "ممكن مساعدة",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "ماشي",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "مش فاهم",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "طيب",
+  "reader": false,
+  "route": "agent"
+ },
+ {
+  "kind": "F-unclear",
+  "text": "عايز حاجة تانية",
+  "reader": false,
+  "route": "agent"
+ }
+]

@@ -1,7 +1,7 @@
 import { latestDeliveredJob } from "./conversationJobs";
 import { normalizeDataset } from "./normalizationPipeline";
 import { inferSocialRowKind } from "./socialRows";
-import type { DatasetColumn } from "../fileSpec";
+import { isInternalColumnKey, resolveColumn, type DatasetColumn } from "../fileSpec";
 import { groupPartDataset } from "./multiProvider/groupPartDataset";
 
 /**
@@ -63,10 +63,16 @@ export async function loadLatestResultColumns(
 /** Contact details, links, record ids and status flags: a sheet per one of these is never what a customer means. */
 const NOT_A_GROUPING_COLUMN = /(?:^|_)(?:phone|email|url|website|linkedin|id)(?:_|$)|_status$/;
 
-/** One question's worth of choices: the columns a customer can actually split or sort by, longest text fields last. With `forGrouping` the contact, link, id and status columns are left out. */
-export function columnChoicesAr(columns: DatasetColumn[], limit = 8, forGrouping = false): string[] {
+/**
+ * One question's worth of choices: the columns a customer can actually split or sort by, longest text fields last. With `forGrouping` the contact, link, id and status columns are left out. The product's own fields
+ * (`isInternalColumnKey`) are never offered. `preferred` (titles of real columns, the ones closest to what the customer asked for) come FIRST, so a cut at `limit` never drops them; a title that is not a real offered column is ignored.
+ */
+export function columnChoicesAr(columns: DatasetColumn[], limit = 8, forGrouping = false, preferred: string[] = []): string[] {
   const long = /^(?:text|comment_text|description|bio|methodology)$/;
-  const usable = forGrouping ? columns.filter((c) => !NOT_A_GROUPING_COLUMN.test(c.key)) : columns;
+  const visible = columns.filter((c) => !isInternalColumnKey(c.key));
+  const usable = forGrouping ? visible.filter((c) => !NOT_A_GROUPING_COLUMN.test(c.key)) : visible;
   const ordered = [...usable.filter((c) => !long.test(c.key)), ...usable.filter((c) => long.test(c.key))];
-  return [...new Set(ordered.map((c) => c.titleAr))].slice(0, limit);
+  const titles = [...new Set(ordered.map((c) => c.titleAr))];
+  const first = preferred.map((p) => resolveColumn(p, usable)?.titleAr).filter((t): t is string => Boolean(t));
+  return [...new Set([...first, ...titles])].slice(0, limit);
 }
