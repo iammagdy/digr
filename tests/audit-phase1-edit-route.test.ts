@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildCompanyPlanEditOperations, buildPeoplePlanEditOperations } from "../src/lib/companyPlanEdits";
 import { extractInterpretedParameters } from "../src/lib/planParameters";
@@ -34,7 +35,7 @@ describe("POST /api/chat/edit-plan: the edited country is saved and the summary 
   beforeEach(() => { state.user = { id: "u1" }; state.plans = []; });
 
   it("a company plan with no country: the page's operations save the country, and reopening reads it", async () => {
-    state.quote = { id: "q_c", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية", query: { keyword: { include: ["electrical"] } } }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 3.168 }] };
+    state.quote = { id: "q_c", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية", query: { keyword: { include: ["electrical"] } } }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 3.168 }] };
     const operations = [
       { action: "set_limit", capabilitySlug: "icypeas-companies-search", targetVolumeMax: 5 },
       { action: "set_formats", formats: ["xlsx"] },
@@ -51,7 +52,7 @@ describe("POST /api/chat/edit-plan: the edited country is saved and the summary 
   });
 
   it("a plan edited WITHOUT a country keeps a summary with no validation sentence and Arabic digits (it used to read «… في يلزم تحديد الدولة» with Latin digits)", async () => {
-    state.quote = { id: "q_n", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية", query: { keyword: { include: ["electrical"] } } }, targetVolumeMin: 1, targetVolumeMax: 12, unitPricePoints: 3.168 }] };
+    state.quote = { id: "q_n", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "icypeas-companies-search", params: { industry: "الكهرباء والطاقة الكهربائية", query: { keyword: { include: ["electrical"] } } }, targetVolumeMin: 1, targetVolumeMax: 12, unitPricePoints: 3.168 }] };
     const { POST } = await import("../src/app/api/chat/edit-plan/route");
     const res = await POST(editRequest({ quoteId: "q_n", operations: [{ action: "set_limit", capabilitySlug: "icypeas-companies-search", targetVolumeMax: 12 }, { action: "set_formats", formats: ["xlsx"] }] }));
     expect(res.status).toBe(200);
@@ -60,7 +61,7 @@ describe("POST /api/chat/edit-plan: the edited country is saved and the summary 
   });
 
   it("a decision-makers plan: the edited country (ISO code) and title are saved; the old behaviour wrote a «query» string and dropped the country", async () => {
-    state.quote = { id: "q_p", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ capabilitySlug: "professional-people-search", params: { q: "مديرين", limit: 5, country: "SA", title: "Director" }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 9 }] };
+    state.quote = { id: "q_p", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "professional-people-search", params: { q: "مديرين", limit: 5, country: "SA", title: "Director" }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 9 }] };
     const operations = [
       { action: "set_limit", capabilitySlug: "professional-people-search", targetVolumeMax: 5 },
       { action: "set_formats", formats: ["xlsx"] },

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
 
 const authMockState = vi.hoisted(() => ({
@@ -465,6 +466,8 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
 
     const prevLive = process.env.TREG_LIVE;
     const prevMock = process.env.ENABLE_MOCK_PROVIDER;
+    const prevAdminClient = authMockState.adminClient;
+    const rpc = vi.fn();
     try {
       delete process.env.TREG_LIVE;
       delete process.env.ENABLE_MOCK_PROVIDER;
@@ -476,6 +479,23 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
         user_metadata: { email_verified: true },
       };
       authMockState.authError = null;
+      authMockState.adminClient = {
+        from: (table: string) => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: table === "plans_quotes" ? {
+                  user_id: "user-verified-1",
+                  status: "quoted",
+                  items: [{ endpointId: AGENT_CAPABILITY_SLUG }],
+                } : null,
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        rpc,
+      };
 
       const req = new NextRequest("http://localhost:3000/api/chat/accept-quote", {
         method: "POST",
@@ -487,7 +507,10 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
       const data = await res.json();
       expect(data.success).toBe(false);
       expect(data.error).toContain("لم يتم حجز أو خصم أي نقاط");
+      expect(data.reasonCode).toBe("flag_off");
+      expect(rpc).not.toHaveBeenCalled();
     } finally {
+      authMockState.adminClient = prevAdminClient;
       if (prevLive === undefined) delete process.env.TREG_LIVE;
       else process.env.TREG_LIVE = prevLive;
       if (prevMock === undefined) delete process.env.ENABLE_MOCK_PROVIDER;

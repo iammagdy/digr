@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -203,7 +204,7 @@ function request(body: Record<string, unknown>) {
 describe("POST /api/chat/sample-remainder", () => {
   beforeEach(() => {
     state.user = { id: "u1" };
-    state.quote = { id: QUOTE_ID, user_id: "u1", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ capabilitySlug: "social-youtube-comments", params: { query: "القهوة" }, targetVolumeMin: 1, targetVolumeMax: 1000, unitPricePoints: 9 }] };
+    state.quote = { id: QUOTE_ID, user_id: "u1", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "social-youtube-comments", params: { query: "القهوة" }, targetVolumeMin: 1, targetVolumeMax: 1000, unitPricePoints: 9 }] };
     state.job = { id: getJobIdForQuote(QUOTE_ID), user_id: "u1", status: "completed", delivered_units: 28, charged_credits: 252, unit_price: 9 };
     state.files = new Map([[`u1/${getJobIdForQuote(QUOTE_ID)}/data.json`, JSON.stringify({ rows: Array.from({ length: 28 }, (_, i) => comment(`c${i + 1}`)) })]]);
     state.inserted = [];

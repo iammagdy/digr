@@ -18,6 +18,8 @@ import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
 import { modelPlanAcceptRefusal } from "../../../../lib/modelPlanner/acceptGuard";
+import { hasLegacyChatQuoteItem, LEGACY_CHAT_QUOTE_AR } from "@/lib/legacyChatQuote";
+import { QUOTE_START_UNAVAILABLE_AR } from "@/lib/multiProvider/copy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -80,8 +82,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
     const adminClient = createAdminClient();
+    const { data: quoteForReadiness, error: quoteReadError } = await adminClient
+      .from("plans_quotes")
+      .select("items, status, user_id")
+      .eq("id", quoteId)
+      .maybeSingle();
+    if (quoteReadError) {
+      return NextResponse.json({ success: false, error: QUOTE_START_UNAVAILABLE_AR }, { status: 503 });
+    }
+    if (typeof quoteForReadiness?.user_id === "string" && quoteForReadiness.user_id !== user.id) {
+      return NextResponse.json({ success: false, error: "غير مصرح لك باعتماد هذا العرض." }, { status: 403 });
+    }
+    // Accepted quotes retain the existing idempotent response. Fresh approvals are agent-only.
+    if (quoteForReadiness?.user_id === user.id && quoteForReadiness.status !== "accepted" && hasLegacyChatQuoteItem(quoteForReadiness.items)) {
+      return NextResponse.json({ success: false, error: LEGACY_CHAT_QUOTE_AR }, { status: 410 });
+    }
+
+    // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
     const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
     const isTestMockAllowed =
       (process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true") || fakeProviderActive();
@@ -113,11 +131,6 @@ export async function POST(req: NextRequest) {
     // Never reserve credits for a decision-maker quote unless its field-level
     // settlement function is installed. The worker repeats this check before
     // reserving provider spend as protection for already accepted jobs.
-    const { data: quoteForReadiness } = await adminClient
-      .from("plans_quotes")
-      .select("items")
-      .eq("id", quoteId)
-      .maybeSingle();
     let readinessItems = quoteForReadiness?.items;
     if (typeof readinessItems === "string") {
       try { readinessItems = JSON.parse(readinessItems); } catch { readinessItems = []; }
@@ -150,6 +163,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       quoteId,
       expectedPlanHash,
+      retireLegacyChatQuote: true,
     });
 
     if (!acceptRes.success || !acceptRes.jobId) {

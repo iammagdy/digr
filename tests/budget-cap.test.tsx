@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -132,7 +133,7 @@ describe("POST /api/chat/edit-plan with a points cap", () => {
   beforeEach(() => {
     state.user = { id: "u1" };
     state.plans = [];
-    state.quote = { id: "q_cap", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ capabilitySlug: "social-x-posts", params: { query: "القهوة" }, targetVolumeMin: 1, targetVolumeMax: 57, unitPricePoints: 9 }] };
+    state.quote = { id: "q_cap", user_id: "u1", status: "quoted", conversation_id: "c1", summary_ar: "خطة", output_formats: ["xlsx"], items: [{ endpointId: AGENT_CAPABILITY_SLUG, capabilitySlug: "social-x-posts", params: { query: "القهوة" }, targetVolumeMin: 1, targetVolumeMax: 57, unitPricePoints: 9 }] };
   });
   const ops = [{ action: "set_limit", capabilitySlug: "social-x-posts", targetVolumeMax: 500 }, { action: "set_formats", formats: ["xlsx"] }];
 

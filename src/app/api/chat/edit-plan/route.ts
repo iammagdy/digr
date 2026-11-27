@@ -20,6 +20,7 @@ import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { editModelPlanQuote } from "@/lib/modelPlanner/editPlan";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 import { chainQuoteCopyFor } from "@/lib/server/multiProvider/planUpgrade";
+import { hasLegacyChatQuoteItem, LEGACY_CHAT_QUOTE_AR } from "@/lib/legacyChatQuote";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,11 @@ export async function POST(req: NextRequest) {
         { success: false, error: "لا يمكن تعديل الخطة بعد بدء التنفيذ بالفعل." },
         { status: 400 }
       );
+    }
+
+    const storedItems = Array.isArray(quoteDoc.items) ? quoteDoc.items : quoteDoc.items_json ?? quoteDoc.items;
+    if (hasLegacyChatQuoteItem(storedItems)) {
+      return NextResponse.json({ success: false, error: LEGACY_CHAT_QUOTE_AR }, { status: 410 });
     }
 
     // The production plans_quotes schema does not contain conversation_id.
