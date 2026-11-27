@@ -48,7 +48,7 @@ export async function readDeliveredTable(
   const wb = new ExcelJS.Workbook();
   try {
     const buf = bytes instanceof ArrayBuffer ? bytes : Buffer.from(bytes as Uint8Array);
-    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    await (wb.xlsx as any)["load"](buf as unknown as ArrayBuffer);
   } catch {
     return { error: "invalid" };
   }
