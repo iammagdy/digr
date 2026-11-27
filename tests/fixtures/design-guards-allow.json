@@ -210,10 +210,6 @@
     },
     {
       "file": "src/functions/shared/chatHandler.ts",
-      "pattern": "/ اختر من الأعمدة الموجودة في الملف\\.$/"
-    },
-    {
-      "file": "src/functions/shared/chatHandler.ts",
       "pattern": "/(?:@|tiktok\\.com\\/@|اسم الحساب المطلوب\\s*:\\s*@?)([a-zA-Z0-9_.]{2,30})/i"
     },
     {

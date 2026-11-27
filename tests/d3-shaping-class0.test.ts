@@ -3,6 +3,7 @@ import { readFileSync } from "fs";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { deterministicShapeSpec, validateFileSpec, type DatasetColumn } from "../src/lib/fileSpec";
 import { normalizeDataset } from "../src/lib/server/normalizationPipeline";
+import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { createChatDb } from "./helpers/chatSession";
 
 /** The columns a delivered company file really has, built the way loadLatestResultColumns builds them. */
@@ -139,11 +140,14 @@ describe("chat turns about the delivered file", () => {
   });
 
   it("a compound request is the model's: one turn, whose spec the code validates", async () => {
-    const { handler, send } = await session();
-    const seen = vi.fn(async () => ({ output: { type: "shape_file", replyAr: "تمام", spec: { groupBy: { column: "المدينة" }, sortBy: [{ column: "اسم الشركة", direction: "asc" }] } }, inputTokens: 500, outputTokens: 30, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t" }));
-    (handler as any).llm.executeTurn = seen;
-    const res: any = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة");
-    expect(seen).toHaveBeenCalledTimes(1);
+    const { executeTurn, send } = await session();
+    // UL2a-2: the ONE shaping model (not the planning model) reads a request the code cannot
+    const shapeModel = vi.fn(async () => ({ ok: true as const, text: JSON.stringify({ kind: "shape", spec: { groupBy: { column: "المدينة" }, sortBy: [{ column: "اسم الشركة", direction: "asc" }] } }), usage: { inputTokens: 500, outputTokens: 30 } }));
+    setChatModelForTesting(shapeModel);
+    let res: any;
+    try { res = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة"); } finally { setChatModelForTesting(null); }
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(executeTurn).not.toHaveBeenCalled();
     expect(res.fileShape.spec).toMatchObject({ groupBy: { column: "city" }, sortBy: [{ column: "company_name", direction: "asc" }] });
   });
 
