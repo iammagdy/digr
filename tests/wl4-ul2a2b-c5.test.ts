@@ -238,3 +238,38 @@ describe("(3) the chat model's own call (the turn's decision, agent on) is given
     for (const c of calls) noInternal(c.system);
   });
 });
+
+describe("F2 (replay of PR 721): a named-column problem the shaping model found but gave NO nearest columns for → the same tiny closest call as the code-read path", () => {
+  const SUBST_NO_CLOSEST = { ...MODEL_SUBSTITUTES, closest: [] };
+  it("the options start with what the closest call names; the call's tokens are on the usage row; still ONE card, no file, 0 points", async () => {
+    const { db, model, send } = await session([json(SUBST_NO_CLOSEST), json({ closest: ["المقر والنطاق الجغرافي", "المدينة"] }, { inputTokens: 300, outputTokens: 20 })]);
+    const res = await send(C5);
+    expect(model).toHaveBeenCalledTimes(2);
+    expect(res.fileShape).toBeUndefined();
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.clarificationItems).toHaveLength(1);
+    expect(res.clarificationItems[0].options.slice(0, 2)).toEqual(["المقر والنطاق الجغرافي", "المدينة"]);
+    noInternal(JSON.stringify(res.clarificationItems) + res.contentAr);
+    expect(rowsOf(db, "llm_usage")[0]).toMatchObject({ inputTokens: 420 + 300, outputTokens: 60 + 20 });
+    nothingPaid(db, res);
+  });
+  it("the closest call fails or answers garbage: the generic order, no crash, still no file", async () => {
+    for (const second of [{ ok: false, failure: "http_529" }, { ok: true, text: "not json", usage: { inputTokens: 1, outputTokens: 1 } }]) {
+      const { db, send } = await session([json(SUBST_NO_CLOSEST), second]);
+      const res = await send(C5);
+      expect(res.fileShape).toBeUndefined();
+      expect(res.outputType).toBe("ask_clarification");
+      expect(res.clarificationItems[0].options).toHaveLength(8);
+      noInternal(JSON.stringify(res.clarificationItems));
+      nothingPaid(db, res);
+    }
+  });
+  it("counter-cases: the model's own closest is used with NO extra call; an unknown column with no named problem (model path) still makes no extra call", async () => {
+    const a = await session([json(MODEL_SUBSTITUTES)]);
+    await a.send(C5);
+    expect(a.model).toHaveBeenCalledTimes(1);
+    const b = await session([json({ kind: "shape", spec: { groupBy: { column: "المحافظة" } } })]);
+    await b.send("قسّم الملف زي ما تحب");
+    expect(b.model).toHaveBeenCalledTimes(1);
+  });
+});

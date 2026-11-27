@@ -3328,8 +3328,8 @@ export class ChatHandler {
         let checkedShape = validateShapedOutput(output as any, shapingColumns);
         // UL2a-2b (C5): a column the file does not have is said by name; when the columns nearest to it are not known yet (a request read by code) ONE small model call finds them
         // (a failure keeps the list as it was). Its tokens are added to this turn's usage row (the model name replaces «deterministic» only when it really spent tokens); nothing is charged to the customer.
-        // Only for a request that CODE read (a request the shaping model read asks for its nearest columns in its own answer).
-        if (checkedShape && checkedShape.kind !== "ok" && checkedShape.missing.length > 0 && !checkedShape.closestUsed && !shapeModelRun) {
+        // For a request that CODE read, and for a named-column problem the shaping model found but gave no nearest columns for (a request the shaping model read otherwise asks for them in its own answer).
+        if (checkedShape && checkedShape.kind !== "ok" && checkedShape.missing.length > 0 && !checkedShape.closestUsed && (!shapeModelRun || checkedShape.namedProblem)) {
           const closestRun = await runClosestColumns({ missing: checkedShape.missing, columns: shapingColumns });
           if (closestRun.inputTokens + closestRun.outputTokens > 0) {
             modelCallCount++;

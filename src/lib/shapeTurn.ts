@@ -260,8 +260,8 @@ const hasDigit = (text: string): boolean => {
 
 export type ShapedOutputCheck =
   | { kind: "ok"; spec: FileSpec }
-  | { kind: "question"; output: any; finalContentAr: string; item: any; questions: string[]; missing: string[]; closestUsed: boolean }
-  | { kind: "answer"; output: any; finalContentAr: string; missing: string[]; closestUsed: boolean };
+  | { kind: "question"; output: any; finalContentAr: string; item: any; questions: string[]; missing: string[]; closestUsed: boolean; namedProblem: boolean }
+  | { kind: "answer"; output: any; finalContentAr: string; missing: string[]; closestUsed: boolean; namedProblem: boolean };
 
 /** The words of the line that names a column the file does not have (code writes it; the name is the customer's own word). */
 const missingColumnLineAr = (names: string[]): string => `${names.map((n) => `«${n}»`).join("، ")} غير موجود في ملفك، ولن يُخصم أي رصيد.`;
@@ -308,11 +308,12 @@ export function validateShapedOutput(output: { type: string; spec?: unknown; nam
       output: { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: [question], questionsAr: [question.text] },
       missing: missingNames,
       closestUsed,
+      namedProblem: problems.length > 0,
     };
   }
   const listed = columnChoicesAr(shapingColumns, 10, false, preferred).map((c) => `«${c}»`).join("، ");
   const finalContentAr = lineAr ? `${lineAr} الأقرب إليه في ملفك: ${listed}. اكتب الطلب من جديد بأحد هذه الأعمدة.` : `${(checked as { errorAr: string }).errorAr} الأعمدة المتاحة: ${listed}.`;
-  return { kind: "answer", finalContentAr, output: { type: "answer_question", answerAr: finalContentAr }, missing: missingNames, closestUsed };
+  return { kind: "answer", finalContentAr, output: { type: "answer_question", answerAr: finalContentAr }, missing: missingNames, closestUsed, namedProblem: problems.length > 0 };
 }
 
 // ---------------------------------------------------------------------------------------------------------------- UL2a-2b (C5): the columns closest to a missing one
