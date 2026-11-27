@@ -29,6 +29,9 @@ import { abortActiveRuns, abortRunsOf } from "./sessions";
 import { ownedStore, type OwnedStore } from "./ownership";
 import { createSupabaseStore } from "./supabaseStore";
 import { createWorker } from "./worker";
+import { restartInPlace, shouldRestartInPlace, type RestartInPlaceDeps } from "./restartInPlace";
+
+type RestartInPlaceExecve = NonNullable<RestartInPlaceDeps["execve"]>;
 import { workerVersion } from "./buildVersion";
 import { workerSpendGateFromEnv } from "./spendGateWiring";
 
@@ -127,13 +130,16 @@ async function main() {
   const concurrency = parseConcurrency(process.env[AGENT_CONCURRENCY_ENV]);
   // each claimed run writes through its OWN view of the store, revoked if another worker takes the mission over (ownership.ts)
   const owned = new Map<string, OwnedStore>();
+  // the two facts that decide how the process ends: a recycle (idle, memory too high: restart in place, the platform never sees an exit) or a platform stop (a deploy: exit)
+  let recycleRequested = false;
+  let platformStop = false;
   const worker = createWorker({
     store, workerId, version: VERSION, log, concurrency,
     // at the memory hard limit the running model run is stopped; the mission goes back to the queue instead of the dyno being killed
     onMemoryPressure: () => { abortActiveRuns("memory"); },
     modelLabel: () => `${models.planning}/${models.execution}`.slice(0, 80) || AGENT_MODEL_DEFAULT,
     // a recycled worker (idle at or above the admit limit for too long) stops its loop; the process exits and the platform restarts it with a fresh heap
-    onRecycle: () => { worker.stop(); },
+    onRecycle: () => { recycleRequested = true; worker.stop(); },
     // every claimed mission ends in a clean state whatever happens in the run (runMission.ts: runMissionSafely)
     runMission: async (mission) => {
       const view = ownedStore(store, mission.id);
@@ -150,12 +156,14 @@ async function main() {
 
   // The platform restarts the worker at every deploy of `main` (SIGTERM, then SIGKILL after 30 seconds) and kills the model's own process at the same moment (exit code 143). The runs in flight are stopped here so each mission is put back in the queue with
   // everything it saved (planning goes back to «queued», an execution to «approved»); the next worker takes it. Before this a planning that met a deploy ended as «a limit of ours» and the customer never got a card.
-  const shutdown = () => { log("shutting down: no new missions; running ones are put back in the queue"); worker.stop(); const stopped = abortActiveRuns("restart"); if (stopped > 0) log(`shutdown: ${stopped} run(s) stopped for the restart`); };
+  const shutdown = () => { platformStop = true; log("shutting down: no new missions; running ones are put back in the queue"); worker.stop(); const stopped = abortActiveRuns("restart"); if (stopped > 0) log(`shutdown: ${stopped} run(s) stopped for the restart`); };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   log(`worker ${workerId} started (${VERSION}); planning ${models.planning}, execution ${models.execution}, ${concurrency} mission(s) at a time`);
   await worker.run();
   await Promise.race([worker.idle(), new Promise((r) => setTimeout(r, 20_000))]);
+  // a recycle restarts THIS process with a fresh heap (no exit, so the platform counts no crash); a platform stop, or a Node without `process.execve`, exits as before
+  if (shouldRestartInPlace({ recycleRequested, platformStop })) restartInPlace({ execve: (process as unknown as { execve?: RestartInPlaceExecve }).execve?.bind(process), execPath: process.execPath, execArgv: process.execArgv, argv: process.argv, env: process.env, log });
   process.exit(0);
 }
 
