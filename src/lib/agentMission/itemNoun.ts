@@ -112,6 +112,12 @@ export function itemNounStored(n: ItemNoun): { singular: string; dual: string; d
   return { singular: n.singular, dual: n.dual, dual_gen: n.dualGen, plural: n.plural, tamyiz: n.tamyiz, feminine: n.feminine };
 }
 
+/** A model-written `unit_noun_ar` that names a specific unit (anything in the closed set other than `GENERIC_ITEM_NOUN`), or null: a generic «عنصر» never outranks an older specific reading. */
+export function specificModelUnitNoun(raw: unknown): ItemNoun | null {
+  const n = coerceItemNoun(raw);
+  return n && n.key !== GENERIC_ITEM_NOUN.key ? n : null;
+}
+
 const KNOWN = new Map<string, ItemNoun>();
 for (const n of ITEM_NOUNS) for (const form of [n.singular, n.dual, n.dualGen, n.plural, n.tamyiz, ...(n.aliases ?? [])]) KNOWN.set(normalizeText(form), n);
 
@@ -156,7 +162,7 @@ export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unkno
   const deliveredKeys = new Set(delivered.map((s) => String((s as { key?: unknown })?.key ?? "")).filter(Boolean));
   if (delivered.some((s) => typeof s?.parent_key === "string" && s.parent_key !== "" && deliveredKeys.has(s.parent_key))) return GENERIC_ITEM_NOUN;
   const nouns = (delivered.length > 0 ? delivered : stages.slice(0, 1)).map((s) => {
-    const fromStage = coerceItemNoun(s?.unit_noun_ar) ?? coerceItemNoun(s?.item_noun_ar ?? (s as any)?.itemNounAr);
+    const fromStage = specificModelUnitNoun(s?.unit_noun_ar) ?? coerceItemNoun(s?.item_noun_ar ?? (s as any)?.itemNounAr);
     if (fromStage) return fromStage;
     const byTitle = itemNounOf(String(s?.title_ar ?? s?.titleAr ?? ""));
     return byTitle;

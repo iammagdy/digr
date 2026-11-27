@@ -29,7 +29,7 @@ describe("B4: the unit noun of a step", () => {
   it("2. exact match only: a table singular is accepted, a plural, a near spelling, a word outside the table and a non-string are not", () => {
     expect(unitNounBySingular("مكان")?.key).toBe(place.key);
     expect(unitNounBySingular("عنصر")).toBe(GENERIC_ITEM_NOUN);
-    for (const bad of ["أماكن", "المكان", "مكانٌ", "صف", "سجل", "", " مكان", null, undefined, 5, {}]) expect(unitNounBySingular(bad as any)).toBeNull();
+    for (const bad of ["أماكن", "المكان", "مكانٌ", "صف", "سجل", "", " مكان", null, undefined, 5, {}, ["مكان"]]) expect(unitNounBySingular(bad as any)).toBeNull();
     for (const n of ITEM_NOUNS) expect(unitNounBySingular(n.singular)).toBe(n);
   });
 
@@ -50,7 +50,7 @@ describe("B4: the unit noun of a step", () => {
       return st;
     };
     expect((await run(step(), "شركة")).unit_noun).toBe("شركة");
-    for (const bad of ["صف", "أماكن", 7, undefined]) expect((await run(step(), bad)).unit_noun ?? null).toBeNull();
+    for (const bad of ["صف", "أماكن", 7, undefined, ["مكان"]]) expect((await run(step(), bad)).unit_noun ?? null).toBeNull();
     const kept = await run({ ...step(), unit_noun: "مكان" }, "سجل");
     expect(kept.unit_noun).toBe("مكان");
   });
@@ -77,6 +77,57 @@ describe("B4: the unit noun of a step", () => {
     expect(none.stages[0].rowsAr).toBe("٥ تغريدات");
     const generic = stagesView({ stages: [{ expected_rows: 5, title_ar: "نتائج", unit_noun_ar: itemNounStored(GENERIC_ITEM_NOUN), deliver: true }] });
     expect(generic.stages[0].rowsAr).toBe("٥ عناصر");
+  });
+
+  it("generic «عنصر» never outranks an existing specific noun (title or overlay) and does not change the parent-child rule vs main", () => {
+    const genericStored = itemNounStored(GENERIC_ITEM_NOUN);
+    // (1) specific model noun beats a title reading
+    expect(stagesView({ stages: [{ expected_rows: 5, title_ar: "التغريدات", unit_noun_ar: itemNounStored(place), deliver: true }] }).stages[0].rowsAr).toBe("٥ أماكن");
+    expect(itemNounOfPlan({ stages: [{ title_ar: "التغريدات", deliver: true, unit_noun_ar: itemNounStored(place) }] }).singular).toBe("مكان");
+
+    // (2) generic model «عنصر» + title «تغريدة» -> «تغريدة» (= main)
+    expect(stagesView({ stages: [{ expected_rows: 5, title_ar: "التغريدات", unit_noun_ar: genericStored, deliver: true }] }))
+      .toEqual(stagesView({ stages: [{ expected_rows: 5, title_ar: "التغريدات", deliver: true }] }));
+    expect(itemNounOfPlan({ stages: [{ title_ar: "التغريدات", deliver: true, unit_noun_ar: genericStored }] }).singular).toBe("تغريدة");
+    expect(buildMissionNotice("completed", { delivered: 5, planned: 5, chargedPoints: 50, releasedPoints: 0, reservedPoints: 50, hasJob: true, stages: [{ titleAr: "التغريدات", delivered: 5, planned: 5, unit_noun_ar: genericStored }] }).body)
+      .toBe(buildMissionNotice("completed", { delivered: 5, planned: 5, chargedPoints: 50, releasedPoints: 0, reservedPoints: 50, hasJob: true, stages: [{ titleAr: "التغريدات", delivered: 5, planned: 5 }] }).body);
+
+    // (3) generic model «عنصر» + no title reading -> «عنصر» or overlay exactly as main
+    expect(stagesView({ stages: [{ expected_rows: 5, title_ar: "نتائج", unit_noun_ar: genericStored, deliver: true }] }))
+      .toEqual(stagesView({ stages: [{ expected_rows: 5, title_ar: "نتائج", deliver: true }] }));
+    expect(stagesView({ stages: [{ expected_rows: 5, title_ar: "نتائج", item_noun_ar: itemNounStored(article), unit_noun_ar: genericStored, deliver: true }] }))
+      .toEqual(stagesView({ stages: [{ expected_rows: 5, title_ar: "نتائج", item_noun_ar: itemNounStored(article), deliver: true }] }));
+    expect(itemNounOfPlan({ stages: [{ title_ar: "نتائج", deliver: true, item_noun_ar: itemNounStored(article), unit_noun_ar: genericStored }] }).singular).toBe("مقال");
+
+    // (4) parent «عنصر» does not flip the same-noun child rule vs main
+    const withParentGeneric = stagesView({
+      stages: [
+        { key: "companies", expected_rows: 5, title_ar: "شركات المقاولات", unit_noun_ar: genericStored, deliver: true },
+        { key: "sub", parent_key: "companies", expected_rows: 5, title_ar: "شركات", deliver: true },
+      ],
+    });
+    const withoutParentUnit = stagesView({
+      stages: [
+        { key: "companies", expected_rows: 5, title_ar: "شركات المقاولات", deliver: true },
+        { key: "sub", parent_key: "companies", expected_rows: 5, title_ar: "شركات", deliver: true },
+      ],
+    });
+    expect(withParentGeneric).toEqual(withoutParentUnit);
+    expect(withParentGeneric.stages[1].rowsAr).toBe("٥ عناصر");
+
+    expect(buildMissionNotice("completed", {
+      delivered: 5, planned: 5, chargedPoints: 50, releasedPoints: 0, reservedPoints: 50, hasJob: true,
+      stages: [
+        { titleAr: "شركات المقاولات", delivered: 5, planned: 5, unit_noun_ar: genericStored },
+        { parentKey: "companies", titleAr: "شركات", delivered: 5, planned: 5 },
+      ],
+    }).body).toBe(buildMissionNotice("completed", {
+      delivered: 5, planned: 5, chargedPoints: 50, releasedPoints: 0, reservedPoints: 50, hasJob: true,
+      stages: [
+        { titleAr: "شركات المقاولات", delivered: 5, planned: 5 },
+        { parentKey: "companies", titleAr: "شركات", delivered: 5, planned: 5 },
+      ],
+    }).body);
   });
 });
 
