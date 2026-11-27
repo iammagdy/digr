@@ -401,6 +401,14 @@ function conversationFor(ctx: TurnContext): Array<{ role: "user" | "assistant"; 
   return out;
 }
 
+/** The decision of the model for this message ALONE: no open request, no earlier message (the one thing that cannot be mixed up with them). Null when the model could not give one (the keyword rules would have). Never throws. */
+async function readMessageAlone(ctx: TurnContext, model: ChatModelCall): Promise<Decision | null> {
+  try {
+    const alone = await decideTurn({ message: ctx.message, balancePoints: ctx.balancePoints, open: null }, model);
+    return alone.source === "model" ? alone : null;
+  } catch { return null; }
+}
+
 /**
  * THE TYPE OF THE MESSAGE AND, FOR A MESSAGE THAT IS NOT A DATA REQUEST, THE REPLY. One call of the chat model; its answer is validated here; any failure is the keyword rules. Never throws.
  */
@@ -436,7 +444,15 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
       if (result.truncated && (!answer || (briefMode && answer.brief === undefined))) { answer = null; failure = "truncated"; }
     } else failure = result.failure;
   } catch { failure = "exception"; /* the keyword rules answer */ }
-  if (!answer) return keywordDecision(ctx, failure);
+  if (!answer) {
+    // the model answered twice in prose (the earlier messages of a conversation are prose, and it imitates them): the SAME message is read once more with nothing before it, which is the case it answers in the format.
+    // With a card open only a non-request reading is taken (a request or an unreadable answer keeps the card and says so, as before): this never opens or replaces anything.
+    if (failure === "unreadable" && ctx.brief?.enabled !== true && (ctx.open !== null || (ctx.history?.length ?? 0) > 0)) {
+      const alone = await readMessageAlone(ctx, model);
+      if (alone !== null && (ctx.open === null || alone.type !== "data_request")) return alone;
+    }
+    return keywordDecision(ctx, failure);
+  }
 
   let type = answer.type;
   // SAFE SIDE: edit_of_open_request only when message refers to the open request; otherwise data_request
@@ -446,6 +462,14 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   // ROUND 57: the two open-request types need an open request too; without one a question about «the plan» is a service question and a cancellation has nothing to cancel
   if (type === "open_request_question" && !ctx.open) type = "service_question";
   if (type === "cancel_open_request" && !ctx.open) type = "other";
+  // UL2a-1 K4 (D-0244): a message typed as a NEW data request while the customer's request has a card open (not while it waits for an answer) could be the model reading the OPEN request out of the history
+  // (live replay: «كيف تعمل المنصة» came back as «collect tweets»). A new request replaces that card, so before it does the message is read ONCE MORE with nothing around it (no open request, no earlier message): a reading
+  // that is not a data request is taken, and the card is untouched; a data request stands as before; a second reading that could not be made keeps the card and says so. Never for a message the model says refers to the open request, and not in research-brief mode (off in production: the llm planner is on).
+  if (type === "data_request" && ctx.open && ctx.open.state !== "needs_input" && ctx.brief?.enabled !== true && answer.refers_to_open_request !== true) {
+    const alone = await readMessageAlone(ctx, model);
+    if (alone === null) return keywordDecision(ctx, "recheck_unavailable");
+    if (alone.type !== "data_request") return alone;
+  }
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({
     type,
     reply,
