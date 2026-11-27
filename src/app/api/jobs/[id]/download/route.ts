@@ -19,6 +19,7 @@ import { excelFromCsv } from "@/lib/server/excelFromCsv";
 import { groupPartDataset } from "@/lib/server/multiProvider/groupPartDataset";
 import { servedPathFor } from "@/lib/server/multiProvider/jobGroupShared";
 import { isRemovedReportPayload, REMOVED_REPORT_ERROR_AR, REMOVED_REPORT_STATUS } from "@/lib/removedReportJob";
+import { shapedDeliveryResponse } from "@/lib/server/shapeDeliveredDownload";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,11 @@ export async function GET(
     const isAdmin = user.app_metadata?.role === "admin";
     if (job.user_id !== user.id && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
+    }
+
+    if (job.endpoint_id === "agent-mission" && req.nextUrl.searchParams.has("spec")) {
+      return await shapedDeliveryResponse(adminClient, job, {
+        format: (req.nextUrl.searchParams.get("format") || "xlsx").toLowerCase(), specParam: req.nextUrl.searchParams.get("spec")! });
     }
 
     if (job.endpoint_id === "agent-mission") {
