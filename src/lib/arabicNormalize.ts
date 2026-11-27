@@ -311,3 +311,6 @@ export function looseSpellingPattern(word: string): string {
   }
   return out;
 }
+/** U+064B–U+065F, the dagger alef U+0670 and the tatweel U+0640 removed (23 units; excludes U+0660–U+066F so ٪ ٫ ٬ ٭ ٮ ٯ stay untouched). */
+const MARK_BLOCK_NARROW: readonly CodeRange[] = [[0x064b, 0x065f], [0x0670, 0x0670], [0x0640, 0x0640]];
+export function stripArabicMarkBlockNarrow(text: string): string { return removeCodeUnits(text, MARK_BLOCK_NARROW); }

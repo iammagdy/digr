@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { normalizeDigits } from "../src/lib/arabicDigits";
 import {
   arabicCommaSemicolonToSpace, foldAlefForms, foldAlefHamzaForms, foldAlefMaqsura, foldFinalTaMarbuta, foldGroupedNumberMarks, foldTaMarbuta, looseSpellingPattern,
-  removeGroupingMarks, stripArabicMarkBlock, stripBidiAndBom, stripHarakatDaggerTatweel, stripHarakatTatweel,
+  removeGroupingMarks, stripArabicMarkBlock, stripArabicMarkBlockNarrow, stripBidiAndBom, stripHarakatDaggerTatweel, stripHarakatTatweel,
 } from "../src/lib/arabicNormalize";
+import { matchesSearch, normalizeSearchText, searchTerms } from "../src/lib/requests/search";
 
 /**
- * UB1 (DT-20261126-wordlist-wave4, D-0238): every helper is the SAME character set the caller used before. The OLD expressions are frozen here (copied from a20974ec/cd33fd1e) and compared with the
+ * UB1 (DT-20261126-wordlist-wave4, D-0238): every helper is the SAME character set the caller used before. The OLD expressions are frozen here (copied from a20974ec/cd33fd1e/78ee12ca) and compared with the
  * helper on EVERY code unit of the Basic Multilingual Plane (single-character strings), on every pair drawn from the characters the sets are made of, and on 4000 seeded random strings.
  */
 const OLD = {
   markBlock: (s: string) => s.replace(/[ً-ٰٟـ]/g, ""),
+  markBlockNarrow: (s: string) => s.replace(/[ً-ٰٟـ]/g, ""),
   harakatDaggerTatweel: (s: string) => s.replace(/[ً-ْٰـ]/g, ""),
   harakatTatweel: (s: string) => s.replace(/[ً-ْـ]/g, ""),
   bidiAndBom: (s: string) => s.replace(/[​-‏‪-‮﻿]/g, ""),
@@ -25,6 +28,7 @@ const OLD = {
 };
 const PAIRS: Array<[string, (s: string) => string, (s: string) => string]> = [
   ["stripArabicMarkBlock", OLD.markBlock, stripArabicMarkBlock],
+  ["stripArabicMarkBlockNarrow", OLD.markBlockNarrow, stripArabicMarkBlockNarrow],
   ["stripHarakatDaggerTatweel", OLD.harakatDaggerTatweel, stripHarakatDaggerTatweel],
   ["stripHarakatTatweel", OLD.harakatTatweel, stripHarakatTatweel],
   ["stripBidiAndBom", OLD.bidiAndBom, stripBidiAndBom],
@@ -76,5 +80,74 @@ describe("UB1 helpers = the frozen old expressions", () => {
     expect(foldAlefHamzaForms("ٱ")).toBe("ٱ"); // the alef wasla is left alone by the 3-form fold
     expect(foldAlefForms("ٱ")).toBe("ا");
     expect(foldFinalTaMarbuta("ةة")).toBe("ةه");
+    expect(stripArabicMarkBlockNarrow("12٫5")).toBe("12٫5");
+    expect(stripArabicMarkBlockNarrow("ٮ")).toBe("ٮ");
+  });
+});
+
+describe("requests/search: normalizeSearchText and searchTerms match base 78ee12ca", () => {
+  const oldNormalizeSearchText = (raw: unknown): string =>
+    normalizeDigits(String(raw ?? ""))
+      .toLowerCase()
+      .replace(/[ً-ٰٟـ]/g, "")
+      .replace(/[أإآٱ]/g, "ا")
+      .replace(/ى/g, "ي")
+      .replace(/ة/g, "ه")
+      .replace(/ؤ/g, "و")
+      .replace(/ئ/g, "ي")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  const oldSearchTerms = (raw: unknown): string[] => {
+    const text = oldNormalizeSearchText(String(raw ?? "").slice(0, 80));
+    return text ? text.split(" ").filter(Boolean) : [];
+  };
+
+  it("matches base 78ee12ca on every BMP code unit, pool pairs, and 1000 random strings", () => {
+    for (let code = 0; code <= 0xffff; code++) {
+      const s = String.fromCharCode(code);
+      if (normalizeSearchText(s) !== oldNormalizeSearchText(s)) {
+        throw new Error(`normalizeSearchText differs at U+${code.toString(16).padStart(4, "0")}: old ${JSON.stringify(oldNormalizeSearchText(s))} new ${JSON.stringify(normalizeSearchText(s))}`);
+      }
+      const n = searchTerms(s);
+      const o = oldSearchTerms(s);
+      if (n.length !== o.length || n.some((t, i) => t !== o[i])) {
+        throw new Error(`searchTerms differs at U+${code.toString(16).padStart(4, "0")}: old ${JSON.stringify(o)} new ${JSON.stringify(n)}`);
+      }
+    }
+    for (const a of POOL) for (const b of POOL) {
+      const s = a + b;
+      expect(normalizeSearchText(s)).toBe(oldNormalizeSearchText(s));
+      expect(searchTerms(s)).toEqual(oldSearchTerms(s));
+    }
+    const rnd = seeded(20261127);
+    for (let i = 0; i < 1000; i++) {
+      const len = 1 + Math.floor(rnd() * 14);
+      let s = "";
+      for (let k = 0; k < len; k++) s += POOL[Math.floor(rnd() * POOL.length)];
+      expect(normalizeSearchText(s)).toBe(oldNormalizeSearchText(s));
+      expect(searchTerms(s)).toEqual(oldSearchTerms(s));
+    }
+  });
+
+  it("preserves U+066A–U+066F behaviour and normal Arabic queries with tashkeel", () => {
+    expect(searchTerms("12٫5")).toEqual(["12", "5"]);
+    expect(searchTerms("12٫5")).toEqual(oldSearchTerms("12٫5"));
+    expect(normalizeSearchText("3٫500")).toBe("3 500");
+    expect(searchTerms("ٮ")).toEqual(["ٮ"]);
+    expect(searchTerms("ٮ")).toEqual(oldSearchTerms("ٮ"));
+    expect(searchTerms("ٯ")).toEqual(["ٯ"]);
+    expect(searchTerms("12٪5")).toEqual(["12", "5"]);
+    expect(searchTerms("50٪")).toEqual(oldSearchTerms("50٪"));
+    expect(searchTerms("٪")).toEqual(oldSearchTerms("٪"));
+    expect(matchesSearch("كلمة", searchTerms("ٮ"))).toBe(false);
+    expect(matchesSearch("نسبة 50٪ من التعليقات", searchTerms("50٪"))).toBe(true);
+    for (const q of [
+      "أَحْمَدُ يَبْحَثُ عَنْ مَدْرَسَةٍ كَبِيرَةٍ ٥٠",
+      "لُؤْلُؤٌ وَبِئْرٌ فِي مِصْرَ",
+      "تَـعْـلِـيـقَـاتٌ مُـسْـتَـخْـدِمِـيـنَ",
+    ]) {
+      expect(normalizeSearchText(q)).toBe(oldNormalizeSearchText(q));
+      expect(searchTerms(q)).toEqual(oldSearchTerms(q));
+    }
   });
 });
