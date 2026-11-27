@@ -65,6 +65,7 @@ export interface RunLlmPlanningInput {
   gateway: Gateway;
   /** The direct web tools (Firecrawl, Context.dev) of this planning, and which of them the worker holds a key for. Absent: only the catalog's tools are offered. */
   web?: Pick<WebGateway, "parsePage" | "webSearch" | "webScrape" | "peopleSearch">;
+  createWebForUnderstanding?: (u: Understanding) => RunLlmPlanningInput["web"];
   webAvailable?: { firecrawl?: boolean; contextdev?: boolean };
   catalog: TregCatalog;
   access: AccountAccess | null;
@@ -110,6 +111,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
     await writePlannerState(store, mission.id, state);
   }
   const qa = state.asked.filter((a) => a.answer !== null);
+  let web = input.web;
   const result = await planWithLlm(
     {
       words,
@@ -125,8 +127,11 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       model: input.model,
       catalog: input.catalog,
       access: input.access,
-      probe: (endpointId, params) => probeAny(input, endpointId, params),
-      ...(input.web && input.webAvailable ? { webTools: directWebEndpoints(input.webAvailable) } : {}),
+      probe: (endpointId, params) => probeAny(input, web, endpointId, params),
+      ...((input.web || input.createWebForUnderstanding) && input.webAvailable ? { webTools: directWebEndpoints(input.webAvailable) } : {}),
+      ...(input.createWebForUnderstanding ? {
+        onUnderstanding: (u: Understanding) => { web = input.createWebForUnderstanding!(u); },
+      } : {}),
       readPage: async (callId) => { const raw = await store.getFile(mission.id, RAW_PATH(callId)); if (raw === null) return null; try { return JSON.parse(raw) as unknown; } catch { return null; } },
       pricingSettings: input.pricingSettings,
       availablePoints: input.availablePoints,
@@ -151,11 +156,12 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
 /** True when the model read the request as company or people research, which the earlier live-proven path plans (no paid call was made for it here). */
 export const handedOver = (r: LlmPlanResult): boolean => r.kind === "cannot" && r.detail === "handed_over";
 
-/** One planning call: a direct web id goes to the web gateway (its own key, the same budget and record), every other id to the TREG gateway; the answer has the TREG gateway's shape. */
-async function probeAny(input: RunLlmPlanningInput, endpointId: string, params: Record<string, unknown>): Promise<GatewayCallResult> {
+/** Direct web and catalog probes use their respective gateways and return the same answer shape. */
+async function probeAny(input: RunLlmPlanningInput, web: RunLlmPlanningInput["web"], endpointId: string, params: Record<string, unknown>): Promise<GatewayCallResult> {
   const req = webRequestOf(endpointId, params);
-  if (req && input.web) {
-    const w = await input.web[req.method]({ ...req.args, why: "llm planner probe" } as never);
+  if (req && input.createWebForUnderstanding && !web) throw new Error("Web planning budget was not initialized");
+  if (req && web) {
+    const w = await web[req.method]({ ...req.args, why: "llm planner probe" } as never);
     if (w.ok) return { ok: true, call_id: w.call_id, http_status: 200, rows_in_page: w.rows_in_page, has_more: false, next_cursor: null, shape: w.shape, first_rows: w.first_rows, warnings: [], saved: w.saved } as unknown as GatewayCallResult;
     if ("refused" in w) return { ok: false, call_id: w.call_id, refused: w.refused as never, message: w.message };
     return { ok: false, call_id: w.call_id, failed: true, http_status: 0, message: w.message };

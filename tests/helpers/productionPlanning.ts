@@ -35,6 +35,8 @@ export interface ProductionPlanningInput {
   settings?: Record<string, unknown>;
   /** The worker's run note as an earlier planning left it (PR-1.3: `{ pending: "conditions", questionsAsked: 1 }` after a clarification question), written before the planning starts. Absent: a fresh mission. */
   runState?: Record<string, unknown>;
+  /** Scripted Understanding for replaying a worker handover before the compiler builds the card. */
+  plannerModel?: RunnerDeps["plannerModel"];
 }
 
 const catalog = loadTregCatalog();
@@ -84,6 +86,7 @@ export async function runProductionPlanning(input: ProductionPlanningInput): Pro
     const rec = fakeRecorder();
     const driver = createFakeDriver([{ tool: "ask_question", args: { question_ar: "؟", options_ar: ["أ", "ب"] } }]);
     const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog, driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+    if (input.plannerModel) deps.plannerModel = input.plannerModel;
     if (input.runState) await memory.putFile(id, AGENT_RUN_STATE_FILE, JSON.stringify({ planningStarts: 1, ...input.runState }), "application/json");
     if (input.planningAt) vi.setSystemTime(new Date(input.planningAt));
     await runPlanning(deps, memory.missions.get(id)!);

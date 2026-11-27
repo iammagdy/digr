@@ -16,7 +16,7 @@ import {
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
-import { planningBudgetFacts } from "../../src/lib/agentMission/planningBudget";
+import { planningBudgetFacts, webPlanningCeilingUsd } from "../../src/lib/agentMission/planningBudget";
 import { sourceHealth, statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib/agentMission/capabilities/routingFacts";
 import { classifyNoCardEnd, noCardSentenceAr, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
@@ -37,7 +37,8 @@ import { holdValueUsd } from "../../src/lib/server/callBudget";
 import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCompanyEvidence } from "../../src/lib/agentMission/companyQuality";
 import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
-import { createGateway } from "./gateway";
+import { createGateway, tregCallBoundOf } from "./gateway";
+import { ceilToMicroUsd } from "../../src/lib/server/spendGate/bounds";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import type { WorkerSpendGate } from "./spendGateWiring";
 import { spendGateOf, withMissionSpendGate } from "./spendGateKeys";
@@ -682,25 +683,27 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (tapped && noPlatformOfItsOwn && note.platformAnswer !== tapped) await updateRunState(store, mission.id, (r) => ({ ...r, platformAnswer: tapped }), deps.log);
     if (platformChoice) mission = withPlatformChoice(mission, platformChoice);
   }
-  const calls = await store.listCalls(mission.id);
+  let calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
   const counter = { seq: lastSeq(calls) };
-  const requestForBudget = askedTextOf(mission);
-  // THE MEASUREMENT AND THE HEALTH OF THE SOURCES, read from the recorded calls of all missions (read only; planning never waits on it): the ranking the planner gets is computed from them
+  // Source ranking uses the same measured calls and clock for both planning paths.
   const planningNow = Date.now();
   const sourceStats = statsFromCalls(await store.recentCalls(planningNow - AGENT_SOURCE_MEASURE_WINDOW_MS).catch(() => []));
-  // THE PLANNING BUDGET is the base figure, or what one minimal sample per stage costs on the platform's sources, under a hard cap (planningBudget.ts): decided by code from the customer's words and the catalog, never by the model
-  const budgetFacts = planningBudgetFacts(requestForBudget, { catalog: deps.catalog, access, stats: sourceStats, now: planningNow });
-  const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd: sum(calls, "planning") });
-  deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) }, ...spendGateOf(deps, mission.id) });
+  const budgetContext = { catalog: deps.catalog, access, stats: sourceStats, now: planningNow };
   // THE WEB TOOLS ONLY WHEN THE WORKER HAS A KEY FOR THEM (webAvailability.ts): a tool that would only be refused is not offered, not listed, not named in the prompt
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
   // (round 53) the same two booleans for the ADMIN, in the database: production had 71 web calls refused «no key» on Oct 29-30 and none offered since, although the keys are stored; whether the deployed worker can
   // reach Firecrawl and Context.dev is now provable per mission (never a key, never shown to the customer)
   if (deps.providerKey) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمشرف: توفر مصادر الويب لهذا التخطيط.", counts: { adm_web_firecrawl: webAvailable.firecrawl ? 1 : 0, adm_web_contextdev: webAvailable.contextdev ? 1 : 0 } }).catch(() => undefined);
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, webAvailable, fetchFn: deps.fetchFn, counter, ...spendGateOf(deps, mission.id) }) : undefined;
+  const providerKey = deps.providerKey;
+  const webForBudget = providerKey && anyWebAvailable(webAvailable)
+    ? (budget: ReturnType<typeof createJobCallBudget>) => createWebGateway({
+        store, missionId: mission.id, jobId: null, phase: "planning", budget,
+        recorder: deps.recorder, providerKey, webAvailable, fetchFn: deps.fetchFn, counter,
+        ...spendGateOf(deps, mission.id),
+      })
+    : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // LLM-FIRST PLANNER (owner direction, 15 Nov 2026; agent/src/llmPlanner): the planning model reads the customer's own words, chooses the catalog's tools and writes their inputs; code checks them against the catalog,
@@ -720,7 +723,12 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     try {
       // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
       const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
-      r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(web ? { web, webAvailable } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, availablePoints: async () => { const balance = await getBalance(deps.client, mission.user_id).catch(() => null); return typeof balance === "number" && Number.isFinite(balance) ? Math.max(0, Math.floor(balance)) : null; }, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
+      r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(webForBudget ? {
+        webAvailable,
+        createWebForUnderstanding: (u: Understanding) => webForBudget(createJobCallBudget({
+          ceilingUsd: webPlanningCeilingUsd(u, budgetContext), spentUsd: sum(calls, "planning"),
+        })),
+      } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, availablePoints: async () => { const balance = await getBalance(deps.client, mission.user_id).catch(() => null); return typeof balance === "number" && Number.isFinite(balance) ? Math.max(0, Math.floor(balance)) : null; }, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }
@@ -776,6 +784,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     // handed over to B2B company/people path: proceeds with planning cost recorded
     await store.updateMission(mission.id, { planning_llm_usd: llmUsd }).catch(() => undefined);
   }
+  if (plannerRan) calls = await store.listCalls(mission.id);
+  const spentUsd = sum(calls, "planning");
+  const budgetFacts = planningBudgetFacts(plannerUnderstanding, {
+    ...budgetContext, ceilToMicroUsd, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, deps.catalog),
+  }, spentUsd);
+  const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd });
+  const childReserves = budgetFacts.stages.filter((stage) => stage.role === "child").map((stage) => stage.reserveUsd);
+  deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: childReserves.length > 0 ? childReserves : [0] }, ...spendGateOf(deps, mission.id) });
+  const web = webForBudget?.(budget);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text, { semantic }).platform };
   // PR B (round 18), ONE PATH FOR SOCIAL: a request on TikTok, X, Instagram, Facebook or YouTube is planned by the plan compiler or not at all. The platform's own switch decides: «تشغيل» (and «تجريبي» for a test account) = the compiled path; «إيقاف» (or no value) = the platform is NOT OFFERED:
@@ -892,7 +910,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       ? "\n\nThe customer chose to continue with companies only. Propose a companies-only plan using the saved companies evidence without a people stage."
       : "";
   const capabilityPrompt = (discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "") + retryGuidance;
-  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(forceCompaniesOnly ? { forceCompaniesOnly: true } : {}), ...(isRecoveryRetry ? { isRecoveryRetry: true } : {}), ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(peopleRoleTitleAr ? { peopleRoleTitleAr } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission: planMission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, log: deps.log, pricingSettings, stats: sourceStats, now: planningNow, ...(forceCompaniesOnly ? { forceCompaniesOnly: true } : {}), ...(isRecoveryRetry ? { isRecoveryRetry: true } : {}), ...(understoodPeople ? { peopleOfCompanies: true, understoodPeople } : {}), ...(peopleRoleTitleAr ? { peopleRoleTitleAr } : {}), ...(understoodCompanies ? { understoodCompanies } : {}), ...(plannerRan ? { plannerRan: true } : {}), ...(plannerUnderstanding ? { plannerUnderstanding } : {}), ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {

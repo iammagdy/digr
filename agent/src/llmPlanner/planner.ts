@@ -78,6 +78,8 @@ export interface LlmPlannerDeps {
   webTools?: CatalogEndpoint[];
   /** Whether this planner plans what the model understood (false: the caller's other path plans it, before any paid call). Absent: always. */
   accept?: (u: Understanding) => boolean;
+  /** Set up the in-run budget for sampling the accepted, validated request. */
+  onUnderstanding?: (u: Understanding) => void;
   log?: (line: string) => void;
   probeTimeoutMs?: number;
 }
@@ -888,6 +890,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
   if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
   if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
+  deps.onUnderstanding?.(u);
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
   await say(customerSafe(`فهمنا طلبك: ${u.understanding_ar.replace(/[.،\s]+$/u, "")}.`, 400, said) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");
 

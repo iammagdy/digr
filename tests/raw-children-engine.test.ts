@@ -10,6 +10,9 @@ import { runPlanning, type RunnerDeps } from "../agent/src/runMission";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { NOT_ADMIN, USER_ID, fakeRecorder } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
+import type { BudgetUnderstandingInput } from "../src/lib/agentMission/budget";
+import { tregCallBoundOf } from "../agent/src/gateway";
+import { ceilToMicroUsd } from "../src/lib/server/spendGate/bounds";
 import { planningBudgetFacts } from "../src/lib/agentMission/planningBudget";
 import { platformCostNotesAr } from "../src/lib/agentMission/platformNotes";
 import { GIVE_UP_REFUSALS_MAX } from "../agent/src/tools";
@@ -326,10 +329,14 @@ describe("Facebook: a dear platform still reaches a card, with the real price an
 
 describe("the planning budget of a dear platform: sized by code from the sources' prices, a hard cap", () => {
   const catalog = loadTregCatalog();
-  const facts = (request: string) => planningBudgetFacts(request, { catalog, access: NOT_ADMIN, stats: new Map(), now: Date.parse("2026-10-29T12:00:00Z") });
+  const facts = (u: BudgetUnderstandingInput) => planningBudgetFacts(u, { catalog, access: NOT_ADMIN, stats: new Map(), now: Date.parse("2026-10-29T12:00:00Z"), ceilToMicroUsd, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, catalog) });
+  const facebook = { steps: [
+    { key: "posts", platform: "facebook", capability: "facebook.search.posts", parent: null },
+    { key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: "posts" },
+  ] };
 
   it("Facebook posts and their comments get more than the flat budget, and not more than the cap; a cheap platform keeps its own", () => {
-    const fb = facts("هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات");
+    const fb = facts(facebook);
     expect(fb.baseUsd).toBe(0.10);
     expect(fb.scaled).toBe(true);
     expect(fb.budgetUsd).toBeGreaterThan(fb.baseUsd);
@@ -338,21 +345,27 @@ describe("the planning budget of a dear platform: sized by code from the sources
     expect(fb.stages[0].sourceId).toBe("justoneapi.x.facebook-search-post-v1");
     // one minimal sample of each stage is always affordable: three calls of the post source and two of the comments source, times the margin, plus the slack
     expect(fb.budgetUsd).toBeGreaterThanOrEqual(1.25 * (3 * fb.stages[0].callUsd + 2 * fb.stages[1].callUsd));
-    const x = facts("هات ٥٠ تغريدة عن منتخب مصر");
+    const x = facts({ steps: [{ key: "posts", platform: "x", capability: "x.search.posts", parent: null }] });
     expect(x).toMatchObject({ baseUsd: 0.05, budgetUsd: 0.05, scaled: false });
-    const tt = facts("هات ١٠ فيديو تيك توك عن الدوري ومع كل فيديو ٥٠ تعليق");
+    const tt = facts({ steps: [
+      { key: "videos", platform: "tiktok", capability: "tiktok.search.videos", parent: null },
+      { key: "comments", platform: "tiktok", capability: "tiktok.video.comments", parent: "videos" },
+    ] });
     expect(tt).toMatchObject({ baseUsd: 0.10, budgetUsd: 0.10, scaled: false });
     // the hard cap never moves, whatever the sources cost
     expect(fb.capUsd).toBe(0.20);
   });
 
-  it("the real planning: three searches of the dear source are not refused by the budget; the comments stage is sampled after them", async () => {
+  it.each([
+    { mode: "structured handover", planner: true, admission: ["ok", "ok", "ok"], spent: 0.06104 },
+    { mode: "owner-only fallback", planner: false, admission: ["ok", "over_budget", "ok"], spent: 0.03152 },
+  ])("$mode keeps the correct number of dear samples and still samples the comments", async ({ planner, admission, spent }) => {
     const store = createMemoryStore();
     store.missions.set("msn_f", newMission({ id: "msn_f", user_id: USER_ID, status: "planning", request_text: "هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات" }));
     const rec = fakeRecorder();
     const answers = [0, 1].map((i) => tregResult({ code: 0, data: { results: [{ post_id: `fp${i}`, url: `https://fb.example/posts/fp${i}`, message: "غلاء الأسعار", timestamp: 1785202291 }] } }, 0.02952));
     const comments = tregResult({ output: { data: { comments: [{ id: "c1", text: "تعليق", author: "a", createdUtc: "2026-10-21T10:00:00Z" }] } } }, 0.002);
-    const queue = [...answers, comments];
+    const queue = [...(planner ? answers : answers.slice(0, 1)), comments];
     const call = async () => { const n = queue.shift(); if (!n) throw new Error("no fake answer left"); return n; };
     const driver = createFakeDriver([
       { tool: "catalog_search", args: { words: ["facebook", "posts", "search"], platform: "facebook", limit: 5 } },
@@ -361,12 +374,22 @@ describe("the planning budget of a dear platform: sized by code from the sources
       { tool: "treg_call", args: { endpoint_id: "anyapi.facebook.post_comments", params: { url: "https://fb.example/posts/fp0" }, why: "the cheaper sources return no author or link fields in their catalog description" } },
     ], { stopAfterTerminal: false });
     const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+    if (planner) {
+      deps.plannerModel = async () => ({
+        input: {
+          decision: "plan", understanding_ar: "منشورات وتعليقات وبيانات شركات.",
+          steps: [...facebook.steps, { key: "companies", platform: "companies", capability: "companies.search", parent: null }],
+        },
+        costUsd: 0,
+      });
+    }
     await runPlanning(deps, store.missions.get("msn_f")!);
     const results = driver.results.filter((x) => x.tool === "treg_call").map((x) => (x.result as { ok?: boolean; refused?: string }));
-    expect(results.map((x) => x.ok === true ? "ok" : x.refused)).toEqual(["ok", "ok", "ok"]);
-    // 2 x 0.02952 + 0.002 = 0.06104 USD, under the scaled budget; the old flat budget (0.10 less the 0.03 kept) would have refused nothing here either, but a third search would have
-    const spent = (await store.listCalls("msn_f")).reduce((n, c) => n + Number(c.cost_usd ?? 0), 0);
-    expect(spent).toBeCloseTo(0.06104, 5);
+    expect(results.map((x) => x.ok === true ? "ok" : x.refused)).toEqual(admission);
+    const rows = await store.listCalls("msn_f");
+    expect(rows.filter((row) => row.status === "ok").at(-1)?.endpoint_id).toBe("anyapi.facebook.post_comments");
+    expect(rows.reduce((n, c) => n + Number(c.cost_usd ?? 0), 0)).toBeCloseTo(spent, 5);
+    expect(queue).toHaveLength(0);
   });
 
   it("planning that holds real rows is sent back twice before it may end without a card, and is never stuck", async () => {

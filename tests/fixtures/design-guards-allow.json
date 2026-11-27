@@ -569,10 +569,6 @@
       "pattern": "/استلمنا\\s+سجلين/"
     },
     {
-      "file": "src/lib/agentMission/budget.ts",
-      "pattern": "/(?:تعليق|تعليقات|ردود|موظف|موظفين|العاملين|مدير|مديري|أشخاص|اشخاص|مراجعات|تقييمات|لكل\\s|وجوه|داخل كل|جوه كل|comments?|replies|employees?|people|reviews?|each\\s|per\\s)/i"
-    },
-    {
       "file": "src/lib/agentMission/capabilities/need.ts",
       "pattern": "/(?:^|[^ء-ي])(?:حساب|صفحه|قناه|اكونت)(?:[^ء-ي]|$)|@[a-z0-9_.]{2,}|(?:instagram|facebook|tiktok|youtube|x|twitter)\\.com\\/|(?:^|[^a-z])(?:account|page|channel)(?:[^a-z]|$)/"
     },
@@ -1485,10 +1481,6 @@
       "pattern": "/ى/g"
     },
     {
-      "file": "src/lib/agentMission/giveUp.ts",
-      "pattern": "/(?:قنوات|قناة|القناة|القنوات|حسابات|حساب|الحساب|صفحات|صفحة|الصفحة|channels?|accounts?|pages?)\\s+[^\\s،,.]/i"
-    },
-    {
       "file": "src/lib/agentMission/government.ts",
       "pattern": "/(?:دون|بدون|بلا|استبعاد|استبعد\\S*|تستبعد|يستبعد|عدا|ما\\s?عدا|ماعدا|غير|مش|ولا)\\s+(?:ال)?(?:جهات|جهه|هيئات|مؤسسات|شركات|مصالح|اجهزه|أجهزة)?\\s*(?:ال)?(?:حكوم|عسكر)/"
     },
@@ -2027,66 +2019,6 @@
     {
       "file": "src/lib/agentMission/planEdit.ts",
       "pattern": "`(?<![0-9٠-٩])(?:${ar}|${from})(?![0-9٠-٩])`"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/انستقرام|انستجرام|إنستغرام|إنستجرام|instagram/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/بوست|منشور|posts?/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/تعليق|comments?/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/تغريد|tweets?/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/تغريد|تويتر|twitter|tweets?|(?:^|[^\\p{L}])(?:إكس|اكس|x)(?:[^\\p{L}]|$)/iu"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/تيك\\s*توك|تيكتوك|tiktok/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/ردود|replies/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/شركات|شركة|compan/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/فيديو|ريلز|videos?|reels/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/فيس\\s*بوك|فيسبوك|facebook/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/لينكد\\s*إن|لينكدإن|linkedin/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/مراجعات|مراجعه|تقييمات|reviews?|ريفيو/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/مطعم|مطاعم|أماكن|اماكن|مكان|ماب|خرائط|maps|places?/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/موظف|عاملين|employees?|مدير|مديري/i"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "pattern": "/يوتيوب|youtube/i"
     },
     {
       "file": "src/lib/agentMission/platformQuestion.ts",
@@ -5920,14 +5852,6 @@
     },
     {
       "file": "src/lib/agentMission/overLimit.ts",
-      "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/agentMission/planningBudget.ts",
       "token": "youtube"
     },
     {

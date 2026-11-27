@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { rankedCandidates } from "../src/lib/agentMission/candidates";
 import { classifyFailure, cheaperAlternatives, expectedCost, SOURCE_DEMOTE_FACTOR, SOURCE_HEALTH_WINDOW_MS, rankEndpoints, sourceHealth, statsFromCalls, type RecordedCallFact } from "../src/lib/agentMission/sourceRanking";
-import { expectedStageCount } from "../src/lib/agentMission/budget";
+import { expectedStageCount, type BudgetUnderstandingInput } from "../src/lib/agentMission/budget";
 import { loadSourceHealth } from "../src/lib/agentMission/adminActions";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
@@ -197,11 +197,15 @@ function setup(responses: TregCallResult[], priorCalls: RecordedCallFact[] = [])
   const deps = (driver: ReturnType<typeof createFakeDriver>): RunnerDeps => ({ store, client: money.client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: callFn, models: MODELS, resolveAccess: async () => NOT_ADMIN });
   return { store, callFn, deps };
 }
-const plan = async (steps: FakeStep[], answers: TregCallResult[], request = "هات منشورات عن القهوة", prior: RecordedCallFact[] = []) => {
+const plan = async (steps: FakeStep[], answers: TregCallResult[], request = "هات منشورات عن القهوة", prior: RecordedCallFact[] = [], understanding?: BudgetUnderstandingInput) => {
   const t = setup(answers, prior);
   t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: request }));
   const driver = createFakeDriver([...steps, { tool: "finish", args: { outcome: "cannot_serve", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة." } }]);
-  await runPlanning(t.deps(driver), t.store.missions.get("msn_x")!);
+  const deps = t.deps(driver);
+  if (understanding) {
+    deps.plannerModel = async () => ({ input: { ...understanding, decision: "plan", understanding_ar: "جمع البيانات المطلوبة." }, costUsd: 0 });
+  }
+  await runPlanning(deps, t.store.missions.get("msn_x")!);
   return { ...t, driver, results: driver.results.filter((r) => r.tool === "treg_call").map((r) => r.result as Record<string, any>) };
 };
 const xPage = tregResult({ output: { data: { items: Array.from({ length: 5 }, (_, i) => ({ id: `${i}`, text: `تغريدة ${i}`, url: `https://x.example/${i}`, author: "a", createdAt: "2026-10-20T10:00:00Z" })), nextCursor: null } } }, 0.00075);
@@ -281,10 +285,15 @@ describe("the planner cannot pick a pricier source without a reason", () => {
 
 // ------------------------------------------------------------------------------------------------------------------ the planning budget is split among the stages
 describe("the planning budget leaves room for every stage", () => {
+  const root = { key: "companies", platform: "companies", capability: "companies.search", parent: null };
+  // The existing comment probe remains an affordable child in this mixed fixture.
+  const child = { key: "comments", platform: "facebook", capability: "facebook.post.comments", parent: root.key };
+  const multi = { steps: [root, child] };
+  const single = { steps: [root] };
   it("a parent and its children expect two samples, a single-stage request one", () => {
-    expect(expectedStageCount("هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات")).toBe(2);
-    expect(expectedStageCount("عايز ١٠ شركات مقاولات في مصر وموظفين كل شركة")).toBe(2);
-    expect(expectedStageCount("هات ٥٠ تغريدة عن منتخب مصر")).toBe(1);
+    expect(expectedStageCount(multi)).toBe(2);
+    expect(expectedStageCount({ steps: [root], people_of_companies: { asked: true } })).toBe(2);
+    expect(expectedStageCount(single)).toBe(1);
   });
 
   const ask = (endpoint: string, params: Record<string, unknown>): FakeStep => ({ tool: "treg_call", args: { endpoint_id: endpoint, params, why: "the fixture source is the one under test" } });
@@ -295,19 +304,19 @@ describe("the planning budget leaves room for every stage", () => {
     const r = await plan([
       ask(POSTS_ENDPOINT, { query: "a", max_results: 5 }), ask(POSTS_ENDPOINT, { query: "b", max_results: 5 }), ask(POSTS_ENDPOINT, { query: "c", max_results: 5 }),
       ask(COMMENTS_ENDPOINT, { url: "https://x.example/p/9000" }),
-    ], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025), tregResult(commentsPage("9000", 12), 0.00144)], REQUEST);
+    ], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025), tregResult(commentsPage("9000", 12), 0.00144)], REQUEST, [], multi);
     expect(r.results.map((x) => x.ok === true ? "ok" : x.refused)).toEqual(["ok", "ok", "stage_reserved", "ok"]);
     expect(r.callFn).toHaveBeenCalledTimes(3);
   });
 
   it("a request with one stage keeps the whole budget for it (no reserve)", async () => {
     // 0.05 single-stage budget: the second call of 0.025 fits (0.05), nothing is kept back
-    const r = await plan([ask(POSTS_ENDPOINT, { query: "a", max_results: 5 }), ask(POSTS_ENDPOINT, { query: "b", max_results: 5 })], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)], "هات منشورات عن القهوة");
+    const r = await plan([ask(POSTS_ENDPOINT, { query: "a", max_results: 5 }), ask(POSTS_ENDPOINT, { query: "b", max_results: 5 })], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)], "هات منشورات عن القهوة", [], single);
     expect(r.results.map((x) => x.ok === true ? "ok" : x.refused)).toEqual(["ok", "ok"]);
   });
 
   it("the planning's own budget still ends it honestly: refusals for the stage reserve are not our failure, a budget refusal is", async () => {
-    const r = await plan([ask(POSTS_ENDPOINT, { query: "a", max_results: 25 })], [], REQUEST);
+    const r = await plan([ask(POSTS_ENDPOINT, { query: "a", max_results: 25 })], [], REQUEST, [], multi);
     expect(r.store.missions.get("msn_x")!.status).toBe("failed");
     expect(String(r.store.missions.get("msn_x")!.error)).toContain("planning_over_budget");
   });

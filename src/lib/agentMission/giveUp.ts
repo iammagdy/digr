@@ -4,8 +4,7 @@ import { blockedEndpointReason } from "../treg/blockList";
 import { isSellable } from "../treg/catalog";
 import { policyVerdict } from "../treg/dataPolicy";
 import { rankedCandidates } from "./candidates";
-import { namedSourceRoutes } from "./namedRoutes";
-import { jobsOfRequest } from "./planningBudget";
+import { isListingEndpoint, namedSourceRoutes, sourceInputOf } from "./namedRoutes";
 import type { StatsMap } from "./sourceRanking";
 
 /**
@@ -24,11 +23,12 @@ export const GIVE_UP_NO_ROWS_REFUSALS_MAX = 3;
 export interface PlanningCallFact { endpoint_id: string; status: string; rows_returned?: number | null; phase?: string }
 export interface UntriedSource { id: string; /** The input that takes the named source, for a listing source. */ input?: string; listing: boolean }
 
-/** The request names a channel, an account or a page («من قنوات العربية واليوم السابع», «من حساب @AlAhly»). */
-const NAMES_A_SOURCE = /(?:قنوات|قناة|القناة|القنوات|حسابات|حساب|الحساب|صفحات|صفحة|الصفحة|channels?|accounts?|pages?)\s+[^\s،,.]/i;
+export interface GiveUpUnderstandingInput {
+  steps: ReadonlyArray<{ platform: string; capability: string; source?: { value?: string } | null }>;
+}
 
 export function untriedBeforeGiveUp(input: {
-  request: string;
+  understanding: GiveUpUnderstandingInput | null;
   catalog: TregCatalog;
   access: AccountAccess;
   stats: StatsMap;
@@ -36,20 +36,28 @@ export function untriedBeforeGiveUp(input: {
   calls: ReadonlyArray<PlanningCallFact>;
 }): { applies: boolean; reached: number; untried: UntriedSource[] } {
   const none = { applies: false, reached: 0, untried: [] as UntriedSource[] };
-  if (!NAMES_A_SOURCE.test(input.request)) return none;
+  const named = input.understanding?.steps.find((step) => step.source?.value?.trim());
+  if (!named) return none;
   const planning = input.calls.filter((c) => (c.phase ?? "planning") === "planning");
   // a sample that gave rows is the other guard's business (it holds real rows and builds the plan from them)
   if (planning.some((c) => c.status === "ok" && Number(c.rows_returned ?? 0) > 0)) return none;
-  const { platform, stages } = jobsOfRequest(input.request);
-  if (!platform || stages.length === 0) return none;
   const reached = new Set(planning.filter((c) => c.status === "ok" || c.status === "empty" || c.status === "failed").map((c) => c.endpoint_id)).size;
   const called = new Set(planning.map((c) => c.endpoint_id));
   const allowed = (id: string): boolean => isSellable(id, input.catalog) && !blockedEndpointReason(id) && policyVerdict(id, input.access).allowed;
 
-  const ranking = rankedCandidates({ catalog: input.catalog, access: input.access, words: stages[0].words, platform, stats: input.stats, now: input.now });
-  const searches: UntriedSource[] = ranking.ranked.map((r) => ({ id: r.id, listing: false }));
-  const seed = ranking.ranked.map((r) => r.id).find((id) => namedSourceRoutes(id, input.catalog, allowed, input.now).length > 0);
-  const listings: UntriedSource[] = seed ? namedSourceRoutes(seed, input.catalog, allowed, input.now).map((r) => ({ id: r.id, input: r.input, listing: true })) : [];
+  const words = named.capability.split(/[.\s_-]+/).filter((word) => word !== named.platform);
+  const ranking = rankedCandidates({ catalog: input.catalog, access: input.access, words, platform: named.platform, stats: input.stats, now: input.now });
+  const listings: UntriedSource[] = [];
+  const searches: UntriedSource[] = [];
+  for (const { id } of ranking.ranked) {
+    const endpoint = input.catalog.byId.get(id);
+    if (endpoint && isListingEndpoint(endpoint)) {
+      listings.push({ id, input: sourceInputOf(endpoint)!, listing: true });
+    } else {
+      listings.push(...namedSourceRoutes(id, input.catalog, allowed, input.now).map((r) => ({ id: r.id, input: r.input, listing: true })));
+      searches.push({ id, listing: false });
+    }
+  }
   const ordered = [...listings, ...searches];
   const seen = new Set<string>();
   const untried = ordered.filter((s) => !called.has(s.id) && !seen.has(s.id) && seen.add(s.id));
