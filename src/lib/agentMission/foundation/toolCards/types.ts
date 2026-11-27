@@ -56,6 +56,10 @@ export interface ToolCard {
   counter: { key: string; counts: "comments_and_replies" | "comments" | "replies" } | null;
   /** The catalog's price of one successful page (USD). */
   costUsdPerPage: number;
+  /** UP1: this endpoint's own facts copied from the catalog (data/treg/treg_catalog_sellable.json): tier, observed reliability (ok rate, or null), price per call. Read only by the tie-break (catalogOrder.ts); tests prove each copy equals the catalog. */
+  catalog?: { tier: "core" | "extended"; okRate: number | null; usd: number };
+  /** UP1: the evidence text of the card (it used to be a comment in the card's file). Documentation only, never read by code. */
+  note?: string;
   /** The stored real pages the card was verified on: mission id and call ids (tests/fixtures/live). */
   verifiedOn: ReadonlyArray<{ mission: string; calls: ReadonlyArray<string> }>;
   /** What the card cannot carry, said once (the compiler turns it into a choice among read rows or a line on the card). */

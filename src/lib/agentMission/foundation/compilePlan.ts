@@ -20,6 +20,7 @@ import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteC
 import { youtubeChannelNoteAr } from "./youtubeChannel";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { COLUMN_OF, sheetWantsOf, suppliedWants } from "./discovery/fieldRecovery";
+import { catalogOrderOf } from "./toolCards/catalogOrder";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 import { rowIsBy, sourceCarryOf, sourceIdOf, sourceOperatorNoteAr, type SourceCarry } from "./sourceScope";
@@ -132,7 +133,7 @@ export function rankedCards(ask: Ask, role: StageRole, options: { cards?: Readon
   const feeds = (c: ToolCard): number => (role === "comments" && (options.repliesCards ?? []).some((rc) => rc.inputs.parent && (rc.inputs.parent.from === "id" || (c.mapping.kind === "replies" && (c.mapping.tokens ?? []).some((t) => t.key === rc.inputs.parent!.from)))) ? 1 : 0);
   // ROUND 36: a source that supplies MORE of the fields the customer named (dates, the account, views, likes) ranks first, whatever else it carries; with no field named the term is 0 for every card and the order is what it was
   const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? suppliedWants(c, ask.wants) : 0, role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.derived ? 0 : 1, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
-  return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return 0; });
+  return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return catalogOrderOf(a, b); });
 }
 
 /** The card of a stage role: the first of `rankedCards`. Null: no usable card (the stage is not included). */

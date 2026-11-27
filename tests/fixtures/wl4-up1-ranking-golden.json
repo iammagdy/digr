@@ -1,0 +1,1374 @@
+{
+ "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.||asked": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.||withCountry": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.||withLanguage": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.||newest": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.||asked": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.||withCountry": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.||withLanguage": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.||newest": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.||asked": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.||withCountry": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.||withLanguage": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.||newest": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.||noTopic": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.||asked": {
+  "parents|customer": [
+   "scrapecreators.instagram.user.posts"
+  ],
+  "parents|catalogOnly": [
+   "scrapecreators.instagram.user.posts",
+   "anyapi.instagram.user.posts"
+  ],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.||withCountry": {
+  "parents|customer": [
+   "scrapecreators.instagram.user.posts"
+  ],
+  "parents|catalogOnly": [
+   "scrapecreators.instagram.user.posts",
+   "anyapi.instagram.user.posts"
+  ],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.||withLanguage": {
+  "parents|customer": [
+   "scrapecreators.instagram.user.posts"
+  ],
+  "parents|catalogOnly": [
+   "scrapecreators.instagram.user.posts",
+   "anyapi.instagram.user.posts"
+  ],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.||newest": {
+  "parents|customer": [
+   "scrapecreators.instagram.user.posts"
+  ],
+  "parents|catalogOnly": [
+   "scrapecreators.instagram.user.posts",
+   "anyapi.instagram.user.posts"
+  ],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.||noTopic": {
+  "parents|customer": [
+   "scrapecreators.instagram.user.posts"
+  ],
+  "parents|catalogOnly": [
+   "scrapecreators.instagram.user.posts",
+   "anyapi.instagram.user.posts"
+  ],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.||asked": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.||withCountry": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.||withLanguage": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.||newest": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.||noTopic": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "عايز ٥٠ بوست من فيسبوك عن الدوري المصري في مصر آخر ٣ شهور||asked": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "عايز ٥٠ بوست من فيسبوك عن الدوري المصري في مصر آخر ٣ شهور||withCountry": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "عايز ٥٠ بوست من فيسبوك عن الدوري المصري في مصر آخر ٣ شهور||withLanguage": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "عايز ٥٠ بوست من فيسبوك عن الدوري المصري في مصر آخر ٣ شهور||newest": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "عايز ٥٠ بوست من فيسبوك عن الدوري المصري في مصر آخر ٣ شهور||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات تعليقات من انستجرام عن العاصمة الإدارية||asked": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات تعليقات من انستجرام عن العاصمة الإدارية||withCountry": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات تعليقات من انستجرام عن العاصمة الإدارية||withLanguage": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات تعليقات من انستجرام عن العاصمة الإدارية||newest": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات تعليقات من انستجرام عن العاصمة الإدارية||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "عايز تعليقات يوتيوب عن الذكاء الاصطناعي بالعربي||asked": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "عايز تعليقات يوتيوب عن الذكاء الاصطناعي بالعربي||withCountry": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "عايز تعليقات يوتيوب عن الذكاء الاصطناعي بالعربي||withLanguage": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "عايز تعليقات يوتيوب عن الذكاء الاصطناعي بالعربي||newest": {
+  "parents|customer": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.x.youtube-web-search-channel"
+  ],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "عايز تعليقات يوتيوب عن الذكاء الاصطناعي بالعربي||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "tikhub.youtube.video.comments",
+   "crawl4ai.youtube.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.youtube.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.youtube.comment_replies"
+  ]
+ },
+ "عايز ١٠٠ تغريدة عن الاقتصاد من تويتر آخر شهر بالانجليزي||asked": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "عايز ١٠٠ تغريدة عن الاقتصاد من تويتر آخر شهر بالانجليزي||withCountry": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "عايز ١٠٠ تغريدة عن الاقتصاد من تويتر آخر شهر بالانجليزي||withLanguage": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "عايز ١٠٠ تغريدة عن الاقتصاد من تويتر آخر شهر بالانجليزي||newest": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "عايز ١٠٠ تغريدة عن الاقتصاد من تويتر آخر شهر بالانجليزي||noTopic": {
+  "parents|customer": [
+   "anyapi.x.search.posts"
+  ],
+  "parents|catalogOnly": [
+   "anyapi.x.search.posts"
+  ],
+  "comments|customer": [],
+  "comments|catalogOnly": [],
+  "replies|customer": [
+   "anyapi.x.post.comments"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.x.post.comments"
+  ]
+ },
+ "ترند تيك توك في السعودية ١٠ فيديوهات مع ٢٠ تعليق لكل فيديو وردود||asked": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "ترند تيك توك في السعودية ١٠ فيديوهات مع ٢٠ تعليق لكل فيديو وردود||withCountry": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "ترند تيك توك في السعودية ١٠ فيديوهات مع ٢٠ تعليق لكل فيديو وردود||withLanguage": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "ترند تيك توك في السعودية ١٠ فيديوهات مع ٢٠ تعليق لكل فيديو وردود||newest": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "ترند تيك توك في السعودية ١٠ فيديوهات مع ٢٠ تعليق لكل فيديو وردود||noTopic": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "تعليقات فيديوهات تيك توك عن كرة القدم الأكثر تعليقًا||asked": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "تعليقات فيديوهات تيك توك عن كرة القدم الأكثر تعليقًا||withCountry": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "تعليقات فيديوهات تيك توك عن كرة القدم الأكثر تعليقًا||withLanguage": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "تعليقات فيديوهات تيك توك عن كرة القدم الأكثر تعليقًا||newest": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "تعليقات فيديوهات تيك توك عن كرة القدم الأكثر تعليقًا||noTopic": {
+  "parents|customer": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "parents|catalogOnly": [
+   "tikhub.tiktok.search.videos",
+   "anyapi.tiktok.search.videos",
+   "crawl4ai.tiktok.search.videos"
+  ],
+  "comments|customer": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.tiktok.video.comments"
+  ],
+  "replies|customer": [
+   "anyapi.tiktok.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.tiktok.comment_replies"
+  ]
+ },
+ "منشورات فيسبوك الأحدث عن الكهرباء||asked": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "منشورات فيسبوك الأحدث عن الكهرباء||withCountry": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "منشورات فيسبوك الأحدث عن الكهرباء||withLanguage": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "منشورات فيسبوك الأحدث عن الكهرباء||newest": {
+  "parents|customer": [
+   "justoneapi.x.facebook-search-post-v1"
+  ],
+  "parents|catalogOnly": [
+   "justoneapi.x.facebook-search-post-v1",
+   "anyapi.facebook.search_posts"
+  ],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "منشورات فيسبوك الأحدث عن الكهرباء||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "comments|catalogOnly": [
+   "scrapecreators.x.v1-facebook-post-comments",
+   "anyapi.facebook.post_comments"
+  ],
+  "replies|customer": [
+   "anyapi.facebook.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.facebook.comment_replies",
+   "scrapecreators.x.v1-facebook-post-comment-replies"
+  ]
+ },
+ "هات ريلز من انستجرام عن السفر||asked": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات ريلز من انستجرام عن السفر||withCountry": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات ريلز من انستجرام عن السفر||withLanguage": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات ريلز من انستجرام عن السفر||newest": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ },
+ "هات ريلز من انستجرام عن السفر||noTopic": {
+  "parents|customer": [],
+  "parents|catalogOnly": [],
+  "comments|customer": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "comments|catalogOnly": [
+   "anyapi.instagram.post.comments",
+   "scrapecreators.instagram.post.comments"
+  ],
+  "replies|customer": [
+   "anyapi.instagram.comment_replies"
+  ],
+  "replies|catalogOnly": [
+   "anyapi.instagram.comment_replies"
+  ]
+ }
+}

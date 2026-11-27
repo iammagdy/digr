@@ -1,0 +1,1902 @@
+[
+  {
+    "endpointId": "tikhub.tiktok.search.videos",
+    "platform": "tiktok",
+    "role": "videos.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "keyword"
+      },
+      "country": {
+        "field": "region"
+      },
+      "order": {
+        "field": "sort_type",
+        "most_commented": 1,
+        "newest": 2
+      },
+      "pageSize": {
+        "field": "count",
+        "value": 20
+      },
+      "cursor": "offset"
+    },
+    "page": {
+      "list": [
+        "data",
+        "search_item_list"
+      ],
+      "item": [
+        "aweme_info"
+      ],
+      "cursor": [
+        "data",
+        "cursor"
+      ],
+      "observedRowsPerPage": 10
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "aweme_id"
+        ],
+        "text": [
+          "desc"
+        ],
+        "author": [
+          "author",
+          "nickname"
+        ],
+        "username": [
+          "author",
+          "unique_id"
+        ],
+        "posted_at": [
+          "create_time"
+        ],
+        "link": [
+          "share_url"
+        ],
+        "country": [
+          "region"
+        ],
+        "language": [
+          "desc_language"
+        ],
+        "likes": [
+          "statistics",
+          "digg_count"
+        ],
+        "comments": [
+          "statistics",
+          "comment_count"
+        ],
+        "shares": [
+          "statistics",
+          "share_count"
+        ],
+        "views": [
+          "statistics",
+          "play_count"
+        ],
+        "saves": [
+          "statistics",
+          "collect_count"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments_and_replies"
+    },
+    "costUsdPerPage": 0.001,
+    "verifiedOn": [
+      {
+        "mission": "msn_5851abc92a1e6645a9cd",
+        "calls": [
+          "call_0006",
+          "call_0007"
+        ]
+      },
+      {
+        "mission": "msn_48f6c7c80eb7068f2a38",
+        "calls": [
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_a6dacebce7e7b7432aa1",
+        "calls": [
+          "call_0002",
+          "call_0003"
+        ]
+      },
+      {
+        "mission": "msn_6066498b5da3dd512595",
+        "calls": [
+          "call_0003"
+        ]
+      },
+      {
+        "mission": "msn_5d849cbac96092de0287",
+        "calls": [
+          "call_0001",
+          "call_0004"
+        ]
+      },
+      {
+        "mission": "msn_f22426e67810c2ce852e",
+        "calls": [
+          "call_0002"
+        ]
+      }
+    ],
+    "cannot": [
+      "language",
+      "period"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9999,
+      "usd": 0.001
+    },
+    "note": "keyword + region + order + page size, paged by offset; 10 rows on a page of count 20 (V: M6, M7, M11, M12, M13)\na period has no day input here (publish_time is a preset), and the language has no input: both are a choice among the read rows and a mark"
+  },
+  {
+    "endpointId": "anyapi.tiktok.search.videos",
+    "platform": "tiktok",
+    "role": "videos.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "query"
+      },
+      "order": {
+        "field": "sortBy",
+        "most_commented": 2
+      },
+      "cursor": "cursor"
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "videos"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 20
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "caption"
+        ],
+        "author": [
+          "authorName"
+        ],
+        "username": [
+          "author"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "country": [
+          "region"
+        ],
+        "likes": [
+          "likes"
+        ],
+        "comments": [
+          "comments"
+        ],
+        "shares": [
+          "shares"
+        ],
+        "views": [
+          "views"
+        ],
+        "saves": [
+          "saves"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments_and_replies"
+    },
+    "costUsdPerPage": 0.0012,
+    "verifiedOn": [
+      {
+        "mission": "msn_5851abc92a1e6645a9cd",
+        "calls": [
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_481a78e310d9e68fddce",
+        "calls": [
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_7a35b44e35e6f3f1b8e9",
+        "calls": [
+          "call_0002"
+        ]
+      }
+    ],
+    "cannot": [
+      "country",
+      "language",
+      "period"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9995,
+      "usd": 0.0012
+    },
+    "note": "query + order, paged by cursor; no country input (M8: both videos Iraqi)"
+  },
+  {
+    "endpointId": "crawl4ai.tiktok.search.videos",
+    "platform": "tiktok",
+    "role": "videos.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "query"
+      },
+      "pageSize": {
+        "field": "limit",
+        "value": 30
+      },
+      "cursor": null
+    },
+    "page": {
+      "list": [
+        "rows"
+      ],
+      "cursor": null,
+      "observedRowsPerPage": 30
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "post_id"
+        ],
+        "text": [
+          "description"
+        ],
+        "author": [
+          "author",
+          "name"
+        ],
+        "username": [
+          "author",
+          "username"
+        ],
+        "posted_at": [
+          "created_at"
+        ],
+        "link": [
+          "url"
+        ],
+        "likes": [
+          "stats",
+          "likes"
+        ],
+        "comments": [
+          "stats",
+          "comments"
+        ],
+        "shares": [
+          "stats",
+          "shares"
+        ],
+        "views": [
+          "stats",
+          "plays"
+        ],
+        "saves": [
+          "stats",
+          "saves"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments_and_replies"
+    },
+    "costUsdPerPage": 0.0005,
+    "verifiedOn": [
+      {
+        "mission": "msn_48f6c7c80eb7068f2a38",
+        "calls": [
+          "call_0001"
+        ]
+      },
+      {
+        "mission": "msn_a6dacebce7e7b7432aa1",
+        "calls": [
+          "call_0001"
+        ]
+      },
+      {
+        "mission": "msn_c796a6ff13d79f7a973d",
+        "calls": [
+          "call_0001"
+        ]
+      },
+      {
+        "mission": "msn_6066498b5da3dd512595",
+        "calls": [
+          "call_0001"
+        ]
+      },
+      {
+        "mission": "msn_f22426e67810c2ce852e",
+        "calls": [
+          "call_0001"
+        ]
+      }
+    ],
+    "cannot": [
+      "country",
+      "language",
+      "period",
+      "order"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9468,
+      "usd": 0.0005
+    },
+    "note": "query + limit, one page; no country, no order, no next page; failed in 3 of 8 planning calls (timeouts)"
+  },
+  {
+    "endpointId": "anyapi.tiktok.video.comments",
+    "platform": "tiktok",
+    "role": "video.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 20
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.002,
+    "verifiedOn": [
+      {
+        "mission": "msn_5851abc92a1e6645a9cd",
+        "calls": [
+          "call_0005",
+          "call_0008",
+          "call_0009",
+          "call_0010",
+          "call_0018",
+          "call_0019",
+          "call_0029"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 1,
+      "usd": 0.002
+    },
+    "note": "the comments of one video by its link, paged by cursor; each comment carries its own replies counter (V: M12 calls 5, 8-29)"
+  },
+  {
+    "endpointId": "anyapi.tiktok.comment_replies",
+    "platform": "tiktok",
+    "role": "comment.replies",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "commentId",
+        "from": "id",
+        "also": [
+          {
+            "param": "url",
+            "from": "link",
+            "grand": true
+          }
+        ]
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 1
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.0009,
+    "verifiedOn": [
+      {
+        "mission": "msn_5851abc92a1e6645a9cd",
+        "calls": [
+          "call_0030",
+          "call_0031",
+          "call_0032",
+          "call_0049",
+          "call_0090",
+          "call_0096"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 1,
+      "usd": 0.0009
+    },
+    "note": "the replies of one comment by the comment's id and the video's link (V: M12 calls 30-96)"
+  },
+  {
+    "endpointId": "anyapi.x.search.posts",
+    "platform": "x",
+    "role": "tweets.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "query",
+        "operators": true,
+        "quoted": true,
+        "sourceOperator": "from:",
+        "or": "OR"
+      },
+      "order": {
+        "field": "queryType",
+        "most_commented": "Top",
+        "newest": "Latest"
+      },
+      "pageSize": {
+        "field": "limit",
+        "value": 20
+      },
+      "cursor": "cursor"
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "items"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 20
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "text"
+        ],
+        "author": [
+          "authorName"
+        ],
+        "username": [
+          "authorUsername"
+        ],
+        "followers": [
+          "authorFollowers"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "is_reply": [
+          "isReply"
+        ],
+        "language": [
+          "lang"
+        ],
+        "likes": [
+          "likeCount"
+        ],
+        "replies_count": [
+          "replyCount"
+        ],
+        "shares": [
+          "retweetCount"
+        ],
+        "views": [
+          "viewCount"
+        ]
+      }
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.00075,
+    "verifiedOn": [
+      {
+        "mission": "msn_b060d3347ed7660f972e",
+        "calls": [
+          "call_0001",
+          "call_0002",
+          "call_0003"
+        ]
+      },
+      {
+        "mission": "msn_e3d679014c58168c3227",
+        "calls": [
+          "call_0001"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 1,
+      "usd": 0.00075
+    }
+  },
+  {
+    "endpointId": "anyapi.x.post.comments",
+    "platform": "x",
+    "role": "tweet.replies",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      },
+      "fixed": {
+        "requireFields": [
+          "nextCursor"
+        ]
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "items"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 1
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "text"
+        ],
+        "author": [
+          "authorName"
+        ],
+        "username": [
+          "authorHandle"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "likes": [
+          "likeCount"
+        ],
+        "replies_count": [
+          "replyCount"
+        ],
+        "shares": [
+          "repostCount"
+        ],
+        "views": [
+          "viewCount"
+        ]
+      }
+    },
+    "counter": null,
+    "costUsdPerPage": 0.0005,
+    "verifiedOn": [
+      {
+        "mission": "msn_50e3b83c44e7ebd7f577",
+        "calls": [
+          "call_0003",
+          "call_0004",
+          "call_0005",
+          "call_0006",
+          "call_0007",
+          "call_0008",
+          "call_0009",
+          "call_0010",
+          "call_0011",
+          "call_0012",
+          "call_0013",
+          "call_0014",
+          "call_0015",
+          "call_0016"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9998,
+      "usd": 0.0005
+    },
+    "note": "THE REPLIES TO A TWEET by its link, paged by cursor, up to 40 a page (the catalog's input note: «Opaque pagination cursor from a previous response's nextCursor»). CATALOG ONLY: written from the catalog entry\n(data/treg/treg_catalog_sellable.json: inputs url/cursor/limit, list_path output.data.items, item_fields authorHandle/authorName/createdUtc/id/likeCount/replyCount/text/url/viewCount, price per successful call);\nFIRST REAL RESPONSES (live round 7, msn_9fa5ba384c05a25247e1, tests/live-e-x-replies-real.test.ts): the list path, the ids, the fields and the parent link (`conversationId` = the tweet asked) are RIGHT; `output.data.nextCursor` is present and NULL on every page and the\nresponse says its source cannot page (it may be incomplete): 16 of at least 23 direct replies came for one tweet. So the card stays catalog_only: «every reply the source shows» is not met. One row per call is assumed for the hold (a tweet with one reply costs a whole call).\nROUND 8 (owner decision, TEST accounts only, which is the only place this card is ever used): the call asks the provider for a source that CAN page, `requireFields: [\"nextCursor\"]` (the provider's own suggestion in that response), declared as an optional input of the catalog entry in code (catalog.ts DECLARED_EXTRA_INPUTS: the snapshot file is pinned and not edited); the engine\nfollows nextCursor until it is null or the stage's page cap. NOT VERIFIED: what the provider answers to it (whether it serves the call, what it charges, whether the token continues the replies) needs a paid call. VERIFIED by the owner's live test (round 8, tests/live-g-x-replies-verified.test.ts): the provider served the route, every page with rows carried a token, the token was followed, an empty page ended each tweet, 0.00054 USD a call. observedRowsPerPage stays 1 on purpose: it sizes the hold (a call is priced as one row), a conservative figure that this change does not touch (the real average was 2.2 rows a call)."
+  },
+  {
+    "endpointId": "justoneapi.x.facebook-search-post-v1",
+    "platform": "facebook",
+    "role": "posts.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "keyword",
+        "required": true,
+        "withSource": true
+      },
+      "period": {
+        "from": "startDate",
+        "to": "endDate"
+      },
+      "cursor": "cursor"
+    },
+    "page": {
+      "list": [
+        "data",
+        "results"
+      ],
+      "cursor": [
+        "data",
+        "cursor"
+      ],
+      "observedRowsPerPage": 5
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "post_id"
+        ],
+        "text": [
+          "message"
+        ],
+        "author": [
+          "author",
+          "name"
+        ],
+        "author_id": [
+          "author",
+          "id"
+        ],
+        "author_url": [
+          "author",
+          "url"
+        ],
+        "posted_at": [
+          "timestamp"
+        ],
+        "link": [
+          "url"
+        ],
+        "comments": [
+          "comments_count"
+        ],
+        "likes": [
+          "reactions_count"
+        ],
+        "shares": [
+          "reshare_count"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0.02952,
+    "verifiedOn": [
+      {
+        "mission": "msn_6bb78c15d116268b0b9b",
+        "calls": [
+          "call_0004",
+          "call_0005"
+        ]
+      },
+      {
+        "mission": "msn_71577d2920048f9ebf22",
+        "calls": [
+          "call_0001",
+          "call_0003",
+          "call_0004"
+        ]
+      },
+      {
+        "mission": "msn_aaed7fa9ffecc854edc0",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_5324df5fff82ef3c6a0e",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_a6e52e97658bc41fa7ad",
+        "calls": [
+          "call_0001"
+        ]
+      },
+      {
+        "mission": "msn_25fb87d4b0dd80c6ae12",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_020bf5c4110c15c86ab8",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_e39585e687833914039e",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      },
+      {
+        "mission": "msn_980f9a239454964b0583",
+        "calls": [
+          "call_0001",
+          "call_0002"
+        ]
+      }
+    ],
+    "cannot": [
+      "country",
+      "language",
+      "order"
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 0.9972,
+      "usd": 0.02952
+    },
+    "note": "keyword + start day + end day, paged by cursor; 5 rows a page (V: 22 live calls)\nthe search has no country, language or order input: they are a choice among the read posts and a mark"
+  },
+  {
+    "endpointId": "anyapi.facebook.search_posts",
+    "platform": "facebook",
+    "role": "posts.search",
+    "status": "catalog_only",
+    "inputs": {
+      "query": {
+        "field": "query",
+        "required": true,
+        "withSource": true
+      },
+      "period": {
+        "from": "startDate",
+        "to": "endDate"
+      },
+      "pageSize": {
+        "field": "limit",
+        "value": 20
+      },
+      "cursor": null
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "items"
+      ],
+      "cursor": null,
+      "observedRowsPerPage": 20
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "text"
+        ],
+        "author": [
+          "authorName"
+        ],
+        "author_url": [
+          "authorUrl"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "comments": [
+          "commentCount"
+        ],
+        "likes": [
+          "reactionCount"
+        ],
+        "shares": [
+          "shareCount"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0.06606,
+    "verifiedOn": [],
+    "cannot": [
+      "country",
+      "language",
+      "order"
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": null,
+      "usd": 0.06606
+    },
+    "note": "the second keyword search: up to 20 posts in one call, no cursor, the page's own link on each row. Never answered with rows (its one planning call was refused), so catalog_only."
+  },
+  {
+    "endpointId": "anyapi.facebook.user.posts",
+    "platform": "facebook",
+    "role": "posts.page",
+    "status": "verified",
+    "inputs": {
+      "source": {
+        "param": "url",
+        "kind": "page_url"
+      },
+      "cursor": "cursor"
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "posts"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 3
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "text"
+        ],
+        "author": [
+          "author"
+        ],
+        "author_id": [
+          "authorId"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "comments": [
+          "comments"
+        ],
+        "likes": [
+          "likes"
+        ],
+        "shares": [
+          "shares"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0.002,
+    "verifiedOn": [
+      {
+        "mission": "msn_6bb78c15d116268b0b9b",
+        "calls": [
+          "call_0002",
+          "call_0003"
+        ]
+      },
+      {
+        "mission": "msn_96beb9f7a1d937a90cd0",
+        "calls": [
+          "call_0002",
+          "call_0003"
+        ]
+      }
+    ],
+    "cannot": [
+      "topic",
+      "period",
+      "country",
+      "language",
+      "order"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9964,
+      "usd": 0.002
+    },
+    "note": "the page listing by the page's link, 3 posts a page; no keyword and no date (V: 5 listing tools, none has either). Rows carry the comment counter (`comments`) and the author id."
+  },
+  {
+    "endpointId": "scrapecreators.x.v1-facebook-post-comments",
+    "platform": "facebook",
+    "role": "post.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      }
+    },
+    "page": {
+      "list": [
+        "comments"
+      ],
+      "cursor": [
+        "cursor"
+      ],
+      "observedRowsPerPage": 6
+    },
+    "mapping": {
+      "kind": "replies",
+      "tokens": [
+        {
+          "key": "feedback_id"
+        },
+        {
+          "key": "expansion_token"
+        }
+      ]
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.00188,
+    "verifiedOn": [
+      {
+        "mission": "msn_6bb78c15d116268b0b9b",
+        "calls": [
+          "call_0006",
+          "call_0009"
+        ]
+      },
+      {
+        "mission": "msn_96beb9f7a1d937a90cd0",
+        "calls": [
+          "call_0004",
+          "call_0006"
+        ]
+      },
+      {
+        "mission": "msn_5324df5fff82ef3c6a0e",
+        "calls": [
+          "call_0003"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": null,
+      "usd": 0.00188
+    },
+    "note": "the comments of one post by its link, paged by cursor; each comment carries its reply counter and the two tokens of its replies"
+  },
+  {
+    "endpointId": "anyapi.facebook.post_comments",
+    "platform": "facebook",
+    "role": "post.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 10
+    },
+    "mapping": {
+      "kind": "replies",
+      "likesFrom": "reactions"
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.002,
+    "verifiedOn": [
+      {
+        "mission": "msn_934781c56a01a96825af",
+        "calls": [
+          "call_0008",
+          "call_0010"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": null,
+      "usd": 0.002
+    },
+    "note": "the comments by the post's link or its feedback id; rows carry the replies counter (`replies`) and the reaction count (`reactions`, a number: `likesFrom`) and no token, so this card cannot feed a replies step. VERIFIED in round 20 on the first real pages (see the header)"
+  },
+  {
+    "endpointId": "anyapi.facebook.comment_replies",
+    "platform": "facebook",
+    "role": "comment.replies",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "feedbackId",
+        "from": "feedback_id",
+        "also": [
+          {
+            "param": "expansionToken",
+            "from": "expansion_token"
+          }
+        ]
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "replies"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 2.6
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.0012,
+    "verifiedOn": [
+      {
+        "mission": "msn_236f4af6fe4cb890abee",
+        "calls": [
+          "call_0046",
+          "call_0047",
+          "call_0048",
+          "call_0049",
+          "call_0050",
+          "call_0051",
+          "call_0052",
+          "call_0053",
+          "call_0054",
+          "call_0055",
+          "call_0056",
+          "call_0057",
+          "call_0058",
+          "call_0059",
+          "call_0060",
+          "call_0061",
+          "call_0062",
+          "call_0063",
+          "call_0064",
+          "call_0065",
+          "call_0066",
+          "call_0067",
+          "call_0068",
+          "call_0069",
+          "call_0070",
+          "call_0071",
+          "call_0072",
+          "call_0073",
+          "call_0074",
+          "call_0075",
+          "call_0076",
+          "call_0077",
+          "call_0078",
+          "call_0079",
+          "call_0080",
+          "call_0081"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": null,
+      "usd": 0.0012
+    },
+    "note": "the replies of one comment by the comment's two tokens. VERIFIED since round 14 on the 36 real pages of live round 12 (calls 46 to 81 of msn_236f4af6fe4cb890abee: 95 rows, 2.64 a call, at most 7; one call per comment that has replies; `hasNextPage` false on each, so one page ends a thread;\nfour comments gave fewer replies than their counters: 5 rows short of 100). Before it, 8 of 8 real reads were successful empty answers. `observedRowsPerPage` is the measured 95 / 36 rounded DOWN (a page never gave less on average): the card used to price a reply as a whole call."
+  },
+  {
+    "endpointId": "scrapecreators.x.v1-facebook-post-comment-replies",
+    "platform": "facebook",
+    "role": "comment.replies",
+    "status": "catalog_only",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "feedback_id",
+        "from": "feedback_id",
+        "also": [
+          {
+            "param": "expansion_token",
+            "from": "expansion_token"
+          }
+        ]
+      }
+    },
+    "page": {
+      "list": [
+        "replies"
+      ],
+      "cursor": [
+        "cursor"
+      ],
+      "observedRowsPerPage": 1
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.00188,
+    "verifiedOn": [],
+    "catalog": {
+      "tier": "extended",
+      "okRate": null,
+      "usd": 0.00188
+    }
+  },
+  {
+    "endpointId": "scrapecreators.instagram.user.posts",
+    "platform": "instagram",
+    "role": "posts.account",
+    "status": "verified",
+    "inputs": {
+      "source": {
+        "param": "handle",
+        "kind": "handle"
+      },
+      "cursor": "next_max_id"
+    },
+    "page": {
+      "list": [
+        "items"
+      ],
+      "cursor": [
+        "next_max_id"
+      ],
+      "observedRowsPerPage": 12
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "pk"
+        ],
+        "text": [
+          "caption",
+          "text"
+        ],
+        "author": [
+          "user",
+          "username"
+        ],
+        "posted_at": [
+          "taken_at"
+        ],
+        "likes": [
+          "like_count"
+        ],
+        "comments": [
+          "comment_count"
+        ],
+        "views": [
+          "play_count"
+        ]
+      },
+      "linkTemplate": {
+        "template": "https://www.instagram.com/p/{}/",
+        "field": [
+          "code"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0.00188,
+    "verifiedOn": [
+      {
+        "mission": "msn_afe9bb0b436670e35a3c",
+        "calls": [
+          "call_0002",
+          "call_0007"
+        ]
+      },
+      {
+        "mission": "msn_e3e7632e2fb2d42f9c19",
+        "calls": [
+          "call_0002"
+        ]
+      }
+    ],
+    "cannot": [
+      "topic",
+      "period",
+      "country",
+      "language",
+      "order"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9869,
+      "usd": 0.00188
+    },
+    "note": "an account listing has no keyword, no date, no country and no language input: each is a choice among the read posts and a mark"
+  },
+  {
+    "endpointId": "anyapi.instagram.user.posts",
+    "platform": "instagram",
+    "role": "posts.account",
+    "status": "catalog_only",
+    "inputs": {
+      "source": {
+        "param": "handle",
+        "kind": "handle"
+      },
+      "cursor": "cursor"
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "posts"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 12
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "text": [
+          "caption"
+        ],
+        "username": [
+          "username"
+        ],
+        "posted_at": [
+          "createdUtc"
+        ],
+        "link": [
+          "url"
+        ],
+        "likes": [
+          "likes"
+        ],
+        "comments": [
+          "comments"
+        ]
+      }
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0.0024,
+    "verifiedOn": [],
+    "cannot": [
+      "topic",
+      "period",
+      "country",
+      "language",
+      "order"
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9958,
+      "usd": 0.0024
+    },
+    "note": "handle + cursor, with the comment counter and the date; 0 calls ever, so its page size and shape are the catalog's only"
+  },
+  {
+    "endpointId": "anyapi.instagram.post.comments",
+    "platform": "instagram",
+    "role": "post.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 5
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.00144,
+    "verifiedOn": [
+      {
+        "mission": "msn_e3e7632e2fb2d42f9c19",
+        "calls": [
+          "call_0004",
+          "call_0008",
+          "call_0009"
+        ]
+      },
+      {
+        "mission": "msn_afe9bb0b436670e35a3c",
+        "calls": [
+          "call_0003",
+          "call_0008"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9999,
+      "usd": 0.00144
+    }
+  },
+  {
+    "endpointId": "scrapecreators.instagram.post.comments",
+    "platform": "instagram",
+    "role": "post.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "url",
+        "from": "link"
+      }
+    },
+    "page": {
+      "list": [
+        "comments"
+      ],
+      "cursor": [
+        "cursor"
+      ],
+      "observedRowsPerPage": 1
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.00188,
+    "verifiedOn": [
+      {
+        "mission": "msn_afe9bb0b436670e35a3c",
+        "calls": [
+          "call_0004"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 0.9801,
+      "usd": 0.00188
+    }
+  },
+  {
+    "endpointId": "anyapi.instagram.comment_replies",
+    "platform": "instagram",
+    "role": "comment.replies",
+    "status": "verified",
+    "inputs": {
+      "cursor": "cursor",
+      "parent": {
+        "param": "commentId",
+        "from": "id",
+        "also": [
+          {
+            "param": "url",
+            "from": "link",
+            "grand": true
+          }
+        ]
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 1
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": null,
+    "costUsdPerPage": 0.0011,
+    "verifiedOn": [
+      {
+        "mission": "msn_e3e7632e2fb2d42f9c19",
+        "calls": [
+          "call_0017"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 1,
+      "usd": 0.0011
+    },
+    "note": "the replies of one comment by the comment's id and the post's link (like TikTok's); a successful `not found` answer is an empty one"
+  },
+  {
+    "endpointId": "tikhub.x.youtube-web-v2-search-channels",
+    "platform": "youtube",
+    "role": "channels.search",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "keyword",
+        "required": true
+      },
+      "cursor": "continuation_token"
+    },
+    "page": {
+      "list": [
+        "data",
+        "channels"
+      ],
+      "cursor": [
+        "data",
+        "continuation_token"
+      ],
+      "observedRowsPerPage": 2
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "channel_id"
+        ],
+        "title": [
+          "title"
+        ],
+        "handle": [
+          "handle"
+        ],
+        "subscribers": [
+          "subscriber_count_text"
+        ]
+      }
+    },
+    "counter": null,
+    "costUsdPerPage": 0.001,
+    "verifiedOn": [
+      {
+        "mission": "msn_ee599cdbbde993073b15",
+        "calls": [
+          "call_0003",
+          "call_0004"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 1,
+      "usd": 0.001
+    }
+  },
+  {
+    "endpointId": "tikhub.x.youtube-web-search-channel",
+    "platform": "youtube",
+    "role": "videos.channel",
+    "status": "verified",
+    "inputs": {
+      "query": {
+        "field": "search_query",
+        "required": true
+      },
+      "source": {
+        "param": "channel_id",
+        "kind": "channel_id"
+      },
+      "cursor": "continuation_token"
+    },
+    "page": {
+      "list": [
+        "data",
+        "videos"
+      ],
+      "cursor": [
+        "data",
+        "continuation_token"
+      ],
+      "observedRowsPerPage": 30
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "video_id"
+        ],
+        "text": [
+          "title"
+        ],
+        "author": [
+          "author"
+        ],
+        "channel_id": [
+          "channel_id"
+        ],
+        "views": [
+          "number_of_views"
+        ],
+        "published": [
+          "published_time"
+        ]
+      },
+      "linkTemplate": {
+        "template": "https://www.youtube.com/watch?v={}",
+        "field": [
+          "video_id"
+        ]
+      }
+    },
+    "counter": null,
+    "costUsdPerPage": 0.001,
+    "verifiedOn": [
+      {
+        "mission": "msn_ee599cdbbde993073b15",
+        "calls": [
+          "call_0006",
+          "call_0007"
+        ]
+      }
+    ],
+    "cannot": [
+      "country",
+      "language",
+      "period",
+      "order"
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 1,
+      "usd": 0.001
+    },
+    "note": "the channel's own videos about the topic, 30 a page; no comment counter on its rows"
+  },
+  {
+    "endpointId": "youtube.youtube.video.detail",
+    "platform": "youtube",
+    "role": "videos.counter",
+    "status": "catalog_only",
+    "inputs": {
+      "ids": {
+        "param": "id",
+        "max": 50
+      },
+      "fixed": {
+        "part": "statistics"
+      },
+      "cursor": null
+    },
+    "page": {
+      "list": [
+        "items"
+      ],
+      "cursor": null,
+      "observedRowsPerPage": 50
+    },
+    "mapping": {
+      "kind": "fields",
+      "fields": {
+        "id": [
+          "id"
+        ],
+        "comments": [
+          "statistics",
+          "commentCount"
+        ]
+      },
+      "numeric": [
+        "comments"
+      ]
+    },
+    "counter": {
+      "key": "comments",
+      "counts": "comments"
+    },
+    "costUsdPerPage": 0,
+    "verifiedOn": [],
+    "catalog": {
+      "tier": "core",
+      "okRate": 1,
+      "usd": 0
+    },
+    "note": "the free counter: up to 50 ids a call; catalog_only (never called, and it needs YouTube connected on our provider account)"
+  },
+  {
+    "endpointId": "crawl4ai.youtube.video.comments",
+    "platform": "youtube",
+    "role": "video.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": null,
+      "parent": {
+        "param": "video",
+        "from": "id"
+      },
+      "fixed": {
+        "limit": 500
+      }
+    },
+    "page": {
+      "list": [
+        "rows"
+      ],
+      "cursor": null,
+      "observedRowsPerPage": 15
+    },
+    "mapping": {
+      "kind": "replies"
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.0009,
+    "verifiedOn": [
+      {
+        "mission": "msn_ee599cdbbde993073b15",
+        "calls": [
+          "call_0009",
+          "call_0011",
+          "call_0013"
+        ]
+      },
+      {
+        "mission": "msn_3594a5ab6311c8691f20",
+        "calls": [
+          "call_0002",
+          "call_0004",
+          "call_0005"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 1,
+      "usd": 0.0009
+    },
+    "note": "up to 500 comments in one call, no cursor, each comment its replies count (`replies`), no reply token: it cannot feed a replies step"
+  },
+  {
+    "endpointId": "tikhub.youtube.video.comments",
+    "platform": "youtube",
+    "role": "video.comments",
+    "status": "verified",
+    "inputs": {
+      "cursor": "continuation_token",
+      "parent": {
+        "param": "video_id",
+        "from": "id"
+      },
+      "fixed": {
+        "language_code": "en"
+      }
+    },
+    "page": {
+      "list": [
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "data",
+        "continuation_token"
+      ],
+      "observedRowsPerPage": 20
+    },
+    "mapping": {
+      "kind": "replies",
+      "tokens": [
+        {
+          "key": "reply_continuation_token"
+        }
+      ],
+      "relativeDates": true
+    },
+    "counter": {
+      "key": "replies_count",
+      "counts": "replies"
+    },
+    "costUsdPerPage": 0.001,
+    "verifiedOn": [
+      {
+        "mission": "msn_41a73a6b2c0b4a76ef0a",
+        "calls": [
+          "call_0006",
+          "call_0007",
+          "call_0008",
+          "call_0009",
+          "call_0010",
+          "call_0011",
+          "call_0012",
+          "call_0013"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "core",
+      "okRate": 1,
+      "usd": 0.001
+    },
+    "note": "the comments with the reply counter (`reply_count`, written as text) and the comment's reply token, paged by `data.continuation_token`. VERIFIED on the 8 real pages of live round 11 (2 videos, 123 comments, 3 with replies). Its `published_time` is a relative text in the provider's own\nlanguage («11个月前»), never a date: the mapping leaves the comment's date empty (round 12). Round 13: the call sends `language_code: \"en\"` (a declared input of the catalog entry), so the text is English («3 days ago», «11 months ago (edited)»): the mapping keeps it and the engine turns it into an approximate Cairo day from the moment of the read, marked approximate; a text it cannot read leaves the date empty and is counted in the delivery's limits. NOT SEEN on a real page yet: the English forms are synthetic until the live round."
+  },
+  {
+    "endpointId": "anyapi.youtube.comment_replies",
+    "platform": "youtube",
+    "role": "comment.replies",
+    "status": "verified",
+    "inputs": {
+      "cursor": "continuationToken",
+      "parent": {
+        "param": "continuationToken",
+        "from": "reply_continuation_token"
+      }
+    },
+    "page": {
+      "list": [
+        "output",
+        "data",
+        "comments"
+      ],
+      "cursor": [
+        "output",
+        "data",
+        "nextCursor"
+      ],
+      "observedRowsPerPage": 10
+    },
+    "mapping": {
+      "kind": "replies",
+      "relativeDates": true
+    },
+    "counter": null,
+    "costUsdPerPage": 0.0012,
+    "verifiedOn": [
+      {
+        "mission": "msn_41a73a6b2c0b4a76ef0a",
+        "calls": [
+          "call_0014",
+          "call_0015",
+          "call_0016"
+        ]
+      }
+    ],
+    "catalog": {
+      "tier": "extended",
+      "okRate": 0.9375,
+      "usd": 0.0012
+    },
+    "note": "the replies of one comment by its reply token (the token is the same input that pages the next page: the engine overwrites it with the next page's token). VERIFIED on the 3 real pages of live round 11 (1, 1 and 2 replies for comments whose counters said 1, 1 and 2; each ends on an empty `nextCursor`).\nNot seen: a reply thread of more than one page, so the next-page token of a page WITH more replies is the catalog's, not a real one.\nround 14: `createdUtc` of a reply is an instant the provider computed (the minute of the call minus the age in `publishedTime`, «11 months ago»): the mapping keeps that text beside it (`date_text`), so ingest writes the approximate day and marks it"
+  }
+]

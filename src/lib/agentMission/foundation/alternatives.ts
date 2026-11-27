@@ -1,6 +1,7 @@
 import type { EngineSpec } from "../plan";
 import { CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, TOOL_CARDS, cardMapCode, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
+import commentIdProofs from "../../../../data/treg/comment_id_proofs.json";
 
 /**
  * THE COMMENTS ALTERNATIVES OF A COMPILED STAGE (round 16). The engine already continues across tools (agent/src/engine/run.ts: a child stage's `spec.alternatives`, read after the main tool ended before the count by a failed read, an exhausted source or a source that only repeats itself);
@@ -43,11 +44,7 @@ export interface AlternativesResult { alternatives: CommentAlternative[]; exclud
  *  - YouTube: video GIWkArP7RJE was read by crawl4ai (msn_ee599cdbbde993073b15, call 11) and by tikhub (msn_41a73a6b2c0b4a76ef0a, call 7): the native comment ids («UgwoGai9...») are the same. (The pair is left out of a stage by `date_semantics`; the proof is kept because it is true.)
  */
 export interface IdProof { a: string; b: string; mission: { a: string; b: string }; calls: { a: string[]; b: string[] } }
-export const COMMENT_ID_PROOFS: ReadonlyArray<IdProof> = [
-  { a: "anyapi.instagram.post.comments", b: "scrapecreators.instagram.post.comments", mission: { a: "msn_afe9bb0b436670e35a3c", b: "msn_afe9bb0b436670e35a3c" }, calls: { a: ["call_0003"], b: ["call_0004"] } },
-  { a: "scrapecreators.x.v1-facebook-post-comments", b: "anyapi.facebook.post_comments", mission: { a: "msn_934781c56a01a96825af", b: "msn_934781c56a01a96825af" }, calls: { a: ["call_0007", "call_0009"], b: ["call_0008", "call_0010"] } },
-  { a: "crawl4ai.youtube.video.comments", b: "tikhub.youtube.video.comments", mission: { a: "msn_ee599cdbbde993073b15", b: "msn_41a73a6b2c0b4a76ef0a" }, calls: { a: ["call_0011"], b: ["call_0007"] } },
-];
+export const COMMENT_ID_PROOFS: ReadonlyArray<IdProof> = commentIdProofs as unknown as ReadonlyArray<IdProof>;
 export const idsProvenEqual = (x: string, y: string, proofs: ReadonlyArray<IdProof> = COMMENT_ID_PROOFS): boolean => proofs.some((p) => (p.a === x && p.b === y) || (p.a === y && p.b === x));
 
 /** The price of one row read through a card: one call over the rows a call gives (the same figure the compiler prices a stage by). */

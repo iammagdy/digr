@@ -21,7 +21,7 @@ import {
  */
 export const ALLOW_LIST_CEILING = {
   arabic_regex: 1268,
-  treg_tokens: 347,
+  treg_tokens: 294,
   srv_paths: 0,
   fallback_lists: 2,
 } as const;
