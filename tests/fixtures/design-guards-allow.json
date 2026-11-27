@@ -5359,10 +5359,6 @@
       "token": "treg"
     },
     {
-      "file": "src/lib/agentMission/capabilities/artifact.ts",
-      "token": "treg"
-    },
-    {
       "file": "src/lib/agentMission/capabilities/need.ts",
       "token": "x"
     },
@@ -5377,14 +5373,6 @@
     {
       "file": "src/lib/agentMission/capabilities/prompt.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/registry.ts",
-      "token": "firecrawl"
-    },
-    {
-      "file": "src/lib/agentMission/capabilities/registry.ts",
-      "token": "treg"
     },
     {
       "file": "src/lib/agentMission/capabilities/registry.ts",
@@ -5513,10 +5501,6 @@
     {
       "file": "src/lib/agentMission/semantic/lexicon.ts",
       "token": "youtube"
-    },
-    {
-      "file": "src/lib/agentMission/sources.ts",
-      "token": "firecrawl"
     },
     {
       "file": "src/lib/agentMission/stage2/askCard.ts",
