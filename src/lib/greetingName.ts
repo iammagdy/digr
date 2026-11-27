@@ -1,5 +1,6 @@
 import { formatAr } from "./arabicDigits";
 import { pointsAr } from "./pointsFormat";
+import { hasArabicLetters, isArabicLettersMarksAndBlanks } from "./arabicNormalize";
 
 /**
  * THE GREETING'S NAME AND BALANCE (round 23). Live: «أهلًا codex test، رصيدك المتاح ١١٦٧٦ نقطة»: a Latin name in an Arabic sentence and a balance without its separator. The name is used only when it is written in Arabic letters; otherwise the greeting says «أهلًا بك».
@@ -8,7 +9,7 @@ import { pointsAr } from "./pointsFormat";
 export function arabicDisplayName(name: unknown): string | null {
   const text = String(name ?? "").replace(/\s+/g, " ").trim();
   if (text === "") return null;
-  return /^[ء-يً-ْ\s]+$/.test(text) && /[ء-ي]/.test(text) ? text : null;
+  return isArabicLettersMarksAndBlanks(text) && hasArabicLetters(text) ? text : null;
 }
 
 /** «رصيدك المتاح ١١٬٦٧٦ نقطة. » (with the trailing space the greeting expects), or «» when the balance is unknown. */

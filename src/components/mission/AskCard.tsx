@@ -6,6 +6,7 @@ import {
   ASK_CARD_BAD_NUMBER_AR, ASK_CARD_CANCEL_AR, ASK_CARD_CLEAR_AR, ASK_CARD_EDIT_AR, ASK_CARD_FROM_AR, ASK_CARD_NO_PERIOD_AR, ASK_CARD_SAVE_AR, ASK_CARD_TO_AR, ASK_EDIT_NEW_READ_AR,
 } from "@/lib/agentMission/stage2/cardText";
 import { normalizeDigits } from "@/lib/arabicDigits";
+import { foldSeparatorMarks } from "@/lib/arabicNormalize";
 
 /**
  * STAGE 2 S4 (docs/STAGE-2.md): THE «فهمنا طلبك» CARD. One row per field of the Ask (its label and value; the customer's own words in «»), an «تعديل» button on each editable field, and the
@@ -36,7 +37,7 @@ export function askEditFromDraft(field: Pick<AskCardField, "key" | "input">, dra
   }
   switch (field.input.kind) {
     case "number": {
-      const t = normalizeDigits(String(draft.text ?? "")).replace(/[٬,\s]/g, "");
+      const t = foldSeparatorMarks(normalizeDigits(String(draft.text ?? ""))).replace(/[,\s]/g, "");
       if (!/^\d{1,9}$/.test(t)) return null;
       const n = Number(t);
       return n < field.input.min || n > field.input.max ? null : ({ field: key, value: n } as AskEdit);

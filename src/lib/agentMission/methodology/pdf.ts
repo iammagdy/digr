@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
 import { formatArabicRtl, getBoldFontBuffer, getRegularFontBuffer } from "../../../functions/shared/fileGenerators";
 import type { DocBlock, MethodologyDocument } from "./document";
+import { isArabicNumericLine, replaceArabicNumberRuns } from "../../arabicNormalize";
 
 /**
  * THE PDF OF THE DATA-COLLECTION METHODOLOGY (round 21): Arabic, shaped and right to left, Arabic-Indic digits, with the embedded IBM Plex Sans Arabic font the site's other PDFs use. It is written HERE (not with `generatePdfReport`, which belongs to the old job pipeline and reads a
@@ -21,12 +22,10 @@ const WORD_SPACING = 2;
 const SPACING = { wordSpacing: WORD_SPACING } as const;
 
 /** A number as one unit: its digit runs joined by a separator that keeps it one number («٢٠٢٦-٠٩-١٤», «١٣:٠٠», «١٬٢٠٠», «٣٫٥»), with a trailing percent sign. */
-const NUMBER_CORE = /[٠-٩]+(?:[٬٫:/.\-][٠-٩]+)*٪?/gu;
-const NUMERIC_ONLY = /^[٠-٩٬٫٪ .:-]+$/u;
 /** A line in the order it is drawn: words from the right, each number reversed once AS A WHOLE (the font engine reverses a right-to-left run, so a number written reversed reads in its own order on the page). A line that is only a number is reversed by formatArabicRtl itself. */
 export const visualLine = (line: string): string => {
-  if (NUMERIC_ONLY.test(line)) return formatArabicRtl(line);
-  const tokens = line.split(" ").map((token) => token.replace(NUMBER_CORE, (run) => [...run].reverse().join("")));
+  if (isArabicNumericLine(line)) return formatArabicRtl(line);
+  const tokens = line.split(" ").map((token) => replaceArabicNumberRuns(token, (run) => [...run].reverse().join("")));
   const shown = formatArabicRtl(tokens.join(" "));
   // the font engine does not mirror quotation marks (formatArabicRtl swaps only brackets): in a right-to-left line the opening mark sits on the right and shows as the closing shape, so «text» keeps its look
   return /[\u0600-\u06FF]/.test(line) ? shown.replace(/[«»]/g, (q) => (q === "«" ? "»" : "«")) : shown;

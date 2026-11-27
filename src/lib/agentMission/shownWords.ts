@@ -29,22 +29,3 @@ export function labelWrittenBy(label: string, said: ReadonlyArray<string>): bool
   const written = new Set(said.flatMap((t) => tokensOf(t)).flatMap((t) => [t, bare(t)]));
   return tokensOf(label).filter((t) => t.length >= 3).some((t) => written.has(t) || written.has(bare(t)));
 }
-
-/** The label's words as a pattern: the Arabic spellings of a letter (the hamza forms of alef, ya and alef maqsura, ta marbuta and ha) are one letter. */
-const letterPattern = (c: string): string => (/[اأإآ]/.test(c) ? "[اأإآ]" : /[يى]/.test(c) ? "[يى]" : /[هة]/.test(c) ? "[هة]" : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-const labelPattern = (label: string): RegExp => new RegExp(`(?<![ء-ي])([وف]?(?:بال|كال|لل|ال|[لبك])?)${label.trim().split(/\s+/).map((w) => [...w].map(letterPattern).join("")).join("\\s+")}(?![ء-ي])`, "gu");
-
-/** The text with every occurrence of the label replaced by `replacement` (a word that carries the letters joined to the label keeps them: «بإكس» becomes «بالمصدر»). */
-export function replaceLabel(text: string, label: string, replacement: string): string {
-  return text.replace(labelPattern(label), (_m, clitic: string) => {
-    const c = /ال$/.test(clitic) ? clitic.slice(0, -2) : /لل$/.test(clitic) ? clitic.slice(0, -1) : clitic;
-    return `${c}${replacement}`.replace(/لال/, "لل");
-  });
-}
-
-/**
- * @deprecated DT-20261123-x-account-rumors r7 (COMMANDER decision): Arabic platform display names are product information always shown to the customer.
- */
-export function withoutUnwrittenLabels(text: string, _said?: ReadonlyArray<string>): string {
-  return text;
-}

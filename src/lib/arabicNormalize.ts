@@ -109,6 +109,42 @@ export function splitScriptBoundary(text: string): string {
     .replace(LATIN_OR_DIGIT_THEN_ARABIC, "$1 ");
 }
 
+const ARABIC_SCRIPT_WORD = /^[؀-ۿ]+$/;
+const ARABIC_LETTERS_MARKS_BLANKS = /^[ء-يً-ْ\s]+$/;
+const ARABIC_NUMBER_RUN = /[٠-٩]+(?:[٬٫:/.\-][٠-٩]+)*٪?/gu;
+const ARABIC_NUMERIC_LINE = /^[٠-٩٬٫٪ .:-]+$/u;
+
+/** True for a NON-EMPTY run of characters of the Arabic block (U+0600–U+06FF) and nothing else. */
+export function isArabicScriptWord(token: string): boolean {
+  return ARABIC_SCRIPT_WORD.test(String(token ?? ""));
+}
+
+/** True when the whole text is Arabic letters (ء–ي), their marks (U+064B–U+0652) and blanks. */
+export function isArabicLettersMarksAndBlanks(text: string): boolean {
+  return ARABIC_LETTERS_MARKS_BLANKS.test(String(text ?? ""));
+}
+
+/** Every run of Arabic-Indic digits with their separators (١٬٢٠٠، ١٢٫٥، ٣:٣٠، ٥٠٪) goes through `replacement`. */
+export function replaceArabicNumberRuns(text: string, replacement: (run: string) => string): string {
+  return String(text ?? "").replace(ARABIC_NUMBER_RUN, replacement);
+}
+
+/** True when the whole line is Arabic-Indic digits, their separators, percent signs and blanks. */
+export function isArabicNumericLine(text: string): boolean {
+  return ARABIC_NUMERIC_LINE.test(String(text ?? ""));
+}
+
+/** Each of « » " ، , . : ؛ becomes ONE blank (the characters are not removed). No regular expression. */
+export function blankListPunctuation(text: string): string {
+  const MARKS = new Set(["\u00AB", "\u00BB", '"', "\u060C", ",", ".", ":", "\u061B"]);
+  return Array.from(String(text ?? "")).map((c) => (MARKS.has(c) ? " " : c)).join("");
+}
+
+/** Zero-width and bidirectional-mark characters (U+200B–U+200F, U+202A–U+202E, U+FEFF) removed. \u escapes on purpose (invisible characters). */
+export function removeZeroWidthAndBidi(text: string): string {
+  return String(text ?? "").replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, "");
+}
+
 /** The Arabic comma ، becomes "," (nothing else changes). No regular expression. */
 export function foldArabicComma(text: string): string {
   return String(text ?? "").split("،").join(",");

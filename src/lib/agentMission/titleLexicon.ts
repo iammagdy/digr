@@ -4,8 +4,9 @@
  *   - NAMES by one small batched model call per mission (agent/src/namesAr.ts): the model only writes the Arabic spelling of names it is given; it never decides money, a count or a row, and its cost is added to the price by code.
  * Pure: no I/O, no model.
  */
-const clean = (s: string): string => s.toLowerCase().replace(/[.,]/g, " ").replace(/[​-‏‪-‮﻿]/g, "").replace(/\s+/g, " ").trim();
-const hasArabic = (s: string): boolean => /[؀-ۿ]/.test(s);
+import { hasArabicScript, removeZeroWidthAndBidi } from "../arabicNormalize";
+const clean = (s: string): string => removeZeroWidthAndBidi(s.toLowerCase().replace(/[.,]/g, " ")).replace(/\s+/g, " ").trim();
+const hasArabic = (s: string): boolean => hasArabicScript(s);
 const hasLatin = (s: string): boolean => /[A-Za-z]/.test(s);
 
 /** Whole titles (cleaned, lower case). */
@@ -75,7 +76,7 @@ function translatePart(raw: string): string | null {
 
 /** The Arabic of a job title, or null: a title that is already Arabic, empty, or that the table cannot read has none. Several roles in one title («Founder & CEO», «CEO / Chairman», «Founder | Managing Director») are joined with «و». */
 export function titleArabic(title: unknown): string | null {
-  const raw = typeof title === "string" ? title.replace(/[​-‏‪-‮﻿]/g, "").trim() : "";
+  const raw = typeof title === "string" ? removeZeroWidthAndBidi(title).trim() : "";
   if (!raw || hasArabic(raw) || !hasLatin(raw)) return null;
   const parts = raw.split(/\s*(?:&|\/|\||\band\b|,|;| - | – )\s*/i).map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) return null;
@@ -117,7 +118,7 @@ const activityKey = (s: string): string => s.toLowerCase().replace(/&amp;/g, "&"
 
 /** The Arabic of a company's activity, or null (already Arabic, empty, or not in the table). */
 export function activityArabic(activity: unknown): string | null {
-  const raw = typeof activity === "string" ? activity.replace(/[​-‏‪-‮﻿]/g, "").trim() : "";
+  const raw = typeof activity === "string" ? removeZeroWidthAndBidi(activity).trim() : "";
   if (!raw || hasArabic(raw) || !hasLatin(raw)) return null;
   return ACTIVITIES[activityKey(raw)] ?? null;
 }

@@ -12,7 +12,7 @@ export function repliesShortfallAr(o: { planned: number; delivered: number; stop
   const ended = o.stop === null || o.stop === "source_exhausted" || o.stop === "no_new_items" || o.stop === "target_reached";
   const clause = ended
     ? "لأن الخطة قدّرت الردود من عيّنة من التعليقات، والمصدر لم يعطِ على التعليقات المقروءة أكثر مما سُلّم"
-    : shortfallClauseAr(o.stop, { pending: 0, stop: null }).replace(/^لأن /, "لأن ");
+    : shortfallClauseAr(o.stop, { pending: 0, stop: null });
   return `الردود التي سُلّمت أقل مما قدّرناه في الخطة ${clause}${o.withMoney ? "، ولم يُخصم إلا مقابل ما سُلّم" : ""}.`;
 }
 

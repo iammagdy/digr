@@ -3,6 +3,7 @@
  * Used wherever our own sentence mentions an industry: reasons shown in the activity feed and the
  * review sheet, and the industry column of delivered workbooks.
  */
+import { hasArabicScript } from "./arabicNormalize";
 const INDUSTRY_LABELS_AR: Record<string, string> = {
   "construction": "المقاولات والتشييد",
   "civil engineering": "الهندسة المدنية",
@@ -223,7 +224,7 @@ function singleLabelAr(value: string): string | null {
 export function industryLabelAr(label: unknown): string | null {
   const value = String(label ?? "").trim();
   if (!value) return null;
-  if (/[؀-ۿ]/u.test(value)) return value;
+  if (hasArabicScript(value)) return value;
   const whole = singleLabelAr(value);
   if (whole) return whole;
   const parts = value.split(/\s*[;|\n]\s*|\s*,\s*(?=[A-Za-z])|\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
