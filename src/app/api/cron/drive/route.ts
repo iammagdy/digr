@@ -8,8 +8,6 @@ import { reconcileJobGroups, TICK_BUDGET_MS } from "../../../../lib/server/multi
 import { withTimeout, TIMED_OUT } from "../../../../lib/server/multiProvider/jobGroupShared";
 import { recordDriverTick } from "../../../../lib/server/driverHeartbeat";
 import { driverModeFromTick } from "../../../../lib/driverMode";
-import { defaultModelPlannerConfig } from "../../../../lib/modelPlanner/chatTurn";
-import { resumeStalePlanningSessions } from "../../../../lib/modelPlanner/planningSession";
 import { backfillChainFinalLines } from "../../../../lib/server/multiProvider/finalLineBackfill";
 
 export const dynamic = "force-dynamic";
@@ -79,8 +77,6 @@ export async function GET(req: NextRequest) {
   ]);
   await recordDriverTick(admin, results.filter((result) => result.started).length, now);
   const groups = groupsRaw === TIMED_OUT ? null : groupsRaw;
-  // Planning sessions whose page has gone (or whose step died) are continued here: one session per tick, inside what is left of this call (the tick above already proved the driver alive).
-  const planning = await resumeStalePlanningSessions({ client: admin, tables: admin, config: defaultModelPlannerConfig(), nowMs: Date.now(), limit: 1, budgetMs: Math.max(10_000, 50_000 - (Date.now() - now)) }).catch(() => ({ considered: 0, stepped: 0, finished: 0 }));
   return NextResponse.json({
     success: true,
     mode: driverModeFromTick(new Date(now).toISOString(), now),
@@ -89,7 +85,6 @@ export async function GET(req: NextRequest) {
     started: results.filter((result) => result.started).length,
     stalledNotices,
     groups,
-    planning,
     results,
   });
 }
