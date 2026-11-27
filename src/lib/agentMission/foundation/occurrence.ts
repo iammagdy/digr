@@ -1,5 +1,6 @@
 import type { Ask } from "./ask";
 import { relativeInstantMs } from "../relativeDates";
+import { foldArabicIndicDigits } from "../../arabicNormalize";
 
 /**
  * OWNER DECISION 7 (live round 10, msn_67cafa6747d70356d9cb: a 2019 video was chosen for «نهائي السوبر»): when the topic is a RECURRING EVENT (a final, a cup, a season, an election) and the request gives no year and no period, the customer is asked before approval
@@ -15,7 +16,7 @@ export const OCCURRENCE_OPTIONS_AR = {
 } as const;
 
 export type OccurrenceAnswer = Occurrence | { kind: "ask_year" };
-const digits = (s: string): string => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+const digits = (s: string): string => foldArabicIndicDigits(s);
 const norm = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
 
 /** A calendar year the customer wrote («٢٠٢٤», «سنة 2019»): four digits, 1990 to 2099. */

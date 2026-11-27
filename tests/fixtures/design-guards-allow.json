@@ -1310,10 +1310,6 @@
     },
     {
       "file": "src/lib/agentMission/foundation/occurrence.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/agentMission/foundation/occurrence.ts",
       "pattern": "/^\\s*(?:منشور|بوست|تعليق|كومنت|فيديو|تغريد|ريل|رد|عنصر|صف|سجل|نتيج)/"
     },
     {
@@ -2078,10 +2074,6 @@
     },
     {
       "file": "src/lib/agentMission/relativeDates.ts",
-      "pattern": "/[​-‏‪-‮﻿]/g"
-    },
-    {
-      "file": "src/lib/agentMission/relativeDates.ts",
       "pattern": "/\\s*\\((?:edited|معدل|تم التعديل)\\)$/"
     },
     {
@@ -2422,10 +2414,6 @@
     },
     {
       "file": "src/lib/agentMission/researchGroup.ts",
-      "pattern": "/[ً-ْـ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/researchGroup.ts",
       "pattern": "/[،,.؛;\\n]+/"
     },
     {
@@ -2438,23 +2426,11 @@
     },
     {
       "file": "src/lib/agentMission/researchGroup.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/agentMission/researchGroup.ts",
-      "pattern": "/[أإآ]/g"
-    },
-    {
-      "file": "src/lib/agentMission/researchGroup.ts",
       "pattern": "/[إا]يميل|بريد|email/i"
     },
     {
       "file": "src/lib/agentMission/researchGroup.ts",
       "pattern": "/^(?:و)?(?:ال)?(?:اخر|احدث|جديد|جديده|الجديده|اخبار|خبر|مقالات|مقال|تقارير|news|latest)$/"
-    },
-    {
-      "file": "src/lib/agentMission/researchGroup.ts",
-      "pattern": "/ة/g"
     },
     {
       "file": "src/lib/agentMission/researchGroup.ts",
@@ -2467,10 +2443,6 @@
     {
       "file": "src/lib/agentMission/researchGroup.ts",
       "pattern": "/تليفون|هاتف|هواتف|phone/i"
-    },
-    {
-      "file": "src/lib/agentMission/researchGroup.ts",
-      "pattern": "/ى/g"
     },
     {
       "file": "src/lib/agentMission/roles.ts",
@@ -4089,36 +4061,8 @@
       "pattern": "/مدير عام|المدير العام|general managers?/i"
     },
     {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/[ً-ٰٟـ]/g"
-    },
-    {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/[أإآٱ]/g"
-    },
-    {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/ؤ/g"
-    },
-    {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/ئ/g"
-    },
-    {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/ة/g"
-    },
-    {
-      "file": "src/lib/requests/search.ts",
-      "pattern": "/ى/g"
-    },
-    {
       "file": "src/lib/researchPlaceholders.ts",
       "pattern": "/(?:اسم\\s*الحساب|اسم_الحساب|اسم المستخدم|اسم_المستخدم|الوسم|الهاشتاج|الهاشتاغ|الموضوع|موضوع البحث|المجال|القطاع|رابط\\s*(?:ال)?(?:فيديو|صفحة|منشور|قناة|حساب)|الدولة|المدينة|الفترة|عدد|اكتب|أدخل|حدد|(?:[٠-٩0-9]+)\\s*(?:شهر|شهور|أشهر|سنة|سنوات|أسبوع|أسابيع|يوم|أيام)|your[_ ]?(?:username|handle|topic|country|industry|count|date)|account[_ ]?name|username|handle|hashtag|keyword|topic|industry|country|city|time[_ ]?range|count)/iu"
-    },
-    {
-      "file": "src/lib/researchPlaceholders.ts",
-      "pattern": "/[_\\s@#،,]+/u"
     },
     {
       "file": "src/lib/researchPlaceholders.ts",
@@ -4419,14 +4363,6 @@
     {
       "file": "src/lib/server/relativeDate.ts",
       "pattern": "/(?:منذ|قبل)\\s*(\\S+)/u"
-    },
-    {
-      "file": "src/lib/server/relativeDate.ts",
-      "pattern": "/[٠-٩]/g"
-    },
-    {
-      "file": "src/lib/server/relativeDate.ts",
-      "pattern": "/[۰-۹]/g"
     },
     {
       "file": "src/lib/server/relativeDate.ts",
@@ -4974,22 +4910,6 @@
     },
     {
       "file": "src/lib/timeWindow.ts",
-      "pattern": "/[ً-ٰٟـ]/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/[،؛]/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/[أإآ]/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/[هة]/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
       "pattern": "/^(?:اسبوع|اسبوعين|اسابيع)$/"
     },
     {
@@ -5007,18 +4927,6 @@
     {
       "file": "src/lib/timeWindow.ts",
       "pattern": "/^(?:شهرين|اسبوعين|يومين|سنتين|عامين)$/"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/ا/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/ى/g"
-    },
-    {
-      "file": "src/lib/timeWindow.ts",
-      "pattern": "/ي/g"
     },
     {
       "file": "src/lib/timeWindow.ts",

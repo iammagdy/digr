@@ -3,6 +3,7 @@ import { isServedPlatform, numbersWritten, RESEARCH_BRIEF_VERSION, type BriefCon
 import { buildRequestContract, type WantedField } from "./requestContract";
 import { districtLabelsIn, placesInText } from "./places";
 import { buildAsk } from "./foundation/ask";
+import { foldAlefHamzaForms, foldAlefMaqsura, foldArabicIndicDigits, foldTaMarbuta, stripHarakatTatweel } from "../arabicNormalize";
 
 /**
  * MULTI-OBJECTIVE RESEARCH (docs/MULTI-OBJECTIVE-RESEARCH.md). ONE customer research brief, several research objectives, executed by the EXISTING plans:
@@ -237,7 +238,7 @@ export interface ConditionDrift { kind: ConditionKind; reason: "contradicts" | "
 
 /** Letters and digits only, with the spellings of one letter made one (أ/إ/آ → ا, ى → ي, ة → ه, Arabic-Indic digits → 0-9): for «the customer's own words are carried», never a list of words. */
 export function normWords(t: string | null | undefined): string {
-  return ` ${String(t ?? "").replace(/[ً-ْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase()} `;
+  return ` ${foldArabicIndicDigits(foldTaMarbuta(foldAlefMaqsura(foldAlefHamzaForms(stripHarakatTatweel(String(t ?? "")))))).replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase()} `;
 }
 const carries = (text: string, phrase: string): boolean => normWords(phrase).trim() !== "" && normWords(text).includes(normWords(phrase));
 

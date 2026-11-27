@@ -214,3 +214,103 @@ export function replaceBareHostsInText(text: string, replacement: (match: string
 export function normalizeArabic(text: string): string {
   return foldDigits(foldArabicLetters(text)).toLowerCase().replace(/\s+/g, " ").trim();
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// UB1 (DT-20261126-wordlist-wave4, D-0238): EXACT-RANGE helpers. Each one is the SAME character set a caller used before it moved here, so no caller changes behaviour; tests/wl4-ub1-orthography.test.ts
+// compares every code unit of the Basic Multilingual Plane against the frozen old expression. The sets differ from each other on purpose (the callers differ), so they keep their own names.
+// They are written with code-unit comparisons, not with Arabic regular expressions (nothing here reads a word; the only regexes left are the two number-grouping ones below).
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+type CodeRange = readonly [from: number, to: number];
+const inRanges = (code: number, ranges: readonly CodeRange[]): boolean => ranges.some(([from, to]) => code >= from && code <= to);
+/** The text without the code units inside the ranges (a unit is one UTF-16 code unit, as a regular expression without the `u` flag reads it). */
+function removeCodeUnits(text: string, ranges: readonly CodeRange[]): string {
+  const s = String(text ?? "");
+  let out = "";
+  for (let i = 0; i < s.length; i++) if (!inRanges(s.charCodeAt(i), ranges)) out += s[i];
+  return out;
+}
+/** Each code unit that has an entry in `to` is replaced by that code unit; every other one stays. */
+function mapCodeUnits(text: string, to: ReadonlyMap<number, string>): string {
+  const s = String(text ?? "");
+  let out = "";
+  for (let i = 0; i < s.length; i++) out += to.get(s.charCodeAt(i)) ?? s[i];
+  return out;
+}
+/** U+064B–U+0670 (harakat, dagger alef, Arabic-Indic digits and the Arabic decimal and thousands marks) and the tatweel U+0640. Callers fold digits BEFORE this. */
+const MARK_BLOCK: readonly CodeRange[] = [[0x064b, 0x0670], [0x0640, 0x0640]];
+/** Harakat U+064B–U+0652, the dagger alef U+0670 and the tatweel U+0640. */
+const HARAKAT_DAGGER_TATWEEL: readonly CodeRange[] = [[0x064b, 0x0652], [0x0670, 0x0670], [0x0640, 0x0640]];
+/** Harakat U+064B–U+0652 and the tatweel U+0640. */
+const HARAKAT_TATWEEL: readonly CodeRange[] = [[0x064b, 0x0652], [0x0640, 0x0640]];
+/** Zero-width marks U+200B–U+200F, bidirectional marks U+202A–U+202E and the BOM U+FEFF. */
+const BIDI_AND_BOM: readonly CodeRange[] = [[0x200b, 0x200f], [0x202a, 0x202e], [0xfeff, 0xfeff]];
+const code = (...units: number[]): string => String.fromCharCode(...units);
+const ALEF = code(0x0627);
+const ALEF_WITH_HAMZA_FORMS = new Map<number, string>([[0x0623, ALEF], [0x0625, ALEF], [0x0622, ALEF]]);
+const ALEF_FORMS_WITH_WASLA = new Map<number, string>([[0x0623, ALEF], [0x0625, ALEF], [0x0622, ALEF], [0x0671, ALEF]]);
+const MAQSURA_TO_YEH = new Map<number, string>([[0x0649, code(0x064a)]]);
+const TA_MARBUTA_TO_HEH = new Map<number, string>([[0x0629, code(0x0647)]]);
+const COMMA_AND_SEMICOLON_TO_SPACE = new Map<number, string>([[0x060c, " "], [0x061b, " "]]);
+
+/** The block U+064B–U+0670 and the tatweel removed. */
+export function stripArabicMarkBlock(text: string): string { return removeCodeUnits(text, MARK_BLOCK); }
+/** Harakat U+064B–U+0652, the dagger alef and the tatweel removed. */
+export function stripHarakatDaggerTatweel(text: string): string { return removeCodeUnits(text, HARAKAT_DAGGER_TATWEEL); }
+/** Harakat U+064B–U+0652 and the tatweel removed. */
+export function stripHarakatTatweel(text: string): string { return removeCodeUnits(text, HARAKAT_TATWEEL); }
+/** Zero-width marks, bidirectional marks and the BOM (11 code units) removed. */
+export function stripBidiAndBom(text: string): string { return removeCodeUnits(text, BIDI_AND_BOM); }
+/** The four alef forms with a hamza, a madda or a wasla become the plain alef (nothing else changes). */
+export function foldAlefForms(text: string): string { return mapCodeUnits(text, ALEF_FORMS_WITH_WASLA); }
+/** The three alef forms with a hamza or a madda become the plain alef (the alef wasla is left alone). */
+export function foldAlefHamzaForms(text: string): string { return mapCodeUnits(text, ALEF_WITH_HAMZA_FORMS); }
+/** The alef maqsura becomes the yeh (nothing else changes). */
+export function foldAlefMaqsura(text: string): string { return mapCodeUnits(text, MAQSURA_TO_YEH); }
+/** The ta marbuta becomes the heh wherever it is. */
+export function foldTaMarbuta(text: string): string { return mapCodeUnits(text, TA_MARBUTA_TO_HEH); }
+/** The ta marbuta becomes the heh only at the very end of the text. */
+export function foldFinalTaMarbuta(text: string): string {
+  const s = String(text ?? "");
+  return s.length > 0 && s.charCodeAt(s.length - 1) === 0x0629 ? `${s.slice(0, -1)}${code(0x0647)}` : s;
+}
+/** The Arabic comma and the Arabic semicolon each become one blank. */
+export function arabicCommaSemicolonToSpace(text: string): string { return mapCodeUnits(text, COMMA_AND_SEMICOLON_TO_SPACE); }
+/** The Arabic thousands mark and the comma removed (a number written with grouping). */
+export function removeGroupingMarks(text: string): string { return removeCodeUnits(text, [[0x066c, 0x066c], [0x002c, 0x002c]]); }
+/** «1,500» and «1٬500» become «1500» (only a comma or the Arabic thousands mark before exactly three digits), then «2٫5» becomes «2.5». Digits must already be Latin. */
+export function foldGroupedNumberMarks(text: string): string {
+  const isDigit = (c: number): boolean => c >= 0x30 && c <= 0x39;
+  const isWord = (c: number): boolean => isDigit(c) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || c === 0x5f;
+  const s = String(text ?? "");
+  // pass 1: a digit, then a comma or the Arabic thousands mark, then exactly three digits and no further word character: the mark goes (the digit before it is consumed, as a regular expression would)
+  let grouped = "";
+  for (let i = 0; i < s.length; i++) {
+    const mark = i + 1 < s.length ? s.charCodeAt(i + 1) : -1;
+    if (isDigit(s.charCodeAt(i)) && (mark === 0x2c || mark === 0x066c) && i + 4 < s.length && isDigit(s.charCodeAt(i + 2)) && isDigit(s.charCodeAt(i + 3)) && isDigit(s.charCodeAt(i + 4)) && (i + 5 >= s.length || !isWord(s.charCodeAt(i + 5)))) {
+      grouped += s[i];
+      i += 1;
+    } else grouped += s[i];
+  }
+  // pass 2: a digit, the Arabic decimal mark, a digit: the mark becomes a point (both digits are consumed)
+  let out = "";
+  for (let i = 0; i < grouped.length; i++) {
+    if (isDigit(grouped.charCodeAt(i)) && i + 2 < grouped.length && grouped.charCodeAt(i + 1) === 0x066b && isDigit(grouped.charCodeAt(i + 2))) {
+      out += `${grouped[i]}.${grouped[i + 2]}`;
+      i += 2;
+    } else out += grouped[i];
+  }
+  return out;
+}
+/** A word as a regular-expression SOURCE that matches its common spellings: alef → [alef, hamza forms], heh and ta marbuta → [either], yeh → [yeh, maqsura]. For raw (not yet folded) customer text. */
+export function looseSpellingPattern(word: string): string {
+  const s = String(word ?? "");
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c === 0x0627 ? `[${code(0x0627, 0x0623, 0x0625)}]` : c === 0x0647 || c === 0x0629 ? `[${code(0x0647, 0x0629)}]` : c === 0x064a ? `[${code(0x064a, 0x0649)}]` : s[i];
+  }
+  return out;
+}
+/** U+064B–U+065F, the dagger alef U+0670 and the tatweel U+0640 removed (23 units; excludes U+0660–U+066F so ٪ ٫ ٬ ٭ ٮ ٯ stay untouched). */
+const MARK_BLOCK_NARROW: readonly CodeRange[] = [[0x064b, 0x065f], [0x0670, 0x0670], [0x0640, 0x0640]];
+export function stripArabicMarkBlockNarrow(text: string): string { return removeCodeUnits(text, MARK_BLOCK_NARROW); }
