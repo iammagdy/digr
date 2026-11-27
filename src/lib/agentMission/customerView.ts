@@ -189,11 +189,11 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     // ROUND 58: a step that hangs on a step of the same noun («بيانات تواصل الشركات» under «شركات …») holds details of those items, never more of them: its rows are «عنصر» («١٢ عنصرًا», not «١٢ شركة»)
     const titleNoun = itemNounOf(String(s?.title_ar ?? ""));
     const metaNoun = coerceItemNoun(s?.item_noun_ar ?? s?.itemNounAr);
-    const ownNoun = (titleNoun.key !== GENERIC_ITEM_NOUN.key ? titleNoun : metaNoun) ?? GENERIC_ITEM_NOUN;
+    const ownNoun = coerceItemNoun(s?.unit_noun_ar) ?? (titleNoun.key !== GENERIC_ITEM_NOUN.key ? titleNoun : metaNoun) ?? GENERIC_ITEM_NOUN;
     const parentStage = typeof s?.parent_key === "string" ? list.find((x) => x?.key === s.parent_key) : null;
     const parentTitleNoun = parentStage ? itemNounOf(String(parentStage?.title_ar ?? "")) : null;
     const parentMetaNoun = parentStage ? coerceItemNoun(parentStage?.item_noun_ar ?? parentStage?.itemNounAr) : null;
-    const parentNoun = parentTitleNoun && parentTitleNoun.key !== GENERIC_ITEM_NOUN.key ? parentTitleNoun : parentMetaNoun;
+    const parentNoun = coerceItemNoun(parentStage?.unit_noun_ar) ?? (parentTitleNoun && parentTitleNoun.key !== GENERIC_ITEM_NOUN.key ? parentTitleNoun : parentMetaNoun);
     const isSubDetails = parentStage && ownNoun.key !== GENERIC_ITEM_NOUN.key && parentNoun && parentNoun.key === ownNoun.key;
     const stageNoun = isSubDetails ? GENERIC_ITEM_NOUN : ownNoun;
     const rowsAr = countAr(rows, stageNoun);

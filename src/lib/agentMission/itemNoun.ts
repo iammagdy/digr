@@ -98,6 +98,20 @@ export function itemNounFromCapability(capability?: string | null, platform?: st
   return coerceItemNoun(itemNounAr);
 }
 
+/** The closed set of unit words the planning model may write for a step: the singular of every noun of the table above, plus «عنصر». The model chooses from it; code never reads the customer's words to choose. */
+export const UNIT_NOUN_SINGULARS: ReadonlyArray<string> = [...ITEM_NOUNS.map((n) => n.singular), GENERIC_ITEM_NOUN.singular];
+
+/** The table noun whose singular is EXACTLY this string (the model's answer or a stored one), or null. No fuzzy match: an answer outside the closed set is no answer. */
+export function unitNounBySingular(word: unknown): ItemNoun | null {
+  if (typeof word !== "string") return null;
+  return [...ITEM_NOUNS, GENERIC_ITEM_NOUN].find((n) => n.singular === word) ?? null;
+}
+
+/** A noun in the stored shape of `item_noun_ar` (the catalog overlay's shape; `coerceItemNoun` reads it back). */
+export function itemNounStored(n: ItemNoun): { singular: string; dual: string; dual_gen: string; plural: string; tamyiz: string; feminine: boolean } {
+  return { singular: n.singular, dual: n.dual, dual_gen: n.dualGen, plural: n.plural, tamyiz: n.tamyiz, feminine: n.feminine };
+}
+
 const KNOWN = new Map<string, ItemNoun>();
 for (const n of ITEM_NOUNS) for (const form of [n.singular, n.dual, n.dualGen, n.plural, n.tamyiz, ...(n.aliases ?? [])]) KNOWN.set(normalizeText(form), n);
 
@@ -134,7 +148,7 @@ export function itemNounOf(text: string | null | undefined): ItemNoun {
 }
 
 /** The noun of what the customer RECEIVES: the noun of the delivered stages when they all name the same thing («التغريدات»), else «عنصر» (posts together with their comments are items). */
-export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean; parent_key?: unknown; capability?: unknown; platform?: unknown; item_noun_ar?: unknown; itemNounAr?: unknown }> } | null | undefined): ItemNoun {
+export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean; parent_key?: unknown; capability?: unknown; platform?: unknown; item_noun_ar?: unknown; itemNounAr?: unknown; unit_noun_ar?: unknown }> } | null | undefined): ItemNoun {
   const stages = Array.isArray(plan?.stages) ? plan!.stages! : [];
   const delivered = stages.filter((s) => s?.deliver !== false);
   // ROUND 58: a delivered step that hangs on another delivered step DESCRIBES its items («بيانات تواصل الشركات» of «شركات مستحضرات التجميل»): its rows are details of those companies, never more companies. The sum of the two is
@@ -142,7 +156,7 @@ export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unkno
   const deliveredKeys = new Set(delivered.map((s) => String((s as { key?: unknown })?.key ?? "")).filter(Boolean));
   if (delivered.some((s) => typeof s?.parent_key === "string" && s.parent_key !== "" && deliveredKeys.has(s.parent_key))) return GENERIC_ITEM_NOUN;
   const nouns = (delivered.length > 0 ? delivered : stages.slice(0, 1)).map((s) => {
-    const fromStage = coerceItemNoun(s?.item_noun_ar ?? (s as any)?.itemNounAr);
+    const fromStage = coerceItemNoun(s?.unit_noun_ar) ?? coerceItemNoun(s?.item_noun_ar ?? (s as any)?.itemNounAr);
     if (fromStage) return fromStage;
     const byTitle = itemNounOf(String(s?.title_ar ?? s?.titleAr ?? ""));
     return byTitle;
