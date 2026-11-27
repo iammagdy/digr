@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
@@ -102,7 +103,7 @@ import { decisionMakerChargePoints, decisionMakerDeliveredUnits, DECISION_MAKER_
 
 const HASH = "a".repeat(64);
 const future = () => new Date(Date.now() + 20 * 60_000).toISOString();
-const item = { capabilitySlug: "professional-people-search", endpointId: "treg.people.search", unitPricePoints: 258, targetVolumeMin: 1, targetVolumeMax: 3, unitCostUsd: 0.015, params: { title: "CEO", country: "EG" } };
+const item = { capabilitySlug: "professional-people-search", endpointId: AGENT_CAPABILITY_SLUG, unitPricePoints: 258, targetVolumeMin: 1, targetVolumeMax: 3, unitCostUsd: 0.015, params: { title: "CEO", country: "EG" } };
 const JOB = "job_quote_q_people";
 
 async function approve() {

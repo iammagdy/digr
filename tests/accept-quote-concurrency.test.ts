@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -88,7 +89,7 @@ vi.mock("../src/lib/server/jobNotices", async (importOriginal) => ({ ...(await i
 
 const HASH = "a".repeat(64);
 const future = () => new Date(Date.now() + 20 * 60_000).toISOString();
-const item = { capabilitySlug: "social-tiktok-comments", endpointId: "tikhub.tiktok.video.comments", unitPricePoints: 6, targetVolumeMin: 1, targetVolumeMax: 30, unitCostUsd: 0.001, params: { query: "كرة القدم" } };
+const item = { capabilitySlug: "social-tiktok-comments", endpointId: AGENT_CAPABILITY_SLUG, unitPricePoints: 6, targetVolumeMin: 1, targetVolumeMax: 30, unitCostUsd: 0.001, params: { query: "كرة القدم" } };
 
 async function approve(quoteId: string) {
   const { POST } = await import("../src/app/api/chat/accept-quote/route");

@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITY_SLUG } from "../src/lib/agentMission/constants";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { toArabicDigits } from "../src/lib/arabicDigits";
@@ -195,6 +196,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       summary_ar: "خطة سابقة",
       output_formats: ["xlsx"],
       items: [{
+        endpointId: AGENT_CAPABILITY_SLUG,
         capabilitySlug: CHAIN_CAPABILITY_SLUG,
         params: { industry: "مقاولات", country: "مصر", requiredFields: ["work_email"] },
         targetVolumeMin: 1,
@@ -245,6 +247,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       summary_ar: "خطة سابقة",
       output_formats: ["xlsx"],
       items: [{
+        endpointId: AGENT_CAPABILITY_SLUG,
         capabilitySlug: CHAIN_CAPABILITY_SLUG,
         params: { industry: "مقاولات", country: "مصر", requiredFields: ["work_email"] },
         targetVolumeMin: 1,

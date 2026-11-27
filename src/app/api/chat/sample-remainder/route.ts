@@ -8,6 +8,7 @@ import { markEditedQuoteCurrent, resolveQuoteConversationId } from "@/functions/
 import { getJobIdForQuote } from "@/lib/md5";
 import { buildRemainderPlan } from "@/lib/server/sampleRemainder";
 import { sampleRestMessageAr } from "@/lib/sampleFirst";
+import { hasLegacyChatQuoteItem, LEGACY_CHAT_QUOTE_AR } from "@/lib/legacyChatQuote";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,11 @@ export async function POST(req: NextRequest) {
     const { data: quoteDoc } = await admin.from("plans_quotes").select("*").eq("id", sampleQuoteId).maybeSingle();
     if (!quoteDoc) return NextResponse.json({ success: false, error: "عرض السعر غير موجود." }, { status: 404 });
     if (quoteDoc.user_id !== user.id) return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا العرض." }, { status: 403 });
+
+    const storedItems = Array.isArray(quoteDoc.items) ? quoteDoc.items : quoteDoc.items_json ?? quoteDoc.items;
+    if (hasLegacyChatQuoteItem(storedItems)) {
+      return NextResponse.json({ success: false, error: LEGACY_CHAT_QUOTE_AR }, { status: 410 });
+    }
 
     const jobId = getJobIdForQuote(sampleQuoteId);
     const { data: job } = await admin.from("jobs").select("id,user_id,status,delivered_units,charged_credits,unit_price").eq("id", jobId).maybeSingle();
