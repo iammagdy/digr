@@ -1,0 +1,52 @@
+[
+  {
+    "a": "anyapi.instagram.post.comments",
+    "b": "scrapecreators.instagram.post.comments",
+    "mission": {
+      "a": "msn_afe9bb0b436670e35a3c",
+      "b": "msn_afe9bb0b436670e35a3c"
+    },
+    "calls": {
+      "a": [
+        "call_0003"
+      ],
+      "b": [
+        "call_0004"
+      ]
+    }
+  },
+  {
+    "a": "scrapecreators.x.v1-facebook-post-comments",
+    "b": "anyapi.facebook.post_comments",
+    "mission": {
+      "a": "msn_934781c56a01a96825af",
+      "b": "msn_934781c56a01a96825af"
+    },
+    "calls": {
+      "a": [
+        "call_0007",
+        "call_0009"
+      ],
+      "b": [
+        "call_0008",
+        "call_0010"
+      ]
+    }
+  },
+  {
+    "a": "crawl4ai.youtube.video.comments",
+    "b": "tikhub.youtube.video.comments",
+    "mission": {
+      "a": "msn_ee599cdbbde993073b15",
+      "b": "msn_41a73a6b2c0b4a76ef0a"
+    },
+    "calls": {
+      "a": [
+        "call_0011"
+      ],
+      "b": [
+        "call_0007"
+      ]
+    }
+  }
+]

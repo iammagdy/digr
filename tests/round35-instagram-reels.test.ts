@@ -3,7 +3,8 @@ import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { buildRequestContract } from "../src/lib/agentMission/requestContract";
 import { discoverCards } from "../src/lib/agentMission/foundation/discovery/deriveCards";
 import { forReels, mediaNotesAr, reelsBasisOf, reelsCandidates } from "../src/lib/agentMission/foundation/discovery/media";
-import { INSTAGRAM_CARDS } from "../src/lib/agentMission/foundation/toolCards/instagram";
+import { TOOL_CARDS } from "../src/lib/agentMission/foundation/toolCards";
+const INSTAGRAM_CARDS = TOOL_CARDS.filter((c) => c.platform === "instagram");
 import { NO_SENSITIVE_ACCESS } from "../src/lib/treg/dataPolicy";
 import { catalog, catalogPage, discoveryWorld } from "./helpers/discoveryWorld";
 
