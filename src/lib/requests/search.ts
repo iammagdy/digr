@@ -1,18 +1,12 @@
 import { normalizeDigits } from "../arabicDigits";
+import { foldAlefForms, foldAlefMaqsura, foldHamzaCarriers, foldTaMarbuta, stripArabicMarkBlock } from "../arabicNormalize";
 
 /**
  * The search over the words of a request: both sides are written the same way before they are compared, so «احمد» finds «أحمد», «٥» finds «5», «مدرسة» finds «مدرسه», and a diacritic or a stretched letter never hides a match.
  * Every word the customer typed must be found (in any order).
  */
 export function normalizeSearchText(raw: unknown): string {
-  return normalizeDigits(String(raw ?? ""))
-    .toLowerCase()
-    .replace(/[ً-ٰٟـ]/g, "")
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/ؤ/g, "و")
-    .replace(/ئ/g, "ي")
+  return foldHamzaCarriers(foldTaMarbuta(foldAlefMaqsura(foldAlefForms(stripArabicMarkBlock(normalizeDigits(String(raw ?? "")).toLowerCase())))))
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }

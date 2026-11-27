@@ -1,4 +1,5 @@
 import { normalizeDigits, toArabicDigits } from "./arabicDigits";
+import { arabicCommaSemicolonToSpace, foldAlefHamzaForms, foldAlefMaqsura, looseSpellingPattern, stripArabicMarkBlock } from "./arabicNormalize";
 
 /**
  * Time windows for feed-type requests (posts, comments, videos on X, TikTok, YouTube, Facebook), decided by code.
@@ -72,11 +73,7 @@ const MONTH_ALT = MONTH_WORDS.map(([w]) => w).sort((a, b) => b.length - a.length
 const MONTH_NUMBER = new Map<string, number>(MONTH_WORDS);
 
 export function normalizeWindowText(text: string): string {
-  return normalizeDigits(String(text || ""))
-    .replace(/[ً-ٰٟـ]/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/[،؛]/g, " ")
+  return arabicCommaSemicolonToSpace(foldAlefMaqsura(foldAlefHamzaForms(stripArabicMarkBlock(normalizeDigits(String(text || ""))))))
     .toLowerCase();
 }
 
@@ -272,7 +269,7 @@ const RELATIVE_RE = new RegExp(`(?:اخر|خلال|اخر\\s*فتره)\\s*(\\d+|
 /** «٣ شهور الماضية», «ثلاث شهور أخيرة», «منذ ٣ شهور», «من ٣ شهور»: a count and a unit with the word that makes it the period behind us. */
 const RELATIVE_BACK_RE = new RegExp(`(?:(?:منذ|مند|من)\\s*(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})|(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})\\s*(?:ال)?(?:ماضي\\S*|اخير\\S*|فات\\S*|سابق\\S*))(?![\\p{L}\\d])(?!\\s*(?:19|20)\\d{2})`, "u");
 /** The count words as a pattern for TEXT THAT IS NOT NORMALISED yet (hamza, taa marbuta and alef maqsura in any spelling): for the readers that look at a customer's raw sentence. */
-export const RELATIVE_COUNT_WORDS_ALT = [...WORD_COUNTS].sort((a, b) => b[0].length - a[0].length).map(([w]) => w.replace(/ا/g, "[اأإ]").replace(/[هة]/g, "[هة]").replace(/ي/g, "[يى]")).join("|");
+export const RELATIVE_COUNT_WORDS_ALT = [...WORD_COUNTS].sort((a, b) => b[0].length - a[0].length).map(([w]) => looseSpellingPattern(w)).join("|");
 const countOf = (raw: string | undefined): number => (raw === undefined || raw === "" ? 1 : /^\d+$/.test(raw) ? Number(raw) : WORD_COUNT_VALUE.get(raw) ?? 1);
 
 function addMonthsClamped(date: Date, months: number): Date {

@@ -1,5 +1,6 @@
 import { normalizeText } from "./relevance";
 import { cairoText, parseMoment } from "./dateCells";
+import { stripBidiAndBom } from "../arabicNormalize";
 
 /**
  * A SOURCE THAT GIVES ONLY A RELATIVE TIME («قبل ٤ أيام», «4 days ago», «Streamed 2 weeks ago», «1 month ago»). The live YouTube retest of 2026-10-29: every video the search gave had a relative publish time, the period filter («آخر ٣ شهور») found no moment in it
@@ -51,7 +52,7 @@ const asNumber = (word: string): number | null => {
 
 /** The number and unit of a relative text, or null. */
 function readAge(raw: string): { n: number; unit: keyof typeof UNIT_MS } | null {
-  let t = normalizeText(raw).replace(/[​-‏‪-‮﻿]/g, "").replace(/[.,;:!]+$/g, "").trim();
+  let t = stripBidiAndBom(normalizeText(raw)).replace(/[.,;:!]+$/g, "").trim();
   if (!t || t.length > 48) return null;
   // the mark YouTube adds to a comment its author changed: «3 days ago (edited)»
   t = t.replace(/\s*\((?:edited|معدل|تم التعديل)\)$/, "").trim();

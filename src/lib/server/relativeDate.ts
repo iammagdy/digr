@@ -4,6 +4,8 @@
  * the period it names, and every line that reports dates says that such dates are approximate.
  */
 
+import { foldDigits } from "../arabicNormalize";
+
 const DAY = 86_400_000;
 const UNIT_MS: Record<string, number> = { second: 1000, minute: 60_000, hour: 3_600_000, day: DAY, week: 7 * DAY, month: 30 * DAY, year: 365 * DAY };
 
@@ -22,7 +24,7 @@ const ARABIC_DUALS: Array<[RegExp, string]> = [
 ];
 
 function latinDigits(text: string): string {
-  return text.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+  return foldDigits(text);
 }
 
 function agoMs(count: number, unit: string, now: number): number {
