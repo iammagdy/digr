@@ -98,14 +98,13 @@ describe("the real chat path: the genuine questions the fixed answers exist for 
     expect(w.db.rows("missions")).toHaveLength(0);
   });
 
-  it.each(["هل يمكنك مساعدتي؟", "هل يمكنك مساعدتي في بحث", "كيف تعمل المنصة", "انت بتعمل ايه", "ماذا تقدم"])("general question: «%s» is still answered as a conversation, never as a mission", async (text) => {
-    const w = world("data_request");
-    // the conversational path is the handler's own model turn (stubbed to answer one fixed line): reaching it proves the question was NOT handed to the agent
-    w.oldPath.mockImplementation(async () => ({ output: { type: "answer_question", contentAr: "أنا ديجر الذكي، مساعد بحثي." }, inputTokens: 0, outputTokens: 0, costUsd: 0, model: "stub", promptVersion: "stub", textBlockAr: "" }) as never);
+  it.each(["هل يمكنك مساعدتي؟", "هل يمكنك مساعدتي في بحث", "كيف تعمل المنصة", "انت بتعمل ايه", "ماذا تقدم"])("general question: «%s» is a chat turn of the agent (its model names the kind): answered as a conversation, never as a mission, and the old model path never runs", async (text) => {
+    const w = world("service_question");
     const r = await w.ask(text);
-    expect(w.oldPath).toHaveBeenCalled();
-    expect(r.outputType).not.toBe("agent_mission");
-    expect(w.model.calls).toHaveLength(0);
+    // DT-20261126-wl4-ul2a-1: these questions used to be sent to the handler's own legacy model turn by a phrase list; the agent's chat model now names their kind and writes the reply under the code guard
+    expect(w.oldPath).not.toHaveBeenCalled();
+    expect(r.outputType).toBe("answer_question");
+    expect(w.model.calls).toHaveLength(1);
     expect(w.db.rows("missions")).toHaveLength(0);
     expect(w.ledgerUnchanged()).toBe(true);
   });
@@ -177,7 +176,8 @@ describe("requests reach the agent without privacy refusal under FX-PRIV", () =>
   });
 
   it("a request for private group messages behind a polite opening is handled as conversation", async () => {
-    const w = world("data_request");
+    // `other` is a real CHAT_TYPES value (out of scope: the fixed «أساعدك فيما أتقنه» reply); `privacy_refusal` is not one
+    const w = world("other");
     const r = await w.ask("هل يمكنك مساعدتي في رسايل الواتساب بتاعة جروب الشغل");
     expect(r.outputType).toBe("answer_question");
   });

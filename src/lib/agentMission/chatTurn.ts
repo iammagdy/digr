@@ -122,7 +122,10 @@ async function readHistory(sb: any, input: AgentChatTurnInput): Promise<Array<{ 
   try {
     const { data } = await sb.from("messages").select("id,role,content_ar,created_at").eq("conversation_id", input.conversationId).order("created_at", { ascending: false }).limit(8);
     const rows = (Array.isArray(data) ? data : []).filter((m: any) => m && m.id !== input.userMsgId && m.id !== input.assistantMsgId && (m.role === "user" || m.role === "assistant") && typeof m.content_ar === "string");
-    return rows.reverse().map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content_ar) }));
+    // oldest first. A customer message and its answer are written in the same instant (same created_at), and the database gives equal times in no fixed order: an answer that came BEFORE its question joined that question to the NEXT message
+    // (conversationFor merges neighbours of one speaker), so the model read «the open request + the new question» as one message (K4 replay). The tie is broken by the order the two are written: the customer's message first.
+    const at = (m: any) => { const t = Date.parse(String(m.created_at ?? "")); return Number.isFinite(t) ? t : 0; };
+    return rows.reverse().sort((a: any, b: any) => at(a) - at(b) || (a.role === b.role ? 0 : a.role === "user" ? -1 : 1)).map((m: any) => ({ role: m.role as "user" | "assistant", content: String(m.content_ar) }));
   } catch { return []; }
 }
 

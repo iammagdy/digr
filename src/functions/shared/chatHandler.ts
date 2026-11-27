@@ -2712,8 +2712,8 @@ export class ChatHandler {
         };
       }
 
-      // The AGENT takes every research request when it is on (the rollback constant is AGENT_SERVES_CHAT): a greeting, a general question and a file-shaping turn are still answered by the code above.
-      if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
+      // The AGENT takes every turn when it is on (the rollback constant is AGENT_SERVES_CHAT) except a greeting (answered by the code above) and a file-shaping turn (answered by code below): a general question about the service is a chat turn of the agent, whose model names its kind and writes its reply under the code guard (conversationModel.ts), never a plan (DT-20261126-wl4-ul2a-1).
+      if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting) {
         currentStep = "agent_mission";
         return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null });
       }

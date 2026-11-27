@@ -89,7 +89,8 @@ describe("the permanent corpus (at least 60 messages) against a fake model that 
     expect(d.source).toBe("model");
     expect(d.type).toBe(type);
     expect(CHAT_TYPES).toContain(d.type);
-    expect(model.calls).toHaveLength(1);
+    // one call per message; a message typed a NEW data request while a plan card is open (not while the agent waits for an answer) is read ONCE MORE alone, the K4 guard (wl4-ul2a1-k4-guard.test.ts)
+    expect(model.calls).toHaveLength(type === "data_request" && open && open.state !== "needs_input" ? 2 : 1);
   });
 });
 
