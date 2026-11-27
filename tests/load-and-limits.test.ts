@@ -18,7 +18,6 @@ import { isPublicPath } from "../src/lib/publicPaths";
 import { middleware } from "../src/middleware";
 import { PUBLIC_LIMITS_PER_MINUTE } from "../src/lib/server/publicRateLimit";
 import { DEFAULT_MAX_CONCURRENT_JOBS, evaluateConcurrentJobs, maxConcurrentJobsPerUser } from "../src/lib/server/concurrentJobs";
-import { POST as acceptQuote } from "../src/app/api/chat/accept-quote/route";
 import { fetchNewestLedgerRows } from "../src/lib/server/typedLedger";
 import { checkPlanProviderCapacity, resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import { setBusyStateForTesting } from "../src/lib/server/busyState";
@@ -52,7 +51,7 @@ describe("a page following a request asks less as it ages, rarely when hidden, a
 describe("a visitor who only looks never spends a call on the sign-in service", () => {
   it("public pages and status endpoints are public; the dashboard, the admin and every private endpoint are not", () => {
     for (const path of ["/", "/pricing", "/calculator", "/join", "/join/CONF26", "/legal/terms", "/for/students", "/api/busy-status", "/api/calculator/estimate", "/robots.txt"]) expect(isPublicPath(path), path).toBe(true);
-    for (const path of ["/dashboard/chat", "/admin", "/admin/conference", "/api/chat", "/api/wallet/balance", "/api/admin/operations", "/login", "/register", "/verify", "/api/chat/accept-quote", "/api/jobs/x/download"]) expect(isPublicPath(path), path).toBe(false);
+    for (const path of ["/dashboard/chat", "/admin", "/admin/conference", "/api/chat", "/api/wallet/balance", "/api/admin/operations", "/login", "/register", "/verify", "/api/missions/msn_test", "/api/jobs/x/download"]) expect(isPublicPath(path), path).toBe(false);
   });
   it("the middleware does not call the sign-in service for a public path, and still does for the rest", async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://mock.supabase.co";
@@ -92,17 +91,6 @@ describe("one account may not run more requests at once than the room can afford
     expect(refused.messageAr).toContain("٣ طلبات قيد التنفيذ");
     expect(refused.messageAr).toContain("ولا يُخصم شيء");
     expect(refused.messageAr).not.toMatch(/[A-Za-z0-9]/);
-  });
-  it("the approval route refuses a fourth request with 429 before anything is reserved, and lets a third through", async () => {
-    const approve = () => acceptQuote(new NextRequest("http://x/api/chat/accept-quote", { method: "POST", body: JSON.stringify({ quoteId: "q1", explicitApproval: true }) }));
-    auth.acceptCalls = 0;
-    auth.activeJobs = 3;
-    const refused = await approve();
-    expect(refused.status).toBe(429);
-    expect((await refused.json())).toMatchObject({ success: false, concurrentLimit: true, activeJobs: 3, maxJobs: 3 });
-    expect(auth.acceptCalls).toBe(0);
-    const source = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    expect(source.indexOf("evaluateConcurrentJobs(")).toBeLessThan(source.indexOf("acceptQuoteSupabase("));
   });
 });
 

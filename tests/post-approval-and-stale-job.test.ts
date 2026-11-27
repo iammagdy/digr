@@ -13,7 +13,6 @@ describe("post-approval message", () => {
     expect(POST_APPROVAL_TAB_AR).toContain("أبقِ الصفحة مفتوحة");
     expect(POST_APPROVAL_TAB_AR).toContain("أبقِ الصفحة مفتوحة حتى تكتمل المهمة");
     expect(POST_APPROVAL_TAB_AR).not.toContain("عند عودتك");
-    expect(chatPage).toContain("content: postApprovalMessageAr(data.driverMode)");
   });
 
   it("contains no English, emoji or technical words, in both states", () => {
@@ -26,7 +25,7 @@ describe("post-approval message", () => {
 
 // Static checks: the behavior itself needs a browser session (NOT RUN in this task).
 describe("a finished or running job from before «سؤال بحثي جديد» cannot come back", () => {
-  const startNewChat = chatPage.slice(chatPage.indexOf("function handleStartNewChat"), chatPage.indexOf("// Save Direct Plan Edits"));
+  const startNewChat = chatPage.slice(chatPage.indexOf("function handleStartNewChat"), chatPage.indexOf("// Download File Handler"));
 
   it("the new-research handler clears the active job, rows, resume hints and the URL", () => {
     expect(startNewChat).toContain("setActiveJob(null)");

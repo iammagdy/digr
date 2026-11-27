@@ -260,9 +260,6 @@ describe("the driver notice and the plan panel after approval", () => {
     expect(shouldSendStartedNotice({ ...base, driver: "cron", workerStarted: false })).toBe(false);
     expect(shouldSendStartedNotice({ ...base, isModelPlanned: false, driver: "cron" })).toBe(false);
     expect(shouldSendStartedNotice({ ...base, isModelPlanned: false, isLongJob: true, driver: "tab" })).toBe(true);
-    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf-8")).toContain("shouldSendStartedNotice(");
-    // the line in the chat stays when the driver is live (a job that ends in seconds must not erase it) and goes with the job otherwise
-    expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf-8")).toContain('progressNotice: normalizeDriverMode(data.driverMode) !== "cron"');
   });
 
   it("the driver is live right after /api/cron/drive wrote its heartbeat and not when the last tick is older than 3 minutes", async () => {
@@ -293,7 +290,6 @@ describe("the driver notice and the plan panel after approval", () => {
     expect(early.steps[1].reasonAr).toBeTruthy();
     const hook = readFileSync("src/hooks/useMissionPanel.ts", "utf-8");
     expect(hook).toContain("lastMission");
-    expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf-8")).toContain("changeMissionPanel({ expanded: true, pinned: true })");
     expect(readFileSync("src/lib/missionPanelContent.ts", "utf-8")).toContain('"review_partial"');
   });
 });

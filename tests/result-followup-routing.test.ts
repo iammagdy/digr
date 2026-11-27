@@ -129,18 +129,6 @@ describe("plan approval copy and selected output formats", () => {
     expect(chatHandler).not.toMatch(/llmResult\.textBlockAr[\s\S]{0,180}planSummaryText/);
   });
 
-  it("keeps the post-approval status in the successful explicit-approval handler", () => {
-    const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    const startHandler = chatPage.slice(
-      chatPage.indexOf("async function handleStartExecution("),
-      chatPage.indexOf("// Download File Handler"),
-    );
-    const acceptedCheck = startHandler.indexOf("if (!res.ok || !data.success)");
-    const postApproval = startHandler.indexOf("content: postApprovalMessageAr(data.driverMode)");
-    expect(acceptedCheck).toBeGreaterThan(-1);
-    expect(postApproval).toBeGreaterThan(acceptedCheck);
-    expect(startHandler).toContain("explicitApproval: true");
-  });
 
   it("reports only generated files; a non-selected format remains available through on-demand conversion", () => {
     expect(resultFileManifest({

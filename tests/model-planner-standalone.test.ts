@@ -68,9 +68,9 @@ describe("PRODUCTION CONDITION: the catalog is read the way the deployed bundle 
     } finally { cwd.mockRestore(); clearTregCatalogCache(); }
   });
 
-  it("every route that loads the catalog at run time declares it for file tracing (the chat, the plan edit, the admin lookup and the admin planner self-test), so no route reads a file the bundle does not hold", () => {
+  it("every route that loads the catalog at run time declares it for file tracing (the chat, the admin lookup and the admin planner self-test), so no route reads a file the bundle does not hold", () => {
     const config = readFileSync("next.config.mjs", "utf-8");
-    for (const route of ["/api/chat", "/api/chat/edit-plan", "/api/admin/reverse-lookup"]) {
+    for (const route of ["/api/chat", "/api/admin/reverse-lookup"]) {
       const line = config.split("\n").find((l) => l.includes(`"${route}":`));
       expect(line, route).toBeTruthy();
       expect(line, route).toContain("treg_catalog_sellable.json");

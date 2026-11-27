@@ -134,17 +134,6 @@ describe("8. paid exploration", () => {
       expect(res.contentAr).not.toContain("عينة أولًا");
     });
 
-    it("the sample is an ordinary quote: the edit route recalculates it with the shared pricing, and only carries the flag", () => {
-      const route = readFileSync("src/app/api/chat/edit-plan/route.ts", "utf8");
-      expect(route).toContain("createAndSaveManagedQuote(adminClient");
-      expect(route).toContain("They change no price.");
-      const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-      expect(page).toContain("onExplore={handleExplore}");
-      expect(page).toContain("explorationByJob.current.set(data.jobId, quote)");
-      expect(page).toContain("fullVolume: offer.fullUnits");
-      expect(page).toContain("sampleRestMessageAr(");
-      expect(page).toContain('"/api/chat/sample-remainder"');
-    });
   });
 });
 

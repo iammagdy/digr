@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import PlanQuoteCard, { type PlanQuoteData } from "../src/app/dashboard/chat/components/PlanQuoteCard";
@@ -7,14 +7,11 @@ import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "../src/lib/consulta
 
 /**
  * The plan lives in the results panel, never in the chat stream. The chat says one sentence; the panel carries the plan,
- * its editable fields, the price, and the approve button (a bottom sheet on mobile). Every approval guard stays.
+ * the historical quote and price (a bottom sheet on mobile).
  */
 const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
 const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
-const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-const acceptQuote = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
 
-const noop = () => {};
 const quote = (extra: Partial<PlanQuoteData> = {}): PlanQuoteData => ({
   quoteId: "q1",
   summaryAr: "جمع تغريدات عن كرة السلة",
@@ -31,10 +28,10 @@ const quote = (extra: Partial<PlanQuoteData> = {}): PlanQuoteData => ({
   ...extra,
 });
 
-const render = (q: PlanQuoteData, props: Record<string, unknown> = {}) =>
+const render = (quote: PlanQuoteData, props: Partial<ComponentProps<typeof PlanQuoteCard>> = {}) =>
   renderToStaticMarkup(createElement(PlanQuoteCard, {
-    quote: q, onStart: noop, onSaveEdit: async () => {}, isStarting: false, available: 500, creditValue: 0.1, onTopupShort: noop, onRefresh: async () => {}, ...props,
-  } as any));
+    quote, available: 500, creditValue: 0.1, ...props,
+  }));
 
 describe("the chat stream", () => {
   it("shows one short sentence for a plan and no plan card", () => {
@@ -49,7 +46,7 @@ describe("the chat stream", () => {
     expect(renderNote).toContain('data-testid="open-plan-btn"');
   });
 
-  it("the plan card is mounted only inside the panel (planCard builder), once for editing and once read-only", () => {
+  it("the plan card is mounted only inside the panel (planCard builder), in the standalone panel and the results tab", () => {
     expect((page.match(/<PlanQuoteCard/g) || []).length).toBe(1);
     expect(page).toContain("planCard(latestPlanQuote, false)");
     expect(page).toContain("planNode={latestPlanQuote ? planCard(latestPlanQuote, true) : undefined}");
@@ -58,12 +55,9 @@ describe("the chat stream", () => {
 
 describe("the panel", () => {
   it("shows the plan until a run is approved, then the results with the plan as a read-only tab", () => {
-    // Same two conditions as before (no open request, or the plan of the rest of a request), now with one more: a plan that can still be
-    // approved takes the panel when the open request is finished or failed (tests/plan-card-states.test.tsx pins every case).
     expect(page).toContain("const panelShowsPlan = shouldShowPlanPanel({");
     expect(page).toContain("latestQuote: latestPlanQuote ? { quoteId: latestPlanQuote.quoteId, status: latestPlanQuote.status, expiresAt: latestPlanQuote.expiresAt } : null,");
     expect(page).toContain("activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,");
-    expect(page).toContain("restPlanQuoteId,");
     expect(page).toContain('data-testid="plan-panel"');
     expect(canvas).toContain('{ id: "plan" as const, label: "الخطة" }');
     expect(canvas).toContain('{tab === "plan" && planNode}');
@@ -86,25 +80,16 @@ describe("the panel", () => {
 
 describe("the plan in the panel keeps every guard", () => {
   it("an incomplete plan, an expired quote and an inactive quote cannot be approved (client)", () => {
-    expect(card).toContain("isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0");
-    expect(card).toContain("baseApprovalState.canApprove && planComplete");
-    expect(card).toContain("approvalState.canApprove");
     const html = render(quote({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
     expect(html).not.toContain("أوافق وابدأ البحث");
-    expect(html).toContain("تحديث السعر");
+    expect(html).not.toContain("تحديث السعر");
+    expect(html).toContain("العرض ده قديم ومبقاش متاح");
     const inactive = render(quote({ status: "superseded" }));
     expect(inactive).not.toContain("أوافق وابدأ البحث");
     const incomplete = render(quote({ items: [{ capabilitySlug: "social-x-posts", params: {}, targetVolumeMin: 1, targetVolumeMax: 10 }] }));
     expect(incomplete).not.toContain("أوافق وابدأ البحث");
   });
 
-  it("a complete, valid, affordable plan offers the approve button", () => {
-    expect(render(quote())).toContain("أوافق وابدأ البحث");
-  });
-
-  it("the server still refuses what the client refuses (accept-quote guards)", () => {
-    for (const guard of ["expectedPlanHash", "hasExplicitQuoteApproval(body)"]) expect(acceptQuote).toContain(guard);
-  });
 
   it("a locked (approved) plan shows no approve button", () => {
     expect(render(quote(), { locked: true })).not.toContain("أوافق وابدأ البحث");

@@ -135,10 +135,6 @@ describe("live check 3: the «فهمت أنك تريد N …» sentence follows 
     expect(second.planQuote.understoodAr).not.toContain("٥");
   });
 
-  it("the card's own edit never keeps the old sentence: the edit route drops it from the replacement quote", () => {
-    const route = src("src/app/api/chat/edit-plan/route.ts");
-    expect(route).toContain("delete editedQuote.understoodAr;");
-  });
 
   it("the sentence of a request names the count the customer wrote, with the right plural", () => {
     expect(understoodLineAr(understandMission("أريد ١ شركة مقاولات في مصر"))).toContain("شركة واحدة");
@@ -146,38 +142,6 @@ describe("live check 3: the «فهمت أنك تريد N …» sentence follows 
   });
 });
 
-describe("live check 4: the plan editor offers a country field when the plan has a country or location parameter", () => {
-  const baseQuote = (items: any[]): PlanQuoteData => ({
-    quoteId: "q1", planHash: "h", status: "quoted", summaryAr: "خطة", targetVolumeMax: 10, requestedVolumeMax: 10, expectedPoints: 30, quotedPoints: 35, unitPricePoints: 3, items,
-    outputFormats: ["xlsx"], expiresAt: new Date(Date.now() + 3_600_000).toISOString(), balance: 5000, currentBalance: 5000,
-  } as unknown as PlanQuoteData);
-  const render = (items: any[]) => renderToStaticMarkup(createElement(PlanQuoteCard, { quote: baseQuote(items), initiallyEditing: true, onSaveEdit: async () => {}, onApprove: () => {}, onRefresh: async () => {} } as never));
-
-  it("finds the parameters a plan carries its country in", () => {
-    expect(planCountryParamKeys({ location: "Egypt", keyword: "x" })).toEqual(["location"]);
-    expect(planCountryParamKeys({ region: "EG", country: "Egypt" })).toEqual(["country", "region"]);
-    expect(planCountryParamKeys({ query: { location: { include: ["Egypt"] } } })).toEqual(["location"]);
-    expect(planCountryParamKeys({ keyword: "x" })).toEqual([]);
-    expect(planCountryParamKeys(undefined)).toEqual([]);
-  });
-
-  it("a generic service with a location parameter shows the country field in the editor; one without shows none", () => {
-    const withLocation = render([{ capabilitySlug: "maps-business-search", targetVolumeMax: 10, params: { query: "مصانع", location: "Egypt" } }]);
-    expect(withLocation).toContain('id="pq-country-q1"');
-    const without = render([{ capabilitySlug: "x-keyword-search", targetVolumeMax: 10, params: { keyword: "كرة" } }]);
-    expect(without).not.toContain('id="pq-country-q1"');
-  });
-
-  it("the edit is written in the form each parameter already uses (a code field gets the ISO code, a name field the English name)", () => {
-    const ops = buildGenericCountryEditOperations("maps-business-search", "السعودية", { location: "Egypt", regionCode: "EG" });
-    expect(ops).toEqual([
-      { action: "set_param", capabilitySlug: "maps-business-search", key: "regionCode", value: "SA" },
-      { action: "set_param", capabilitySlug: "maps-business-search", key: "location", value: "Saudi Arabia" },
-    ].sort((a, b) => ops.findIndex((o) => o.key === a.key) - ops.findIndex((o) => o.key === b.key)));
-    expect(buildGenericCountryEditOperations("s", "بلد لا يقرأه أحد", { location: "Egypt" })).toEqual([]);
-    expect(src("src/app/dashboard/chat/page.tsx")).toContain("buildGenericCountryEditOperations(slug, newCountry");
-  });
-});
 
 describe("live check 5: stored refund wording is read as «حجز مؤقت مُحرَّر» on request cards, activity lines and the wallet", () => {
   const STORED = [

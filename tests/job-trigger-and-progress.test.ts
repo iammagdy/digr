@@ -53,7 +53,7 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
       process.env.VERCEL = "1";
       process.env.VERCEL_ENV = "production";
       process.env.APP_URL = "http://127.0.0.1:3000";
-      const req = new NextRequest("https://diger.tech/api/chat/accept-quote", {
+      const req = new NextRequest("https://diger.tech/api/jobs/job-test/nudge", {
         headers: { host: "diger.tech", "x-forwarded-proto": "https", "x-forwarded-host": "127.0.0.1:3000" },
       });
       expect(resolveInternalBaseUrl(req)).toBe("https://diger.tech");
@@ -72,7 +72,7 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
       vi.stubEnv("NODE_ENV", "production");
       process.env.VERCEL = "1";
       process.env.VERCEL_ENV = "production";
-      const req = new NextRequest("https://127.0.0.1:3000/api/chat/accept-quote");
+      const req = new NextRequest("https://127.0.0.1:3000/api/jobs/job-test/nudge");
       expect(() => resolveInternalBaseUrl(req)).toThrow("internal worker origin is invalid");
     });
 

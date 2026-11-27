@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The fake provider can NOT be enabled on a production deployment and never touches the live database. Files: src/lib/server/
- * fakeProviderMode.ts (the guard), fakeSocialSource.ts (the fake), src/app/api/worker/chunk/route.ts and src/app/api/chat/accept-quote/
  * route.ts (the two places that read the guard). Truth table and a whole job: tests/fake-provider-mode.test.ts.
  */
 const state = vi.hoisted(() => ({ acceptCalls: 0, gateReady: false }));
@@ -25,7 +24,6 @@ import { CRON_SECRET, jobRow, seedSocialJob, setupEnv, callWorker } from "./help
 import { getInjectedProviderAdapter, setProviderAdapterForTesting } from "../src/lib/server/tregAdapter";
 import { PRODUCTION_DATABASE_REF } from "../src/lib/server/fakeProviderMode";
 import { POST as workerPost } from "../src/app/api/worker/chunk/route";
-import { POST as acceptQuote } from "../src/app/api/chat/accept-quote/route";
 
 const TEST_URL = "https://abcdefghijklmnop.supabase.co";
 const saved = { ...process.env };
@@ -75,37 +73,14 @@ describe("VERCEL_ENV=production with the flag set: the worker refuses a mock and
   });
 });
 
-describe("VERCEL_ENV=production with the flag set: the approval route does not open the test door", () => {
-  const approve = () => acceptQuote(new NextRequest("http://x/api/chat/accept-quote", { method: "POST", body: JSON.stringify({ quoteId: "q1", expectedPlanHash: "a".repeat(64), explicitApproval: true }) }));
 
-  it("production + flag: the live gate answers 503 and nothing is accepted or reserved", async () => {
-    setEnv({ NODE_ENV: "production", VERCEL_ENV: "production", PRESSURE_FAKE_PROVIDER: "on", NEXT_PUBLIC_SUPABASE_URL: TEST_URL, ENABLE_MOCK_PROVIDER: undefined });
-    const res = await approve();
-    expect(res.status).toBe(503);
-    expect((await res.json()).reasonCode).toBe("live_provider_disabled");
-    expect(state.acceptCalls).toBe(0);
-  });
-
-  it("a preview with the flag and a test database passes the live gate (the next guard, the plan check, answers 409), and the live database address does not (503)", async () => {
-    setEnv({ NODE_ENV: "production", VERCEL_ENV: "preview", PRESSURE_FAKE_PROVIDER: "on", NEXT_PUBLIC_SUPABASE_URL: TEST_URL, ENABLE_MOCK_PROVIDER: undefined });
-    const open = await approve();
-    expect(open.status).toBe(409);
-    expect((await open.json()).gaps).toContain("empty_plan");
-    setEnv({ NEXT_PUBLIC_SUPABASE_URL: `https://${PRODUCTION_DATABASE_REF}.supabase.co` });
-    const closed = await approve();
-    expect(closed.status).toBe(503);
-    expect((await closed.json()).reasonCode).toBe("live_provider_disabled");
-    expect(state.acceptCalls).toBe(0);
-  });
-});
-
-describe("the fake source and its guard are read in exactly two routes and nowhere else", () => {
+describe("the fake source and its guard are read in exactly one route and nowhere else", () => {
   it("no other source file imports the fake provider or its guard", () => {
     const files: string[] = [];
     const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); if (statSync(path).isDirectory()) walk(path); else if (/\.(ts|tsx)$/.test(name)) files.push(path); } };
     walk("src");
     const users = files.filter((file) => /fakeProviderMode|fakeSocialSource/.test(readFileSync(file, "utf8")) && !/fakeProviderMode\.ts$|fakeSocialSource\.ts$/.test(file));
-    expect(users.sort()).toEqual(["src/app/api/chat/accept-quote/route.ts", "src/app/api/worker/chunk/route.ts"]);
+    expect(users.sort()).toEqual(["src/app/api/worker/chunk/route.ts"]);
   });
   it("the guard itself reads only three environment values and names the live project", () => {
     const source = readFileSync("src/lib/server/fakeProviderMode.ts", "utf8");

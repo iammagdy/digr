@@ -355,7 +355,7 @@ describe("e-mail: admin diagnosis and a test to the admin's own address", () => 
   });
 
   it("the admin module and card are not imported by any customer file", () => {
-    const customerFiles = ["src/app/dashboard/chat/page.tsx", "src/app/dashboard/requests/page.tsx", "src/app/api/chat/accept-quote/route.ts", "src/app/api/worker/chunk/route.ts"];
+    const customerFiles = ["src/app/dashboard/chat/page.tsx", "src/app/dashboard/requests/page.tsx", "src/app/api/worker/chunk/route.ts"];
     for (const file of customerFiles) {
       const source = readFileSync(file, "utf8");
       expect(source, file).not.toContain("emailCheck");

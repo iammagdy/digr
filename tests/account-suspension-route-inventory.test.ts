@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
  * or is named here with the reason it stays open. A new mutating route fails this test until it does one of the three.
  */
 const ALLOWED_OPEN: Record<string, string> = {
+  "src/app/api/chat/[retiredQuoteAction]/route.ts": "D-0248 cached chat tabs receive only a retirement error or not found; no account lookup or mutation",
   "src/app/api/jobs/[id]/nudge/route.ts": "only releases a stuck hold of an old request back to the customer (release_job_atomic): it gives points back, never spends",
   "src/app/api/support/messages/route.ts": "the suspension sentence tells the customer to contact support: support must stay reachable",
   "src/app/api/onboarding/route.ts": "the customer's own profile answers; starts nothing and spends nothing",

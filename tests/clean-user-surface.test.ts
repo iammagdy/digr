@@ -28,12 +28,10 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(card).not.toContain("منهجية الجمع");
     expect(card).not.toContain("قيد التجهيز");
     expect(card).not.toContain("الكتالوج");
-    // Verifies primary "أوافق وابدأ البحث" button and secondary "تعديل" button
-    expect(card).toContain("أوافق وابدأ البحث");
-    expect(card).toContain('"تعديل"');
+    expect(card).not.toContain("أوافق وابدأ البحث");
     // Verifies RTL and plain language steps (what, from where, how many)
     expect(card).toContain('dir="rtl"');
-    expect(card).toContain("أوافق وابدأ البحث");
+    expect(card).not.toContain("أوافق وابدأ البحث");
   });
 
   it("PlanQuoteCard describes people fields as present or absent without claiming verification", () => {

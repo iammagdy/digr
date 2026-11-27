@@ -1,4 +1,3 @@
-import { hasLegacyChatQuoteItem, LEGACY_CHAT_QUOTE_AR } from "../legacyChatQuote";
 import { pointsAr } from "../pointsFormat";
 import { isGroupQuoteItems, hasJobGroupRpc } from "../server/multiProvider/jobGroupPlan";
 import { GROUP_UNAVAILABLE_AR, QUOTE_START_UNAVAILABLE_AR, groupStartLineAr } from "../multiProvider/copy";
@@ -10,7 +9,6 @@ export interface AcceptQuoteOptions {
   userId: string;
   quoteId: string;
   expectedPlanHash?: string;
-  retireLegacyChatQuote?: true;
 }
 
 export interface AcceptQuoteResult {
@@ -43,7 +41,7 @@ export async function acceptQuoteSupabase(
   adminClient: SupabaseClient,
   options: AcceptQuoteOptions
 ): Promise<AcceptQuoteResult> {
-  const { userId, quoteId, expectedPlanHash, retireLegacyChatQuote } = options;
+  const { userId, quoteId, expectedPlanHash } = options;
 
   if (!quoteId || typeof quoteId !== "string" || !userId || typeof userId !== "string") {
     return {
@@ -60,7 +58,7 @@ export async function acceptQuoteSupabase(
   try {
     const { data: quoteDoc, error: qErr } = await adminClient
       .from("plans_quotes")
-      .select("quote_hash, items, user_id, status")
+      .select("quote_hash, items")
       .eq("id", quoteId)
       .single();
 
@@ -77,11 +75,6 @@ export async function acceptQuoteSupabase(
         statusCode: 404,
         errorAr: "عرض السعر غير موجود أو تم حذفه.",
       };
-    }
-
-    // Recheck the stored document used for atomic acceptance, even if the earlier route read saw no row.
-    if (retireLegacyChatQuote && quoteDoc.user_id === userId && quoteDoc.status !== "accepted" && hasLegacyChatQuoteItem(quoteDoc.items)) {
-      return { success: false, statusCode: 410, errorAr: LEGACY_CHAT_QUOTE_AR };
     }
 
     if (quoteDoc) {

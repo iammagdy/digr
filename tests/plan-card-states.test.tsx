@@ -20,67 +20,29 @@ const render = (q: PlanQuoteData, locked = false, available: number | null = 139
   quote: q, locked, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {},
 } as any));
 
-describe("a plan card of a quote that is still valid always has its approve button", () => {
-  it("the retry plan of the live test: asked 30, capacity allows 28, reserve 194, warning and button together", () => {
+describe("historical plan cards", () => {
+  it("keeps the requested volume, capacity limit and recorded hold on a retry quote", () => {
     const html = render(quote({ askedVolumeMax: 30, requestedVolumeMax: 30, capacityConstrained: true }));
-    expect(html).toContain(APPROVE);
+    expect(html).not.toContain(APPROVE);
     expect(html).toContain('data-testid="plan-volume-limit"');
     expect(html).toContain("طلبت ٣٠ سجل، والذي تتسع له سعة الاستخراج المتاحة الآن ٢٨ سجل، وسيُحجز للخطة حتى ١٩٤ نقطة ولا يُخصم منها إلا ما يُسلَّم.");
     expect(html).not.toContain("سقف المهمة الحالي");
-    expect(html).not.toContain('data-testid="plan-approval-note"');
   });
 
-  it("a plain valid plan, a points-cap shrink and a default volume all keep the button", () => {
-    expect(render(quote())).toContain(APPROVE);
-    expect(render(quote({ askedVolumeMax: 2000, requestedVolumeMax: 1000, pointsCapConstrained: true, pointsCap: 600 }))).toContain(APPROVE);
-  });
-});
-
-describe("the button is hidden only for an expired, accepted, incomplete or read-only plan, and the card says why", () => {
-  it("accepted: a plain sentence, no button", () => {
+  it("keeps the old accepted job's status without an action", () => {
     const html = render(quote({ status: "accepted" }));
     expect(html).not.toContain(APPROVE);
     expect(html).toContain("بدأ تنفيذ هذه الخطة بالفعل، ولا يمكن الموافقة عليها مرة ثانية.");
   });
 
-  it("superseded (expired status): the existing sentence, no button", () => {
-    const html = render(quote({ status: "expired" }));
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain("هذا العرض لم يعد صالحاً للموافقة. استخدم أحدث عرض سعر في هذه المحادثة.");
-  });
-
-  it("expired by time: the sentence and the refresh button, no approve", () => {
-    const html = render(quote({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain("انتهت صلاحية عرض السعر. نحتاج تحديثه قبل الموافقة.");
-    expect(html).toContain("تحديث السعر");
-  });
-
-  it("status that could not be read: asks to reload", () => {
-    const html = render(quote({ status: "unknown" }));
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain("أعد تحميل المحادثة قبل الموافقة");
-  });
-
-  it("incomplete plan: no button and a sentence that says what to do", () => {
-    const html = render(quote({ items: [] }));
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain('data-testid="plan-approval-note"');
-    expect(html).toContain("الخطة غير مكتملة بعد، لذلك لا يظهر زر الموافقة.");
-  });
-
-  it("read-only beside a running request: no button and a sentence that says when", () => {
-    const html = render(quote(), true);
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain('data-testid="plan-approval-note"');
-    expect(html).toContain("يمكنك الموافقة عليها بعد انتهاء الطلب الجاري.");
-  });
-
-  it("balance too low: the top-up offer instead of the button", () => {
-    const html = render(quote({ isAffordable: false }), false, 50);
-    expect(html).not.toContain(APPROVE);
-    expect(html).toContain("شحن الرصيد");
-  });
+  it.each([{ status: "quoted" }, { status: "expired" }, { status: "unknown" }, { expiresAt: new Date(0).toISOString() }, { items: [] }, { isAffordable: false }])(
+    "retires a historical unaccepted card regardless of its stored approval state (%j)",
+    (props) => {
+      const html = render(quote(props as Partial<PlanQuoteData>), false, 50);
+      expect(html).toContain("العرض ده قديم ومبقاش متاح، اكتب طلبك من جديد");
+      expect(html).not.toMatch(/أوافق وابدأ البحث|تحديث السعر|شحن الرصيد|edit-plan-btn|explore-first-btn/);
+    },
+  );
 
   it("the note helper: every state in one place", () => {
     const base = { locked: false, status: "quoted", expiredByTime: false, planComplete: true };

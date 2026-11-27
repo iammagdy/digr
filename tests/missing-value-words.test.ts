@@ -124,34 +124,4 @@ describe("a plan with a missing value is never priced", () => {
     expect(mockDb.from).not.toHaveBeenCalled();
   });
 
-  describe("accept-quote", () => {
-    let rpcCalls: Array<{ name: string; params: any }>;
-    beforeEach(() => {
-      rpcCalls = [];
-      authMockState.user = { id: "user-verified-1", email: "v@example.com", email_confirmed_at: "2026-10-12T00:00:00Z", user_metadata: { email_verified: true } };
-      const items = [companyItem("undefined")];
-      authMockState.adminClient = {
-        from: vi.fn((table: string) => {
-          if (table === "plans_quotes") {
-            return { select: vi.fn(() => ({ eq: vi.fn(() => ({
-              maybeSingle: vi.fn(async () => ({ data: { id: "quote-undefined", items }, error: null })),
-              single: vi.fn(async () => ({ data: { id: "quote-undefined", items, quote_hash: "h" }, error: null })),
-            })) })) };
-          }
-          return { select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: null, error: null })) })) })) };
-        }),
-        rpc: vi.fn(async (name: string, params: any) => { rpcCalls.push({ name, params }); return { data: { success: true }, error: null }; }),
-      };
-    });
-
-    it("a company quote whose country is «undefined» is a 409 with zero reserve calls", async () => {
-      const { POST } = await import("../src/app/api/chat/accept-quote/route");
-      const res = await POST(new NextRequest("http://localhost:3000/api/chat/accept-quote", { method: "POST", body: JSON.stringify({ quoteId: "quote-undefined", explicitApproval: true }) }));
-      expect(res.status).toBe(409);
-      const json = await res.json();
-      expect(json.error).toBe("الخطة غير مكتملة");
-      expect(json.gaps).toContain("country");
-      expect(rpcCalls).toHaveLength(0);
-    });
-  });
 });

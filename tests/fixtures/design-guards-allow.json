@@ -4867,14 +4867,6 @@
       "token": "treg"
     },
     {
-      "file": "src/app/api/chat/accept-quote/route.ts",
-      "token": "treg"
-    },
-    {
-      "file": "src/app/api/chat/accept-quote/route.ts",
-      "token": "treg.people.search"
-    },
-    {
       "file": "src/app/api/worker/chunk/route.ts",
       "token": "treg"
     },
@@ -4884,10 +4876,6 @@
     },
     {
       "file": "src/app/api/worker/chunk/route.ts",
-      "token": "youtube"
-    },
-    {
-      "file": "src/app/dashboard/chat/page.tsx",
       "token": "youtube"
     },
     {

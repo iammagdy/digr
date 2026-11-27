@@ -287,21 +287,8 @@ describe("the editor of a plan keeps an X account plan an account plan", () => {
     expect(facebook.params.query).toBe("x");
   });
 
-  it("the chat page writes the topic field of an X account plan as the account (read from its source)", () => {
-    const source = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(source).toContain('const isAccountPlan = slug === "social-x-posts"');
-    expect(source).toContain('const paramKey = isAccountPlan ? "channel"');
-    expect(source).toContain("isPostOrUrl && !isAccountPlan &&");
-  });
 
-  it("the edit route cleans the plan before it is priced (read from its source)", () => {
-    const source = readFileSync("src/app/api/chat/edit-plan/route.ts", "utf8");
-    expect(source.indexOf("normalizeXAccountPlanItem(planItem)")).toBeGreaterThan(source.indexOf("applyPlanOperations(currentPlan"));
-    expect(source.indexOf("normalizeXAccountPlanItem(planItem)")).toBeLessThan(source.indexOf("createAndSaveManagedQuote("));
-    // and the account plan keeps the sentence the plan itself writes after an edit, not the generic line that named the account like a sector
-    expect(source).toContain("socialPlanSummaryAr(xPosts, primaryItem.params");
-    expect(source.indexOf("socialPlanSummaryAr(xPosts")).toBeLessThan(source.indexOf("createAndSaveManagedQuote("));
-  });
+
 });
 
 describe("the plan says what the account route does with a period", () => {

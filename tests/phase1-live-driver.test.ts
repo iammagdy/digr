@@ -104,7 +104,7 @@ describe("Phase 1: what the customer is told", () => {
   });
 
   it("no server caller promises from the old flag any more, and the page re-reads the live answer", () => {
-    for (const file of ["src/app/api/chat/accept-quote/route.ts", "src/app/api/calculator/estimate/route.ts", "src/functions/shared/chatHandler.ts", "src/app/api/driver-status/route.ts", "src/app/api/admin/email-check/route.ts", "src/app/api/cron/drive/route.ts"]) {
+    for (const file of ["src/app/api/calculator/estimate/route.ts", "src/functions/shared/chatHandler.ts", "src/app/api/driver-status/route.ts", "src/app/api/admin/email-check/route.ts", "src/app/api/cron/drive/route.ts"]) {
       expect(readFileSync(file, "utf8"), file).not.toContain("longJobDriverMode");
     }
     const hook = readFileSync("src/hooks/useDriverMode.ts", "utf8");

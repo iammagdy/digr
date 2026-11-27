@@ -13,7 +13,6 @@ vi.mock("../src/lib/supabase/quoteAccept", () => ({ acceptQuoteSupabase: vi.fn(a
 
 import { BUSY_BELOW_SAFE_BUDGET_USD, evaluateBusy, NOT_BUSY } from "../src/lib/busyMode";
 import { BUSY_CACHE_MS, getBusyState, setBusyStateForTesting } from "../src/lib/server/busyState";
-import { POST as acceptQuote } from "../src/app/api/chat/accept-quote/route";
 import { GET as busyStatus } from "../src/app/api/busy-status/route";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { createStatefulSupabase } from "./helpers/statefulSupabase";
@@ -115,15 +114,6 @@ describe("the chat and the approval stop while busy", () => {
     expect(reply.contentAr).not.toBe(busy.messageAr);
   });
 
-  it("the approval is refused with the same sentence before anything is reserved", async () => {
-    setBusyStateForTesting(busy);
-    accept.calls = 0;
-    const res = await acceptQuote(new NextRequest("http://x/api/chat/accept-quote", { method: "POST", body: JSON.stringify({ quoteId: "q1", explicitApproval: true }) }));
-    const body = await res.json();
-    expect(res.status).toBe(503);
-    expect(body).toMatchObject({ success: false, busy: true, error: busy.messageAr, queueAhead: 2, position: 3 });
-    expect(accept.calls).toBe(0);
-  });
 
   it("the public status answers in one sentence, no number about the provider, and is rate limited", async () => {
     setBusyStateForTesting(busy);
@@ -137,11 +127,6 @@ describe("the chat and the approval stop while busy", () => {
 });
 
 describe("the busy check sits before anything is reserved, and writes nothing", () => {
-  it("in the approval route it comes before the quote is accepted (the reserve)", () => {
-    const source = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    expect(source.indexOf("getBusyState(adminClient)")).toBeGreaterThan(0);
-    expect(source.indexOf("getBusyState(adminClient)")).toBeLessThan(source.indexOf("acceptQuoteSupabase("));
-  });
   it("the busy state source reads only: no insert, update, upsert, delete or rpc", () => {
     const source = readFileSync("src/lib/server/busyState.ts", "utf8");
     for (const word of [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("]) expect(source).not.toContain(word);

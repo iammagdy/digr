@@ -216,7 +216,7 @@ describe("audit phase 2: counts read as words and one money sentence (point 15)"
     expect(card).not.toContain('data-testid="plan-cap-line"');
     expect(card).not.toContain('data-testid="plan-hold-line"');
     expect(card).toContain('data-testid="plan-price-vs-hold"');
-    expect(card).toContain('data-testid="plan-edit-hint"');
+    expect(card).not.toContain('data-testid="plan-edit-hint"');
   });
 });
 
