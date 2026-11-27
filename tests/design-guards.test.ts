@@ -163,7 +163,7 @@ describe("Design Guards on Current Codebase (Regression Guard)", () => {
     expect(allowIndex).toBeInstanceOf(AllowIndex);
 
     // Verify allow-list is functional on a known legacy hit
-    const allowed = allowIndex.isAllowed("src/lib/server/relevanceEvidence.ts", "fallback_list", "ات,ون,ين,ان,يه,ها,ه,ي");
+    const allowed = allowIndex.isAllowed("src/lib/server/researchRelevanceGate.ts", "fallback_list", "channel,channels,url,handle,account,trending,ref");
     expect(allowed).toBe(true);
   });
 });

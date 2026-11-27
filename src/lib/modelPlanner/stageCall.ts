@@ -12,6 +12,7 @@ import { toArabicDigits } from "../arabicDigits";
 import { MODEL_PLAN_REQUEST_PARAM, TOPIC_REVIEW_CALL_ESTIMATE_USD, TOPIC_REVIEW_JOB_CAP_USD, TOPIC_REVIEW_ROWS_PER_CALL } from "./constants";
 import type { MissionManager } from "./manager";
 import type { PlanStep, StepAlternate, StepFacts, StoredModelPlan } from "./types";
+import { isAllDigits, startsWithOneLetterPrefix } from "../arabicUnits";
 
 /** What a page of any stage keeps between chunks, as far as the shared call code is concerned. */
 export interface PageCursor { next: string | number | null; page: number; offset: number; reviewUsd?: number }
@@ -136,8 +137,8 @@ const GENERIC_WORDS = new Set(["بعد", "قبل", "حول", "بين", "ضد", "
 
 /** The request's distinctive words, each with the spellings a row may use (with and without a one-letter prefix): numbers and generic words are not topic words. */
 export function distinctiveTopicWords(request: string): string[][] {
-  const stems = topicStems(request).filter((st) => !/^[\d٠-٩]+$/u.test(st) && !GENERIC_WORDS.has(st));
-  return stems.map((st) => [st, ...(/^[لبوف]/u.test(st) && st.length >= 5 ? [st.slice(1)] : [])]);
+  const stems = topicStems(request).filter((st) => !isAllDigits(st) && !GENERIC_WORDS.has(st));
+  return stems.map((st) => [st, ...(startsWithOneLetterPrefix(st) && st.length >= 5 ? [st.slice(1)] : [])]);
 }
 
 /**

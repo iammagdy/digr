@@ -4,6 +4,8 @@
  * and provides Arabic localization for common MENA and European cities.
  */
 
+import { splitOnCommas } from "../arabicUnits";
+
 const CITY_ARABIC_MAP: Record<string, string> = {
   // Egypt
   cairo: "القاهرة",
@@ -188,7 +190,7 @@ export function extractCityFromAddress(rawLocation?: string | null, targetCountr
   }
 
   // Tokenize by comma
-  const parts = trimmed.split(/[,،]+/).map((p) => p.trim()).filter(Boolean);
+  const parts = splitOnCommas(trimmed).map((p) => p.trim()).filter(Boolean);
 
   // Check individual parts for known cities (whole names only, longest first)
   for (const part of parts) {
@@ -279,7 +281,7 @@ export function localizeAddressAr(rawAddress?: string | null): string {
   if (!raw || raw === "غير متاح") return "غير متاح";
   if (!/[A-Za-z\u00c0-\u024f]/.test(raw)) return raw;
   if (/[\u0600-\u06FF]/u.test(raw)) return raw;
-  const parts = raw.split(/[,،]+/).map((part) => part.trim()).filter(Boolean);
+  const parts = splitOnCommas(raw).map((part) => part.trim()).filter(Boolean);
   const out: string[] = [];
   for (const part of parts) {
     const whole = translateAddressToken(part);

@@ -6,6 +6,7 @@
  * Deterministic and offline: no model decides a match.
  */
 
+import { FOLD_TOPIC, isMarkOrTatweel, mapCodePoints, removeCodePoints, stripTopicArticle, stripTopicFinalHaYa, stripTopicPluralEnding } from "../arabicUnits";
 import { regionEvidenceWords } from "../regionNames";
 
 const STOP_WORDS = new Set([
@@ -14,20 +15,14 @@ const STOP_WORDS = new Set([
   "اسبوع", "سنه", "البلد", "الدوله", "مصر", "السعوديه", "المانيا", "egypt", "saudi", "germany",
   "تغريده", "تغريدات", "تويت", "تويتات", "tweet", "tweets", "بوست", "بوستات", "منشور", "منشورات", "post", "posts",
   "كومنت", "كومنتس", "تعليق", "تعليقات", "comment", "comments", "فيديو", "فيديوهات", "مقطع", "مقاطع", "video", "videos",
-  "تيك", "توك", "تيكتوك", "tiktok", "يوتيوب", "youtube", "فيسبوك", "facebook", "تويتر", "اكس", "twitter", "x",
+  "تيك", "توك", "تيكتوك", "tiktok", "يوتيوب", "youtube", "فيسبوك", "facebook", "تويتر", "اكس", "twitter",
   "ترند", "تريند", "ترندنج", "trending", "الرائجه", "رائجه", "القناه", "قناه", "حساب", "مصري", "المصري", "المصريه",
 ]);
 
 export function normalizeText(value: string): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[ً-ٰٟـ]/gu, "")
-    .replace(/[أإآٱ]/gu, "ا")
-    .replace(/ى/gu, "ي")
-    .replace(/ة/gu, "ه")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+  // marks and tatweel out, then the letter variants folded, by code point (src/lib/arabicUnits.ts); then everything that is not a letter or a digit is a space
+  const folded = mapCodePoints(removeCodePoints(String(value ?? "").toLowerCase().normalize("NFKD"), isMarkOrTatweel), FOLD_TOPIC);
+  return folded.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 /** Irregular plurals and common dialect spellings (already normalised), to the singular form; then stemmed like any word. */
@@ -37,10 +32,7 @@ const IRREGULAR: Record<string, string> = {
 };
 
 function lightStem(token: string): string {
-  let t = token.replace(/^(?:وال|بال|لل|ال)(?=.{3,})/u, "");
-  t = t.replace(/(?:ات|ون|ين)$/u, (m) => (t.length - m.length >= 3 ? "" : m));
-  t = t.replace(/(?:ه|ي)$/u, (m) => (t.length > 3 ? "" : m));
-  return t;
+  return stripTopicFinalHaYa(stripTopicPluralEnding(stripTopicArticle(token)));
 }
 
 /** Light stem: irregular plurals and dialect spellings first, then article / clitic prefixes and regular endings. */
@@ -48,7 +40,7 @@ export function stemToken(token: string): string {
   if (/^[a-z]+$/.test(token)) return token.replace(/(?:ies|s)$/u, "").replace(/ing$/u, "") || token;
   const direct = IRREGULAR[token];
   if (direct) return lightStem(direct);
-  const unprefixed = token.replace(/^(?:وال|بال|لل|ال)(?=.{3,})/u, "");
+  const unprefixed = stripTopicArticle(token);
   return lightStem(IRREGULAR[unprefixed] ?? unprefixed);
 }
 
@@ -127,7 +119,8 @@ export const FOOTBALL_TOPIC_RE = /كره (?:ال)?قدم|football|soccer|(?<![\p
 
 /** True when the request is about basketball (checked on the request's own words, not on a row). */
 export function isBasketballTopic(topic: string): boolean {
-  return /كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic) || BASKETBALL_TOPIC_RE.test(normalizeText(topic));
+  // the English names are also tested on the RAW words: a word boundary there is the customer's own spacing (a tatweel or a mark beside «NBA» is not a letter, but normalising would glue it to the next word)
+  return /basketball|\bnba\b|hoops/i.test(topic) || BASKETBALL_TOPIC_RE.test(normalizeText(topic));
 }
 
 export function countPattern(value: string, pattern: RegExp): number {

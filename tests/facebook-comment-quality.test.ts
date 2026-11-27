@@ -118,7 +118,7 @@ import { POST_REVIEW_BUDGET_NOTE_AR, maxPagesForJob } from "../src/lib/server/pr
 import { chargeForUnits, reserveForUnits, recordUnitPricePoints } from "../src/lib/recordPricing";
 import { FIXTURE_TOPIC, facebookKeywordWorld, fixtureComments, postNumberOf } from "./helpers/fakeFacebookKeyword";
 import { evaluateResearchRowRelevance } from "../src/lib/server/researchRelevanceGate";
-import { facebookCommentDropReason, isGenericComment, isPureWellWish } from "../src/lib/server/commentQuality";
+import { facebookCommentDropReason, isGenericComment } from "../src/lib/server/commentQuality";
 import { FACEBOOK_KEYWORD_SLUG, PAGED_FIRST_CHUNK_ROWS } from "../src/lib/facebookKeywordService";
 import { readDiagnosticFile, totalDiagnostic } from "../src/lib/server/zeroDeliveryDiagnostic";
 
@@ -225,38 +225,6 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
   const TOPIC = "الترندات الصحية";
   const ar = (n: number) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
   const diagnostic = async () => totalDiagnostic(await readDiagnosticFile({ download: async (path: string) => { const buf = db.partials.get(path); return buf ? { data: new Blob([new Uint8Array(buf)]) } : { data: null }; }, upload: async () => ({}) }, JOB));
-
-  it("THE 3rd LIVE RUN: the six pleasantries that were delivered and charged are now rejected, the five informative comments are kept", () => {
-    for (const text of LIVE_WISHES) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(true);
-    for (const text of LIVE_KEPT) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(false);
-    // the earlier fixtures still behave
-    for (const text of ["بالتوفيق والنجاح الدائم", "بالتوفيق والسداد والنجاح", "بالتوفيق معالي الوزير دكتور"]) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(true);
-    for (const text of ["علاج السكر غير موجود تأمين صحي طنطا عيادة علي", "ياريت لو امكن ذيادة تعاقد الاطباء والفنيين فوق السن يومية"]) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(false);
-  });
-
-  it("typos, a stretched word, tatweel, a glued formula, a repeated phrase and emoji do not hide a pleasantry", () => {
-    const wishes = [
-      "بالتوفيييييق يا دكتووور", "بـــالتــوفــيــق والنجــاح", "بالتوفيق 🌹🌹🌹 ان شاء الله 🙏", "🌹 بالتوفيق 🌹", "ربنا يوفقك ربنا يوفقك ربنا يوفقك",
-      "ماشاءالله ماشاءالله ماشاء الله ربنا يحفظك", "الحمدلله ربنا يبارك فيك يا دكتور", "جزاك الله خيرا", "شكرا يا دكتور وبالتوفيق دائما", "تحياتي لحضرتك وبالتوفيق ان شاء الله",
-      "ان شاءالله ربنا يوفقك وينصرك", "بالتوفيق يا دكتر 💐💐", "ربنا يوفقك يا دكتور ❤️❤️❤️", "انشالله بالتوفيق دايما", "بسم الله ماشاء الله تبارك الله",
-    ];
-    for (const text of wishes) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(true);
-  });
-
-  it("a polite word inside an informative comment keeps it: a question, a number, a request, a complaint, a duty, an opinion or a word of the topic", () => {
-    const informative = [
-      "بالتوفيق للمنظومة الصحية في تقليل الانتظار", "شكرا يا دكتور بس المستشفى محتاجة اجهزة", "ربنا يوفقكم بس لازم تحسنوا الخدمة", "الحمد لله تم الشفاء بعد ٣ جلسات علاج",
-      "جزاك الله خيرا هل الدواء متوفر؟", "بالتوفيق ان شاء الله وياريت تنظروا في المعاشات", "الوزير لازم يوضح موقفه", "تحيا مصر بس الاسعار نار", "بالتوفيق 😊 ممكن رقم التواصل؟",
-      "ربنا يحفظك يا دكتور لو سمحت رد علينا", "شكرا لكن الخدمة سيئة", "بالتوفيق ان شاء الله ومحتاجين تعيين ٥٠٠ طبيب",
-    ];
-    for (const text of informative) expect(isPureWellWish(text, { topic: TOPIC }), text).toBe(false);
-    // the topic's own word keeps a comment even when everything else is a wish
-    expect(isPureWellWish("بالتوفيق للصحة", { topic: TOPIC })).toBe(false);
-  });
-
-  it("nothing is decided on empty or connecting words alone", () => {
-    for (const text of ["", "   ", "🌹🌹🌹", "ان", "يا", "و في من", "..."]) expect(isPureWellWish(text, { topic: TOPIC }), JSON.stringify(text)).toBe(false);
-  });
 
   it("facebookCommentDropReason: only an empty text and a bare link are dropped", () => {
     for (const text of ["", "   ", "\n\t"]) expect(facebookCommentDropReason(text), JSON.stringify(text)).toBe("empty");

@@ -121,7 +121,6 @@ import ExcelJS from "exceljs";
 import { generateCsvReport, generateExcelReport } from "../src/functions/shared/fileGenerators";
 import { normalizeDataset } from "../src/lib/server/normalizationPipeline";
 import { evaluateResearchRowRelevance } from "../src/lib/server/researchRelevanceGate";
-import { WELL_WISH_REASON_AR, isPureWellWish } from "../src/lib/server/commentQuality";
 import { FACEBOOK_KEYWORD_SLUG, PAGED_FIRST_CHUNK_ROWS } from "../src/lib/facebookKeywordService";
 import { readDiagnosticFile, totalDiagnostic } from "../src/lib/server/zeroDeliveryDiagnostic";
 
@@ -271,14 +270,6 @@ describe("worker: the Facebook keyword mission", () => {
   // ---- item 4 (owner decision, final): the comments of an adopted post are delivered as they are, well-wishes included ----
   const REAL_WISHES = ["بالتوفيق والنجاح الدائم", "بالتوفيق والسداد والنجاح", "بالتوفيق معالي الوزير دكتور"];
   const REAL_KEPT = ["علاج السكر غير موجود تأمين صحي طنطا عيادة علي", "ياريت لو امكن ذيادة تعاقد الاطباء والفنيين فوق السن يومية"];
-
-  it("ITEM 4 (the rule, kept for other code): the three real well-wishes are recognised, the two real comments are kept, and a wish that says something is kept", () => {
-    for (const text of REAL_WISHES) expect(isPureWellWish(text), text).toBe(true);
-    for (const text of REAL_KEPT) expect(isPureWellWish(text), text).toBe(false);
-    expect(isPureWellWish("بالتوفيق للمنظومة الصحية في تقليل الانتظار")).toBe(false);
-    expect(isPureWellWish("الوزير لازم يوضح موقفه")).toBe(false);
-    expect(isPureWellWish("")).toBe(false);
-  });
 
   it("ITEM 4 (the gate): the keyword service keeps every comment of an adopted post (well-wishes included); only an empty comment or a bare link is left out; the other services are untouched", () => {
     const params = { query: "الترندات الصحية", region: "EG" };

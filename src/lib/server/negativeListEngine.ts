@@ -10,6 +10,8 @@
  *   CONFIRMED_DUPLICATE | POSSIBLE_DUPLICATE | DISTINCT | INSUFFICIENT_EVIDENCE
  */
 
+import { FOLD_EXCLUSION, isMarkOrTatweel, mapCodePoints, removeCodePoints, stripLeadingArticle } from "../arabicUnits";
+
 export type MatchCategory =
   | "CONFIRMED_DUPLICATE"
   | "POSSIBLE_DUPLICATE"
@@ -116,14 +118,8 @@ export const GENERIC_BUSINESS_WORDS: ReadonlySet<string> = new Set([
  */
 export function normalizeArabicText(text: string): string {
   if (!text) return "";
-  return text
-    .replace(/[\u064B-\u065F\u0670]/g, "") // remove tashkeel
-    .replace(/\u0640/g, "") // remove tatweel
-    .replace(/[إأآٱ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/[ىي]/g, "ي")
-    .replace(/ؤ/g, "و")
-    .replace(/ئ/g, "ي")
+  // tashkeel and tatweel removed, then alef forms, ta marbuta, alef maksura, waw/ya with hamza folded, by code point (src/lib/arabicUnits.ts)
+  return mapCodePoints(removeCodePoints(text, isMarkOrTatweel), FOLD_EXCLUSION)
     .replace(/[^\u0621-\u064A\w\s]/g, " ") // replace punctuation
     .replace(/\s+/g, " ")
     .trim()
@@ -162,7 +158,7 @@ export function stripBusinessSuffixes(name: string): string {
   const norm = normalizeArabicText(name);
   const words = norm.split(/\s+/);
   const filtered = words.filter((w) => {
-    const rawNoAl = w.replace(/^ال/, "");
+    const rawNoAl = stripLeadingArticle(w);
     return !GENERIC_BUSINESS_WORDS.has(w) && !GENERIC_BUSINESS_WORDS.has(rawNoAl) && w.length > 1;
   });
   return filtered.join(" ");
@@ -176,7 +172,7 @@ export function extractBrandTokens(name: string): string[] {
   const normalized = normalizeArabicText(name);
   const words = normalized.split(/\s+/);
   return words.filter((w) => {
-    const rawNoAl = w.replace(/^ال/, "");
+    const rawNoAl = stripLeadingArticle(w);
     return !GENERIC_BUSINESS_WORDS.has(w) && !GENERIC_BUSINESS_WORDS.has(rawNoAl) && w.length >= 2;
   });
 }
@@ -425,8 +421,8 @@ export function normalizeArabicCompanyName(name: string): string {
   const norm = normalizeArabicText(name);
   const words = norm.split(/\s+/);
   const filtered = words.filter((w) => {
-    const rawNoAl = w.replace(/^ال/, "");
-    return !LEGAL_FORMS.has(w) && !LEGAL_FORMS.has(rawNoAl) && !/^(ش|م|ذ|ع)$/.test(w);
+    const rawNoAl = stripLeadingArticle(w);
+    return !LEGAL_FORMS.has(w) && !LEGAL_FORMS.has(rawNoAl) && !(w.length === 1 && "\u0634\u0645\u0630\u0639".includes(w));
   });
   return filtered.join(" ");
 }

@@ -3461,14 +3461,6 @@
       "pattern": "/غير\\s+متاح|لا\\s+تتوفر|غير\\s+متوفر|لا\\s+يمكن\\s+(?:توفير|تنفيذ)|لا\\s+نستطيع/"
     },
     {
-      "file": "src/lib/modelPlanner/stageCall.ts",
-      "pattern": "/^[\\d٠-٩]+$/u"
-    },
-    {
-      "file": "src/lib/modelPlanner/stageCall.ts",
-      "pattern": "/^[لبوف]/u"
-    },
-    {
       "file": "src/lib/modelPlanner/validate.ts",
       "pattern": "/(?:^|[^\\u0600-\\u06FF])(?:واحد|واحدة|اتنين|اثنين|اثنان|تلات|ثلاث|ثلاثة|تلاتة|اربع|أربع|اربعة|أربعة|خمس|خمسة|ست|ستة|سبع|سبعة|تمان|ثمان|ثمانية|تمانية|تسع|تسعة|عشر|عشرة|عشرين|ثلاثين|تلاتين|اربعين|أربعين|خمسين|ستين|سبعين|ثمانين|تمانين|تسعين|مية|مائة|ميتين|مئتين|مائتين|ألف|الف|ألفين|الفين)(?![\\u0600-\\u06FF])/u"
     },
@@ -4094,10 +4086,6 @@
     },
     {
       "file": "src/lib/server/addressParser.ts",
-      "pattern": "/[,،]+/"
-    },
-    {
-      "file": "src/lib/server/addressParser.ts",
       "pattern": "/^(road|street|st|rd|ave|avenue|district|حي|شارع|طريق)\\s+/i"
     },
     {
@@ -4134,91 +4122,11 @@
     },
     {
       "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[ً-ٰٟـ]/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[؀-ۿ]/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[?؟]/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[0-9٠-٩۰-۹]/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[أإآ]/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/[أإآٱ]/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/^[وفبلك]/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
       "pattern": "/^و?اللهم$/u"
     },
     {
       "file": "src/lib/server/commentQuality.ts",
       "pattern": "/^و(?=\\p{L}{3,})/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/^يا/u"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ؤ/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ئ/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ابن\\s*(?:ال)?حلال|ولاد\\s*(?:ال)?حلال/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/الحمد\\s*لله|الحمدلله|الحمد\\s*الله/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ان\\s*شاء\\s*الله|انشاء\\s*الله|انشالله|انشاالله|ان\\s*شالله/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/بسم\\s*الله|بسمالله|بسم\\s*لله/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ة/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/تحيا\\s*مصر/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/جزاك\\s*الله|جزاكم\\s*الله|جزاكالله/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ما\\s*شاء\\s*الله|ماشاء\\s*الله|ماشالله|ماشاالله|ما\\s*شالله/gu"
-    },
-    {
-      "file": "src/lib/server/commentQuality.ts",
-      "pattern": "/ى/gu"
     },
     {
       "file": "src/lib/server/exclusionFileParser.ts",
@@ -4283,34 +4191,6 @@
     {
       "file": "src/lib/server/multiProvider/planUpgrade.ts",
       "pattern": "/صفحات?\\s+(?:ال)?فريق|صفحة\\s+(?:ال)?إدارة|مواقع\\s+(?:ال)?شركات|المنشور(?:ة|ين)?\\s+(?:على|في)\\s+(?:مواقع|المواقع)|team\\s+pages?|public\\s+team/i"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/[إأآٱ]/g"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/[ىي]/g"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/^(ش|م|ذ|ع)$/"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/^ال/"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/ؤ/g"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/ئ/g"
-    },
-    {
-      "file": "src/lib/server/negativeListEngine.ts",
-      "pattern": "/ة/g"
     },
     {
       "file": "src/lib/server/providerLimits.ts",
@@ -4427,26 +4307,6 @@
     {
       "file": "src/lib/server/relativeDate.ts",
       "pattern": "/يومين|يومان/u"
-    },
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "/^(?:وال|بال|كال|فال|لل|ال)/"
-    },
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "/^[مت]/"
-    },
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "/^[وبلف]/"
-    },
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "/^و.{3,}/"
-    },
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "/^وال?$/"
     },
     {
       "file": "src/lib/server/relevanceValidationLayer.ts",
@@ -4610,14 +4470,6 @@
     },
     {
       "file": "src/lib/server/socialRows.ts",
-      "pattern": "/[^a-z0-9؀-ۿ]/g"
-    },
-    {
-      "file": "src/lib/server/socialRows.ts",
-      "pattern": "/^[\\w.\\-؀-ۿ]{2,60}$/u"
-    },
-    {
-      "file": "src/lib/server/socialRows.ts",
       "pattern": "/comment|comments|تعليق/u"
     },
     {
@@ -4630,43 +4482,11 @@
     },
     {
       "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/(?:ات|ون|ين)$/u"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/(?:ه|ي)$/u"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/[ً-ٰٟـ]/gu"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/[أإآٱ]/gu"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/^(?:وال|بال|لل|ال)(?=.{3,})/u"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/ة/gu"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\\bnba\\b|hoops/i"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
       "pattern": "/كره (?:ال)?سله|كوره (?:ال)?سله|basketball|\\bnba\\b|hoops|باسكت|(?:دوري|لاعب\\w*|مباراه|مباريات|منتخب|اتحاد|نادي|فريق|بطوله)\\s+(?:ال)?سله/u"
     },
     {
       "file": "src/lib/server/topicMatch.ts",
       "pattern": "/كره (?:ال)?قدم|football|soccer|(?<![\\p{L}\\p{N}])القدم(?![\\p{L}\\p{N}])/u"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
-      "pattern": "/ى/gu"
     },
     {
       "file": "src/lib/servicesCatalogText.ts",
@@ -5868,10 +5688,6 @@
     },
     {
       "file": "src/lib/server/topicMatch.ts",
-      "token": "x"
-    },
-    {
-      "file": "src/lib/server/topicMatch.ts",
       "token": "youtube"
     },
     {
@@ -6141,10 +5957,6 @@
   ],
   "srv_paths": [],
   "fallback_lists": [
-    {
-      "file": "src/lib/server/relevanceEvidence.ts",
-      "pattern": "ات,ون,ين,ان,يه,ها,ه,ي"
-    },
     {
       "file": "src/lib/server/researchRelevanceGate.ts",
       "pattern": "channel,channels,url,handle,account,trending,ref"

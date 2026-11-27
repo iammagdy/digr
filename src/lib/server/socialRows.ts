@@ -8,6 +8,7 @@
 
 import { relativeRowDate } from "./relativeDate";
 import { toBool, toEpochMs } from "../coerce";
+import { isSocialHandle, squashKey } from "../arabicUnits";
 
 export type SocialRowKind = "comments" | "videos" | "posts";
 
@@ -22,7 +23,7 @@ export function inferSocialRowKind(...identifiers: Array<string | null | undefin
 
 /** Lower-cased key without separators, so `Digg_Count`, `diggCount` and `digg count` are the same key. */
 function squash(key: string): string {
-  return key.toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, "");
+  return squashKey(key.toLowerCase());
 }
 
 function pick(row: Record<string, any>, aliases: string[]): unknown {
@@ -104,7 +105,7 @@ const handle = (value: unknown): string | undefined => {
   const s = text(value);
   if (!s) return undefined;
   const h = s.replace(/^@/, "");
-  return /^[\w.\-؀-ۿ]{2,60}$/u.test(h) ? `@${h}` : undefined;
+  return isSocialHandle(h) ? `@${h}` : undefined;
 };
 
 /** «True» / «False» / 1 / 0 / real booleans (see `toBool`). */
