@@ -168,8 +168,8 @@ describe("shape-delivery-chat (P7 / T7)", () => {
 
     expect(res.outputType).toBe("answer_question");
     expect(res.fileShape).toBeDefined();
-    expect(res.fileShape.jobId).toBe(jobId);
-    expect(res.fileShape.spec).toMatchObject({
+    expect(res.fileShape!.jobId).toBe(jobId);
+    expect(res.fileShape!.spec).toMatchObject({
       sortBy: [{ column: "col_1", direction: "asc" }],
     });
     expect(res.contentAr).toContain("تحميل الملف المخصص");
@@ -271,7 +271,7 @@ describe("shape-delivery-chat (P7 / T7)", () => {
 
     expect(shapeModel).toHaveBeenCalledTimes(1);
     expect(res.outputType).toBe("answer_question");
-    expect(res.fileShape.spec).toMatchObject({
+    expect(res.fileShape!.spec).toMatchObject({
       sortBy: [{ column: "col_1", direction: "asc" }],
     });
     expect(res.contentAr).toContain("تحميل الملف المخصص");
@@ -502,7 +502,7 @@ describe("shape-delivery-chat (P7 / T7)", () => {
 
     expect(res.outputType).toBe("answer_question");
     expect(res.fileShape).toBeDefined();
-    expect(res.fileShape.jobId).toBe(deliveredJobId);
+    expect(res.fileShape!.jobId).toBe(deliveredJobId);
   });
 
   it("C7: conversation whose assistant card has no plan.agentMissionId behaves like C1", async () => {

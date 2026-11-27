@@ -87,7 +87,7 @@ describe("deliveredTable (P3 / T3)", () => {
     // 2. Split (groupBy City col_3)
     const splitSpec = {
       columns: ["col_1", "col_2", "col_3"],
-      groupBy: { column: "col_3" },
+      groupBy: { column: "col_3", mode: "sheets" as const },
     };
     const xlsxBuf = await deliveredShapedXlsx(res, splitSpec);
     const splitWb = new ExcelJS.Workbook();
