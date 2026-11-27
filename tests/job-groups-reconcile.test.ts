@@ -67,10 +67,6 @@ vi.mock("../src/lib/server/jobStallNotifier", () => ({
   notifyStalledJobs: vi.fn(async () => 0),
 }));
 
-vi.mock("../src/lib/modelPlanner/planningSession", () => ({
-  resumeStalePlanningSessions: vi.fn(async () => ({ considered: 0, stepped: 0, finished: 0 })),
-}));
-
 vi.mock("../src/lib/server/jobNotices", () => ({
   insertJobNotice: vi.fn(async () => ({ ok: true })),
   jobStalledNotice: vi.fn(() => "notice"),
@@ -1845,7 +1841,7 @@ describe("T11: drive route", () => {
     const { groups, ...rest } = body;
     expect(res.status).toBe(200);
     expect(groups).toEqual({ installed: false, claims: 0, frozen: 0, released: 0, drawn: 0, closed: 0 });
-    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "planning", "results", "started", "stalledNotices", "success"].sort());
+    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "results", "started", "stalledNotices", "success"].sort());
   });
 
   it("(q2) an unknown error shape: the handler never throws and the JSON equals today's plus `groups` (null or a zero result)", async () => {
@@ -1856,7 +1852,7 @@ describe("T11: drive route", () => {
     const res = await GET(driveRequest());
     const { groups, ...rest } = await res.json();
     expect(res.status).toBe(200);
-    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "planning", "results", "started", "stalledNotices", "success"].sort());
+    expect(Object.keys(rest).sort()).toEqual(["considered", "dispatched", "mode", "results", "started", "stalledNotices", "success"].sort());
     expect(groups === null || groups.claims === 0).toBe(true);
     expect(w.errors.length).toBeLessThanOrEqual(1);
   });
@@ -1977,7 +1973,6 @@ describe("T14: the cron answers keep every legacy field when the reconcile fails
       dispatched: 1,
       started: 1,
       stalledNotices: { considered: 2, notified: 1 },
-      planning: { considered: 0, stepped: 0, finished: 0 },
       results: [{ jobId: "job_due_1", started: true }],
     },
     watchdog: {
