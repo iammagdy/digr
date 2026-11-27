@@ -230,3 +230,88 @@ describe("the root of the K4 replay: a message and its answer are written in the
     expect(prompts[0].indexOf(`العميل: «${OPEN_REQUEST}»`)).toBeLessThan(prompts[0].indexOf("المساعد: «بدأ الوكيل"));
   });
 });
+
+describe("K4b (P0, G2 round 2): the prose recovery takes ONLY a non-data isolated reading, with or without a card", () => {
+  /** A model that answers the Nth call ABOUT THE MESSAGE UNDER TEST with the Nth scripted answer (the last one repeats): the order of the calls of one turn is reading, format retry, isolated reading. Any other message (the earlier exchange) is a service answer. */
+  function sequence(answers: Answer[], target: string = QUESTIONS[2]!) {
+    const calls: Array<{ message: string; open: boolean }> = [];
+    let n = 0;
+    const call = async (input: ChatModelInput) => {
+      const message = lastUser(input);
+      calls.push({ message, open: /OPEN_REQUEST: (?!none)/.test(input.system) });
+      const a: Answer = message === target ? answers[Math.min(n++, answers.length - 1)]! : SERVICE;
+      if (a === "fail") return { ok: false as const, failure: "http_529" };
+      if (a === "prose") return { ok: true as const, text: "أنا مساعد ديجر وأجمع لك بيانات البحث وأسلمها في ملف إكسل.", usage: { inputTokens: 900, outputTokens: 40 } };
+      return { ok: true as const, text: JSON.stringify(a), usage: { inputTokens: 900, outputTokens: 80 } };
+    };
+    return { call, calls };
+  }
+  const HIST = [{ role: "user" as const, content: "مرحبا" }, { role: "assistant" as const, content: "أهلًا بك" }];
+  const noCard = async (answers: Answer[]) => {
+    const model = sequence(answers);
+    const decision = await decideTurn({ message: QUESTIONS[2], balancePoints: 100, open: null, history: HIST }, model.call as any);
+    return { decision, calls: model.calls };
+  };
+  /** The handler path: one earlier exchange (so the conversation has a history, no card), then the question; the model answers prose twice, then reads the message alone as `isolated`. */
+  async function handlerNoCard(isolated: Answer) {
+    const answers: Answer[] = ["prose", "prose", isolated];
+    const model = sequence(answers);
+    const w = world(model as any);
+    await w.ask(QUESTIONS[0]!);
+    const r = await w.ask(QUESTIONS[2]!);
+    return { w, r, model };
+  }
+
+  it("(1) no card, earlier history, prose twice, isolated reading = data_request → NOT taken: the keyword fallback decides, 0 missions, nothing started (fail-first on 6cf042f2)", async () => {
+    const { decision, calls } = await noCard(["prose", "prose", DATA]);
+    expect(calls).toHaveLength(3);
+    expect(decision.source).toBe("keyword");
+  });
+
+  it("(1a) the same through the real handler: 0 missions queued, the answer is not a mission, nothing started (fail-first on 6cf042f2: one queued mission)", async () => {
+    const { w, r } = await handlerNoCard(DATA);
+    expect(w.db.rows("missions")).toHaveLength(0);
+    expect(r.outputType).not.toBe("agent_mission");
+    nothingStarted(w);
+  });
+
+  it("(1b) the isolated reading that cannot be made (null) → the keyword fallback, as before", async () => {
+    const { decision } = await noCard(["prose", "prose", "fail"]);
+    expect(decision.source).toBe("keyword");
+  });
+
+  it("(2) no card, earlier history, prose twice, isolated reading = service_question → answered as a question (unchanged)", async () => {
+    const { decision, calls } = await noCard(["prose", "prose", SERVICE]);
+    expect(calls).toHaveLength(3);
+    expect(decision).toMatchObject({ type: "service_question", source: "model", reply: SERVICE_REPLY });
+    const { w, r } = await handlerNoCard(SERVICE);
+    expect(r.outputType).toBe("answer_question");
+    expect(w.db.rows("missions")).toHaveLength(0);
+    nothingStarted(w);
+  });
+
+  it("(3) an open plan_ready card, prose twice, isolated reading = data_request → the card is kept with the fixed answer (unchanged)", async () => {
+    const model = scriptedModel({ open: () => "prose", alone: () => DATA });
+    const w = world(model);
+    const card = await w.openCard();
+    const before = card.snapshot();
+    const r = await w.ask(QUESTIONS[2]);
+    expect(r.contentAr).toBe(OPEN_KEPT_AR);
+    expect(card.snapshot()).toBe(before);
+    expect(w.db.rows("missions")).toHaveLength(1);
+    nothingStarted(w);
+  });
+
+  it("(4) a clear new request in proper JSON with NO card (history present) → one mission queued, one model call, as before", async () => {
+    const target = "هات ١٠ تعليقات من تيك توك عن السياحة";
+    const model = sequence([DATA], target);
+    const w = world(model as any);
+    await w.ask(QUESTIONS[0]!);
+    const before = model.calls.length;
+    const r = await w.ask(target);
+    expect(model.calls.length - before).toBe(1);
+    expect(r.outputType).toBe("agent_mission");
+    expect(w.db.rows("missions")).toHaveLength(1);
+    nothingStarted(w);
+  });
+});

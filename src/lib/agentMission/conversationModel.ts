@@ -446,10 +446,10 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   } catch { failure = "exception"; /* the keyword rules answer */ }
   if (!answer) {
     // the model answered twice in prose (the earlier messages of a conversation are prose, and it imitates them): the SAME message is read once more with nothing before it, which is the case it answers in the format.
-    // With a card open only a non-request reading is taken (a request or an unreadable answer keeps the card and says so, as before): this never opens or replaces anything.
+    // Only a non-request reading is taken, with a card open or not (K4b, G2 round 2): a request reading (or none) is the keyword rules, with a card open the card is kept and says so, as before. This never opens or replaces anything.
     if (failure === "unreadable" && ctx.brief?.enabled !== true && (ctx.open !== null || (ctx.history?.length ?? 0) > 0)) {
       const alone = await readMessageAlone(ctx, model);
-      if (alone !== null && (ctx.open === null || alone.type !== "data_request")) return alone;
+      if (alone !== null && alone.type !== "data_request") return alone;
     }
     return keywordDecision(ctx, failure);
   }
