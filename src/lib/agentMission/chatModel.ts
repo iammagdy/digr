@@ -14,6 +14,8 @@ export const CHAT_MODEL_MAX_TOKENS = 800;
 export const CHAT_MODEL_BRIEF_MAX_TOKENS = 900;
 export const CHAT_MODEL_TIMEOUT_MS = 12_000;
 const DEFAULT_MODEL = "claude-haiku-5-5";
+/** The model name a chat-model call uses (the same expression the call reads), for a caller that records which model answered. */
+export const chatModelName = (): string => (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || DEFAULT_MODEL).trim();
 
 export interface ChatModelInput {
   system: string;
@@ -48,7 +50,7 @@ export async function callClaudeChatWith(input: ChatModelInput, deps: ChatModelD
   try {
     const key = await (deps.resolveKey ?? (async () => (await resolveProviderKey("anthropic")).key))();
     if (!key) return fail("no_key");
-    const model = (deps.model ?? (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || DEFAULT_MODEL)).trim();
+    const model = (deps.model ?? chatModelName()).trim();
     const send = (withThinkingOff: boolean) => (deps.fetchImpl ?? fetch)("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },

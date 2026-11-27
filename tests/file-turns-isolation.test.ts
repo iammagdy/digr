@@ -4,6 +4,7 @@ import { getJobIdForQuote } from "../src/lib/md5";
 import { latestDeliveredJob } from "../src/lib/server/conversationJobs";
 import { loadLatestResultColumns } from "../src/lib/server/savedResultColumns";
 import { fileEditAnswerAr, unsupportedFileEdit } from "../src/lib/fileSpec";
+import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { createStatefulSupabase } from "./helpers/statefulSupabase";
 
 /**
@@ -182,8 +183,13 @@ describe("edits the file does not offer are answered by code with one plain sent
 describe("a turn about the file never reaches a priced flow, whatever the model would say", () => {
   it("a compound request the model would turn into a country question or a plan is answered plainly", async () => {
     const { store, model, send } = session();
-    const reply = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة وفلتر على القاهرة");
-    expect(model).toHaveBeenCalledTimes(1);
+    // UL2a-2: the shaping model (not the planning model) reads a request the code cannot; whatever it answers, no plan, no question about a country
+    const shapeModel = vi.fn(async () => ({ ok: true as const, text: '{"kind":"cant"}' }));
+    setChatModelForTesting(shapeModel);
+    let reply: any;
+    try { reply = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة وفلتر على القاهرة"); } finally { setChatModelForTesting(null); }
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(model).not.toHaveBeenCalled();
     expect(reply.outputType).toBe("answer_question");
     expect(reply.planQuote).toBeUndefined();
     expect(hasCountryQuestion(reply)).toBe(false);

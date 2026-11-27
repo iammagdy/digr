@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { SHAPE_QUESTION_IDS, resolveGroupColumn, resolveShapeAnswer, shapeAnswerFromMessage, type DatasetColumn } from "../src/lib/fileSpec";
 import { normalizeDataset } from "../src/lib/server/normalizationPipeline";
+import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { createChatDb } from "./helpers/chatSession";
 
 /** The columns a delivered company file really has, built the way loadLatestResultColumns builds them. */
@@ -111,8 +112,13 @@ describe("the answer turn never yields a quote, even when the model would return
 
   it("when the model would answer a shaping turn with a plan (a compound request), it is turned into a plain answer", async () => {
     const { db, model, send } = await session();
-    const res: any = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة وفلتر على القاهرة");
-    expect(model).toHaveBeenCalledTimes(1);
+    // UL2a-2: the shaping model (not the planning model) reads a request the code cannot; whatever it answers, no plan
+    const shapeModel = vi.fn(async () => ({ ok: true as const, text: '{"kind":"cant"}' }));
+    setChatModelForTesting(shapeModel);
+    let res: any;
+    try { res = await send("قسّم الملف حسب المدينة ورتبه حسب اسم الشركة وفلتر على القاهرة"); } finally { setChatModelForTesting(null); }
+    expect(shapeModel).toHaveBeenCalledTimes(1);
+    expect(model).not.toHaveBeenCalled();
     expect(res.outputType).toBe("answer_question");
     expect(res.planQuote).toBeUndefined();
     expect(res.contentAr).toContain("لن يُخصم عليه أي رصيد");
