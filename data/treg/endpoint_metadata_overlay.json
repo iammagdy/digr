@@ -9681,141 +9681,141 @@
   },
   "treg.google.serp.local": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "litescrape.google.serp.local": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "serper.google.serp.places": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "dataforseo.x.serp-google-local-finder-live-advanced": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "serpapi.x.google-local": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "treg.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "anyapi.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "anyapi.google.serp.maps.place": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "apify.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "crawl4ai.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "litescrape.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "serper.google.serp.maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "dataforseo.x.serp-google-maps-live-advanced": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
   "serpapi.x.google-maps": {
     "item_noun_ar": {
-      "singular": "مقال",
-      "dual": "مقالان",
-      "dual_gen": "مقالين",
-      "plural": "مقالات",
-      "tamyiz": "مقالًا",
+      "singular": "مكان",
+      "dual": "مكانان",
+      "dual_gen": "مكانين",
+      "plural": "أماكن",
+      "tamyiz": "مكانًا",
       "feminine": false
     }
   },
