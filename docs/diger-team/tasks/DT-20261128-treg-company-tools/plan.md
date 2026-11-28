@@ -47,7 +47,7 @@
 
 ## 6. PR-2 funded execution and planning
 
-- Plan v1.2 G2.1–G2.7 and G3.1–G3.6, including D-0267 G2.5a. The approved PR-1 head is `3c1f8bf233d3e978d6ab7f78124ecdfe758a9519`. The branch also incorporates main through `5a73861b`.
+- Plan v1.2 G2.1–G2.7 and G3.1–G3.6, including D-0267 G2.5a. The approved PR-1 head is `5f03ad4ce2057beeeb542e742927153d06a5fd97`. The branch also incorporates main through `5a73861b`.
 - A tagged paid request needs a funded preflight and a strict persisted reservation before dispatch. The transport permit is single-use. Unprovable journal exposure leaves zero paid capacity for funded, legacy, and web routes in that phase. A proven-empty journal preserves ordinary routing.
 - Company search estimates use validated free helpers. Funded delivery uses the trusted adapter contract and canonical domain identity. Fixtures cover delivered-only settlement and full release when nothing is delivered.
 - The manifest remains empty. The company phone endpoint is disabled. Activation requires a separate CTO GO.
