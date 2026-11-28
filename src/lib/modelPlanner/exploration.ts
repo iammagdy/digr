@@ -1,5 +1,5 @@
 import { executeTregCall, maxTregAttempts, type TregCallOptions, type TregCallResult } from "../../functions/shared/tregClient";
-import { blockedEndpointReason } from "../treg/blockList";
+import { blockedEndpointReason, getValidatedAdditions } from "../treg/blockList";
 import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg/catalog";
 import { categoryOf, policyVerdict, type AccountAccess } from "../treg/dataPolicy";
 import { callMoney, createJobCallBudget, floorMicroUsd, type CallMoney } from "../server/callBudget";
@@ -210,6 +210,9 @@ export async function runSampleCall(input: { id: string; params: PlanParam[]; li
   const endpoint = catalog.byId.get(id);
   const none = { attempts: [] as ExplorationAttempt[], costUsd: 0 };
   if (!endpoint) return { ok: false, kind: "refused", message: `«${id}» is not an endpoint of the catalog`, ...none };
+  if (getValidatedAdditions().byId.get(id)) {
+    return { ok: false, kind: "refused", message: "this endpoint requires funded worker planning", ...none };
+  }
   const verdict = policyVerdict(id, ctx.access);
   const category = categoryOf(id);
   if (!verdict.allowed || blockedEndpointReason(id, endpoint.scope) || category === "sensitive" || category === "blocked") {

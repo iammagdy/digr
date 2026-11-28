@@ -1,3 +1,4 @@
+import { getValidatedAdditions } from "../treg/blockList";
 import { sampleCellText } from "./sampleLinks";
 import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
@@ -73,6 +74,8 @@ export interface EngineSpec {
   /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
   parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string; /** The field is read from the PARENT'S parent (the replies of a comment take the video's id and link). */ grand?: true }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
+  /** Worker-owned marker. Execution also requires matching mission-private proof. */
+  funded_recipe_version?: 1;
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
   window?: DateWindow;
@@ -617,6 +620,15 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     if (how && how.issues.length) issues.push(`${label} how_ar: ${how.issues.join("; ")}`);
 
     const endpointId = String(raw.endpoint_id ?? "");
+    const additions = getValidatedAdditions().byId;
+    if (additions.has(endpointId)) issues.push(`${label}: the endpoint requires a server-funded recipe`);
+    if (isRecord(raw.engine)) {
+      const alternatives = Array.isArray(raw.engine.alternatives) ? raw.engine.alternatives : [];
+      if ([raw.engine, ...alternatives].some((recipe) => isRecord(recipe) && additions.has(String(recipe.endpoint_id ?? "")))) {
+        issues.push(`${label}: the recipe contains an internal or funded endpoint`);
+      }
+    }
+
     if (!lookup.endpointAllowed(endpointId)) issues.push(`${label}: the endpoint is not available for this account`);
 
     const expected = Number(raw.expected_rows);
@@ -697,6 +709,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     const sourceFields: SourceField[] = [];
     for (const id of measuredBy) {
       const call = lookup.call(id);
+      if (call && additions.has(call.endpointId)) {
+        issues.push(`${label}: funded calls and internal helpers cannot measure this plan`);
+        continue;
+      }
       const text = lookup.evidenceText(id);
       if (text) evidence += `\n${text}`;
       if (text && id.startsWith("call_")) for (const f of usefulFieldsOfPage(text)) if (!sourceFields.some((x) => x.cls === f.cls)) sourceFields.push(f);

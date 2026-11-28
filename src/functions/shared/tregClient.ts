@@ -1,6 +1,6 @@
 import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
 import { POOL_MAX_HOPS, getTregKeyPool, type KeyChoice } from "../../lib/server/tregKeyPool";
-import { blockedEndpointReason } from "../../lib/treg/blockList";
+import { blockedEndpointReason, getValidatedAdditions } from "../../lib/treg/blockList";
 import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, callMoney, type JobCallBudget } from "../../lib/server/callBudget";
 import { classifyTregCharge } from "../../lib/server/tregCharge";
@@ -55,6 +55,72 @@ export interface TregCallOptions {
   skipControlProbe?: boolean;
   /** Circuit breaker instance to record to or query. */
   circuitBreaker?: EndpointCircuitBreaker;
+}
+
+interface FundedTransportBinding {
+  missionId: string;
+  phase: "planning" | "execution";
+  maxMicros: number;
+}
+
+interface FundedTransportAuthorization {
+  binding: FundedTransportBinding;
+  request: string;
+  consumed: boolean;
+}
+
+// Authority is associated with the exact options object. It cannot be serialized or copied into new options.
+const fundedAuthorizations = new WeakMap<TregCallOptions, FundedTransportAuthorization>();
+
+function fundedWireRequest(options: TregCallOptions): string {
+  return JSON.stringify([
+    options.endpointId, options.method, options.userId, options.jobId, options.idempotencyKey,
+    options.routeMaxCostUsd, serializeProviderParams(options.params ?? {}, options.allowedParamKeys),
+  ]);
+}
+
+/** Internal worker adapter. Call only after winning the mission's durable funded claim. */
+export function bindFundedTregTransport(options: TregCallOptions, binding: FundedTransportBinding): TregCallOptions {
+  const wire: TregCallOptions = {
+    ...options,
+    params: structuredClone(options.params ?? {}),
+    allowedParamKeys: options.allowedParamKeys?.slice(),
+    routeMaxCostUsd: binding.maxMicros / 1_000_000,
+    singleAttempt: true,
+    skipControlProbe: true,
+    rawCapture: undefined,
+  };
+  fundedAuthorizations.set(wire, { binding: { ...binding }, request: fundedWireRequest(wire), consumed: false });
+  return wire;
+}
+
+function fundedWireRole(endpointId: string): unknown {
+  const additions = getValidatedAdditions();
+  if (!additions.byId.size && !additions.deniedIds.size) return undefined;
+  // Match the endpoint the HTTP request would actually reach, including normalized URL paths.
+  try {
+    const path = new URL(`/call/${endpointId}`, "https://provider.invalid").pathname;
+    const id = decodeURIComponent(path).replace(/^\/call\//, "").replace(/\/+$/, "");
+    return additions.deniedIds.has(id) ? "invalid" : additions.byId.get(id)?.contract.role;
+  } catch {
+    return undefined;
+  }
+}
+
+function fundedAuthorizationOf(options: TregCallOptions, role: unknown): FundedTransportAuthorization | undefined {
+  const authorization = fundedAuthorizations.get(options);
+  if (role !== "delivery" && role !== "count" && role !== "schema") return;
+  if (!authorization || authorization.consumed || options.isControlProbe || options.callBudget || options.headerFromBudget) return;
+  const { binding } = authorization;
+  const micros = binding.maxMicros;
+  const jobMatchesPhase = binding.phase === "planning"
+    ? options.jobId === `agent_${binding.missionId}`
+    : binding.phase === "execution" && options.jobId !== `agent_${binding.missionId}`;
+  if (!binding.missionId || !jobMatchesPhase || !options.jobId || !options.userId
+    || !Number.isSafeInteger(micros) || (role === "delivery" ? micros <= 0 : micros !== 0)
+    || options.endpointId !== options.endpointId.trim()
+    || !options.idempotencyKey || !options.method || authorization.request !== fundedWireRequest(options)) return;
+  return authorization;
 }
 
 export interface TregCallResult {
@@ -263,6 +329,10 @@ export function resetStepAttempts(): void {
  * A refused call costs nothing and carries `blocked` / `budgetStopped` so the caller can end the collection and settle on what it has.
  */
 export async function executeTregCall(options: TregCallOptions): Promise<TregCallResult> {
+  const role = fundedWireRole(options.endpointId);
+  if ((role || fundedAuthorizations.has(options)) && !fundedAuthorizationOf(options, role)) {
+    return fundedTransportRefusal();
+  }
   const blocked = blockedEndpointReason(options.endpointId, options.endpointScope);
   if (blocked) {
     console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: blocked }));
@@ -271,6 +341,11 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   if (categoryOf(options.endpointId) === "sensitive" && options.sensitiveAccess?.allowed !== true) {
     console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: "sensitive_not_allowed" }));
     return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked: "sensitive_not_allowed" });
+  }
+
+  if (role) {
+    // The gateway reserved and recorded the exact amount. No pool selection, fallback or control probe.
+    return executeTregCallUnguarded(options);
   }
 
   const budget = options.callBudget;
@@ -447,7 +522,18 @@ export function parseRetryAfter(header: string | null): number | null {
   return null;
 }
 
+function fundedTransportRefusal(): TregCallResult {
+  return refusedCall({ error: "funded_transport_required", httpStatus: 403, blocked: "funded_transport_required" });
+}
+
 async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregCallResult> {
+  const role = fundedWireRole(options.endpointId);
+  if (role || fundedAuthorizations.has(options)) {
+    if (!role) return fundedTransportRefusal();
+    const authorization = fundedAuthorizationOf(options, role);
+    if (!authorization || blockedEndpointReason(options.endpointId, options.endpointScope)) return fundedTransportRefusal();
+    authorization.consumed = true;
+  }
   const baseUrl = (
     options.baseUrl ||
     process.env.TREG_BASE_URL ||
@@ -576,6 +662,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
         method,
         headers,
         body: requestBody,
+        ...(role ? { redirect: "error" as const } : {}),
         signal:
           options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
             ? AbortSignal.timeout(options.timeoutMs)
@@ -583,7 +670,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       });
 
       // HTTP 429 with Retry-After (delay and retry once if <= 10 seconds)
-      if (response.status === 429 && !retried429) {
+      if (!role && response.status === 429 && !retried429) {
         const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
         if (retryAfter !== null && retryAfter <= 10) {
           if (stepKey && options.callBudget) {
@@ -625,7 +712,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   }
 
   if (!response) {
-    const errorMsg = sanitizeTregDetail(lastNetErr?.message || "Failed to reach data provider", token);
+    const errorMsg = role ? "provider_call_failed" : sanitizeTregDetail(lastNetErr?.message || "Failed to reach data provider", token);
     return {
       ok: false,
       httpStatus: 503,
@@ -676,7 +763,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     rawText = "";
   }
 
-  if (options.rawCapture) {
+  if (!role && options.rawCapture) {
     try { await options.rawCapture({ endpointId: options.endpointId, httpStatus: response.status, page, body: responseBody ?? rawText }); } catch { /* a capture never changes a call */ }
   }
 
@@ -708,15 +795,15 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   const effectiveStatus = isBusinessError
     ? (typeof responseBody.code === "number" ? responseBody.code : typeof responseBody.status_code === "number" ? responseBody.status_code : 400)
     : response.status;
-  const rawBusinessError = isBusinessError ? (responseBody.error || responseBody.message || "provider_business_error") : undefined;
+  const rawBusinessError = isBusinessError && !role ? (responseBody.error || responseBody.message || "provider_business_error") : undefined;
 
-  const bodyError = responseBody?.error;
+  const bodyError = role ? undefined : responseBody?.error;
   // DT-20261119-09 (F2): TREG's price-cap refusal is read wherever its fields sit (top level, inside a `detail` object or a JSON `detail` string): live 2026-11-19 six of them were read as «platform balance low» and traced «endpoint_payment_refused»
   const isRouteMaxCost = response.status === 402 && isRouteMaxCostBody(responseBody);
   const isPlatformBalanceLow = response.status === 402 && !isRouteMaxCost;
 
   let rawDetail = "";
-  if (!effectiveOk) {
+  if (!effectiveOk && !role) {
     if (responseBody && typeof responseBody === "object") {
       if (typeof responseBody.detail === "string" && responseBody.detail.trim()) {
         rawDetail = responseBody.detail;
@@ -738,7 +825,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     }
   }
 
-  const sanitizedDetail = !effectiveOk ? sanitizeTregDetail(rawDetail, token) : undefined;
+  const sanitizedDetail = !effectiveOk ? (role ? "provider_call_failed" : sanitizeTregDetail(rawDetail, token)) : undefined;
 
   if (!effectiveOk && effectiveStatus >= 400 && effectiveStatus < 500) {
     console.warn(JSON.stringify({
@@ -757,7 +844,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     tregCallId,
     costMicro,
     latencyMs,
-    data: responseBody,
+    data: role && !effectiveOk ? null : responseBody,
     error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : rawBusinessError || bodyError || (effectiveOk ? undefined : `http_${effectiveStatus}`),
     errorDetails: sanitizedDetail,
     detail: sanitizedDetail,
