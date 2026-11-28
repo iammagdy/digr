@@ -3,6 +3,8 @@ import { normalizeDataset } from "./normalizationPipeline";
 import { inferSocialRowKind } from "./socialRows";
 import { isInternalColumnKey, resolveColumn, type DatasetColumn } from "../fileSpec";
 import { groupPartDataset } from "./multiProvider/groupPartDataset";
+import { readDeliveredWorkbook } from "../agentMission/deliveredWorkbook";
+import { deliveredColumnsOf } from "../agentMission/deliveredTable";
 
 /**
  * The columns of the customer's latest delivered result, read from the saved data (never from the provider).
@@ -31,6 +33,17 @@ export async function readJobDatasetText(admin: any, job: { id: string; user_id:
   return "";
 }
 
+async function deliveredColumnsFor(admin: any, job: any): Promise<DatasetColumn[]> {
+  try {
+    const wb = await readDeliveredWorkbook(admin, { job });
+    if (!wb.ok) return [];
+    const cols = await deliveredColumnsOf(wb.bytes);
+    return cols.slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
 export async function loadLatestResultColumns(
   admin: any,
   scope: { conversationId: string; userId: string },
@@ -41,7 +54,10 @@ export async function loadLatestResultColumns(
     const job = await latestDeliveredJob(admin, scope);
     if (!job?.id) return none;
     const text = await readJobDatasetText(admin, job);
-    if (!text) return { jobId: job.id, columns: [] };
+    if (!text) {
+      const columns = job.endpoint_id === "agent-mission" ? await deliveredColumnsFor(admin, job) : [];
+      return { jobId: job.id, columns };
+    }
     const parsed = JSON.parse(text);
     parsed.metadata = parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {};
     const normalized = normalizeDataset(parsed, {
