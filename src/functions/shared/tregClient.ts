@@ -838,13 +838,15 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     }));
   }
 
+  if (role && !effectiveOk) responseBody = null;
+
   return {
     ok: effectiveOk,
     httpStatus: effectiveStatus,
     tregCallId,
     costMicro,
     latencyMs,
-    data: role && !effectiveOk ? null : responseBody,
+    data: responseBody,
     error: typeof bodyError === "string" && bodyError ? bodyError : isRouteMaxCost ? "route_max_cost" : rawBusinessError || bodyError || (effectiveOk ? undefined : `http_${effectiveStatus}`),
     errorDetails: sanitizedDetail,
     detail: sanitizedDetail,
