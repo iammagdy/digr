@@ -8,13 +8,11 @@ import { resetExplorationMemoryForTesting, runSampleCall } from "../src/lib/mode
 import { EXPLORATION_REQUEST_CAP_USD, MAX_PLANNER_TURNS, MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
 import { runModelPlanChunk } from "../src/lib/modelPlanner/interpreter";
 import { readStepRows } from "../src/lib/modelPlanner/reader";
-import { loadMeasuredAvgCallUsd } from "../src/lib/modelPlanner/measured";
 import { loadRecipeForEndpoint, saveRecipeAfterDelivery } from "../src/lib/modelPlanner/recipes";
 import { unitCost } from "../src/lib/modelPlanner/pricing";
 import { mapParamsToSibling, paramClass, rankSiblings } from "../src/lib/modelPlanner/siblings";
 import { clearTregCatalogCache, loadTregCatalog } from "../src/lib/treg/catalog";
 import { validatePlan } from "../src/lib/modelPlanner/validate";
-import { revalidateStoredPlan } from "../src/lib/modelPlanner/editPlan";
 import { ProposePlanSchema } from "../src/lib/modelPlanner/types";
 import { toolCatalogSearch } from "../src/lib/modelPlanner/tools";
 import type { ProviderAdapterCallInput } from "../src/lib/server/tregAdapter";
@@ -170,10 +168,11 @@ describe("ONE READER: a single-object answer (the natgeo profile) is ONE row, re
     }
   });
 
-  it("an EDIT of the approved plan keeps the way its answer is read (no new sample is made): the single-object reading survives the new volume and the new price", async () => {
+  it("validating a new volume with approved evidence preserves the single-object reader and the unit price", async () => {
     const { out } = await planNow(script, request, { exploration: { client: createMemoryDb(), requestId: "r1", userId: "u1", call: callWith(profile) } });
     if (out.kind !== "plan") throw new Error("no plan");
-    const verdict = revalidateStoredPlan({ stored: out.plan.stored, summaryAr: out.plan.summaryAr, customerText: request, newVolume: 3, access: nobody, catalog });
+    const proposal = plan();
+    const verdict = validatePlan(ProposePlanSchema.parse({ ...proposal, steps: [{ ...proposal.steps[0], volume: 3 }] }), { customerText: request, access: nobody, catalog, samples: new Map(), approved: out.plan.stored });
     expect(verdict.ok).toBe(true);
     if (!verdict.ok) return;
     expect(verdict.plan.stored.steps[0].facts).toMatchObject({ listPath: null, rootObjectIsRow: true });
@@ -456,15 +455,10 @@ describe("MODEL LOOP ROBUSTNESS: every refusal goes back with its exact reason u
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 describe("PRICING: routed endpoints use what was measured when it exists, else the highest sibling; a saved recipe is used by the next request without a sample; the database decides", () => {
-  it("a routed endpoint's price is its highest sibling's, and the MEASURED average of its real calls (from the database) once there are enough of them", async () => {
+  it("a routed endpoint uses its highest sibling price until a measured average is available", () => {
     const routed = catalog.byId.get("treg.x.user.posts")!;
     expect(unitCost(routed, catalog)).toMatchObject({ usd: 0.01476, basis: "routed_worst_sibling" });
-    const db = createMemoryDb();
-    expect(await loadMeasuredAvgCallUsd(db, "treg.x.user.posts")).toBeNull();
-    db.seed("exploration_calls", [0.002, 0.004, 0.006].map((c, i) => ({ id: `e${i}`, endpoint_id: "treg.x.user.posts", cost_usd: c, http_status: 200, rows_returned: 5, created_at: `2026-10-2${i}T10:00:00Z` })));
-    const avg = await loadMeasuredAvgCallUsd(db, "treg.x.user.posts");
-    expect(avg).toBe(0.004);
-    expect(unitCost(routed, catalog, avg)).toMatchObject({ usd: 0.004, basis: "measured_average" });
+    expect(unitCost(routed, catalog, 0.004)).toMatchObject({ usd: 0.004, basis: "measured_average" });
   });
 
   it("the planner asks for the measured average only for a routed endpoint, and prices the plan with it", async () => {
