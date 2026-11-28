@@ -23,7 +23,7 @@ import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { FAKE_MODEL_LITERALS, LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
-import { loadLatestResultColumns } from "../../lib/server/savedResultColumns";
+import { loadLatestResultColumns, loadLatestResultValues } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, studiesUnavailableReplyAr, topicSourceQuestion } from "./topicGathering";
 import { noteLocalLlmSpend } from "./rateLimits";
 import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, TURN_BUDGET_MS, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
@@ -3326,6 +3326,11 @@ export class ChatHandler {
       // guessed: the customer is told which columns exist and asked ONE question.
       {
         let checkedShape = validateShapedOutput(output as any, shapingColumns);
+        // UL2a-2b B5: a term the shaping model called a missing column may be a VALUE in the file's own cells («فلتر النتائج على القاهرة»): the cells are read (only on a turn that has such a term) and the check runs again with them.
+        if (checkedShape && checkedShape.kind !== "ok" && checkedShape.namedProblem && sb) {
+          const values = await loadLatestResultValues(sb, { conversationId, userId });
+          if (values) checkedShape = validateShapedOutput(output as any, shapingColumns, { values });
+        }
         // UL2a-2b (C5): a column the file does not have is said by name; when the columns nearest to it are not known yet (a request read by code) ONE small model call finds them
         // (a failure keeps the list as it was). Its tokens are added to this turn's usage row (the model name replaces «deterministic» only when it really spent tokens); nothing is charged to the customer.
         // For a request that CODE read, and for a named-column problem the shaping model found but gave no nearest columns for (a request the shaping model read otherwise asks for them in its own answer).

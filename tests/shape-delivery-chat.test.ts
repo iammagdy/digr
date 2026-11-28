@@ -536,7 +536,28 @@ describe("shape-delivery-chat (P7 / T7)", () => {
     expect(res.outputType).not.toBe("answer_question");
   });
 
-  it.skip("M5: a named column the file lacks → the UL2a-2b-C5 card/«غير موجود» line on agent columns (activates when #721 (UL2a-2b-C5) merges — D-0260)", async () => {
-    // Activates when #721 (UL2a-2b-C5) merges — D-0260
+  it("M5: a named column the file lacks → the UL2a-2b-C5 card/«غير موجود» line on agent columns (D-0260: #721 merged)", async () => {
+    const conversationId = "conv_m5";
+    const userId = "user_m5";
+    const missionId = "msn_agent_m5_12345678";
+    const jobId = "job_agent_m5_12345678";
+    const db = createTestDb({
+      conversationId,
+      userId,
+      messages: [{ id: "msg_card_m5", conversation_id: conversationId, user_id: userId, created_at: "2026-11-27T10:05:00Z", plan: { agentMissionId: missionId } }],
+      missions: [{ id: missionId, user_id: userId, job_id: jobId, files: [{ name: "result.xlsx", path: "result/result.xlsx", kind: "xlsx" }], delivered_units: 2 }],
+      jobs: [{ id: jobId, user_id: userId, conversation_id: conversationId, endpoint_id: "agent-mission", status: "completed", charged_credits: 10, delivered_units: 2, created_at: "2026-11-27T10:06:00Z" }],
+      storageFiles: { [`${AGENT_BUCKET}/${missionId}/result/result.xlsx`]: workbookBytes },
+    });
+    // the shaping model swaps the real column «المدينة» in for the missing «المحافظة»: the code catches it (nothing is built)
+    setChatModelForTesting((async () => json({ kind: "shape", spec: { groupBy: { column: "المدينة" }, sortBy: [{ column: "اسم الشركة", direction: "asc" }] }, named: [{ said: "المحافظة", column: "المدينة", use: "column" }, { said: "اسم الشركة", column: "اسم الشركة", use: "column" }], closest: ["المدينة"] })) as ChatModelCall);
+    const res = await new ChatHandler(db as any).handleUserMessage({ userId, conversationId, message: "قسّم الملف حسب المحافظة ورتبه حسب اسم الشركة", userBalance: 5000 });
+    expect(res.fileShape).toBeUndefined();
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.contentAr).toContain("«المحافظة»");
+    expect(res.contentAr).toContain("غير موجود");
+    expect(res.clarificationItems?.[0]?.options?.[0]).toBe("المدينة");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.agentMission).toBeUndefined();
   });
 });

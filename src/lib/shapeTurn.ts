@@ -3,6 +3,7 @@ import { CHAT_MODEL_TIMEOUT_MS, chatModelName, getChatModel, type ChatModelCall 
 import { checkCustomerText } from "./agentMission/text";
 import {
   SHAPE_CHOICE_QUESTION_ID,
+  FILE_SPEC_LIMITS,
   FILTER_OPERATORS,
   FileSpecSchema,
   describeFileSpecAr,
@@ -258,6 +259,50 @@ const hasDigit = (text: string): boolean => {
   return false;
 };
 
+// ---------------------------------------------------------------------------------------------------------------- UL2a-2b B5: a value of the file's own cells is not a missing column
+/** The distinct values of each visible column of the delivered file (read from its cells), by column key. Short cells only; bounded by the reader. */
+export type ResultValues = Record<string, string[]>;
+export const VALUE_IN_MANY_QUESTION_AR = "تقصد أنهي عمود؟";
+
+/**
+ * A term the model names (`named`) that is not a real column is looked up among the CELL VALUES of the visible columns, with the same folding the code uses for names (`foldColumnName`; exact, never fuzzy):
+ *  - found in exactly ONE visible column → a filter on that column (`equals`) is added to the spec (unless the spec already filters that column on that value) and the term stops being a missing column;
+ *  - found in more than one → `ambiguous` (the caller asks which column; nothing is picked);
+ *  - found nowhere and the model says the term only refers to the delivered file («use: file») → dropped: it names no column and no value, so it blocks nothing; any other unknown term stays a missing column.
+ * The product's own fields never count (internal columns are skipped), and a term that already IS a real column is left to `namedColumnProblems`.
+ */
+export function resolveValueTerms(input: { named: NamedColumn[] | undefined; spec: unknown; columns: DatasetColumn[]; values: ResultValues }): { named: NamedColumn[]; spec: unknown; ambiguous: Array<{ said: string; titles: string[]; value: string }> } {
+  const visible = input.columns.filter((c) => !isInternalColumnKey(c.key));
+  const index = new Map<string, Map<string, string>>();
+  for (const c of visible) {
+    const m = new Map<string, string>();
+    for (const v of input.values[c.key] ?? []) { const f = foldColumnName(v); if (f && !m.has(f)) m.set(f, v); }
+    index.set(c.key, m);
+  }
+  const parsed = FileSpecSchema.safeParse(input.spec);
+  let spec: unknown = input.spec;
+  const filters = parsed.success ? [...(parsed.data.filters ?? [])] : null;
+  const kept: NamedColumn[] = [];
+  const ambiguous: Array<{ said: string; titles: string[]; value: string }> = [];
+  for (const n of input.named ?? []) {
+    if (namedColumnProblems([n], input.columns).length === 0) { kept.push(n); continue; }
+    const term = foldColumnName(n.said);
+    const hits = visible.filter((c) => index.get(c.key)?.has(term));
+    if (hits.length === 1 && filters) {
+      const hit = hits[0]!;
+      const value = index.get(hit.key)!.get(term)!;
+      const has = filters.some((f) => resolveColumn(f.column, visible)?.key === hit.key && foldColumnName(String(f.value ?? "")) === term);
+      if (!has && filters.length < FILE_SPEC_LIMITS.maxFilters) filters.push({ column: hit.key, op: "equals", value });
+      continue;
+    }
+    if (hits.length >= 2) { ambiguous.push({ said: n.said, titles: hits.map((c) => c.titleAr), value: index.get(hits[0]!.key)!.get(term)! }); kept.push(n); continue; }
+    if (hits.length === 0 && n.use === "file") continue;
+    kept.push(n);
+  }
+  if (parsed.success && filters && filters.length !== (parsed.data.filters ?? []).length) spec = { ...parsed.data, filters };
+  return { named: kept, spec, ambiguous };
+}
+
 export type ShapedOutputCheck =
   | { kind: "ok"; spec: FileSpec }
   | { kind: "question"; output: any; finalContentAr: string; item: any; questions: string[]; missing: string[]; closestUsed: boolean; namedProblem: boolean }
@@ -283,18 +328,35 @@ function questionForSubstitutedColumn(spec: unknown, title: string, columns: Dat
  * (`namedColumnProblems`); the options (or the listed columns) start with the ones CLOSEST to it (`closest`, from the model's own answer or `runClosestColumns`), and the product's own fields are never shown.
  * Returns null when the output is not a `shape_file` or no columns are known.
  */
-export function validateShapedOutput(output: { type: string; spec?: unknown; named?: NamedColumn[]; closest?: string[] }, shapingColumns: DatasetColumn[], opts: { closest?: string[] } = {}): ShapedOutputCheck | null {
+export function validateShapedOutput(output: { type: string; spec?: unknown; named?: NamedColumn[]; closest?: string[] }, shapingColumns: DatasetColumn[], opts: { closest?: string[]; values?: ResultValues } = {}): ShapedOutputCheck | null {
   if (output.type !== "shape_file" || shapingColumns.length === 0) return null;
   const preferred = opts.closest && opts.closest.length > 0 ? opts.closest : output.closest ?? [];
   const closestUsed = preferred.length > 0;
-  const problems = namedColumnProblems(output.named, shapingColumns);
-  const checked = validateFileSpec(output.spec, shapingColumns);
+  // UL2a-2b B5: a term the model calls a missing column that is really a VALUE in the file's own cells is a filter on that column (read from the cells, not from words)
+  const valued = opts.values ? resolveValueTerms({ named: output.named, spec: output.spec, columns: shapingColumns, values: opts.values }) : null;
+  const named = valued ? valued.named : output.named;
+  const specIn = valued ? valued.spec : output.spec;
+  const problems = namedColumnProblems(named, shapingColumns);
+  const checked = validateFileSpec(specIn, shapingColumns);
   if (problems.length === 0 && checked.ok) return { kind: "ok", spec: checked.spec };
-  const parsedSpec = FileSpecSchema.safeParse(output.spec);
+  // the only problems left are values that sit in more than one column: ONE question, with those columns
+  if (valued && valued.ambiguous.length > 0 && problems.every((p) => valued.ambiguous.some((a) => foldColumnName(a.said) === foldColumnName(p.said)))) {
+    const amb = valued.ambiguous[0]!;
+    const options = amb.titles.map((title) => `فلتر الملف على ${title} يساوي ${amb.value}`).filter((option) => {
+      const spec = deterministicShapeSpec(option, shapingColumns);
+      return spec !== null && validateFileSpec(spec, shapingColumns).ok;
+    });
+    if (options.length >= 2) {
+      const question = { id: SHAPE_CHOICE_QUESTION_ID, text: VALUE_IN_MANY_QUESTION_AR, question: VALUE_IN_MANY_QUESTION_AR, type: "single" as const, options, allowOther: false };
+      const finalContentAr = `«${amb.said}» موجودة في أكثر من عمود من ملفك، ولن يُخصم أي رصيد. اختر العمود المقصود.`;
+      return { kind: "question", item: question, questions: [question.text], finalContentAr, output: { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: [question], questionsAr: [question.text] }, missing: [], closestUsed: true, namedProblem: false };
+    }
+  }
+  const parsedSpec = FileSpecSchema.safeParse(specIn);
   const missingNames = [...new Set([...problems.map((p) => p.said), ...(parsedSpec.success ? unknownColumnNames(parsedSpec.data, shapingColumns) : [])])];
   const substituted = problems.find((p) => p.column !== null);
-  const own = substituted ? questionForSubstitutedColumn(output.spec, substituted.column!, shapingColumns) : null;
-  const shapeQuestion = problems.length > 0 ? (own ? { id: own.id, textAr: own.textAr } : null) : shapeQuestionForSpec(output.spec as any, shapingColumns);
+  const own = substituted ? questionForSubstitutedColumn(specIn, substituted.column!, shapingColumns) : null;
+  const shapeQuestion = problems.length > 0 ? (own ? { id: own.id, textAr: own.textAr } : null) : shapeQuestionForSpec(specIn as any, shapingColumns);
   const lineAr = problems.length > 0 ? missingColumnLineAr(problems.map((p) => p.said)) : null;
   if (shapeQuestion) {
     const choices = columnChoicesAr(shapingColumns, 8, shapeQuestion.id === "shape_column_required", preferred);
@@ -424,7 +486,7 @@ export function shapeSystemPrompt(columns: DatasetColumn[]): string {
     "Answer with ONE JSON object and nothing else, in one of these three forms:",
     '1) {"kind":"shape","spec":{...}} when you can say how the file should look. spec may hold only: "columns" (array of column titles to keep, in order), "filters" (array of {"column","op","value"}; op is one of ' + FILTER_OPERATORS.join(", ") + '), "sortBy" (array of {"column","direction":"asc"|"desc"}), "groupBy" ({"column","mode":"sheets"} one sheet per value). If the customer leaves the choice to you, choose a sensible one using only the listed columns.',
     // UL2a-2b (C5): the model says which columns the CUSTOMER named, and the code checks each against the real columns: a named column the file does not have is never replaced by another one
-    '   Form 1 also carries "named": an array with one {"said","column"} for EVERY column the customer names in the text (a column, never a value to filter by or a sheet name). "said" is the customer\'s own words for it, copied exactly from the text. "column" is the exact title from the list that it IS, or null when the list has no such column. If the list has no column with that name, "column" is null: never put a different column in its place, even a similar one, and never choose another column for it in "spec". If the customer names no column (for example "as you like"), "named" is []. For every null, "closest" is an array of up to 3 titles from the list that are nearest in meaning to what the customer asked for (most likely first); otherwise "closest" is [].',
+    '   Form 1 also carries "named": an array with one {"said","column"} for EVERY column the customer names in the text (a column, never a value to filter by or a sheet name). "said" is the customer\'s own words for it, copied exactly from the text. "column" is the exact title from the list that it IS, or null when the list has no such column. If the list has no column with that name, "column" is null: never put a different column in its place, even a similar one, and never choose another column for it in "spec". If the customer names no column (for example "as you like"), "named" is []. For every null, "closest" is an array of up to 3 titles from the list that are nearest in meaning to what the customer asked for (most likely first); otherwise "closest" is []. Each entry also has "use": "column" when the customer uses the term as the NAME of a column, "value" when it is a value to look for inside a column (for example the thing to filter by), "file" when it only refers to the delivered file or its results as a whole. A term of use "value" or "file" is not a missing column.',
     '2) {"kind":"answer","answerAr":"..."} when the request is unclear: ONE short Arabic sentence that asks what they want, with a short example. Plain Arabic, no digits, no prices, no points, no source or tool names, never a list.',
     '3) {"kind":"cant"} when the text is not about the shape of this file (for example it asks to collect new data, search, buy or plan something).',
     "Never plan, search, quote, price or start anything. Never write a formula or a script.",
@@ -432,7 +494,7 @@ export function shapeSystemPrompt(columns: DatasetColumn[]): string {
 }
 
 /** UL2a-2b (C5): a column the customer named in the text (`said`, their own words) and the real column the model says it is (`column`, null: the file has none). */
-export interface NamedColumn { said: string; column: string | null }
+export interface NamedColumn { said: string; column: string | null; /** what the model says the term is: a column name, a value inside a column, or the delivered file itself (absent: a column name) */ use?: "column" | "value" | "file" }
 export type ShapeModelOutput = { type: "shape_file"; replyAr: string; spec: unknown; named?: NamedColumn[]; closest?: string[] } | { type: "answer_question"; answerAr: string };
 
 // ---------------------------------------------------------------------------------------------------------------- UL2a-2b (C5): a column the customer names is never replaced by another one
@@ -497,7 +559,8 @@ function parseNamedColumns(raw: unknown, customerText: string | undefined): Name
     const said = typeof (entry as any).said === "string" ? (entry as any).said.trim().slice(0, 80) : "";
     if (!said || (folded !== null && !folded.includes(foldColumnName(said)))) continue;
     const column = typeof (entry as any).column === "string" && (entry as any).column.trim() !== "" ? (entry as any).column.trim().slice(0, 80) : null;
-    out.push({ said, column });
+    const rawUse = typeof (entry as any).use === "string" ? (entry as any).use.trim().toLowerCase() : "";
+    out.push({ said, column, ...(rawUse === "value" || rawUse === "file" || rawUse === "column" ? { use: rawUse as "column" | "value" | "file" } : {}) });
   }
   return out;
 }
