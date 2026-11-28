@@ -1,7 +1,8 @@
 import writeActions from "../../../data/treg/treg_write_actions.json";
 import catalogIndex from "../../../data/treg/treg_catalog_index.json";
-import { categoryOf } from "./dataPolicy";
 import dataPolicy from "../../../data/treg/data_policy.json";
+import sellableAdditions from "../../../data/treg/sellable_additions.json";
+import type { CatalogEndpoint, EndpointAdapterContract } from "./catalog";
 
 /**
  * The hard block list for the data gateway. Enforced in code at the one place every gateway call passes (`executeTregCall`), whatever the plan, the model or a
@@ -27,6 +28,200 @@ const PAUSED_SET: ReadonlySet<string> = new Set(PAUSED_PROVIDERS);
 const WRITE_IDS: ReadonlySet<string> = new Set((writeActions as Array<{ id: string }>).map((e) => e.id));
 const SELLABLE_IDS: ReadonlySet<string> = new Set(catalogIndex.ids);
 const KNOWN_PROVIDERS: ReadonlySet<string> = new Set([...catalogIndex.providers, ...[...WRITE_IDS].map(providerOf)]);
+const BLOCKED_POLICY_IDS: ReadonlySet<string> = new Set(
+  Object.keys((dataPolicy as any).endpoints ?? {}).filter((id) => (dataPolicy as any).endpoints[id] === "blocked")
+);
+
+export interface CatalogAdditionEntry {
+  endpoint: CatalogEndpoint;
+  policy: "public";
+  contract: EndpointAdapterContract;
+}
+
+export interface ValidatedCatalogAdditions {
+  valid: boolean;
+  version: number;
+  entries: CatalogAdditionEntry[];
+  byId: ReadonlyMap<string, CatalogAdditionEntry>;
+  endpoints: CatalogEndpoint[];
+  contracts: EndpointAdapterContract[];
+  providers: ReadonlySet<string>;
+  deniedIds: ReadonlySet<string>;
+  rejectionReason?: string;
+}
+
+export function validateCatalogAdditions(
+  raw: unknown,
+  pinned?: {
+    sellableIds?: ReadonlySet<string>;
+    writeIds?: ReadonlySet<string>;
+    pausedProviders?: ReadonlySet<string>;
+    blockedEndpoints?: ReadonlySet<string>;
+  }
+): ValidatedCatalogAdditions {
+  const sellableIds = pinned?.sellableIds ?? SELLABLE_IDS;
+  const writeIds = pinned?.writeIds ?? WRITE_IDS;
+  const pausedProviders = pinned?.pausedProviders ?? PAUSED_SET;
+  const blockedEndpoints = pinned?.blockedEndpoints ?? BLOCKED_POLICY_IDS;
+
+  const candidateIds = new Set<string>();
+  if (raw && typeof raw === "object" && Array.isArray((raw as any).entries)) {
+    for (const item of (raw as any).entries) {
+      if (item && typeof item === "object") {
+        if (typeof item.endpoint?.id === "string") candidateIds.add(item.endpoint.id.trim());
+        if (typeof item.contract?.endpoint_id === "string") candidateIds.add(item.contract.endpoint_id.trim());
+      }
+    }
+  }
+
+  const fail = (reason: string): ValidatedCatalogAdditions => ({
+    valid: false,
+    version: typeof (raw as any)?.version === "number" ? (raw as any).version : 1,
+    entries: [],
+    byId: new Map(),
+    endpoints: [],
+    contracts: [],
+    providers: new Set(),
+    deniedIds: candidateIds,
+    rejectionReason: reason,
+  });
+
+  if (!raw || typeof raw !== "object") return fail("not_an_object");
+  const r = raw as { version?: unknown; entries?: unknown };
+  if (r.version !== 1) return fail("invalid_version");
+  if (!Array.isArray(r.entries)) return fail("invalid_entries");
+
+  if (r.entries.length === 0) {
+    return {
+      valid: true,
+      version: 1,
+      entries: [],
+      byId: new Map(),
+      endpoints: [],
+      contracts: [],
+      providers: new Set(),
+      deniedIds: new Set(),
+    };
+  }
+
+  const validatedEntries: CatalogAdditionEntry[] = [];
+  const byId = new Map<string, CatalogAdditionEntry>();
+  const providers = new Set<string>();
+
+  for (const item of r.entries) {
+    if (!item || typeof item !== "object") return fail("entry_not_object");
+    const entry = item as Partial<CatalogAdditionEntry>;
+
+    if (entry.policy !== "public") return fail("policy_not_public");
+
+    const ep = entry.endpoint;
+    if (!ep || typeof ep !== "object" || typeof ep.id !== "string") return fail("invalid_endpoint");
+    const id = ep.id.trim();
+    if (!id) return fail("empty_endpoint_id");
+
+    if (byId.has(id)) return fail(`duplicate_manifest_id: ${id}`);
+    if (sellableIds.has(id)) return fail(`duplicate_base_id: ${id}`);
+    if (writeIds.has(id)) return fail(`write_action_id: ${id}`);
+    if (blockedEndpoints.has(id)) return fail(`policy_denied_id: ${id}`);
+
+    const provider = String(ep.provider ?? "").trim();
+    if (!provider) return fail(`missing_provider: ${id}`);
+    if (providerOf(id) !== provider) return fail(`provider_namespace_mismatch: ${id}`);
+
+    if (pausedProviders.has(provider.toLowerCase())) return fail(`paused_provider_id: ${id}`);
+
+    const scope = String(ep.scope ?? "").toLowerCase();
+    if (scope === "own_account") return fail(`own_account_scope: ${id}`);
+
+    const contract = entry.contract;
+    if (!contract || typeof contract !== "object" || typeof contract.endpoint_id !== "string") {
+      return fail(`invalid_contract: ${id}`);
+    }
+    if (contract.endpoint_id.trim() !== id) return fail(`contract_endpoint_id_mismatch: ${id}`);
+
+    const role = contract.role;
+    if (role !== "delivery" && role !== "count" && role !== "schema") return fail(`invalid_contract_role: ${id}`);
+
+    if (role === "delivery") {
+      if (contract.dispatch !== "funded") return fail(`delivery_must_be_funded: ${id}`);
+      if (!ep.cost || typeof ep.cost.usd !== "number" || ep.cost.usd <= 0) {
+        return fail(`delivery_cost_must_be_positive: ${id}`);
+      }
+    } else {
+      if (ep.cost && typeof ep.cost.usd === "number" && ep.cost.usd > 0) {
+        return fail(`helper_must_be_free: ${id}`);
+      }
+      if (ep.cost && ep.cost.unit !== "call") return fail(`helper_unit_must_be_call: ${id}`);
+    }
+
+    if (contract.helpers) {
+      if (typeof contract.helpers !== "object") return fail(`invalid_helpers_object: ${id}`);
+      const hCount = contract.helpers.count;
+      const hSchema = contract.helpers.schema;
+      if (hCount !== undefined) {
+        if (typeof hCount !== "string" || !hCount.trim()) return fail(`invalid_count_helper_id: ${id}`);
+        if (providerOf(hCount) !== provider) return fail(`cross_source_helper: ${hCount}`);
+      }
+      if (hSchema !== undefined) {
+        if (typeof hSchema !== "string" || !hSchema.trim()) return fail(`invalid_schema_helper_id: ${id}`);
+        if (providerOf(hSchema) !== provider) return fail(`cross_source_helper: ${hSchema}`);
+      }
+    }
+
+    const validated: CatalogAdditionEntry = {
+      endpoint: ep as CatalogEndpoint,
+      policy: "public",
+      contract: contract as EndpointAdapterContract,
+    };
+    validatedEntries.push(validated);
+    byId.set(id, validated);
+    providers.add(provider);
+  }
+
+  // Cross-reference checks within manifest
+  for (const item of validatedEntries) {
+    if (item.contract.helpers) {
+      if (item.contract.helpers.count) {
+        const h = byId.get(item.contract.helpers.count);
+        if (!h) return fail(`missing_helper: ${item.contract.helpers.count}`);
+        if (h.contract.role !== "count") return fail(`invalid_helper_role: ${item.contract.helpers.count}`);
+        if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
+          return fail(`paid_helper: ${item.contract.helpers.count}`);
+        }
+      }
+      if (item.contract.helpers.schema) {
+        const h = byId.get(item.contract.helpers.schema);
+        if (!h) return fail(`missing_helper: ${item.contract.helpers.schema}`);
+        if (h.contract.role !== "schema") return fail(`invalid_helper_role: ${item.contract.helpers.schema}`);
+        if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
+          return fail(`paid_helper: ${item.contract.helpers.schema}`);
+        }
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    version: 1,
+    entries: validatedEntries,
+    byId,
+    endpoints: validatedEntries.map((e) => e.endpoint),
+    contracts: validatedEntries.map((e) => e.contract),
+    providers,
+    deniedIds: new Set(),
+  };
+}
+
+export const VALIDATED_ADDITIONS: ValidatedCatalogAdditions = validateCatalogAdditions(sellableAdditions);
+let activeValidatedAdditions: ValidatedCatalogAdditions = VALIDATED_ADDITIONS;
+
+export function getValidatedAdditions(): ValidatedCatalogAdditions {
+  return activeValidatedAdditions;
+}
+
+export function setValidatedAdditionsForTest(additions: ValidatedCatalogAdditions | null): void {
+  activeValidatedAdditions = additions ?? VALIDATED_ADDITIONS;
+}
 
 /** The provider part of an endpoint id: everything before the first dot. */
 export function providerOf(endpointId: string): string {
@@ -36,15 +231,34 @@ export function providerOf(endpointId: string): string {
 }
 
 /** Why an endpoint may never be called, or null when it may. `scope` is the catalog's own scope of the endpoint when the caller has it. */
-export function blockedEndpointReason(endpointId: string, scope?: string | null): EndpointBlockReason | null {
+export function blockedEndpointReason(
+  endpointId: string,
+  scope?: string | null,
+  additions: ValidatedCatalogAdditions = getValidatedAdditions()
+): EndpointBlockReason | null {
   const id = String(endpointId ?? "").trim();
   if (!id) return null;
   if (WRITE_IDS.has(id)) return "write_action";
   if (String(scope ?? "").toLowerCase() === "own_account") return "own_account";
   const provider = providerOf(id);
   if (provider && PAUSED_SET.has(provider.toLowerCase())) return "paused_provider";
-  if (categoryOf(id) === "blocked") return "policy_blocked";
-  if (provider && KNOWN_PROVIDERS.has(provider) && !SELLABLE_IDS.has(id)) return "not_sellable";
+  if (BLOCKED_POLICY_IDS.has(id)) return "policy_blocked";
+
+  if (additions.valid && additions.byId.has(id)) {
+    return null;
+  }
+
+  if (additions.deniedIds.has(id)) {
+    return "not_sellable";
+  }
+
+  if (
+    provider &&
+    (KNOWN_PROVIDERS.has(provider) || (additions.valid && additions.providers.has(provider))) &&
+    !SELLABLE_IDS.has(id)
+  ) {
+    return "not_sellable";
+  }
   return null;
 }
 
