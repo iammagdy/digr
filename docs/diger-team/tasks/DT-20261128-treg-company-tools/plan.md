@@ -37,10 +37,17 @@
   4. `src/lib/treg/catalog.ts` (in-memory merge for verified bundled snapshot, contract normalization)
   5. `tests/treg-catalog-additions.test.ts` (NEW unit test suite covering validation, boundaries, and empty manifest)
   6. `docs/diger-team/tasks/DT-20261128-treg-company-tools/plan.md` (NEW task record)
-- **PR-2 (Senior Developer / FAWAALY):** G2 + G3 funded worker and engine routing (12 files, manifest remains empty).
-- **PR-3 (Senior Developer / FAWAALY):** A activation of the 4 approved entries (3 files).
+- **PR-2 (Lead Architect / ARCHITECT):** G2 + G3 funded worker and engine routing (12 files, manifest remains empty).
+- **PR-3 (separate CTO GO required):** A activation of the 4 approved entries (3 files).
 
 ## 5. Rollback Plan
 - Reverting additions: Emptying `data/treg/sellable_additions.json` returns effective runtime to base 3,276 endpoints immediately with zero code changes.
 - PR rollback: Revert PRs in reverse dependency order (PR-3 -> PR-2 -> PR-1).
 - Invariants: No changes to ledger, points, pricing, SQL migrations, database tables, or production feature flags.
+
+## 6. PR-2 funded execution and planning
+
+- Plan v1.2 G2.1–G2.7 and G3.1–G3.6, including D-0267 G2.5a. The approved PR-1 head is `3c1f8bf233d3e978d6ab7f78124ecdfe758a9519`. The branch also incorporates main through `5a73861b`.
+- A tagged paid request needs a funded preflight and a strict persisted reservation before dispatch. The transport permit is single-use. Unprovable journal exposure leaves zero paid capacity for funded, legacy, and web routes in that phase. A proven-empty journal preserves ordinary routing.
+- Company search estimates use validated free helpers. Funded delivery uses the trusted adapter contract and canonical domain identity. Fixtures cover delivered-only settlement and full release when nothing is delivered.
+- The manifest remains empty. The company phone endpoint is disabled. Activation requires a separate CTO GO.
