@@ -629,7 +629,7 @@ export function withKeptPeopleAsk(retry: Understanding, refused: Understanding |
 }
 
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
-export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string; understanding?: Understanding }> {
+export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log" | "fundedProbe">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string; understanding?: Understanding }> {
   const ask = asker(deps, cost);
   const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access, Boolean(deps.fundedProbe))}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
