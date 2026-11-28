@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import PlanQuoteCard, { type PlanQuoteData } from "../src/app/dashboard/chat/components/PlanQuoteCard";
@@ -6,16 +6,11 @@ import { readShape } from "../src/lib/treg/shapeReader";
 import { createAndSaveManagedQuote, type PlanItem } from "../src/functions/shared/planManager";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
 import { loadRecipeForEndpoint, recipeRowFromPlan, recipeSlug, saveRecipeAfterDelivery } from "../src/lib/modelPlanner/recipes";
-import { customerWordsOf, purposeFrom } from "../src/lib/modelPlanner/chatTurn";
-import { MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
-import { runModelPlannerTurn } from "../src/lib/modelPlanner/chatTurn";
-import { createScriptedTransport } from "../src/lib/modelPlanner/transport";
-import { PURPOSE_QUESTION_AR, PURPOSE_QUESTION_ID } from "../src/lib/server/sensitiveAccess";
-import { SENSITIVE_NOT_VERIFIED_AR } from "../src/lib/treg/dataPolicy";
+import { MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
 import { quoteScopeGaps } from "../src/lib/quoteScopeGaps";
 import { createChatDb } from "./helpers/chatSession";
 import { createMemoryDb } from "./helpers/memoryDb";
-import { propose, sample, stubGateway, xAccountPlan, X_REQUEST, fixturePages, type GatewayStub } from "./helpers/plannerKit";
+import { xAccountPlan, X_REQUEST, fixturePages } from "./helpers/plannerKit";
 import { validatePlan } from "../src/lib/modelPlanner/validate";
 import { ProposePlanSchema } from "../src/lib/modelPlanner/types";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -113,23 +108,5 @@ describe("the plan card: real sample rows before approval, for historical plans"
   });
   it("a model plan item is complete for the scope guard (no gap), so the approve button is offered", () => {
     expect(quoteScopeGaps(quote().items)).toEqual([]);
-  });
-});
-
-describe("the chat turn of the model planner: the customer's words, the purpose question and its answer", () => {
-  let gateway: GatewayStub;
-  beforeEach(() => { process.env.TREG_TOKEN = "t"; vi.stubEnv("JOB_MAX_POINTS_CAP", ""); gateway = stubGateway({}); vi.spyOn(console, "warn").mockImplementation(() => undefined); });
-  afterEach(() => { gateway.restore(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
-
-  it("the words are the customer's messages after the last plan card, control buttons left out, newest last", () => {
-    const history = [
-      { role: "user", content: "قديم" }, { role: "assistant", content: "خطة", quote: { quoteId: "q0" } },
-      { role: "user", content: "أريد ١٠ منشورات من @a" }, { role: "assistant", content: "ما الحساب؟" }, { role: "user", content: "أوافق وابدأ" },
-    ];
-    expect(customerWordsOf(history as any, "@a على إكس")).toEqual(["أريد ١٠ منشورات من @a", "@a على إكس"]);
-    expect(customerWordsOf([], "طلب")).toEqual(["طلب"]);
-    expect(purposeFrom([{ role: "assistant", content: PURPOSE_QUESTION_AR }], "للتواصل مع عميل")).toBe("للتواصل مع عميل");
-    expect(purposeFrom([{ role: "assistant", content: "سؤال آخر" }], "للتواصل مع عميل")).toBeNull();
-    expect(purposeFrom([{ role: "assistant", content: PURPOSE_QUESTION_AR }], '{"type":"x"}')).toBeNull();
   });
 });

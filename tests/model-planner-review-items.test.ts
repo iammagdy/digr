@@ -8,19 +8,14 @@ import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
 import { runModelPlanChunk } from "../src/lib/modelPlanner/interpreter";
 import { runPlanner, PLAN_UNAVAILABLE_AR } from "../src/lib/modelPlanner/planner";
 import { createScriptedTransport } from "../src/lib/modelPlanner/transport";
-import { EDIT_NOT_AVAILABLE_AR, EDIT_REJECTED_AR, editModelPlanQuote, revalidateStoredPlan } from "../src/lib/modelPlanner/editPlan";
-import { GUEST_SIGNUP_AR } from "../src/lib/modelPlanner/chatTurn";
-import { MODEL_PLAN_PARAM, MODEL_PLAN_REQUEST_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
-import { ProposePlanSchema } from "../src/lib/modelPlanner/types";
+import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
+import { ProposePlanSchema, type StoredModelPlan } from "../src/lib/modelPlanner/types";
 import { validatePlan, type StepSample } from "../src/lib/modelPlanner/validate";
 import { resetExplorationMemoryForTesting } from "../src/lib/modelPlanner/exploration";
 import type { ProviderAdapterCallInput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
-import { ChatHandler } from "../src/functions/shared/chatHandler";
-import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
-import { createChatDb } from "./helpers/chatSession";
 import { createMemoryDb } from "./helpers/memoryDb";
-import { describe as describeTool, propose, sample, search, stubGateway, xAccountPlan, X_REQUEST, fixturePages, type GatewayStub } from "./helpers/plannerKit";
+import { describe as describeTool, propose, sample, search, stubGateway, X_REQUEST, type GatewayStub } from "./helpers/plannerKit";
 
 vi.mock("../src/lib/supabase/server", async () => (await import("./helpers/replayWorld")).world.supabaseServerMock());
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => ({
@@ -176,23 +171,23 @@ describe("COUNTRY GATE on the model path: a named country holds company and pers
 });
 
 // ---------------------------------------------------------------------------------------------------- 4. the stored plan is re-validated
-// UL2a-3 C-2a: the chat's model planner is gone, so the EDIT-route cases, the GUEST sign-up cases and the allowlist-on-the-handler case that went through it are retired with it (C-2b removes the writer they exercised).
-// What stays is the code validation of a stored plan: `revalidateStoredPlan` on the plan the planner stored for the X-account request (captured once from the pre-removal tree: fixtures/model-planner-stored-items.json).
 describe("a stored model plan is re-validated by code", () => {
-  const STORED_X: { stored: any; summaryAr: string } = JSON.parse(readFileSync(join(__dirname, "fixtures", "model-planner-stored-items.json"), "utf8")).reviewItemsX;
+  const STORED_X: { stored: StoredModelPlan } = JSON.parse(readFileSync(join(__dirname, "fixtures", "model-planner-stored-items.json"), "utf8")).reviewItemsX;
 
-  it("revalidateStoredPlan: the unchanged step keeps its measured values (no new sample); a changed step gets no shortcut", async () => {
+  it("only the unchanged step can reuse approved measurements without a fresh sample", () => {
     const stored = STORED_X.stored;
-    const args = { stored, summaryAr: STORED_X.summaryAr, customerText: X_REQUEST, newVolume: 40, access: nobody, today: TODAY };
-    const same = revalidateStoredPlan(args);
+    const step = stored.steps[0];
+    const proposal = { summaryAr: "جمع ٤٠ منشورًا من حساب @elonmusk", steps: [{ endpointId: step.endpointId, volume: 40, params: step.params, fieldMap: step.fieldMap, filters: step.filters }] };
+    const context = { customerText: X_REQUEST, access: nobody, catalog, samples: new Map<string, StepSample>(), today: TODAY };
+    const same = validatePlan(ProposePlanSchema.parse(proposal), { ...context, approved: stored });
     expect(same.ok).toBe(true);
     if (same.ok) expect(same.plan.steps[0].price.measuredFrom).toBe("approved_plan");
     // a step whose field map is NOT the approved one gets no shortcut: it is checked against real evidence again (and with no sample it cannot stand)
     const forgedMap = { ...stored.steps[0].fieldMap, columns: [...stored.steps[0].fieldMap.columns].reverse() };
-    const changed = validatePlan(ProposePlanSchema.parse({ summaryAr: "جمع ٤٠ منشورًا من حساب @elonmusk", steps: [{ endpointId: "anyapi.x.user.posts", volume: 40, params: stored.steps[0].params, fieldMap: forgedMap, filters: stored.steps[0].filters }] }), { customerText: X_REQUEST, access: nobody, catalog, samples: new Map(), today: TODAY, approved: stored });
+    const changed = validatePlan(ProposePlanSchema.parse({ ...proposal, steps: [{ ...proposal.steps[0], fieldMap: forgedMap }] }), { ...context, approved: stored });
     expect(changed.ok).toBe(false);
     // and without the approved plan the same unchanged proposal has no price at all
-    const bare = validatePlan(ProposePlanSchema.parse({ summaryAr: "جمع ٤٠ منشورًا من حساب @elonmusk", steps: [{ endpointId: "anyapi.x.user.posts", volume: 40, params: stored.steps[0].params, fieldMap: stored.steps[0].fieldMap, filters: stored.steps[0].filters }] }), { customerText: X_REQUEST, access: nobody, catalog, samples: new Map(), today: TODAY });
+    const bare = validatePlan(ProposePlanSchema.parse(proposal), context);
     expect(bare.ok).toBe(false);
   });
 });

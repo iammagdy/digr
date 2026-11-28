@@ -4,8 +4,6 @@ import path from "node:path";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 import { PURPOSE_QUESTION_AR, SENSITIVE_DAILY_LIMIT, auditValueOfParams, countSensitiveLookupsToday, maskLookupValue, resolveAccountAccess, runSensitiveCall, sensitiveCategoryLabel, sensitiveRefusalAr } from "../src/lib/server/sensitiveAccess";
 import { buildRawFirstPage, createFirstPageCapture } from "../src/lib/server/rawCapture";
-import { modelPlanAcceptRefusal } from "../src/lib/modelPlanner/acceptGuard";
-import { MODEL_PLAN_PARAM, MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
 import { createMemoryDb } from "./helpers/memoryDb";
 
 const SENSITIVE_PHONE = "blitzapi.people.phone.reverse";
@@ -103,6 +101,7 @@ describe("runSensitiveCall: policy, purpose, daily limit, audit", () => {
     expect(sensitiveCategoryLabel("treg.people.email.find.personal")).toBe("personal_contact");
     expect(sensitiveCategoryLabel("moltsets.people.audiences.maid")).toBe("advertising_ids");
     expect(sensitiveCategoryLabel("aiark.people.personality.analyze")).toBe("personality");
+    expect(PURPOSE_QUESTION_AR).not.toMatch(/[A-Za-z]|\d/);
   });
 
   it("a failed call passes through its error without sensitive audit", async () => {
@@ -153,27 +152,6 @@ describe("who is «verified business»: the admin flag lives in its own table; u
     const noTable = createMemoryDb({ missing: ["verified_business_accounts"] });
     expect(await resolveAccountAccess(noTable, "v1")).toEqual({ isAdmin: false, verifiedBusiness: false });
     expect(await resolveAccountAccess(null, "v1")).toEqual({ isAdmin: false, verifiedBusiness: false });
-  });
-});
-
-describe("approval: a stored model plan with a sensitive step is accepted for any account under FX-PRIV", () => {
-  const item = (purpose?: string, endpointId = SENSITIVE_EMAIL) => ({
-    capabilitySlug: MODEL_PLAN_SLUG,
-    params: { [MODEL_PLAN_PARAM]: { v: 1, steps: [{ endpointId, facts: { scope: "any_account" } }] }, ...(purpose !== undefined ? { [MODEL_PLAN_PURPOSE_PARAM]: purpose } : {}) },
-  });
-  it("under FX-PRIV: unverified and verified accounts are accepted without 403; blocked step still 403", async () => {
-    const db = createMemoryDb();
-    db.seed("verified_business_accounts", [{ user_id: "v1", verified: true }]);
-    db.admins.add("adm");
-    expect(await modelPlanAcceptRefusal(db, "plain", [item("التواصل مع عميل محتمل")])).toBeNull();
-    expect(await modelPlanAcceptRefusal(db, "v1", [item()])).toBeNull();
-    expect(await modelPlanAcceptRefusal(db, "v1", [item("ok")])).toBeNull();
-    expect(await modelPlanAcceptRefusal(db, "v1", [item("التواصل مع عميل محتمل")])).toBeNull();
-    expect(await modelPlanAcceptRefusal(db, "adm", [item()])).toBeNull();
-    expect(await modelPlanAcceptRefusal(db, "adm", [item("x", "apollo.people.search")])).toMatchObject({ status: 403 });
-    // a plan of the old path is not looked at
-    expect(await modelPlanAcceptRefusal(db, "plain", [{ capabilitySlug: "social-x-posts", params: { channel: "@x" } }])).toBeNull();
-    expect(PURPOSE_QUESTION_AR).not.toMatch(/[A-Za-z]|\d/);
   });
 });
 

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { customerFacingFailure, readChatResponse, TEMPORARY_FAILURE_NO_CHARGE_AR } from "@/lib/customerError";
 import type { CalculatorCard } from "@/lib/missionEstimate";
-import { newPlannerRequestId } from "@/lib/missionPanelState";
 import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller";
 import { createClient } from "@/lib/supabase/client";
 
@@ -151,7 +150,7 @@ export default function MissionEstimator() {
       const response = await fetch("/api/chat", {
         method: "POST", headers, signal: controller.signal,
         body: JSON.stringify({
-          source: "calculator", plannerRequestId: newPlannerRequestId(), message,
+          source: "calculator", message,
           ...(previous ? { conversationId: previous.id } : {}),
           ...(!headers.Authorization ? { isGuest: true } : {}),
         }),
