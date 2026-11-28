@@ -412,12 +412,19 @@ export const SHAPE_QUESTION_IDS = [
 ] as const;
 export type ShapeQuestionId = (typeof SHAPE_QUESTION_IDS)[number];
 
-export function isShapeQuestionId(id: unknown): id is ShapeQuestionId {
-  return typeof id === "string" && (SHAPE_QUESTION_IDS as readonly string[]).includes(id);
+/**
+ * UL2a-2b: the ONE question asked when the chat model says a message is about the open file but not what is wanted. Its options are instructions built from the file's REAL columns in the words the code reads
+ * («قسّم الملف شيت لكل X», «رتب الملف حسب X»); the answer is read by the same code, so it can never need a model and never asks again.
+ */
+export const SHAPE_CHOICE_QUESTION_ID = "shape_choice_required" as const;
+export type ShapeAnswerQuestionId = ShapeQuestionId | typeof SHAPE_CHOICE_QUESTION_ID;
+
+export function isShapeQuestionId(id: unknown): id is ShapeAnswerQuestionId {
+  return typeof id === "string" && ((SHAPE_QUESTION_IDS as readonly string[]).includes(id) || id === SHAPE_CHOICE_QUESTION_ID);
 }
 
 /** The customer's answer to a shaping question, read from the card payload; null when the message is anything else. */
-export function shapeAnswerFromMessage(message: string): { questionId: ShapeQuestionId; value: string } | null {
+export function shapeAnswerFromMessage(message: string): { questionId: ShapeAnswerQuestionId; value: string } | null {
   const text = String(message || "").trim();
   if (!text.startsWith("{") || !text.includes("clarification_answers")) return null;
   try {
@@ -443,6 +450,21 @@ export interface ShapeQuestion {
 }
 
 const isKnownColumn = (name: string, columns: DatasetColumn[]) => resolveGroupColumn(name, columns) !== null;
+
+/**
+ * UL2a-2b (C5): fields the product writes for itself (a key that starts with «_», or the relevance status). The same rule the results screen uses to hide them: they are never a column a customer can name,
+ * and never an option of a question or a word of a reply.
+ */
+export function isInternalColumnKey(key: string): boolean {
+  return key.startsWith("_") || key.endsWith("_relevance_status");
+}
+
+/** The names a spec uses for columns the file does not have (each once, as written); empty when every column it names exists. */
+export function unknownColumnNames(spec: FileSpec | null | undefined, columns: DatasetColumn[]): string[] {
+  if (!spec) return [];
+  const names = [spec.groupBy?.column, ...(spec.sortBy ?? []).map((e) => e.column), ...(spec.filters ?? []).map((e) => e.column), ...(spec.columns ?? [])];
+  return [...new Set(names.filter((n): n is string => typeof n === "string" && n !== "" && !isKnownColumn(n, columns)))];
+}
 
 /** Which question a spec with an unknown column needs, or null when every column it names exists. */
 export function shapeQuestionForSpec(spec: FileSpec | null | undefined, columns: DatasetColumn[]): ShapeQuestion | null {
@@ -477,12 +499,18 @@ const SHAPE_ANSWER_FAILED_AR = "لم أستطع تحديد الشكل المطل
  * column choice recover theirs (operator, value, the other columns) from the customer's original request. No model, no price.
  */
 export function resolveShapeAnswer(input: {
-  questionId: ShapeQuestionId;
+  questionId: ShapeAnswerQuestionId;
   value: string;
   originalText?: string;
   columns: DatasetColumn[];
 }): ShapeAnswerResolution {
   const failed: ShapeAnswerResolution = { ok: false, errorAr: SHAPE_ANSWER_FAILED_AR };
+  // UL2a-2b: the chosen option IS an instruction in the words the code reads; read it against the real columns
+  if (input.questionId === SHAPE_CHOICE_QUESTION_ID) {
+    const chosenSpec = input.value ? deterministicShapeSpec(input.value, input.columns) : null;
+    const checkedChoice = chosenSpec ? validateFileSpec(chosenSpec, input.columns) : null;
+    return checkedChoice?.ok ? { ok: true, spec: checkedChoice.spec, ignored: [] } : failed;
+  }
   const chosen = input.value ? resolveGroupColumn(input.value, input.columns) : null;
   if (!chosen) return failed;
   let spec: FileSpec | null = null;
