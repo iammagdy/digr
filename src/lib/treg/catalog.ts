@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { normalizeArabic } from "../arabicNormalize";
-import { PAUSED_PROVIDERS } from "./blockList";
+import { PAUSED_PROVIDERS, getValidatedAdditions, type ValidatedCatalogAdditions } from "./blockList";
 import priceSync from "../../../data/treg/price_sync.json";
+import catalogIndex from "../../../data/treg/treg_catalog_index.json";
 import endpointMetadataOverlay from "../../../data/treg/endpoint_metadata_overlay.json";
 import { applyPriceSync } from "./priceSyncFile";
 import { CATALOG_PRICE_REV } from "./priceRev";
@@ -166,6 +168,7 @@ export function normalizePaginationContract(p: any): EndpointPaginationContract 
   const cursor_out_rest = p.cursor_out_path_rest ?? p.cursor_out_path ?? null;
   const cursor_out_mcp = p.cursor_out_path_mcp ?? p.mcp_cursor_out_path ?? null;
   return {
+    ...p,
     cursor_in_param: p.cursor_in_param ?? null,
     cursor_out_path: cursor_out_rest,
     cursor_out_path_rest: cursor_out_rest,
@@ -393,11 +396,12 @@ const cache = new Map<string, TregCatalog>();
 const defaultDir = () => path.join(process.cwd(), "data", "treg");
 
 /** The immutable input to the runtime overlay and to each weekly rebuild. */
-export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatalog {
+export function loadTregPriceBaseline(options: { dir?: string; additions?: ValidatedCatalogAdditions } = {}): TregCatalog {
   const dir = options.dir ?? defaultDir();
-  const snapshot = JSON.parse(readFileSync(path.join(dir, "treg_catalog_sellable.json"), "utf-8"));
+  const snapshotBytes = readFileSync(path.join(dir, "treg_catalog_sellable.json"));
+  const snapshot = JSON.parse(snapshotBytes.toString("utf-8"));
   const writes = JSON.parse(readFileSync(path.join(dir, "treg_write_actions.json"), "utf-8"));
-  let adapterContracts: unknown = undefined;
+  let adapterContracts: any = undefined;
   const regPath = path.join(dir, "treg_research_endpoint_registry.json");
   try {
     if (existsSync(regPath)) {
@@ -406,7 +410,32 @@ export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatal
   } catch {
     // fallback
   }
-  const catalog = parseCatalog(snapshot, writes, adapterContracts);
+
+  const additions = options.additions ?? getValidatedAdditions();
+  const isBundled = path.resolve(dir) === path.resolve(defaultDir());
+  const snapshotSha = createHash("sha256").update(snapshotBytes).digest("hex");
+  const isVerifiedBundled = isBundled && snapshotSha === catalogIndex.source.sha256;
+
+  let mergedSnapshot = snapshot;
+  if (isVerifiedBundled && additions.valid && additions.endpoints.length > 0) {
+    mergedSnapshot = {
+      ...snapshot,
+      count: (snapshot.count ?? snapshot.endpoints.length) + additions.endpoints.length,
+      endpoints: [...snapshot.endpoints, ...additions.endpoints],
+    };
+    if (adapterContracts && Array.isArray(adapterContracts.endpoints)) {
+      adapterContracts = {
+        ...adapterContracts,
+        endpoints: [...adapterContracts.endpoints, ...additions.contracts],
+      };
+    } else {
+      adapterContracts = {
+        endpoints: [...additions.contracts],
+      };
+    }
+  }
+
+  const catalog = parseCatalog(mergedSnapshot, writes, adapterContracts);
   applyEndpointMetadataOverlay(catalog);
   declareExtraInputs(catalog);
   applyPriceCorrections(catalog);
@@ -414,15 +443,15 @@ export function loadTregPriceBaseline(options: { dir?: string } = {}): TregCatal
 }
 
 /** Loads the bundled overlay. The CLI supplies an explicit file to check proposed bytes cold. */
-export function loadTregCatalog(options: { dir?: string; syncFile?: string } = {}): TregCatalog {
-  const { dir = defaultDir(), syncFile } = options;
-  const hit = syncFile === undefined ? cache.get(dir) : undefined;
+export function loadTregCatalog(options: { dir?: string; syncFile?: string; additions?: ValidatedCatalogAdditions } = {}): TregCatalog {
+  const { dir = defaultDir(), syncFile, additions } = options;
+  const hit = syncFile === undefined && additions === undefined ? cache.get(dir) : undefined;
   if (hit) return hit;
-  const catalog = loadTregPriceBaseline({ dir });
+  const catalog = loadTregPriceBaseline({ dir, additions });
   const overlay: unknown = syncFile === undefined ? priceSync : JSON.parse(readFileSync(syncFile, "utf-8"));
   const file = applyPriceSync(catalog, overlay, PINNED_PRICE_IDS);
   if (syncFile === undefined && file.revision !== CATALOG_PRICE_REV) throw new Error("catalog price revision disagrees with the price sync file");
-  if (syncFile === undefined) cache.set(dir, catalog);
+  if (syncFile === undefined && additions === undefined) cache.set(dir, catalog);
   return catalog;
 }
 
