@@ -55,6 +55,13 @@ export const SUPPORTED_DELIVERY_COST_UNITS: ReadonlySet<string> = new Set([
   "user",
   "utf8_byte",
 ]);
+export const SUPPORTED_DELIVERY_BILLING_TYPES: ReadonlySet<string> = new Set([
+  "per_call",
+  "per_record",
+  "per_result",
+  "per_success",
+  "quota_rows",
+]);
 const SUPPORTED_HTTP_METHODS: ReadonlySet<string> = new Set(["GET", "POST"]);
 
 export interface CatalogAdditionEntry {
@@ -161,8 +168,8 @@ export function validateCatalogAdditions(
     if (scope === "own_account") return fail(`own_account_scope: ${id}`);
     if (scope !== "read") return fail(`invalid_scope: ${id}`);
 
-    // b) method must be a supported HTTP method (GET or POST); missing/other rejected.
-    if (typeof ep.method !== "string" || !SUPPORTED_HTTP_METHODS.has(ep.method.trim().toUpperCase())) {
+    // b) method must be a supported HTTP method (exact literal "GET" or "POST" only, no lowercase, no padding); missing/other rejected.
+    if (typeof ep.method !== "string" || !SUPPORTED_HTTP_METHODS.has(ep.method)) {
       return fail(`unsupported_method: ${id}`);
     }
 
@@ -186,8 +193,17 @@ export function validateCatalogAdditions(
       if (typeof cost.unit !== "string" || !SUPPORTED_DELIVERY_COST_UNITS.has(cost.unit)) {
         return fail(`delivery_unsupported_unit: ${id}`);
       }
-      if (!cost.type || typeof cost.type !== "string" || cost.type === "free" || cost.type === "zero") {
+      if (
+        typeof cost.type !== "string" ||
+        cost.type.trim() !== cost.type ||
+        !SUPPORTED_DELIVERY_BILLING_TYPES.has(cost.type)
+      ) {
         return fail(`delivery_cost_inconsistent: ${id}`);
+      }
+      if (cost.value !== undefined && cost.value !== null) {
+        if (typeof cost.value !== "number" || !Number.isFinite(cost.value) || cost.value <= 0) {
+          return fail(`delivery_cost_value_invalid: ${id}`);
+        }
       }
     } else {
       // d) roles "count" and "schema": cost must be PRESENT and exactly free type, USD 0 (finite), unit per call; missing cost, negative/non-numeric USD, or any non-free type is rejected.
@@ -198,6 +214,11 @@ export function validateCatalogAdditions(
         return fail(`helper_usd_must_be_zero: ${id}`);
       }
       if (cost.unit !== "call") return fail(`helper_unit_must_be_call: ${id}`);
+      if (cost.value !== undefined && cost.value !== null) {
+        if (typeof cost.value !== "number" || !Number.isFinite(cost.value) || cost.value !== 0 || Object.is(cost.value, -0)) {
+          return fail(`helper_cost_value_invalid: ${id}`);
+        }
+      }
     }
 
     if (contract.helpers) {

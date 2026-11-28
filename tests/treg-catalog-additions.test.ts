@@ -441,6 +441,42 @@ describe("treg-catalog-additions (G1a + G1b)", () => {
           return b;
         },
       },
+      {
+        name: "delivery billing type blank",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint.cost as any).type = "   ";
+          return b;
+        },
+      },
+      {
+        name: "helper with positive cost.value",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[1].endpoint.cost as any).value = 0.05;
+          return b;
+        },
+      },
+      {
+        name: "method get (lowercase)",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint as any).method = "get";
+          return b;
+        },
+      },
+      {
+        name: "method padded GET",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint as any).method = " GET";
+          return b;
+        },
+      },
     ];
 
     it.each(invalidCases)("$name is rejected at all three boundaries", ({ candidateId, builder, expectedBlockReason }) => {
