@@ -737,6 +737,9 @@ export function createGateway(deps: GatewayDeps) {
 
       // Point 3.4: Runtime page-size clamp
       if (!funded) params = clampOutgoingPageSize(endpoint, params);
+      else if (funded.role !== "delivery" && (!member || !isZeroFreeEndpoint(member.endpoint) || !isZeroFreeEndpoint(endpoint))) {
+        return fundedRefusal("blocked");
+      }
 
       // 3: data policy
       const verdict = policyVerdict(endpointId, deps.access);
@@ -753,8 +756,12 @@ export function createGateway(deps: GatewayDeps) {
       if (funded && paramsSignature(params) !== paramsSignature(serializeProviderParams(params, [...known]))) {
         return fundedRefusal("missing_params");
       }
-      if (funded?.role === "delivery" && tregCallBoundOf(endpointId, params, deps.catalog) !== funded.schedule.maxPerCallMicros / 1_000_000) {
-        return fundedRefusal("over_budget");
+      if (funded?.role === "delivery") {
+        const { pageSize, maxPerCallMicros } = funded.schedule;
+        if (!member || fundedCallMicros(member.endpoint, deps.catalog, pageSize) !== maxPerCallMicros
+          || tregCallBoundOf(endpointId, params, deps.catalog) !== maxPerCallMicros / 1_000_000) {
+          return fundedRefusal("over_budget");
+        }
       }
 
       // 4b: a source that refuses, by its own description, what its input schema accepts (a topic search without a login) is not called at all

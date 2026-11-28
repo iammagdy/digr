@@ -1,3 +1,4 @@
+import { getValidatedAdditions } from "../../../src/lib/treg/blockList";
 import { MODEL_SONNET } from "../../../src/lib/agentMission/constants";
 import { isPeopleOfCompanyStep } from "../../../src/lib/agentMission/childSources";
 import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
@@ -113,6 +114,19 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
   }
   const qa = state.asked.filter((a) => a.answer !== null);
   let web = input.web;
+  const schemas = new Map<string, Promise<GatewayCallResult>>();
+  const fundedProbe = input.fundedCaller && ((scope: FundedSchedule, endpointId: string, params: Record<string, unknown>) => {
+    const manifest = getValidatedAdditions();
+    if (manifest.byId.get(endpointId)?.contract.role !== "schema") {
+      return probeAny(input, undefined, endpointId, params, input.fundedCaller!(scope));
+    }
+    const key = `${manifest.version}:${endpointId}`;
+    const known = schemas.get(key);
+    if (known) return known;
+    const loading = probeAny(input, undefined, endpointId, params, input.fundedCaller!(scope));
+    schemas.set(key, loading);
+    return loading;
+  });
   const result = await planWithLlm(
     {
       words,
@@ -136,10 +150,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       readPage: async (callId) => { const raw = await store.getFile(mission.id, RAW_PATH(callId)); if (raw === null) return null; try { return JSON.parse(raw) as unknown; } catch { return null; } },
       pricingSettings: input.pricingSettings,
       availablePoints: input.availablePoints,
-      ...(input.fundedCaller ? {
-        fundedProbe: (scope: FundedSchedule, endpointId: string, params: Record<string, unknown>) =>
-          probeAny(input, undefined, endpointId, params, input.fundedCaller!(scope)),
-      } : {}),
+      ...(fundedProbe ? { fundedProbe } : {}),
       today: cairoDayOf(input.now),
       onProgress: async (lineAr) => { await store.addEvent(mission.id, { kind: "progress", message_ar: lineAr }); },
       accept: acceptOf(input.catalog, input.access),
