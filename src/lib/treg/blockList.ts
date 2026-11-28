@@ -32,6 +32,31 @@ const BLOCKED_POLICY_IDS: ReadonlySet<string> = new Set(
   Object.keys((dataPolicy as any).endpoints ?? {}).filter((id) => (dataPolicy as any).endpoints[id] === "blocked")
 );
 
+export const SUPPORTED_DELIVERY_COST_UNITS: ReadonlySet<string> = new Set([
+  "ad",
+  "analysis_unit",
+  "call",
+  "character",
+  "domain",
+  "employee",
+  "index_item_unit",
+  "item",
+  "keyword",
+  "page",
+  "per_success",
+  "post",
+  "quota_row",
+  "record",
+  "result",
+  "review",
+  "row",
+  "step",
+  "target",
+  "user",
+  "utf8_byte",
+]);
+const SUPPORTED_HTTP_METHODS: ReadonlySet<string> = new Set(["GET", "POST"]);
+
 export interface CatalogAdditionEntry {
   endpoint: CatalogEndpoint;
   policy: "public";
@@ -130,8 +155,16 @@ export function validateCatalogAdditions(
 
     if (pausedProviders.has(provider.toLowerCase())) return fail(`paused_provider_id: ${id}`);
 
-    const scope = String(ep.scope ?? "").toLowerCase();
+    // a) scope must be the documented read scope (same value the base snapshot uses for read endpoints); a missing scope is rejected.
+    if (typeof ep.scope !== "string" || !ep.scope.trim()) return fail(`missing_scope: ${id}`);
+    const scope = ep.scope.trim().toLowerCase();
     if (scope === "own_account") return fail(`own_account_scope: ${id}`);
+    if (scope !== "read") return fail(`invalid_scope: ${id}`);
+
+    // b) method must be a supported HTTP method (GET or POST); missing/other rejected.
+    if (typeof ep.method !== "string" || !SUPPORTED_HTTP_METHODS.has(ep.method.trim().toUpperCase())) {
+      return fail(`unsupported_method: ${id}`);
+    }
 
     const contract = entry.contract;
     if (!contract || typeof contract !== "object" || typeof contract.endpoint_id !== "string") {
@@ -143,15 +176,28 @@ export function validateCatalogAdditions(
     if (role !== "delivery" && role !== "count" && role !== "schema") return fail(`invalid_contract_role: ${id}`);
 
     if (role === "delivery") {
+      // c) role "delivery": cost must be finite (Number.isFinite) and > 0 USD, in a supported unit, and the cost fields consistent with each other
       if (contract.dispatch !== "funded") return fail(`delivery_must_be_funded: ${id}`);
-      if (!ep.cost || typeof ep.cost.usd !== "number" || ep.cost.usd <= 0) {
-        return fail(`delivery_cost_must_be_positive: ${id}`);
+      if (!ep.cost || typeof ep.cost !== "object") return fail(`delivery_cost_missing: ${id}`);
+      const cost = ep.cost;
+      if (typeof cost.usd !== "number" || !Number.isFinite(cost.usd) || cost.usd <= 0) {
+        return fail(`delivery_cost_must_be_finite_positive: ${id}`);
+      }
+      if (typeof cost.unit !== "string" || !SUPPORTED_DELIVERY_COST_UNITS.has(cost.unit)) {
+        return fail(`delivery_unsupported_unit: ${id}`);
+      }
+      if (!cost.type || typeof cost.type !== "string" || cost.type === "free" || cost.type === "zero") {
+        return fail(`delivery_cost_inconsistent: ${id}`);
       }
     } else {
-      if (ep.cost && typeof ep.cost.usd === "number" && ep.cost.usd > 0) {
-        return fail(`helper_must_be_free: ${id}`);
+      // d) roles "count" and "schema": cost must be PRESENT and exactly free type, USD 0 (finite), unit per call; missing cost, negative/non-numeric USD, or any non-free type is rejected.
+      if (!ep.cost || typeof ep.cost !== "object") return fail(`helper_cost_missing: ${id}`);
+      const cost = ep.cost;
+      if (cost.type !== "free") return fail(`helper_type_must_be_free: ${id}`);
+      if (typeof cost.usd !== "number" || !Number.isFinite(cost.usd) || cost.usd !== 0 || Object.is(cost.usd, -0)) {
+        return fail(`helper_usd_must_be_zero: ${id}`);
       }
-      if (ep.cost && ep.cost.unit !== "call") return fail(`helper_unit_must_be_call: ${id}`);
+      if (cost.unit !== "call") return fail(`helper_unit_must_be_call: ${id}`);
     }
 
     if (contract.helpers) {
@@ -187,7 +233,7 @@ export function validateCatalogAdditions(
         const h = byId.get(helpers.count);
         if (!h) return fail(`missing_helper: ${helpers.count}`);
         if (h.contract.role !== "count") return fail(`invalid_helper_role: ${helpers.count}`);
-        if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
+        if (!h.endpoint.cost || typeof h.endpoint.cost.usd !== "number" || !Number.isFinite(h.endpoint.cost.usd) || h.endpoint.cost.usd !== 0 || Object.is(h.endpoint.cost.usd, -0) || h.endpoint.cost.type !== "free" || h.endpoint.cost.unit !== "call") {
           return fail(`paid_helper: ${helpers.count}`);
         }
       }
@@ -195,7 +241,7 @@ export function validateCatalogAdditions(
         const h = byId.get(helpers.schema);
         if (!h) return fail(`missing_helper: ${helpers.schema}`);
         if (h.contract.role !== "schema") return fail(`invalid_helper_role: ${helpers.schema}`);
-        if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
+        if (!h.endpoint.cost || typeof h.endpoint.cost.usd !== "number" || !Number.isFinite(h.endpoint.cost.usd) || h.endpoint.cost.usd !== 0 || Object.is(h.endpoint.cost.usd, -0) || h.endpoint.cost.type !== "free" || h.endpoint.cost.unit !== "call") {
           return fail(`paid_helper: ${helpers.schema}`);
         }
       }
@@ -250,7 +296,7 @@ export function blockedEndpointReason(
     return null;
   }
 
-  if (additions.deniedIds.has(id)) {
+  if (additions.deniedIds.has(id) && !SELLABLE_IDS.has(id)) {
     return "not_sellable";
   }
 
