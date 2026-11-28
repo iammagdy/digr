@@ -30,7 +30,6 @@ import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE, customerFacingMessageText
 import { openJobHref } from "@/lib/requestLinks";
 import { PARTIAL_SENTENCE_AR } from "@/lib/jobs/requestStatus";
 import { isUntitledConversation, titleFromFirstRequest } from "@/lib/conversationTitleFromRequest";
-import { resolvePlanningPending } from "@/lib/planningClient";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
@@ -735,7 +734,7 @@ export default function ChatWorkspacePage() {
 
       clearTimeout(timeoutId);
 
-      const data: any = await resolvePlanningPending(await readChatResponse(res), { headers, signal: controller.signal });
+      const data: any = await readChatResponse(res);
 
       if (data.isGuest) {
         setGuestRemaining(data.remainingGuestMessages ?? 0);
@@ -842,7 +841,7 @@ export default function ChatWorkspacePage() {
           ...(activeJob?.resultColumns?.length ? { resultColumns: activeJob.resultColumns } : {}),
         }),
       });
-      const data: any = await resolvePlanningPending(await readChatResponse(res), { headers, signal: controller.signal });
+      const data: any = await readChatResponse(res);
 
       setMessages((previous) => [
         ...previous.map((message) => message.id === assistantMessageId

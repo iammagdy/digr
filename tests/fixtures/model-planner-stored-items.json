@@ -1,0 +1,1458 @@
+{
+ "_comment": "UL2a-3 C-2a: the quote item (as the chat's model planner stored it) of two replay jobs, captured once from the pre-removal tree (fixtures of the replay world: no customer data). The worker tests seed their job from these.",
+ "x": {
+  "item": {
+   "capabilitySlug": "model-planned",
+   "endpointId": "anyapi.x.user.posts",
+   "params": {
+    "_modelStep": {
+     "v": 1,
+     "steps": [
+      {
+       "endpointId": "anyapi.x.user.posts",
+       "volume": 10,
+       "params": [
+        {
+         "name": "handle",
+         "value": "elonmusk",
+         "source": "customer_text",
+         "quote": "@elonmusk"
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "text",
+          "headerAr": "نص المنشور",
+          "role": "text"
+         },
+         {
+          "field": "authorHandle",
+          "headerAr": "الحساب",
+          "role": "author_handle"
+         },
+         {
+          "field": "createdUtc",
+          "headerAr": "تاريخ النشر",
+          "role": "date"
+         },
+         {
+          "field": "likes",
+          "headerAr": "الإعجابات",
+          "role": "likes",
+          "transform": "number"
+         },
+         {
+          "field": "url",
+          "headerAr": "الرابط",
+          "role": "url"
+         }
+        ],
+        "pagination": {
+         "kind": "token",
+         "param": "cursor"
+        }
+       },
+       "filters": [
+        {
+         "kind": "author_equals",
+         "field": "authorHandle",
+         "value": "elonmusk",
+         "quote": "@elonmusk"
+        },
+        {
+         "kind": "exclude_true",
+         "field": "isReply"
+        },
+        {
+         "kind": "exclude_prefix",
+         "field": "text",
+         "prefix": "RT @"
+        }
+       ],
+       "facts": {
+        "method": "POST",
+        "scope": "any_account",
+        "limitName": "limit",
+        "limitMax": 100,
+        "listPath": "rows",
+        "cursorPath": null,
+        "itemFields": {
+         "bookmarks": {
+          "type": "number"
+         },
+         "createdUtc": {
+          "type": "number"
+         },
+         "id": {
+          "type": "string"
+         },
+         "isReply": {
+          "type": "boolean"
+         },
+         "lang": {
+          "type": "string"
+         },
+         "likes": {
+          "type": "number"
+         },
+         "media": {
+          "type": "array"
+         },
+         "quotes": {
+          "type": "number"
+         },
+         "replies": {
+          "type": "number"
+         },
+         "retweets": {
+          "type": "number"
+         },
+         "text": {
+          "type": "string"
+         },
+         "url": {
+          "type": "string"
+         },
+         "views": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.0005,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "crawl4ai.x.user.posts",
+          "method": "POST",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "username",
+            "value": "elonmusk",
+            "source": "customer_text",
+            "quote": "@elonmusk"
+           }
+          ],
+          "listPath": "rows",
+          "cursorPath": null,
+          "itemFields": {
+           "author": {
+            "type": "string"
+           },
+           "created": {
+            "type": "string"
+           },
+           "id": {
+            "type": "string"
+           },
+           "is_retweet": {
+            "type": "boolean"
+           },
+           "likes": {
+            "type": "number"
+           },
+           "quotes": {
+            "type": "number"
+           },
+           "replies": {
+            "type": "number"
+           },
+           "retweets": {
+            "type": "number"
+           },
+           "text": {
+            "type": "string"
+           },
+           "url": {
+            "type": "string"
+           }
+          },
+          "limitName": "limit",
+          "limitMax": null,
+          "callEstimateUsd": 0.00045
+         }
+        ]
+       }
+      }
+     ],
+     "measured": [
+      {
+       "rowsPerCall": 10,
+       "passRate": 0.3,
+       "costPerCallUsd": 0.0005,
+       "from": "sample"
+      }
+     ],
+     "managerBudgetUsd": 0.01,
+     "delivers": [
+      true
+     ],
+     "stages": [
+      {
+       "parent": null,
+       "deliver": true,
+       "effVolume": 10,
+       "perParent": 0,
+       "titleAr": "المرحلة ١"
+      }
+     ],
+     "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+    },
+    "_customerRequest": "أريد ١٠ منشورات من حساب @elonmusk على منصة X"
+   },
+   "targetVolumeMin": 1,
+   "targetVolumeMax": 10,
+   "paginationStrategy": "cursor",
+   "pricingUnit": "item",
+   "unitCostUsd": 0.0001666666666666667,
+   "unitPricePoints": 0.916667,
+   "rawPoints": 9.16667,
+   "itemReservation": 11,
+   "reservedPoints": 11
+  },
+  "quotedPoints": 11
+ },
+ "tiktok": {
+  "item": {
+   "capabilitySlug": "model-planned",
+   "endpointId": "anyapi.tiktok.search.videos",
+   "params": {
+    "_modelStep": {
+     "v": 1,
+     "steps": [
+      {
+       "endpointId": "anyapi.tiktok.search.videos",
+       "volume": 30,
+       "params": [
+        {
+         "name": "query",
+         "value": "كرة السلة في مصر",
+         "source": "customer_text",
+         "quote": "كرة السلة في مصر"
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "id",
+          "headerAr": "معرف المقطع",
+          "role": "id"
+         },
+         {
+          "field": "caption",
+          "headerAr": "وصف المقطع",
+          "role": "title"
+         }
+        ],
+        "pagination": {
+         "kind": "token",
+         "param": "cursor"
+        }
+       },
+       "filters": [],
+       "facts": {
+        "method": "POST",
+        "scope": "any_account",
+        "limitName": null,
+        "limitMax": null,
+        "listPath": "output.data.videos",
+        "cursorPath": "output.data.nextCursor",
+        "itemFields": {
+         "author": {
+          "type": "string"
+         },
+         "caption": {
+          "type": "string"
+         },
+         "comments": {
+          "type": "number"
+         },
+         "createdUtc": {
+          "type": "number"
+         },
+         "id": {
+          "type": "string"
+         },
+         "likes": {
+          "type": "number"
+         },
+         "region": {
+          "type": "string"
+         },
+         "saves": {
+          "type": "number"
+         },
+         "shares": {
+          "type": "number"
+         },
+         "views": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.0012,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "tikhub.tiktok.search.videos",
+          "method": "GET",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "keyword",
+            "value": "كرة السلة في مصر",
+            "source": "customer_text",
+            "quote": "كرة السلة في مصر"
+           }
+          ],
+          "listPath": "data.search_item_list",
+          "cursorPath": "data.cursor",
+          "itemFields": {
+           "aweme_info": {
+            "type": "object"
+           },
+           "search_aweme_info": {
+            "type": "object"
+           }
+          },
+          "limitName": "count",
+          "limitMax": null,
+          "callEstimateUsd": 0.001
+         },
+         {
+          "endpointId": "crawl4ai.tiktok.search.videos",
+          "method": "POST",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "query",
+            "value": "كرة السلة في مصر",
+            "source": "customer_text",
+            "quote": "كرة السلة في مصر"
+           }
+          ],
+          "listPath": "rows",
+          "cursorPath": null,
+          "itemFields": {
+           "author": {
+            "type": "object"
+           },
+           "cover": {
+            "type": "string"
+           },
+           "created_at": {
+            "type": "string"
+           },
+           "description": {
+            "type": "string"
+           },
+           "duration_s": {
+            "type": "number"
+           },
+           "hashtags": {
+            "type": "array"
+           },
+           "music": {
+            "type": "object"
+           },
+           "post_id": {
+            "type": "string"
+           },
+           "stats": {
+            "type": "object"
+           },
+           "url": {
+            "type": "string"
+           }
+          },
+          "limitName": "limit",
+          "limitMax": null,
+          "callEstimateUsd": 0.0005
+         }
+        ]
+       }
+      },
+      {
+       "endpointId": "tikhub.tiktok.video.comments",
+       "volume": 30,
+       "params": [
+        {
+         "name": "aweme_id",
+         "source": "prior_step",
+         "fromStep": {
+          "step": 1,
+          "field": "id"
+         }
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "text",
+          "headerAr": "نص التعليق",
+          "role": "text"
+         },
+         {
+          "field": "digg_count",
+          "headerAr": "الإعجابات",
+          "role": "likes",
+          "transform": "number"
+         }
+        ],
+        "pagination": {
+         "kind": "single"
+        }
+       },
+       "filters": [],
+       "perItem": 10,
+       "facts": {
+        "method": "GET",
+        "scope": "any_account",
+        "limitName": "count",
+        "limitMax": null,
+        "listPath": "data.comments",
+        "cursorPath": "data.cursor",
+        "itemFields": {
+         "allow_download_photo": {
+          "type": "boolean"
+         },
+         "author_pin": {
+          "type": "boolean"
+         },
+         "aweme_id": {
+          "type": "string"
+         },
+         "cid": {
+          "type": "string"
+         },
+         "collect_stat": {
+          "type": "number"
+         },
+         "comment_language": {
+          "type": "string"
+         },
+         "create_time": {
+          "type": "number"
+         },
+         "digg_count": {
+          "type": "number"
+         },
+         "fold_status": {
+          "type": "number"
+         },
+         "image_list": {
+          "type": "array"
+         },
+         "is_author_digged": {
+          "type": "boolean"
+         },
+         "is_comment_translatable": {
+          "type": "boolean"
+         },
+         "is_high_purchase_intent": {
+          "type": "boolean"
+         },
+         "no_show": {
+          "type": "boolean"
+         },
+         "reply_comment_total": {
+          "type": "number"
+         },
+         "reply_id": {
+          "type": "string"
+         },
+         "reply_to_reply_id": {
+          "type": "string"
+         },
+         "seeking_help_model_type": {
+          "type": "number"
+         },
+         "share_info": {
+          "type": "object"
+         },
+         "sort_extra_score": {
+          "type": "object"
+         },
+         "sort_tags": {
+          "type": "string"
+         },
+         "status": {
+          "type": "number"
+         },
+         "stick_position": {
+          "type": "number"
+         },
+         "text": {
+          "type": "string"
+         },
+         "text_extra": {
+          "type": "array"
+         },
+         "thread_has_more": {
+          "type": "boolean"
+         },
+         "thread_id": {
+          "type": "number"
+         },
+         "trans_btn_style": {
+          "type": "number"
+         },
+         "user": {
+          "type": "object"
+         },
+         "user_buried": {
+          "type": "boolean"
+         },
+         "user_digged": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.001,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "tikhub.x.tiktok-app-v3-fetch-video-comments",
+          "method": "GET",
+          "scope": "",
+          "params": [
+           {
+            "name": "aweme_id",
+            "source": "prior_step",
+            "fromStep": {
+             "step": 1,
+             "field": "id"
+            }
+           }
+          ],
+          "listPath": null,
+          "cursorPath": "data.cursor",
+          "itemFields": null,
+          "limitName": "count",
+          "limitMax": null,
+          "callEstimateUsd": 0.001
+         }
+        ]
+       }
+      }
+     ],
+     "topic": "كرة السلة في مصر",
+     "measured": [
+      {
+       "rowsPerCall": 1,
+       "passRate": 1,
+       "costPerCallUsd": 0.0012,
+       "from": "sample"
+      },
+      {
+       "rowsPerCall": 1,
+       "passRate": 1,
+       "costPerCallUsd": 0.001,
+       "from": "sample"
+      }
+     ],
+     "managerBudgetUsd": 0.01,
+     "delivers": [
+      false,
+      true
+     ],
+     "stages": [
+      {
+       "parent": null,
+       "deliver": false,
+       "effVolume": 30,
+       "perParent": 0,
+       "titleAr": "المرحلة ١"
+      },
+      {
+       "parent": 0,
+       "deliver": true,
+       "effVolume": 30,
+       "perParent": 1,
+       "titleAr": "المرحلة ٢",
+       "askedPerParent": 10
+      }
+     ],
+     "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+    },
+    "_customerRequest": "هات ٣٠ تعليق تيك توك عن كرة السلة في مصر"
+   },
+   "targetVolumeMin": 1,
+   "targetVolumeMax": 30,
+   "paginationStrategy": "cursor",
+   "pricingUnit": "item",
+   "unitCostUsd": 0.00112,
+   "unitPricePoints": 6.16,
+   "rawPoints": 184.8,
+   "itemReservation": 213,
+   "reservedPoints": 213
+  },
+  "quotedPoints": 213
+ },
+ "salah": {
+  "item": {
+   "capabilitySlug": "model-planned",
+   "endpointId": "anyapi.x.search.posts",
+   "params": {
+    "_modelStep": {
+     "v": 1,
+     "steps": [
+      {
+       "endpointId": "anyapi.x.search.posts",
+       "volume": 20,
+       "params": [
+        {
+         "name": "query",
+         "value": "محمد صلاح بعد انتقاله لتركيا",
+         "source": "customer_text",
+         "quote": "محمد صلاح بعد انتقاله لتركيا"
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "text",
+          "headerAr": "نص التغريدة",
+          "role": "text"
+         },
+         {
+          "field": "authorUsername",
+          "headerAr": "الحساب",
+          "role": "author_handle"
+         },
+         {
+          "field": "createdUtc",
+          "headerAr": "تاريخ النشر",
+          "role": "date",
+          "transform": "unix_s_to_iso"
+         },
+         {
+          "field": "likeCount",
+          "headerAr": "الإعجابات",
+          "role": "likes",
+          "transform": "number"
+         },
+         {
+          "field": "url",
+          "headerAr": "الرابط",
+          "role": "url"
+         }
+        ],
+        "pagination": {
+         "kind": "token",
+         "param": "cursor"
+        }
+       },
+       "filters": [],
+       "facts": {
+        "method": "POST",
+        "scope": "any_account",
+        "limitName": "limit",
+        "limitMax": 50,
+        "listPath": "output.data.items",
+        "cursorPath": null,
+        "itemFields": {
+         "authorName": {
+          "type": "string"
+         },
+         "authorUsername": {
+          "type": "string"
+         },
+         "authorVerified": {
+          "type": "boolean"
+         },
+         "bookmarkCount": {
+          "type": "number"
+         },
+         "conversationId": {
+          "type": "string"
+         },
+         "createdUtc": {
+          "type": "number"
+         },
+         "id": {
+          "type": "string"
+         },
+         "isReply": {
+          "type": "boolean"
+         },
+         "lang": {
+          "type": "string"
+         },
+         "likeCount": {
+          "type": "number"
+         },
+         "media": {
+          "type": "array"
+         },
+         "quoteCount": {
+          "type": "number"
+         },
+         "replyCount": {
+          "type": "number"
+         },
+         "retweetCount": {
+          "type": "number"
+         },
+         "text": {
+          "type": "string"
+         },
+         "url": {
+          "type": "string"
+         },
+         "viewCount": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.00075,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "crawl4ai.x.search.posts",
+          "method": "POST",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "query",
+            "value": "محمد صلاح بعد انتقاله لتركيا",
+            "source": "customer_text",
+            "quote": "محمد صلاح بعد انتقاله لتركيا"
+           }
+          ],
+          "listPath": null,
+          "cursorPath": null,
+          "itemFields": null,
+          "limitName": "limit",
+          "limitMax": null,
+          "callEstimateUsd": 0.00065
+         }
+        ]
+       }
+      }
+     ],
+     "topic": "محمد صلاح بعد انتقاله لتركيا",
+     "measured": [
+      {
+       "rowsPerCall": 8,
+       "passRate": 1,
+       "costPerCallUsd": 0.00075,
+       "from": "sample"
+      }
+     ],
+     "managerBudgetUsd": 0.01,
+     "delivers": [
+      true
+     ],
+     "stages": [
+      {
+       "parent": null,
+       "deliver": true,
+       "effVolume": 20,
+       "perParent": 0,
+       "titleAr": "المرحلة ١"
+      }
+     ],
+     "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+    },
+    "_customerRequest": "هات ٢٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا"
+   },
+   "targetVolumeMin": 1,
+   "targetVolumeMax": 20,
+   "paginationStrategy": "cursor",
+   "pricingUnit": "item",
+   "unitCostUsd": 9.375e-05,
+   "unitPricePoints": 0.515625,
+   "rawPoints": 10.3125,
+   "itemReservation": 12,
+   "reservedPoints": 12
+  },
+  "quotedPoints": 12
+ },
+ "marriage": {
+  "item": {
+   "capabilitySlug": "model-planned",
+   "endpointId": "anyapi.tiktok.search.videos",
+   "params": {
+    "_modelStep": {
+     "v": 1,
+     "steps": [
+      {
+       "endpointId": "anyapi.tiktok.search.videos",
+       "volume": 5,
+       "deliver": true,
+       "titleAr": "جمع الفيديوهات",
+       "params": [
+        {
+         "name": "query",
+         "value": "الجواز والطلاق في مصر",
+         "source": "customer_text",
+         "quote": "الجواز والطلاق في مصر"
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "id",
+          "headerAr": "معرف المقطع",
+          "role": "id"
+         },
+         {
+          "field": "caption",
+          "headerAr": "وصف المقطع",
+          "role": "title"
+         }
+        ],
+        "pagination": {
+         "kind": "token",
+         "param": "cursor"
+        }
+       },
+       "filters": [],
+       "facts": {
+        "method": "POST",
+        "scope": "any_account",
+        "limitName": null,
+        "limitMax": null,
+        "listPath": "output.data.videos",
+        "cursorPath": "output.data.nextCursor",
+        "itemFields": {
+         "author": {
+          "type": "string"
+         },
+         "caption": {
+          "type": "string"
+         },
+         "comments": {
+          "type": "number"
+         },
+         "createdUtc": {
+          "type": "number"
+         },
+         "id": {
+          "type": "string"
+         },
+         "likes": {
+          "type": "number"
+         },
+         "region": {
+          "type": "string"
+         },
+         "saves": {
+          "type": "number"
+         },
+         "shares": {
+          "type": "number"
+         },
+         "views": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.0012,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "tikhub.tiktok.search.videos",
+          "method": "GET",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "keyword",
+            "value": "الجواز والطلاق في مصر",
+            "source": "customer_text",
+            "quote": "الجواز والطلاق في مصر"
+           }
+          ],
+          "listPath": "data.search_item_list",
+          "cursorPath": "data.cursor",
+          "itemFields": {
+           "aweme_info": {
+            "type": "object"
+           },
+           "search_aweme_info": {
+            "type": "object"
+           }
+          },
+          "limitName": "count",
+          "limitMax": null,
+          "callEstimateUsd": 0.001
+         },
+         {
+          "endpointId": "crawl4ai.tiktok.search.videos",
+          "method": "POST",
+          "scope": "any_account",
+          "params": [
+           {
+            "name": "query",
+            "value": "الجواز والطلاق في مصر",
+            "source": "customer_text",
+            "quote": "الجواز والطلاق في مصر"
+           }
+          ],
+          "listPath": "rows",
+          "cursorPath": null,
+          "itemFields": {
+           "author": {
+            "type": "object"
+           },
+           "cover": {
+            "type": "string"
+           },
+           "created_at": {
+            "type": "string"
+           },
+           "description": {
+            "type": "string"
+           },
+           "duration_s": {
+            "type": "number"
+           },
+           "hashtags": {
+            "type": "array"
+           },
+           "music": {
+            "type": "object"
+           },
+           "post_id": {
+            "type": "string"
+           },
+           "stats": {
+            "type": "object"
+           },
+           "url": {
+            "type": "string"
+           }
+          },
+          "limitName": "limit",
+          "limitMax": null,
+          "callEstimateUsd": 0.0005
+         }
+        ]
+       }
+      },
+      {
+       "endpointId": "tikhub.tiktok.video.comments",
+       "volume": 50,
+       "deliver": true,
+       "titleAr": "جمع التعليقات",
+       "params": [
+        {
+         "name": "aweme_id",
+         "source": "prior_step",
+         "fromStep": {
+          "step": 1,
+          "field": "id"
+         }
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "text",
+          "headerAr": "نص التعليق",
+          "role": "text"
+         },
+         {
+          "field": "digg_count",
+          "headerAr": "الإعجابات",
+          "role": "likes",
+          "transform": "number"
+         }
+        ],
+        "pagination": {
+         "kind": "single"
+        }
+       },
+       "filters": [],
+       "perItem": 10,
+       "facts": {
+        "method": "GET",
+        "scope": "any_account",
+        "limitName": "count",
+        "limitMax": null,
+        "listPath": "data.comments",
+        "cursorPath": "data.cursor",
+        "itemFields": {
+         "allow_download_photo": {
+          "type": "boolean"
+         },
+         "author_pin": {
+          "type": "boolean"
+         },
+         "aweme_id": {
+          "type": "string"
+         },
+         "cid": {
+          "type": "string"
+         },
+         "collect_stat": {
+          "type": "number"
+         },
+         "comment_language": {
+          "type": "string"
+         },
+         "create_time": {
+          "type": "number"
+         },
+         "digg_count": {
+          "type": "number"
+         },
+         "fold_status": {
+          "type": "number"
+         },
+         "image_list": {
+          "type": "array"
+         },
+         "is_author_digged": {
+          "type": "boolean"
+         },
+         "is_comment_translatable": {
+          "type": "boolean"
+         },
+         "is_high_purchase_intent": {
+          "type": "boolean"
+         },
+         "no_show": {
+          "type": "boolean"
+         },
+         "reply_comment_total": {
+          "type": "number"
+         },
+         "reply_id": {
+          "type": "string"
+         },
+         "reply_to_reply_id": {
+          "type": "string"
+         },
+         "seeking_help_model_type": {
+          "type": "number"
+         },
+         "share_info": {
+          "type": "object"
+         },
+         "sort_extra_score": {
+          "type": "object"
+         },
+         "sort_tags": {
+          "type": "string"
+         },
+         "status": {
+          "type": "number"
+         },
+         "stick_position": {
+          "type": "number"
+         },
+         "text": {
+          "type": "string"
+         },
+         "text_extra": {
+          "type": "array"
+         },
+         "thread_has_more": {
+          "type": "boolean"
+         },
+         "thread_id": {
+          "type": "number"
+         },
+         "trans_btn_style": {
+          "type": "number"
+         },
+         "user": {
+          "type": "object"
+         },
+         "user_buried": {
+          "type": "boolean"
+         },
+         "user_digged": {
+          "type": "number"
+         }
+        },
+        "callEstimateUsd": 0.001,
+        "entity": null,
+        "alternates": [
+         {
+          "endpointId": "tikhub.x.tiktok-app-v3-fetch-video-comments",
+          "method": "GET",
+          "scope": "",
+          "params": [
+           {
+            "name": "aweme_id",
+            "source": "prior_step",
+            "fromStep": {
+             "step": 1,
+             "field": "id"
+            }
+           }
+          ],
+          "listPath": null,
+          "cursorPath": "data.cursor",
+          "itemFields": null,
+          "limitName": "count",
+          "limitMax": null,
+          "callEstimateUsd": 0.001
+         }
+        ]
+       }
+      }
+     ],
+     "topic": "الجواز والطلاق في مصر",
+     "measured": [
+      {
+       "rowsPerCall": 1,
+       "passRate": 1,
+       "costPerCallUsd": 0.0012,
+       "from": "sample"
+      },
+      {
+       "rowsPerCall": 1,
+       "passRate": 1,
+       "costPerCallUsd": 0.001,
+       "from": "sample"
+      }
+     ],
+     "managerBudgetUsd": 0.01,
+     "delivers": [
+      true,
+      true
+     ],
+     "stages": [
+      {
+       "parent": null,
+       "deliver": true,
+       "effVolume": 5,
+       "perParent": 0,
+       "titleAr": "جمع الفيديوهات"
+      },
+      {
+       "parent": 0,
+       "deliver": true,
+       "effVolume": 5,
+       "perParent": 1,
+       "titleAr": "جمع التعليقات",
+       "askedPerParent": 10
+      }
+     ],
+     "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+    },
+    "_customerRequest": "هات ٥ فيديوهات تيك توك عن ترند الجواز والطلاق في مصر، وكل واحد معاه ١٠ كومنتات"
+   },
+   "targetVolumeMin": 1,
+   "targetVolumeMax": 10,
+   "paginationStrategy": "cursor",
+   "pricingUnit": "item",
+   "unitCostUsd": 0.0010999999999999998,
+   "unitPricePoints": 6.05,
+   "rawPoints": 60.5,
+   "itemReservation": 70,
+   "reservedPoints": 70
+  },
+  "quotedPoints": 70
+ },
+ "natgeo": {
+  "item": {
+   "capabilitySlug": "model-planned",
+   "endpointId": "crawl4ai.instagram.user.profile",
+   "params": {
+    "_modelStep": {
+     "v": 1,
+     "steps": [
+      {
+       "endpointId": "crawl4ai.instagram.user.profile",
+       "volume": 1,
+       "params": [
+        {
+         "name": "username",
+         "value": "natgeo",
+         "source": "customer_text",
+         "quote": "@natgeo"
+        }
+       ],
+       "fieldMap": {
+        "columns": [
+         {
+          "field": "username",
+          "headerAr": "اسم المستخدم",
+          "role": "author_handle"
+         },
+         {
+          "field": "followers",
+          "headerAr": "المتابعون",
+          "role": "followers",
+          "transform": "number"
+         }
+        ],
+        "pagination": {
+         "kind": "single"
+        }
+       },
+       "filters": [],
+       "facts": {
+        "method": "POST",
+        "scope": "any_account",
+        "limitName": null,
+        "limitMax": null,
+        "listPath": null,
+        "cursorPath": null,
+        "itemFields": {
+         "followers": {
+          "type": "number"
+         },
+         "full_name": {
+          "type": "string"
+         },
+         "is_private": {
+          "type": "boolean"
+         },
+         "is_verified": {
+          "type": "boolean"
+         },
+         "posts": {
+          "type": "number"
+         },
+         "profile_pic_url": {
+          "type": "string"
+         },
+         "user_id": {
+          "type": "string"
+         },
+         "username": {
+          "type": "string"
+         }
+        },
+        "callEstimateUsd": 0.0009,
+        "entity": null,
+        "rootObjectIsRow": true
+       }
+      }
+     ],
+     "measured": [
+      {
+       "rowsPerCall": 1,
+       "passRate": 1,
+       "costPerCallUsd": 0.0009,
+       "from": "sample"
+      }
+     ],
+     "managerBudgetUsd": 0.01,
+     "delivers": [
+      true
+     ],
+     "stages": [
+      {
+       "parent": null,
+       "deliver": true,
+       "effVolume": 1,
+       "perParent": 0,
+       "titleAr": "المرحلة ١"
+      }
+     ],
+     "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+    },
+    "_customerRequest": "هات بيانات حساب انستقرام @natgeo"
+   },
+   "targetVolumeMin": 1,
+   "targetVolumeMax": 1,
+   "paginationStrategy": "cursor",
+   "pricingUnit": "item",
+   "unitCostUsd": 0.0009,
+   "unitPricePoints": 4.95,
+   "rawPoints": 4.95,
+   "itemReservation": 6,
+   "reservedPoints": 6
+  },
+  "quotedPoints": 6
+ },
+ "reviewItemsX": {
+  "stored": {
+   "v": 1,
+   "steps": [
+    {
+     "endpointId": "anyapi.x.user.posts",
+     "volume": 10,
+     "params": [
+      {
+       "name": "handle",
+       "value": "elonmusk",
+       "source": "customer_text",
+       "quote": "@elonmusk"
+      }
+     ],
+     "fieldMap": {
+      "columns": [
+       {
+        "field": "text",
+        "headerAr": "نص المنشور",
+        "role": "text"
+       },
+       {
+        "field": "authorHandle",
+        "headerAr": "الحساب",
+        "role": "author_handle"
+       },
+       {
+        "field": "createdUtc",
+        "headerAr": "تاريخ النشر",
+        "role": "date"
+       },
+       {
+        "field": "likes",
+        "headerAr": "الإعجابات",
+        "role": "likes",
+        "transform": "number"
+       },
+       {
+        "field": "url",
+        "headerAr": "الرابط",
+        "role": "url"
+       }
+      ],
+      "pagination": {
+       "kind": "token",
+       "param": "cursor"
+      }
+     },
+     "filters": [
+      {
+       "kind": "author_equals",
+       "field": "authorHandle",
+       "value": "elonmusk",
+       "quote": "@elonmusk"
+      },
+      {
+       "kind": "exclude_true",
+       "field": "isReply"
+      },
+      {
+       "kind": "exclude_prefix",
+       "field": "text",
+       "prefix": "RT @"
+      }
+     ],
+     "facts": {
+      "method": "POST",
+      "scope": "any_account",
+      "limitName": "limit",
+      "limitMax": 100,
+      "listPath": "rows",
+      "cursorPath": null,
+      "itemFields": {
+       "bookmarks": {
+        "type": "number"
+       },
+       "createdUtc": {
+        "type": "number"
+       },
+       "id": {
+        "type": "string"
+       },
+       "isReply": {
+        "type": "boolean"
+       },
+       "lang": {
+        "type": "string"
+       },
+       "likes": {
+        "type": "number"
+       },
+       "media": {
+        "type": "array"
+       },
+       "quotes": {
+        "type": "number"
+       },
+       "replies": {
+        "type": "number"
+       },
+       "retweets": {
+        "type": "number"
+       },
+       "text": {
+        "type": "string"
+       },
+       "url": {
+        "type": "string"
+       },
+       "views": {
+        "type": "number"
+       }
+      },
+      "callEstimateUsd": 0.0005,
+      "entity": null,
+      "alternates": [
+       {
+        "endpointId": "crawl4ai.x.user.posts",
+        "method": "POST",
+        "scope": "any_account",
+        "params": [
+         {
+          "name": "username",
+          "value": "elonmusk",
+          "source": "customer_text",
+          "quote": "@elonmusk"
+         }
+        ],
+        "listPath": "rows",
+        "cursorPath": null,
+        "itemFields": {
+         "author": {
+          "type": "string"
+         },
+         "created": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         },
+         "is_retweet": {
+          "type": "boolean"
+         },
+         "likes": {
+          "type": "number"
+         },
+         "quotes": {
+          "type": "number"
+         },
+         "replies": {
+          "type": "number"
+         },
+         "retweets": {
+          "type": "number"
+         },
+         "text": {
+          "type": "string"
+         },
+         "url": {
+          "type": "string"
+         }
+        },
+        "limitName": "limit",
+        "limitMax": null,
+        "callEstimateUsd": 0.00045
+       }
+      ]
+     }
+    }
+   ],
+   "measured": [
+    {
+     "rowsPerCall": 10,
+     "passRate": 0.3,
+     "costPerCallUsd": 0.0005,
+     "from": "sample"
+    }
+   ],
+   "managerBudgetUsd": 0.01,
+   "delivers": [
+    true
+   ],
+   "stages": [
+    {
+     "parent": null,
+     "deliver": true,
+     "effVolume": 10,
+     "perParent": 0,
+     "titleAr": "المرحلة ١"
+    }
+   ],
+   "platformChoiceAr": "اخترنا هذه المنصة لأنها الأنسب لطلبك."
+  },
+  "summaryAr": "جمع ١٠ منشورات من حساب @elonmusk"
+ }
+}
