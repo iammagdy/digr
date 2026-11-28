@@ -192,11 +192,12 @@ describe("treg-catalog-additions (G1a + G1b)", () => {
       name: string;
       candidateId: string;
       builder: () => unknown;
-      expectedBlockReason?: string;
+      expectedBlockReason?: string | null;
     }> = [
       {
         name: "duplicate base snapshot ID",
         candidateId: "anyapi.x.user.posts",
+        expectedBlockReason: null,
         builder: () => ({
           version: 1,
           entries: [
@@ -376,6 +377,70 @@ describe("treg-catalog-additions (G1a + G1b)", () => {
           return b;
         },
       },
+      {
+        name: "helper cost removed",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          delete (b.entries[1].endpoint as any).cost;
+          return b;
+        },
+      },
+      {
+        name: "helper USD -1",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[1].endpoint.cost as any).usd = -1;
+          return b;
+        },
+      },
+      {
+        name: "helper nonzero per-call cost with USD 0",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[1].endpoint.cost as any).type = "per_call";
+          (b.entries[1].endpoint.cost as any).usd = 0;
+          return b;
+        },
+      },
+      {
+        name: "delivery unsupported unit",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint.cost as any).unit = "unsupported_unit";
+          return b;
+        },
+      },
+      {
+        name: "delivery USD 1e309",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint.cost as any).usd = 1e309;
+          return b;
+        },
+      },
+      {
+        name: "unsupported method",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          (b.entries[0].endpoint as any).method = "DELETE";
+          return b;
+        },
+      },
+      {
+        name: "read scope removed",
+        candidateId: "synthetic.company.search",
+        builder: () => {
+          const b = makeSyntheticBatch();
+          delete (b.entries[0].endpoint as any).scope;
+          return b;
+        },
+      },
     ];
 
     it.each(invalidCases)("$name is rejected at all three boundaries", ({ candidateId, builder, expectedBlockReason }) => {
@@ -391,7 +456,7 @@ describe("treg-catalog-additions (G1a + G1b)", () => {
 
       // 2. Hard admission boundary
       const blockReason = blockedEndpointReason(candidateId, null, result);
-      if (expectedBlockReason) {
+      if (expectedBlockReason !== undefined) {
         expect(blockReason).toBe(expectedBlockReason);
       } else {
         expect(blockReason).toBe("not_sellable");
@@ -409,12 +474,36 @@ describe("treg-catalog-additions (G1a + G1b)", () => {
       // 4. Catalog loader boundary: additions not merged, count stays 3276
       const baseline = loadTregPriceBaseline({ additions: result });
       expect(baseline.count).toBe(3276);
-      if (candidateId === "anyapi.x.user.posts" || candidateId === "tikhub.x.douyin-app-v3-open-douyin-app-to-send-private-message") {
-        // Base entries remain in the base snapshot
+      if (candidateId === "anyapi.x.user.posts") {
+        // Base entries remain in the base snapshot and sellable (F2)
+        expect(baseline.byId.has(candidateId)).toBe(true);
+        expect(isSellable(candidateId, baseline)).toBe(true);
+      } else if (candidateId === "tikhub.x.douyin-app-v3-open-douyin-app-to-send-private-message") {
+        // Base entry remains in the base snapshot
         expect(baseline.byId.has(candidateId)).toBe(true);
       } else {
         expect(baseline.byId.has(candidateId)).toBe(false);
         expect(isSellable(candidateId, baseline)).toBe(false);
+      }
+
+      // Every candidate ID in the batch receives hard refusal and blocked policy (unless base ID)
+      for (const id of result.deniedIds) {
+        if (id === "anyapi.x.user.posts") {
+          expect(blockedEndpointReason(id, null, result)).toBeNull();
+          expect(categoryOf(id, result)).toBe("public");
+        } else if (id === "openmart.deny-rules.create") {
+          expect(blockedEndpointReason(id, null, result)).toBe("write_action");
+          expect(categoryOf(id, result)).toBe("blocked");
+        } else if (id === "apollo.company.search") {
+          expect(blockedEndpointReason(id, null, result)).toBe("paused_provider");
+          expect(categoryOf(id, result)).toBe("blocked");
+        } else if (id === "tikhub.x.douyin-app-v3-open-douyin-app-to-send-private-message") {
+          expect(blockedEndpointReason(id, null, result)).toBe("policy_blocked");
+          expect(categoryOf(id, result)).toBe("blocked");
+        } else {
+          expect(blockedEndpointReason(id, null, result)).toBe("not_sellable");
+          expect(categoryOf(id, result)).toBe("blocked");
+        }
       }
     });
   });
