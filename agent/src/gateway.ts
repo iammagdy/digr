@@ -1,7 +1,9 @@
-import { createHash } from "node:crypto";
+import { corporateDomainOf } from "../../src/lib/agentMission/customerExclusion";
+import { isPlaceholderCompanyUrl } from "../../src/lib/agentMission/companyIdentity";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { executeTregCall, type TregCallOptions, type TregCallResult, maxTregAttempts } from "../../src/functions/shared/tregClient";
+import { bindFundedTregTransport, executeTregCall, serializeProviderParams, type TregCallOptions, type TregCallResult, maxTregAttempts } from "../../src/functions/shared/tregClient";
 import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
 import { commitTregSpend, commitTregSpendAcknowledged, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
 import type { JobCallBudget } from "../../src/lib/server/callBudget";
@@ -9,7 +11,7 @@ import { runSensitiveCall, sensitiveRefusalAr, type SensitiveRefusal } from "../
 import { digestValue, buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { callEstimateUsd, unitCost } from "../../src/lib/modelPlanner/pricing";
 import { toolCatalogSearch, toolDescribeEndpoint } from "../../src/lib/modelPlanner/tools";
-import { blockedEndpointReason } from "../../src/lib/treg/blockList";
+import { blockedEndpointReason, getValidatedAdditions } from "../../src/lib/treg/blockList";
 import { endpointCostUsd, isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { getPollEndpoints, hasUsablePrice, isDocumentedFreeEndpoint } from "./llmPlanner/catalogView";
 import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
@@ -72,9 +74,131 @@ export type RefusalCode =
   | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample" | "spend_gate";
 
 export type GatewayCallResult =
-  | { ok: true; call_id: string; charge_usd?: number | null; reserved_usd?: number; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string; stop_reason?: string }
+  | { ok: true; call_id: string; charge_usd?: number | null; reserved_usd?: number; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; funded_auxiliary?: unknown; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string; stop_reason?: string }
   | { ok: false; call_id: string; refused: RefusalCode; message: string }
   | { ok: false; call_id: string; failed: true; http_status: number; message: string; /** THIS call's own charge (USD) when it is known, null when it is not; and what was reserved for it (DT-20261119-11 D3) */ charge_usd?: number | null; reserved_usd?: number };
+
+export interface GatewayCallInput {
+  endpoint_id?: unknown;
+  params?: unknown;
+  purpose?: unknown;
+  why?: unknown;
+  /** A capped stage's money left for this call (USD). */
+  spend_limit_usd?: unknown;
+}
+
+/** Verified by the server before it constructs a phase- and stage-scoped caller. */
+export interface FundedSchedule {
+  endpointId: string;
+  params: Record<string, unknown>;
+  pageSize: number | null;
+  maxPages: number;
+  maxPerCallMicros: number;
+  maxTotalMicros: number;
+}
+
+interface FundedScope {
+  schedule: FundedSchedule;
+  role: "delivery" | "count" | "schema";
+}
+
+export interface FundedRequestDescriptor {
+  pageSizeKey?: string;
+  positionKey?: string;
+  minPageSize?: number;
+  maxPageSize?: number;
+  exactlyOne?: boolean;
+  filterKey?: string;
+  filterBindings?: Record<string, string>;
+}
+
+export interface FundedResultDescriptor {
+  rowsPath?: string;
+  objectPath?: string;
+  successPath?: string;
+  identityKey?: string;
+  matchInput?: string;
+  fields?: string[];
+  morePath?: string;
+  positionPath?: string;
+  countPath?: string;
+  schemaPath?: string;
+  schemaKeyPath?: string;
+  schemaTypePath?: string;
+  schemaSearchablePath?: string;
+  schemaFilterKeysPath?: string;
+}
+
+function valueAt(value: unknown, path: string | undefined): unknown {
+  if (!path) return undefined;
+  return path.split(".").reduce<unknown>((node, field) =>
+    node !== null && typeof node === "object" && Object.hasOwn(node, field)
+      ? (node as Record<string, unknown>)[field]
+      : undefined, value);
+}
+
+export function canonicalFundedDomain(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const domain = input.trim().toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+  return domain.length <= 253 && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)
+    && !isPlaceholderCompanyUrl(domain) ? corporateDomainOf(domain) : null;
+}
+
+function projectedFundedValue(input: unknown): string | number | boolean | undefined {
+  if (typeof input === "string") return input.length > 0 && input.length <= 256 && !/[\u0000-\u001f]/.test(input) ? input : undefined;
+  if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
+  if (typeof input === "boolean") return input;
+}
+
+function projectFundedResult(data: unknown, params: Record<string, unknown>, role: FundedScope["role"], descriptor: FundedResultDescriptor, request?: FundedRequestDescriptor) {
+  if (role === "count") {
+    const count = valueAt(data, descriptor.countPath);
+    return { data: null, auxiliary: isMicroAmount(count) ? count : null };
+  }
+  if (role === "schema") {
+    const schema = valueAt(data, descriptor.schemaPath);
+    const columns = Array.isArray(schema) && schema.length <= 200 ? schema : [];
+    const auxiliary = columns.flatMap((entry) => {
+      const key = valueAt(entry, descriptor.schemaKeyPath ?? "key");
+      const type = valueAt(entry, descriptor.schemaTypePath ?? "type");
+      const searchable = valueAt(entry, descriptor.schemaSearchablePath ?? "searchable");
+      const filterKeys = valueAt(entry, descriptor.schemaFilterKeysPath);
+      const bindings = Array.isArray(filterKeys) && filterKeys.length <= 20
+        ? filterKeys.filter((field): field is string => typeof field === "string" && /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(field))
+        : [];
+      return typeof key === "string" && /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key)
+        && typeof type === "string" && /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(type)
+        && typeof searchable === "boolean" ? [{ key, type, searchable, bindings }] : [];
+    });
+    return { data: null, auxiliary };
+  }
+  const { rowsPath, objectPath, successPath, identityKey, matchInput, fields, morePath, positionPath } = descriptor;
+  const inputDomain = matchInput ? canonicalFundedDomain(params[matchInput]) : null;
+  const inputRows = objectPath
+    ? valueAt(data, successPath) === true && inputDomain !== null ? [valueAt(data, objectPath)] : []
+    : valueAt(data, rowsPath);
+  const limit = request?.pageSizeKey ? params[request.pageSizeKey] : 1;
+  const rows = (Array.isArray(inputRows) && isMicroAmount(limit) ? inputRows.slice(0, limit) : []).flatMap((row) => {
+    const domain = canonicalFundedDomain(valueAt(row, identityKey));
+    if (!domain || !identityKey || (matchInput && domain !== inputDomain)) return [];
+    const values = (fields ?? []).flatMap((field) => {
+      const value = projectedFundedValue(valueAt(row, field));
+      return value === undefined ? [] : [[field, value] as const];
+    });
+    return [{ ...Object.fromEntries(values), [identityKey]: domain }];
+  });
+  const more = valueAt(data, morePath);
+  const cursor = valueAt(data, positionPath);
+  return {
+    data: {
+      rows,
+      has_more: more === true && rows.length > 0 && request?.positionKey !== undefined
+        && isMicroAmount(cursor) && cursor > Number(params[request.positionKey]),
+      ...(isMicroAmount(cursor) && request?.positionKey !== undefined && cursor > Number(params[request.positionKey]) ? { next_cursor: cursor } : {}),
+    },
+    auxiliary: null,
+  };
+}
 
 export interface GatewayDeps {
   /** Planning only: the most samples of one source that gave rows (default GATEWAY_MAX_SAMPLES_PER_SOURCE). The LLM planner reads more pages while it measures what a source holds, and plans again after the customer answers; the planning budget still bounds the spend. */
@@ -108,6 +232,8 @@ export interface GatewayDeps {
   stageBudget?: { stages: number; budgetUsd: number; /** The USD kept for the first sample of each stage (code sized it from the sources' prices: planningBudget.ts); absent: the flat share of the budget for every stage. */ reservesUsd?: number[] };
   /** ROUND 62: the hard spend gate of this mission (agent/src/spendGateWiring.ts). Absent or mode "off": nothing changes. */
   spendGate?: GateContext;
+  /** Recheck private phase exposure before another route can spend after a funded attempt. */
+  providerExposureProven?: () => Promise<boolean>;
 }
 
 const clip = (s: unknown, n: number): string => String(s ?? "").slice(0, n);
@@ -255,9 +381,26 @@ export function clampOutgoingPageSize(
  * THE ESTIMATED BOUND OF ONE TREG CALL (DT-20261119-11): the catalog estimate for the call the gateway will really send (the parameters the catalog does not know are dropped, the size clamped to the input's maximum), rounded UP to the micro-dollar and floored at 0.001.
  * It is the SMALLEST amount a call is admitted with, and what a capped stage checks a call against. It is NOT what is sent to the provider: the header is the money that is really left (the amount reserved on every ledger, `tregCall` step 6). Null: not a catalog id or lacks a usable price.
  */
+export function fundedCallMicros(endpoint: CatalogEndpoint, catalog: TregCatalog, pageSize: number | null): number | null {
+  const rate = unitCost(endpoint, catalog);
+  if (!rate || (rate.unit === "record" && (!isMicroAmount(pageSize) || pageSize === 0))) return null;
+  const micros = Math.ceil(rate.usd * (rate.unit === "record" ? pageSize! : 1) * 1_000_000 - 1e-7);
+  return isMicroAmount(micros) && micros > 0 ? micros : null;
+}
+
 export function tregCallBoundOf(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
   const endpoint = catalog.byId.get(endpointId);
   if (!endpoint || !hasUsablePrice(endpoint, catalog)) return null;
+  const contract = getValidatedAdditions().byId.get(endpointId)?.contract;
+  if (contract) {
+    if (contract.role !== "delivery") return 0;
+    const request = contract.request as FundedRequestDescriptor | undefined;
+    const size = request?.pageSizeKey ? params[request.pageSizeKey] : null;
+    if (request?.pageSizeKey && (!isMicroAmount(size) || size < (request.minPageSize ?? 1) || size > (request.maxPageSize ?? 0)
+      || !request.positionKey || !isMicroAmount(params[request.positionKey]))) return null;
+    const micros = fundedCallMicros(endpoint, catalog, typeof size === "number" ? size : null);
+    return micros === null ? null : micros / 1_000_000;
+  }
   const clamped = clampOutgoingPageSize(endpoint, params ?? {});
   const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
   const kept = Object.fromEntries(Object.entries(clamped).filter(([k]) => known.has(k)));
@@ -266,6 +409,131 @@ export function tregCallBoundOf(endpointId: string, params: Record<string, unkno
 
 const callIdOf = (n: number) => `call_${String(n).padStart(4, "0")}`;
 export const RAW_PATH = (callId: string) => `raw/${callId}.json`;
+
+interface FundedClaim {
+  version: 1;
+  phase: CallPhase;
+  ordinal: number;
+  requestDigest: string;
+  grantDigest: string;
+  callId: string;
+  providerCostId: number;
+  reservedMicros: number;
+}
+interface FundedReceipt extends FundedClaim {
+  chargedMicros: number;
+  outcome: "ok" | "failed";
+  projection: string | null;
+}
+
+const journalFolder = (phase: CallPhase) => `funded-journal/${phase}`;
+const journalPath = (phase: CallPhase, ordinal: number, kind: "claim" | "receipt") =>
+  `${journalFolder(phase)}/${String(ordinal).padStart(6, "0")}.${kind}.json`;
+const fundedProjectionPath = (phase: CallPhase, ordinal: number) =>
+  `funded-projections/${phase}/${String(ordinal).padStart(6, "0")}.json`;
+
+function isMicroAmount(amount: unknown): amount is number {
+  return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 0;
+}
+
+function validClaim(value: unknown, phase: CallPhase, ordinal: number): value is FundedClaim {
+  if (!value || typeof value !== "object") return false;
+  const claim = value as Partial<FundedClaim>;
+  return claim.version === 1 && claim.phase === phase && claim.ordinal === ordinal
+    && typeof claim.requestDigest === "string" && /^[0-9a-f]{32}$/.test(claim.requestDigest)
+    && typeof claim.grantDigest === "string" && /^[0-9a-f]{32}$/.test(claim.grantDigest)
+    && typeof claim.callId === "string" && /^call_[0-9]{4,12}$/.test(claim.callId)
+    && isMicroAmount(claim.providerCostId) && claim.providerCostId > 0
+    && isMicroAmount(claim.reservedMicros);
+}
+
+function validReceipt(value: unknown, claim: FundedClaim): value is FundedReceipt {
+  if (!validClaim(value, claim.phase, claim.ordinal)) return false;
+  const receipt = value as Partial<FundedReceipt>;
+  return receipt.requestDigest === claim.requestDigest && receipt.grantDigest === claim.grantDigest
+    && receipt.callId === claim.callId && receipt.providerCostId === claim.providerCostId
+    && receipt.reservedMicros === claim.reservedMicros
+    && isMicroAmount(receipt.chargedMicros) && receipt.chargedMicros <= claim.reservedMicros
+    && (receipt.outcome === "ok"
+      ? receipt.projection === fundedProjectionPath(claim.phase, claim.ordinal)
+      : receipt.outcome === "failed" && receipt.projection === null);
+}
+
+function parseJournalObject(content: string | null): unknown {
+  return content === null ? null : JSON.parse(content);
+}
+
+/** Exposure absent from the existing phase call rows. An incomplete or conflicting journal buys no paid capacity. */
+export async function readFundedExposure(store: AgentStore, missionId: string, phase: CallPhase, calls: readonly CallRow[]) {
+  const claims: Array<{ claim: FundedClaim; receipt: FundedReceipt | null }> = [];
+  let lastSequence = 0;
+  let additionalMicros = 0;
+  let proven = true;
+  let taggedAllowed = true;
+  try {
+    const listed = await store.listFiles(missionId, journalFolder(phase));
+    if (listed.length >= 100_000) throw new Error("journal listing limit");
+    const names = new Set(listed.map(({ name }) => name));
+    if (names.size !== listed.length) throw new Error("duplicate journal entry");
+    const ordinals = [...names].map((name) => {
+      const match = /\/(\d{6})\.(?:claim|receipt)\.json$/.exec(name);
+      if (!match) throw new Error("invalid journal path");
+      return Number(match[1]);
+    });
+    const last = ordinals.reduce((max, entry) => Math.max(max, entry), 0);
+    if (last > names.size || ordinals.some((ordinal) => ordinal < 1)) throw new Error("journal gap");
+    const requests = new Set<string>();
+    const reservations = new Set<number>();
+    const ids = new Set<string>();
+    for (let ordinal = 1; ordinal <= last; ordinal += 1) {
+      const path = journalPath(phase, ordinal, "claim");
+      if (!names.has(path)) throw new Error("journal gap");
+      const claim = parseJournalObject(await store.getFile(missionId, path));
+      if (!validClaim(claim, phase, ordinal)) throw new Error("invalid journal claim");
+      if (requests.has(claim.requestDigest) || reservations.has(claim.providerCostId) || ids.has(claim.callId)) {
+        throw new Error("conflicting journal claim");
+      }
+      requests.add(claim.requestDigest);
+      reservations.add(claim.providerCostId);
+      ids.add(claim.callId);
+      lastSequence = Math.max(lastSequence, Number(claim.callId.slice(5)));
+
+      const receiptPath = journalPath(phase, ordinal, "receipt");
+      let receipt: FundedReceipt | null = null;
+      if (names.has(receiptPath)) {
+        try {
+          const stored = parseJournalObject(await store.getFile(missionId, receiptPath));
+          if (!validReceipt(stored, claim)) throw new Error("invalid journal receipt");
+          receipt = stored;
+        } catch {
+          proven = false;
+        }
+      }
+      const callId = `${missionId}:${claim.callId}`;
+      const references = calls.filter((row) => row.id === callId || row.provider_cost_id === claim.providerCostId);
+      const matching = references.filter((row) =>
+        row.id === callId && row.phase === phase && row.provider_cost_id === claim.providerCostId && row.status !== "refused");
+      const row = matching[0];
+      const rowMicros = row ? Math.round(Number(row.cost_usd) * 1_000_000) : 0;
+      if (references.length !== matching.length || matching.length > 1 || !isMicroAmount(rowMicros)
+        || (row && rowMicros > claim.reservedMicros)
+        || (receipt !== null && row && rowMicros !== receipt.chargedMicros)) {
+        proven = false;
+        receipt = null;
+      }
+      if (!receipt) taggedAllowed = false;
+      additionalMicros += Math.max(0, (receipt?.chargedMicros ?? claim.reservedMicros)
+        - (isMicroAmount(rowMicros) ? rowMicros : 0));
+      if (!Number.isSafeInteger(additionalMicros)) throw new Error("journal amount overflow");
+      claims.push({ claim, receipt });
+    }
+    if (calls.some((row) => row.phase === phase && row.params_digest?._funded === 1
+      && !ids.has(row.id.slice(missionId.length + 1)))) proven = false;
+  } catch {
+    proven = false;
+  }
+  return { claims, lastSequence, additionalMicros, proven, taggedAllowed: proven && taggedAllowed };
+}
 
 const REFUSAL_TEXT: Record<RefusalCode, string> = {
   not_sellable: "this endpoint is not in the catalog you may use; search the catalog and use an id exactly as catalog_search returned it",
@@ -344,6 +612,9 @@ export function createGateway(deps: GatewayDeps) {
     return { ok: false, call_id: id, refused: code, message: code === "missing_params" && detail ? `${REFUSAL_TEXT[code]}: ${detail.slice(0, 200)} (describe_endpoint shows each one)` : REFUSAL_TEXT[code] };
   };
 
+  const fundedRefusal = (reason: RefusalCode): GatewayCallResult =>
+    ({ ok: false, call_id: "", refused: reason, message: REFUSAL_TEXT[reason] });
+
   return {
     catalogSearch(input: { platform?: string; words?: string[]; limit?: number }) {
       return toolCatalogSearch(input, deps.access, deps.catalog);
@@ -352,46 +623,157 @@ export function createGateway(deps: GatewayDeps) {
       return toolDescribeEndpoint(input, deps.access, deps.catalog, null);
     },
 
-    async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown; why?: unknown; /** A capped stage's money left for THIS call (USD): the header can never be above it (engine/sourceGateway.ts). */ spend_limit_usd?: unknown }): Promise<GatewayCallResult> {
+    tregCall: (input: GatewayCallInput) => tregCall(input),
+    fundedCaller: (schedule: FundedSchedule) => {
+      const trusted = structuredClone(schedule);
+      return (input: GatewayCallInput) => {
+        const id = String(input.endpoint_id ?? "").trim();
+        const contract = getValidatedAdditions().byId.get(trusted.endpointId)?.contract;
+        const member = getValidatedAdditions().byId.get(id)?.contract;
+        const role = member?.role;
+        const helpers = contract?.helpers as Partial<Record<"schema" | "count", string>> | undefined;
+        if (!contract || contract.role !== "delivery" || (role !== "delivery" && role !== "count" && role !== "schema")
+          || (role === "delivery" ? id !== trusted.endpointId : deps.phase !== "planning" || helpers?.[role] !== id)) {
+          return Promise.resolve(fundedRefusal("blocked"));
+        }
+        return tregCall(input, { schedule: trusted, role });
+      };
+    },
+  };
+
+  async function tregCall(input: GatewayCallInput, funded?: FundedScope): Promise<GatewayCallResult> {
       deps.counter.seq += 1;
-      const id = callIdOf(deps.counter.seq);
+      let id = callIdOf(deps.counter.seq);
       const endpointId = String(input.endpoint_id ?? "").trim();
-      let params: Record<string, unknown> = input.params && typeof input.params === "object" && !Array.isArray(input.params) ? { ...(input.params as Record<string, unknown>) } : {};
+      let params: Record<string, unknown> = input.params && typeof input.params === "object" && !Array.isArray(input.params)
+        ? (funded ? structuredClone(input.params as Record<string, unknown>) : { ...(input.params as Record<string, unknown>) }) : {};
+
+      const member = getValidatedAdditions().byId.get(endpointId);
+      if (Boolean(member) !== Boolean(funded)) return fundedRefusal("blocked");
+      if (deps.providerExposureProven && !(await deps.providerExposureProven())) return fundedRefusal("over_budget");
+      const reject = funded ? async (_id: string, _endpoint: string, _params: Record<string, unknown>, code: RefusalCode, _detail?: string) => fundedRefusal(code) : refuse;
+      const requestDescriptor = member?.contract.request as FundedRequestDescriptor | undefined;
+      const resultDescriptor = member?.contract.result as FundedResultDescriptor | undefined;
+      let fundedState: Awaited<ReturnType<typeof readFundedExposure>> | undefined;
+      let requestDigest = "";
+      let grantDigest = "";
+      if (funded) {
+        if (!member || !resultDescriptor || (deps.phase === "execution" && !deps.jobId)) return fundedRefusal("blocked");
+        const { schedule, role } = funded;
+        const stableParams = { ...params };
+        const sizeKey = requestDescriptor?.pageSizeKey;
+        const positionKey = requestDescriptor?.positionKey;
+        let position = 0;
+        if (role === "delivery" && sizeKey) {
+          const size = params[sizeKey];
+          if (!isMicroAmount(size) || size !== schedule.pageSize || size < (requestDescriptor.minPageSize ?? 1)
+            || size > (requestDescriptor.maxPageSize ?? 0) || !positionKey || !isMicroAmount(params[positionKey])) {
+            return fundedRefusal("missing_params");
+          }
+          position = params[positionKey] as number;
+          delete stableParams[sizeKey];
+          delete stableParams[positionKey];
+        }
+        if (role === "delivery" && resultDescriptor.matchInput) {
+          const key = resultDescriptor.matchInput;
+          const domain = canonicalFundedDomain(params[key]);
+          if (!domain || Object.keys(params).length !== 1 || domain !== params[key]) return fundedRefusal("missing_params");
+        }
+        const expectedParams = role === "schema" ? {} : schedule.params;
+        if (paramsSignature(stableParams) !== paramsSignature(expectedParams)) return fundedRefusal("missing_params");
+        try {
+          const calls = await deps.store.listCalls(deps.missionId);
+          fundedState = await readFundedExposure(deps.store, deps.missionId, deps.phase, calls);
+          if (!fundedState.proven) return fundedRefusal("recording_unavailable");
+          const maxSeen = calls.reduce((seq, row) => Math.max(seq, Number(/call_(\d+)$/.exec(row.id)?.[1] ?? 0)), fundedState.lastSequence);
+          if (maxSeen >= Number(id.slice(5))) {
+            deps.counter.seq = Math.max(deps.counter.seq, maxSeen) + 1;
+            id = callIdOf(deps.counter.seq);
+          }
+          requestDigest = paramsSignature({ phase: deps.phase, endpointId, params });
+          grantDigest = paramsSignature({ userId: deps.userId, jobId: deps.jobId, schedule });
+          const existing = fundedState.claims.find(({ claim }) => claim.requestDigest === requestDigest);
+          if (existing) {
+            if (existing.claim.grantDigest !== grantDigest || !existing.receipt?.projection) return fundedRefusal("recording_unavailable");
+            const saved = await deps.store.getFile(deps.missionId, existing.receipt.projection);
+            if (saved === null) return fundedRefusal("recording_unavailable");
+            const replayed = JSON.parse(saved) as GatewayCallResult;
+            if (!replayed.ok || replayed.call_id !== existing.claim.callId || !Array.isArray(replayed.first_rows)) {
+              return fundedRefusal("recording_unavailable");
+            }
+            Object.defineProperty(replayed, "charge_usd", { value: existing.receipt.chargedMicros / 1_000_000 });
+            Object.defineProperty(replayed, "reserved_usd", { value: existing.claim.reservedMicros / 1_000_000 });
+            return replayed;
+          }
+          if (!fundedState.taggedAllowed) return fundedRefusal("recording_unavailable");
+          const previous = fundedState.claims.filter(({ claim }) => claim.grantDigest === grantDigest && claim.reservedMicros > 0);
+          if (role === "delivery" && (previous.length >= schedule.maxPages || (previous.length === 0 && position !== 0)
+            || !isMicroAmount(schedule.maxPerCallMicros) || schedule.maxPerCallMicros < 1
+            || !isMicroAmount(schedule.maxTotalMicros)
+            || previous.reduce((total, entry) => total + entry.claim.reservedMicros, 0) + schedule.maxPerCallMicros > schedule.maxTotalMicros)) {
+            return fundedRefusal("over_budget");
+          }
+          const previousPage = previous.at(-1)?.receipt?.projection;
+          if (role === "delivery" && previous.length > 0) {
+            if (!positionKey || !previousPage) return fundedRefusal("recording_unavailable");
+            const previousResult = parseJournalObject(await deps.store.getFile(deps.missionId, previousPage)) as GatewayCallResult | null;
+            if (!previousResult?.ok || previousResult.has_more !== true || previousResult.next_cursor !== String(position)) {
+              return fundedRefusal("missing_params");
+            }
+          }
+        } catch {
+          return fundedRefusal("recording_unavailable");
+        }
+      }
 
       // 1 + 2: sellable, usable price, block list
       const endpoint = deps.catalog.byId.get(endpointId);
       const isCatalogPoll = Boolean(endpoint && isCatalogPollEndpoint(endpointId, deps.catalog));
       const blocked = blockedEndpointReason(endpointId, endpoint?.scope ?? null);
-      if (blocked) return refuse(id, endpointId, params, blocked === "not_sellable" ? "not_sellable" : "blocked", blocked);
+      if (blocked) return reject(id, endpointId, params, blocked === "not_sellable" ? "not_sellable" : "blocked", blocked);
       if (!endpoint || !isSellable(endpointId, deps.catalog) || (!hasUsablePrice(endpoint, deps.catalog) && !isCatalogPoll)) {
-        return refuse(id, endpointId, params, "not_sellable");
+        return reject(id, endpointId, params, "not_sellable");
       }
 
       // Point 3.4: Runtime page-size clamp
-      params = clampOutgoingPageSize(endpoint, params);
+      if (!funded) params = clampOutgoingPageSize(endpoint, params);
+      else if (funded.role !== "delivery" && (!member || !isZeroFreeEndpoint(member.endpoint) || !isZeroFreeEndpoint(endpoint))) {
+        return fundedRefusal("blocked");
+      }
 
       // 3: data policy
       const verdict = policyVerdict(endpointId, deps.access);
-      if (!verdict.allowed) return refuse(id, endpointId, params, verdict.reason === "blocked" ? "blocked" : "sensitive_not_allowed", verdict.category);
+      if (!verdict.allowed) return reject(id, endpointId, params, verdict.reason === "blocked" ? "blocked" : "sensitive_not_allowed", verdict.category);
 
       // 4: parameters
       const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
       for (const k of Object.keys(params)) if (!known.has(k)) delete params[k];
       // what the call log keeps of the parameters: the values given, plus WHY a dearer source was chosen when the agent said so (for the admin's trace; never shown to a customer)
-      const trace: Record<string, unknown> = { ...params, ...(input.why ? { _why: clip(input.why, 300) } : {}) };
+      const trace: Record<string, unknown> = funded ? { _funded: 1 } : { ...params, ...(input.why ? { _why: clip(input.why, 300) } : {}) };
       const missing = endpoint.inputs.filter((i) => i.required && (params[i.name] === undefined || params[i.name] === null || params[i.name] === "")).map((i) => i.name);
-      if (missing.length) return refuse(id, endpointId, trace, "missing_params", missing.join(","));
+      if (missing.length) return reject(id, endpointId, trace, "missing_params", missing.join(","));
+
+      if (funded && paramsSignature(params) !== paramsSignature(serializeProviderParams(params, [...known]))) {
+        return fundedRefusal("missing_params");
+      }
+      if (funded?.role === "delivery") {
+        const { pageSize, maxPerCallMicros } = funded.schedule;
+        if (!member || fundedCallMicros(member.endpoint, deps.catalog, pageSize) !== maxPerCallMicros
+          || tregCallBoundOf(endpointId, params, deps.catalog) !== maxPerCallMicros / 1_000_000) {
+          return fundedRefusal("over_budget");
+        }
+      }
 
       // 4b: a source that refuses, by its own description, what its input schema accepts (a topic search without a login) is not called at all
       const restricted = sessionRestriction(endpointId, params);
       if (restricted) {
-        const refused = await refuse(id, endpointId, trace, "needs_login", "topic search without a login");
+        const refused = await reject(id, endpointId, trace, "needs_login", "topic search without a login");
         return { ...refused, message: restricted } as GatewayCallResult;
       }
 
       // 5: the mission's USD budget (a free documented poll endpoint of an async tool is exempt from budget reserve/caps/repeat-sample)
-      const isFreePoll = isCatalogPoll && isZeroFreeEndpoint(endpoint);
-      const estimate = isFreePoll ? 0 : estimateCallUsd(endpoint, params, deps.catalog);
+      const isFreePoll = funded ? funded.role !== "delivery" : isCatalogPoll && isZeroFreeEndpoint(endpoint);
+      const estimate = isFreePoll ? 0 : funded ? funded.schedule.maxPerCallMicros / 1_000_000 : estimateCallUsd(endpoint, params, deps.catalog);
       // 4c: CONTACT-FINDER SAMPLES DO NOT STARVE PLANNING (contactSampling.ts): at most a quarter of the planning budget, one sample per kind, the cheapest ranked finder first, never a finder whose one call costs more than that quarter
       const finderKind = deps.phase === "planning" && !isFreePoll ? contactFinderKind(endpoint.capability) : null;
       if (finderKind) {
@@ -399,11 +781,11 @@ export function createGateway(deps: GatewayDeps) {
         const cheapestId = cheapestFinder(finderKind, capUsd);
         const why = contactSampleRefusal({ kind: finderKind, estimateUsd: estimate, capUsd, sampledKinds: new Set([...contactKinds, ...contactPending]), spentOnContactUsd: contactSpentUsd + contactHeldUsd, endpointId, cheapestId });
         if (why) {
-          const refused = await refuse(id, endpointId, trace, "contact_sample", `${finderKind}_${why}`);
+          const refused = await reject(id, endpointId, trace, "contact_sample", `${finderKind}_${why}`);
           return { ...refused, message: contactSampleMessage(why, finderKind, cheapestId) } as GatewayCallResult;
         }
       }
-      if (!isFreePoll && !deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
+      if (!isFreePoll && !deps.budget.reserve(estimate)) return reject(id, endpointId, trace, "over_budget", `${deps.phase}`);
       // what this call holds on the job's money: its estimate now, the money it may take once step 6 has reserved it (DT-20261119-11 D1)
       let held = isFreePoll ? 0 : estimate;
       // F4: a contact-finder sample also holds its money on the CONTACT allowance (the quarter cap), in the same synchronous step as the job's hold, and marks its kind as being sampled; every exit below gives it back exactly once
@@ -432,7 +814,7 @@ export function createGateway(deps: GatewayDeps) {
         const reserves = [...(deps.stageBudget.reservesUsd ?? [])].sort((a, b) => b - a);
         const kept = reserves.length > 0 ? reserves.slice(0, unsampledOthers).reduce((n, r) => n + r, 0) : unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
         planCapUsd = deps.stageBudget.budgetUsd - kept;
-        if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
+        if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { settleHeld(estimate, 0); return reject(id, endpointId, trace, "stage_reserved", "planning"); }
       }
 
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
@@ -440,7 +822,7 @@ export function createGateway(deps: GatewayDeps) {
       const sampled = samplesWithRows.get(endpointId) ?? 0;
       const perSource = Math.max(GATEWAY_MAX_SAMPLES_PER_SOURCE, deps.maxSamplesPerSource ?? 0);
       const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= perSource || sampled >= Math.max(GATEWAY_MAX_NAMED_SOURCE_SAMPLES, perSource) : sampled >= perSource;
-      if (!isFreePoll && deps.phase === "planning" && repeated) { settleHeld(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
+      if (!isFreePoll && deps.phase === "planning" && repeated) { settleHeld(estimate, 0); return reject(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: THE MONEY THIS CALL MAY TAKE (DT-20261119-11, D1/D2/D5). The header sent to TREG IS the amount reserved here, on EVERY ledger, BEFORE anything is sent: the job's money (the estimate held until now is REPLACED in one step, so two calls in flight can
       // never hold the same money), the planning stages' kept share, a capped stage's money, the provider's daily cap and the owner's grant. TREG refuses a route above the header before billing, so a stale catalog price can never make a call that
@@ -449,14 +831,14 @@ export function createGateway(deps: GatewayDeps) {
       // CAMPAIGN SCOPE: with the worker's own token passed EXPLICITLY the TREG client makes one attempt and never moves to another key of the pool (tregClient.ts executeWithKeyPool), so a call is ONE billable attempt by construction.
       const noKeyPool = deps.spendGate?.noKeyPool === true && Boolean(deps.token);
       // the attempts the client can make (key-pool hops), or the worker's own count for a gated mission (spendGate.tregAttempts), whichever is more
-      const maxAttempts = noKeyPool ? 1 : Math.max(maxTregAttempts({}), deps.spendGate?.tregAttempts ?? 1);
+      const maxAttempts = noKeyPool || funded ? 1 : Math.max(maxTregAttempts({}), deps.spendGate?.tregAttempts ?? 1);
       const gateOn = Boolean(deps.spendGate && deps.spendGate.mode !== "off");
       let chosen: { perRequest: number; attempts: number; aggregate: number; reservation: Awaited<ReturnType<typeof deps.recorder.reserve>>; gated: GateBefore | null } | null = null;
-      const reservationKey = spendReservationKey("treg", deps.missionId, id);
+      const reservationKey = spendReservationKey("treg", deps.missionId, funded ? `${id}_${randomUUID()}` : id);
       if (isFreePoll) {
         const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: 0, jobId: deps.jobId });
         if (!reservation.allowed) {
-          return refuse(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
+          return reject(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
         }
         let gated: GateBefore | null = null;
         if (gateOn) {
@@ -468,7 +850,7 @@ export function createGateway(deps: GatewayDeps) {
           if (!gated.proceed) {
             const releaseArgs = { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed" as const, durationMs: 0, jobId: deps.jobId };
             await commit(deps.client, releaseArgs);
-            return refuse(id, endpointId, trace, "spend_gate", String(gated.reason));
+            return reject(id, endpointId, trace, "spend_gate", String(gated.reason));
           }
         }
         chosen = { perRequest: 0, attempts: 1, aggregate: 0, reservation, gated };
@@ -482,16 +864,18 @@ export function createGateway(deps: GatewayDeps) {
         let poolUsd = left.length ? Math.min(...left) : GATEWAY_NO_CEILING_REQUEST_USD * maxAttempts;
         // the owner gate's existing aggregate limit (bounds.ts MAX_SINGLE_OPERATION_USD) applies to what it reserves: all the attempts together
         if (gateOn) poolUsd = Math.min(poolUsd, MAX_SINGLE_OPERATION_USD);
+        if (funded) poolUsd = Math.min(poolUsd, estimate);
         const minBound = tregCallBoundUsd(estimate);
         // admission: the money left must cover at least the call's own estimate (the same test as before: an estimate that does not fit the approved money is the one refusal); when it does not stretch to every attempt the call makes ONE
         // PLANNING (D-0138 follow-up, live re-test R2): one call that cannot be reckoned must never be able to take all the planning money, so a planning call holds at most HALF of what is left (never below its own estimate)
         const money = callMoney(poolUsd, estimate, maxAttempts, deps.phase === "planning" ? { maxShare: 0.5 } : {});
-        if (!money) { settleHeld(held, 0); return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`); }
+        if (!money) { settleHeld(held, 0); return reject(id, endpointId, trace, "over_budget", `${deps.phase}`); }
         // the amounts to try, largest first: all the money left, then a quarter of it, … down to the smallest admissible amount (never below the call's own estimate bound: the amount main admitted it with); a ledger that has no room for one amount is asked
         // for the next. When every amount fails for ALL the attempts together, the last try is ONE request (no key-pool hop) at the smallest amount.
         const candidates: Array<{ perRequest: number; attempts: number }> = [];
         for (let h = money.perRequestUsd; h > 0 && candidates.length < 6; h = Math.max(floorMicroUsd(h / 4), Math.min(minBound, money.perRequestUsd))) { candidates.push({ perRequest: h, attempts: money.attempts }); if (h <= minBound) break; }
-        if (money.attempts > 1) candidates.push({ perRequest: Math.min(minBound, floorMicroUsd(poolUsd)), attempts: 1 });
+        if (funded) candidates.splice(0, candidates.length, { perRequest: estimate, attempts: 1 });
+        if (!funded && money.attempts > 1) candidates.push({ perRequest: Math.min(minBound, floorMicroUsd(poolUsd)), attempts: 1 });
         // ONE key for the call: the amounts tried for it share the key (a refused amount leaves no reservation behind); the next call gets its own
         let lastRefusal: { code: RefusalCode; detail: string } = { code: "over_budget", detail: `${deps.phase}` };
         for (const { perRequest, attempts } of candidates) {
@@ -506,7 +890,7 @@ export function createGateway(deps: GatewayDeps) {
             reholdAll(held, was); held = was;
             if (reservation.reason === "cap") { lastRefusal = { code: "daily_cap", detail: reservation.reason ?? "" }; continue; }
             settleHeld(held, 0);
-            return refuse(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
+            return reject(id, endpointId, trace, "recording_unavailable", reservation.reason ?? "");
           }
           // 6b: THE HARD SPEND GATE: what is reserved against the owner's grant is the amount the header allows, per attempt. Each call (a new call id) is a new paid attempt with its own reservation key.
           let gated: GateBefore | null = null;
@@ -525,23 +909,46 @@ export function createGateway(deps: GatewayDeps) {
               const releaseArgs = { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed" as const, durationMs: 0, jobId: deps.jobId };
               const released = (await commit(deps.client, releaseArgs)) !== false || (await commit(deps.client, releaseArgs)) !== false;
               reholdAll(held, was); held = was;
-              if (!released) { settleHeld(held, 0); return refuse(id, endpointId, trace, "spend_gate", "release_unconfirmed"); }
+              if (!released) { settleHeld(held, 0); return reject(id, endpointId, trace, "spend_gate", "release_unconfirmed"); }
               const reason = gated.proceed ? gated.observedRefusal : gated.reason;
               // a ledger with no ROOM for this amount is asked for a smaller one; an unavailable gate, an ambiguous reservation or a grant that is not open is never retried
               if (roomReason(reason)) { lastRefusal = { code: "spend_gate", detail: String(reason) }; continue; }
               settleHeld(held, 0);
-              return refuse(id, endpointId, trace, "spend_gate", String(reason));
+              return reject(id, endpointId, trace, "spend_gate", String(reason));
             }
           }
           chosen = { perRequest, attempts, aggregate, reservation, gated };
           break;
         }
-        if (!chosen) { settleHeld(held, 0); return refuse(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
+        if (!chosen) { settleHeld(held, 0); return reject(id, endpointId, trace, lastRefusal.code, lastRefusal.detail); }
       }
       const { reservation, gated } = chosen;
       const headerUsd = chosen.perRequest;
       // what the call may be billed, all attempts together: reserved on every ledger, and kept for a call whose charge is unknown (timeout, no charge reported)
       const reservedUsd = chosen.aggregate;
+
+      let claim: FundedClaim | null = null;
+      if (fundedState) {
+        const ordinal = fundedState.claims.length + 1;
+        const proposed: FundedClaim = {
+          version: 1, ordinal, phase: deps.phase, callId: id, requestDigest, grantDigest,
+          providerCostId: reservation.costId ?? 0, reservedMicros: Math.round(reservedUsd * 1_000_000),
+        };
+        try {
+          if (validClaim(proposed, deps.phase, ordinal)
+            && (await deps.store.putNewStrict(deps.missionId, journalPath(deps.phase, ordinal, "claim"), JSON.stringify(proposed), "application/json"))?.created === true) {
+            claim = proposed;
+          }
+        } catch {
+          // A missing acknowledgement never authorizes a send.
+        }
+        if (!claim) {
+          settleHeld(held, 0);
+          if (gated) await gateAfter(deps.spendGate, gated, 0);
+          await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
+          return fundedRefusal("recording_unavailable");
+        }
+      }
 
       // the call itself, through the audited path for a sensitive endpoint
       const started = Date.now();
@@ -559,11 +966,14 @@ export function createGateway(deps: GatewayDeps) {
       const perform = async () => {
         performed = true;
         try {
-          res = await call({
+          const wire: TregCallOptions = {
             endpointId, method: endpoint.method === "GET" ? "GET" : "POST", params, allowedParamKeys: [...known], userId: deps.userId, jobId: deps.jobId ?? `agent_${deps.missionId}`,
-            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: headerUsd, ...(chosen.attempts === 1 && maxAttempts > 1 ? { singleAttempt: true } : {}), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
-            endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? (noKeyPool ? { token: deps.token } : { legacyToken: deps.token }) : {}),
-          });
+            stepId: id, page: 1, idempotencyKey: claim ? `agent_${deps.missionId}_${deps.phase}_${claim.requestDigest}` : `agent_${deps.missionId}_${id}`, routeMaxCostUsd: headerUsd, ...(chosen.attempts === 1 && maxAttempts > 1 ? { singleAttempt: true } : {}), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
+            endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? (noKeyPool || funded ? { token: deps.token } : { legacyToken: deps.token }) : {}),
+          };
+          res = await call(claim
+            ? bindFundedTregTransport(wire, { missionId: deps.missionId, phase: deps.phase, maxMicros: claim.reservedMicros })
+            : wire);
         } catch {
           thrown = true;
         }
@@ -589,7 +999,7 @@ export function createGateway(deps: GatewayDeps) {
         settleHeld(held, 0);
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
         void sensitiveRefusalAr; // the Arabic sentence is for the customer's screen, not for the model
-        return refuse(id, endpointId, trace, outcome.refused as SensitiveRefusal, "sensitive");
+        return reject(id, endpointId, trace, outcome.refused as SensitiveRefusal, "sensitive");
       }
 
       const durationMs = Date.now() - started;
@@ -603,6 +1013,47 @@ export function createGateway(deps: GatewayDeps) {
       if (finderKind) { contactKinds.add(finderKind); contactSpentUsd += actualUsd; }
       await deps.store.updateMission(deps.missionId, { [spendField]: Number(deps.budget.spentUsd().toFixed(6)) });
 
+      if (funded && claim && resultDescriptor) {
+        const projected = result?.ok ? projectFundedResult(result.data, params, funded.role, resultDescriptor, requestDescriptor) : { data: null, auxiliary: null };
+        const rows = projected.data?.rows ?? [];
+        const httpStatus = result?.httpStatus ?? 0;
+        const status = tregCallStatusOf({ ok: Boolean(result?.ok), rows });
+        // The generic raw reader sees only validated delivery rows. Helpers remain in private storage.
+        const rawPath = projected.data ? RAW_PATH(id) : null;
+        if (rawPath) {
+          const created = await deps.store.putNewStrict(deps.missionId, rawPath, JSON.stringify(projected.data), "application/json");
+          if (created?.created !== true) return fundedRefusal("recording_unavailable");
+        }
+        const answer = result?.ok ? {
+          ok: true as const, call_id: id, http_status: httpStatus, rows_in_page: rows.length,
+          has_more: projected.data?.has_more ?? null,
+          next_cursor: projected.data && "next_cursor" in projected.data ? String(projected.data.next_cursor) : null,
+          shape: null, first_rows: rows.slice(0, AGENT_FIRST_ROWS), warnings: [], saved: rawPath ?? "",
+          ...(funded.role !== "delivery" ? { funded_auxiliary: projected.auxiliary } : {}),
+        } : { ok: false as const, call_id: id, failed: true as const, http_status: httpStatus, message: "the source answered with an error" };
+        await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows.length, capabilityId, status, durationMs, jobId: deps.jobId });
+        const cost = knownChargeUsd();
+        if (cost !== null) {
+          const chargedMicros = Math.round(cost * 1_000_000);
+          const projection = answer.ok ? fundedProjectionPath(deps.phase, claim.ordinal) : null;
+          const receipt: FundedReceipt = { ...claim, chargedMicros, outcome: answer.ok ? "ok" : "failed", projection };
+          if (validReceipt(receipt, claim)) {
+            if (projection && (await deps.store.putNewStrict(deps.missionId, projection, JSON.stringify(answer), "application/json"))?.created !== true) {
+              return fundedRefusal("recording_unavailable");
+            }
+            if ((await deps.store.putNewStrict(deps.missionId, journalPath(deps.phase, claim.ordinal, "receipt"), JSON.stringify(receipt), "application/json"))?.created !== true) {
+              return fundedRefusal("recording_unavailable");
+            }
+          }
+        }
+        if (funded.role === "delivery") await logCall({
+          id, endpoint_id: endpointId, params: trace, status: status === "success" ? "ok" : status,
+          http_status: httpStatus, rows: rows.length, cost_usd: actualUsd, estimate_usd: estimate,
+          provider_cost_id: reservation.costId, storage_path: rawPath, duration_ms: durationMs,
+        });
+        return withFacts(answer);
+      }
+
       if (!result) {
         await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
         await logCall({ id, endpoint_id: endpointId, params: { ...trace, _failure: "the call did not complete (no answer)" }, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
@@ -611,7 +1062,7 @@ export function createGateway(deps: GatewayDeps) {
       if (result.blocked) {
         // executeTregCall's own gate refused (it runs the same lists): nothing was sent
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
-        return refuse(id, endpointId, trace, result.blocked === "sensitive_not_allowed" ? "sensitive_not_allowed" : "blocked", String(result.blocked));
+        return reject(id, endpointId, trace, result.blocked === "sensitive_not_allowed" ? "sensitive_not_allowed" : "blocked", String(result.blocked));
       }
 
       // save the FULL raw answer, then read its shape
@@ -652,8 +1103,7 @@ export function createGateway(deps: GatewayDeps) {
         saved: storagePath ? `${id} (the full page is saved; give "${id}" to run_code to process it${rowsIn ? `: its rows are ${rowsIn}` : ""})` : "not saved",
         ...(rowsIn ? { rows_in_code: rowsIn } : {}),
       } as GatewayCallResult);
-    },
-  };
+  }
 }
 
 export type Gateway = ReturnType<typeof createGateway>;

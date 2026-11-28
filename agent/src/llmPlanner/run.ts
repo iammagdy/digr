@@ -1,7 +1,8 @@
+import { getValidatedAdditions } from "../../../src/lib/treg/blockList";
 import { MODEL_SONNET } from "../../../src/lib/agentMission/constants";
 import { isPeopleOfCompanyStep } from "../../../src/lib/agentMission/childSources";
 import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
-import { RAW_PATH, type Gateway, type GatewayCallResult } from "../gateway";
+import { RAW_PATH, type FundedSchedule, type Gateway, type GatewayCallResult } from "../gateway";
 import { callTregWithAsync } from "../asyncTreg";
 import type { WebGateway } from "../webGateway";
 import { webRequestOf } from "../engine/sourceGateway";
@@ -73,6 +74,7 @@ export interface RunLlmPlanningInput {
   words: StoredCustomerWords | null;
   pricingSettings?: unknown;
   availablePoints?: () => Promise<number | null>;
+  fundedCaller?: (scope: FundedSchedule) => ReturnType<Gateway["fundedCaller"]>;
   now: number;
   log?: (line: string) => void;
 }
@@ -112,6 +114,19 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
   }
   const qa = state.asked.filter((a) => a.answer !== null);
   let web = input.web;
+  const schemas = new Map<string, Promise<GatewayCallResult>>();
+  const fundedProbe = input.fundedCaller && ((scope: FundedSchedule, endpointId: string, params: Record<string, unknown>) => {
+    const manifest = getValidatedAdditions();
+    if (manifest.byId.get(endpointId)?.contract.role !== "schema") {
+      return probeAny(input, undefined, endpointId, params, input.fundedCaller!(scope));
+    }
+    const key = `${manifest.version}:${endpointId}`;
+    const known = schemas.get(key);
+    if (known) return known;
+    const loading = probeAny(input, undefined, endpointId, params, input.fundedCaller!(scope));
+    schemas.set(key, loading);
+    return loading;
+  });
   const result = await planWithLlm(
     {
       words,
@@ -135,6 +150,7 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       readPage: async (callId) => { const raw = await store.getFile(mission.id, RAW_PATH(callId)); if (raw === null) return null; try { return JSON.parse(raw) as unknown; } catch { return null; } },
       pricingSettings: input.pricingSettings,
       availablePoints: input.availablePoints,
+      ...(fundedProbe ? { fundedProbe } : {}),
       today: cairoDayOf(input.now),
       onProgress: async (lineAr) => { await store.addEvent(mission.id, { kind: "progress", message_ar: lineAr }); },
       accept: acceptOf(input.catalog, input.access),
@@ -157,7 +173,8 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
 export const handedOver = (r: LlmPlanResult): boolean => r.kind === "cannot" && r.detail === "handed_over";
 
 /** Direct web and catalog probes use their respective gateways and return the same answer shape. */
-async function probeAny(input: RunLlmPlanningInput, web: RunLlmPlanningInput["web"], endpointId: string, params: Record<string, unknown>): Promise<GatewayCallResult> {
+async function probeAny(input: RunLlmPlanningInput, web: RunLlmPlanningInput["web"], endpointId: string, params: Record<string, unknown>, funded?: ReturnType<Gateway["fundedCaller"]>): Promise<GatewayCallResult> {
+  if (funded) return funded({ endpoint_id: endpointId, params });
   const req = webRequestOf(endpointId, params);
   if (req && input.createWebForUnderstanding && !web) throw new Error("Web planning budget was not initialized");
   if (req && web) {

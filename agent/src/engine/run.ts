@@ -1,12 +1,13 @@
-import { COMPANY_SOURCE_ID_KEY } from "../../../src/lib/agentMission/companyQuality";
+import { ROW_KEY_FIELDS } from "../../../src/lib/agentMission/contract";
+import { getValidatedAdditions } from "../../../src/lib/treg/blockList";
+import { COMPANY_BRANCH_FIELDS, COMPANY_SOURCE_ID_KEY } from "../../../src/lib/agentMission/companyQuality";
 import { isCompanyStage } from "../../../src/lib/agentMission/entities";
 import { AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
 import { stagePriceInputs, type EngineSpec, type PricedPlan } from "../../../src/lib/agentMission/plan";
 import { BARREN_PAGES, enginePageCapFor, executionFundingSchedule } from "../../../src/lib/agentMission/price";
 export { ENGINE_MAX_PAGES_PER_STAGE, enginePageCapFor } from "../../../src/lib/agentMission/price";
 import { missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
-import type { Gateway } from "../gateway";
-import { RAW_PATH } from "../gateway";
+import { canonicalFundedDomain, RAW_PATH, type FundedResultDescriptor, type Gateway } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams, type PeriodBounds } from "../../../src/lib/agentMission/dateWindow";
@@ -59,6 +60,7 @@ export interface EngineDeps {
   maxPagesPerStage?: number;
   /** The approved schedule bounds every dispatch, including paid failures. */
   fundedCallLimit?: number;
+  fundedDispatch?: ReadonlyMap<string, ReturnType<Gateway["fundedCaller"]>>;
   /** Asked before every page: a reason (the worker's memory guard) stops the run so the mission can be put back in the queue with everything it saved. */
   shouldStop?: () => string | null;
   /** The stages that run the REDESIGNED engine behaviour (S1 items 1.1, 1.3, 1.9): the type's flag is active for the account AND the stage's recipe was built by code. Absent or not listed: the engine behaves as it always did. */
@@ -339,6 +341,13 @@ async function collectParentChildren(
 
 async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
+  const tagged = getValidatedAdditions().byId.get(spec.endpoint_id);
+  if (tagged) {
+    if (tagged.contract.role !== "delivery" || stage.parent_key !== null || !deps.fundedDispatch?.has(stage.key)) {
+      return { reason: "failed", aborted: null };
+    }
+    return runStream(deps, stage, spec, "root", spec.params, null, Number.POSITIVE_INFINITY);
+  }
   if (stage.parent_key === null) return runRoot(deps, stage, spec);
   const parentKey = stage.parent_key;
   // THE COMPLETE COUNT (S1 live findings): the parents the promised count was computed from are the parents read (redesigned stages only)
@@ -680,6 +689,7 @@ async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineS
     if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
     if (!CONTINUE_ON.has(r.reason) && r.reason !== "daily_cap") break;
     const alt = spec.alternatives![i];
+    if (getValidatedAdditions().byId.has(alt.endpoint_id)) continue;
     const family = capFamilyOf(alt.endpoint_id); if (capped.has(family)) continue;
     const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
     const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest)), boundsOf(period)) : withCairoPeriod(stage, alt.window, alt.params);
@@ -766,6 +776,13 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
 async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null, opts: { singlePage?: boolean; targetRows?: number } = {}): Promise<{ reason: StopReason; aborted: string | null; definitiveEmpty?: boolean }> {
   const { items, store, gateway } = deps;
+  const addition = getValidatedAdditions().byId.get(spec.endpoint_id)?.contract;
+  const fundedCall = addition?.role === "delivery" && parentId === null && streamKey === "root"
+    ? deps.fundedDispatch?.get(stage.key) : undefined;
+  if (addition && !fundedCall) return { reason: "failed", aborted: null };
+  const fundedIdentity = fundedCall ? (addition?.result as FundedResultDescriptor | undefined)?.identityKey : undefined;
+  if (fundedCall && !fundedIdentity) return { reason: "failed", aborted: null };
+
   const now = deps.now ?? Date.now;
   // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
   const depthPages = parentId !== null ? depthPagesOf(stage, spec) : 1;
@@ -804,14 +821,14 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     if (cursor !== null && state?.visitedPositions?.has(cursor)) {
       return { reason: "source_exhausted", aborted: null };
     }
-    const nextInput = cursor && (paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
+    const nextInput = cursor && (fundedCall ? Number(cursor) : paging ? pageInputValue(cursor, paging) : pageMode ? Number(cursor) : cursor);
     if (cursor !== null && nextInput === null) return { reason: "source_exhausted", aborted: null };
     const callParams = cursor && spec.cursor_param ? { ...params, [spec.cursor_param]: nextInput } : params;
     if (deps.fundedCallLimit !== undefined) {
       if (items.stage(stage.key).fundedCalls >= deps.fundedCallLimit) return { reason: "page_limit", aborted: null };
       await items.commit([{ t: "funded_call", stage: stage.key }]);
     }
-    const result = deps.sources ? await deps.sources.call({ stageKey: stage.key, endpoint_id: spec.endpoint_id, params: callParams }) : await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
+    const result = fundedCall ? await fundedCall({ endpoint_id: spec.endpoint_id, params: callParams }) : deps.sources ? await deps.sources.call({ stageKey: stage.key, endpoint_id: spec.endpoint_id, params: callParams }) : await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
     if (!result.ok) {
       if ("refused" in result) return { reason: refusalStop(result.refused), aborted: null };
       // A PARENT THE SOURCE DOES NOT KNOW (live: aviato.companies.employees answered 404 «Not Found» for 14 of 23 companies, each asked twice by the same input, and three such companies in a row ended the stage with 20 companies never asked): a client error
@@ -819,7 +836,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
       if (parentId !== null && "http_status" in result && PARENT_UNKNOWN_HTTP.has(Number(result.http_status))) return { reason: "source_exhausted", aborted: null };
       // a page that failed is asked once more; a second failure ends the stream with that reason (what was saved stays saved)
       failures += 1;
-      if (failures >= (isCatalogPaging ? 1 : 2)) return { reason: "failed", aborted: null };
+      if (failures >= (fundedCall || isCatalogPaging ? 1 : 2)) return { reason: "failed", aborted: null };
       continue;
     }
     failures = 0;
@@ -828,10 +845,23 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     let page: unknown = null;
     try { page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
     if (page === null) return { reason: "failed", aborted: null };
-    const reading = paging ? readShape(page, { missionPage: paging }) : null;
+    const reading = paging && !fundedCall ? readShape(page, { missionPage: paging }) : null;
     const rowsInPage = reading ? reading.rows.length : result.rows_in_page;
     const hasMore = reading ? reading.hasMore : result.has_more;
-    const mapped = reading && rowsInPage === 0
+    const projected = fundedIdentity && isObject(page) && Array.isArray(page.rows) ? page.rows : null;
+    if (fundedIdentity && !projected) return { reason: "failed", aborted: null };
+    const mapped = projected
+      ? { ok: true as const, resultJson: JSON.stringify(projected.map((row: unknown) => {
+          if (!isObject(row)) return null;
+          const domain = canonicalFundedDomain(row[fundedIdentity!]);
+          if (!domain) return null;
+          const copy = { ...row };
+          for (const key of [...ROW_KEY_FIELDS, ...COMPANY_BRANCH_FIELDS, "parent_id"]) {
+            if (key !== fundedIdentity) delete copy[key];
+          }
+          return { ...copy, id: domain, [COMPANY_SOURCE_ID_KEY]: domain };
+        }).filter(Boolean)) }
+      : reading && rowsInPage === 0
       ? { ok: true as const, resultJson: "[]" }
       : await deps.sandbox(spec.map_code, { [spec.map_file_id]: page });
     // the mapping is OURS: a mapping that fails on a page the source gave is our failure (an internal one while nothing has been stored yet), never «the source failed»
@@ -847,12 +877,14 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const profiled = parentId !== null && isPeopleStage(stage) ? withSourceProfiles(page, confirmed, nameKeysOf(stage.columns)) : confirmed;
     const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(profiled, stage.role_preference.role).rows : profiled;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
-    const nextCursor = reading ? reading.nextCursor : pageMode
+    let nextCursor = reading ? reading.nextCursor : pageMode
       ? (rowsInPage > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null)
       : result.next_cursor ?? null;
+    if (fundedCall && (nextCursor === null || !/^\d+$/.test(nextCursor)
+      || !Number.isSafeInteger(Number(nextCursor)) || Number(nextCursor) <= Number(cursor ?? 0))) nextCursor = null;
     // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
     const guaranteeCount = deps.redesignStages?.has(stage.key) === true || isCatalogPaging;
-    let ended = pageMode && !reading ? rowsInPage === 0 : !nextCursor || (rowsInPage === 0 && !guaranteeCount) || hasMore === false || !spec.cursor_param;
+    let ended = pageMode && !reading ? rowsInPage === 0 : !nextCursor || (rowsInPage === 0 && (Boolean(fundedCall) || !guaranteeCount)) || hasMore === false || !spec.cursor_param;
     if (nextCursor) {
       if (nextCursor === cursor || state?.visitedPositions?.has(nextCursor)) {
         ended = true;
@@ -869,7 +901,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(opts.targetRows !== undefined ? { targetRows: opts.targetRows } : {}), ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: hasMore, ended, rows_in_page: rowsInPage, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: fundedIdentity ?? spec.id_field ?? null, ...(opts.targetRows !== undefined ? { targetRows: opts.targetRows } : {}), ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: hasMore, ended, rows_in_page: rowsInPage, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
     // EVERY REPLY, WITHOUT A PAID PAGE FOR NOTHING (live finding C): the replies of a comment read to the end have the comment's own counter as their signal (a real page keeps a next-page value after its last row). When the replies read have reached the counter, the page was
     // not a full one (fewer rows than a call usually gives) and the counter was not exceeded, the comment is done; a counter that was understated shows itself (more rows than it said, or a full page), and the read goes on to the source's end
     if (counterStop !== null && parentId !== null && counterStop > 0) {

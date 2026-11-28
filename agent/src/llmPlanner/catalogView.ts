@@ -1,7 +1,7 @@
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import { endpointCostUsd, isSellable } from "../../../src/lib/treg/catalog";
 import { PER_CALL_UNITS, PER_RECORD_UNITS, unitCost } from "../../../src/lib/modelPlanner/pricing";
-import { blockedEndpointReason } from "../../../src/lib/treg/blockList";
+import { blockedEndpointReason, getValidatedAdditions } from "../../../src/lib/treg/blockList";
 import { policyVerdict, type AccountAccess } from "../../../src/lib/treg/dataPolicy";
 import { PEOPLE_OF_COMPANY_CAPABILITIES } from "../../../src/lib/agentMission/childSources";
 import { PHONE_CAPABILITIES } from "../../../src/lib/agentMission/peopleCheck";
@@ -68,7 +68,9 @@ export const isAsyncTask = (e: CatalogEndpoint): boolean =>
   (Boolean(e.async) || Boolean(e.async_config) || /-task-(post|get)(-|$)/.test(e.id)) &&
   !(Boolean((e.async_config as any)?.poll?.endpoint));
 
-export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access: AccountAccess | null): boolean =>
+export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access: AccountAccess | null, includeFunded = false): boolean => {
+  const role = getValidatedAdditions().byId.get(e.id)?.contract.role;
+  return (!role || (includeFunded && role === "delivery")) &&
   !isMediaGen(e) &&
   !isPollOnlyEndpoint(e, catalog) &&
   hasSupportedAsync(e, catalog) &&
@@ -76,15 +78,16 @@ export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access:
   hasUsablePrice(e, catalog) &&
   !blockedEndpointReason(e.id, e.scope ?? null) &&
   policyVerdict(e.id, access).allowed;
+};
 
 /** The capability of an endpoint, or a name made from its id when the catalog gave none (`platform.other`). */
 export const capabilityOf = (e: CatalogEndpoint): string => (e.capability && e.capability.trim() !== "" ? e.capability : `${e.platform}.other`);
 
 /** One line per platform: the platform key and the capabilities the account may use there, with how many tools serve each. */
-export function platformIndex(catalog: TregCatalog, access: AccountAccess | null): string {
+export function platformIndex(catalog: TregCatalog, access: AccountAccess | null, includeFunded = false): string {
   const byPlatform = new Map<string, Map<string, number>>();
   for (const e of catalog.endpoints) {
-    if (!usableEndpoint(e, catalog, access)) continue;
+    if (!usableEndpoint(e, catalog, access, includeFunded)) continue;
     const caps = byPlatform.get(e.platform) ?? new Map<string, number>();
     const cap = capabilityOf(e);
     caps.set(cap, (caps.get(cap) ?? 0) + 1);
@@ -98,13 +101,13 @@ export function platformIndex(catalog: TregCatalog, access: AccountAccess | null
 const sizeOf = (m: Map<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
 
 /** The usable capabilities of a platform (full names). */
-export function capabilitiesOf(catalog: TregCatalog, access: AccountAccess | null, platform: string): Set<string> {
-  return new Set(catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access)).map(capabilityOf));
+export function capabilitiesOf(catalog: TregCatalog, access: AccountAccess | null, platform: string, includeFunded = false): Set<string> {
+  return new Set(catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access, includeFunded)).map(capabilityOf));
 }
 
 /** The platforms the catalog serves for this account. */
-export function platformsOf(catalog: TregCatalog, access: AccountAccess | null): Set<string> {
-  return new Set(catalog.endpoints.filter((e) => usableEndpoint(e, catalog, access)).map((e) => e.platform));
+export function platformsOf(catalog: TregCatalog, access: AccountAccess | null, includeFunded = false): Set<string> {
+  return new Set(catalog.endpoints.filter((e) => usableEndpoint(e, catalog, access, includeFunded)).map((e) => e.platform));
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -253,7 +256,7 @@ export function capabilityTagsOf(e: CatalogEndpoint): string[] {
   return Array.from(set);
 }
 
-export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint>; circuitBreaker?: EndpointCircuitBreaker } = {}): CatalogEndpoint[] {
+export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; web?: ReadonlyArray<CatalogEndpoint>; circuitBreaker?: EndpointCircuitBreaker; includeFunded?: boolean } = {}): CatalogEndpoint[] {
   const cb = options.circuitBreaker ?? getCircuitBreaker();
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
@@ -316,9 +319,9 @@ function fallbackGroupOf(e: CatalogEndpoint): string | null {
   return registryFallbackGroups.get(e.id) ?? null;
 }
 
-function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; circuitBreaker?: EndpointCircuitBreaker } = {}): CatalogEndpoint[] {
+function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; hasSource?: boolean; circuitBreaker?: EndpointCircuitBreaker; includeFunded?: boolean } = {}): CatalogEndpoint[] {
   const cb = options.circuitBreaker ?? getCircuitBreaker();
-  const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access) && cb.isAvailable(e.id));
+  const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access, options.includeFunded) && cb.isAvailable(e.id));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a, catalog) - callUsdOf(b, catalog);
   const chosen = [...exact].sort(rank).slice(0, max);

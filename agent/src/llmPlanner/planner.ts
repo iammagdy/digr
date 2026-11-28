@@ -1,11 +1,15 @@
+import { getValidatedAdditions } from "../../../src/lib/treg/blockList";
+import { effectiveJobPointsCap } from "../../../src/lib/jobPointsCap";
+import { SAMPLE_ROWS_REQUESTED } from "../../../src/lib/modelPlanner/constants";
+import { knownColumnTitleAr } from "../../../src/lib/agentMission/taskContracts";
 import { unitCost } from "../../../src/lib/modelPlanner/pricing";
 import { endpointCostUsd, type CatalogEndpoint, type TregCatalog } from "../../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../../src/lib/treg/dataPolicy";
 import { hintsOf, missionPageOf, pageInputValue, readShape } from "../../../src/lib/treg/shapeReader";
 import { buildShapeDigest, digestValue } from "../../../src/lib/modelPlanner/digest";
-import { fundingCallUsdMicro, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate } from "../../../src/lib/agentMission/price";
+import { enginePageCapFor, executionBudgetUsd, fundingCallUsdMicro, priceMissionByCode, type ExecutionFundingRoute, type ListedMissionRate } from "../../../src/lib/agentMission/price";
 import { normalizeMissionPricingSettings, type MissionPricingSettings } from "../../../src/lib/missionPricing";
-import { AGENT_MAX_DELIVERED_ROWS } from "../../../src/lib/agentMission/constants";
+import { AGENT_MAX_DELIVERED_ROWS, AGENT_PLANNING_BUDGET_CAP_USD } from "../../../src/lib/agentMission/constants";
 import providerMetadata from "../../../data/capabilities/provider-metadata.json";
 import { APPROVED_CAPABILITY_CATALOG } from "../../../src/functions/shared/capabilityRegistry";
 import { DEFAULT_PRICING_SETTINGS, unitPricePointsForCapability } from "../../../src/functions/shared/quotes";
@@ -25,7 +29,7 @@ import { ownTitleWords, sameNounStem } from "../../../src/lib/agentMission/quant
 import { countAr, itemNounOf, itemNounFromCapability, coerceItemNoun, GENERIC_ITEM_NOUN, itemNounStored, unitNounBySingular } from "../../../src/lib/agentMission/itemNoun";
 import { countSupportedByMessage, countWrittenIn, isCountOfOtherNoun, isSingularPerParentCitation, tokensOf, wordNumbersIn, writtenElsewhere } from "../../../src/lib/agentMission/numberWords";
 import { effectiveChargeUsd } from "../asyncTreg";
-import { estimateCallUsd, tregCallBoundOf, type GatewayCallResult } from "../gateway";
+import { canonicalFundedDomain, estimateCallUsd, fundedCallMicros, tregCallBoundOf, type FundedRequestDescriptor, type FundedResultDescriptor, type FundedSchedule, type GatewayCallResult } from "../gateway";
 import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isDocumentedFreeEndpoint, isProven, peopleOfCompanyHint, platformIndex, platformsOf, multiProviderEndpoints } from "./catalogView";
 import { validateInputShape } from "../tools";
 import { buildScoutSchema, DECIDE_IT_AR_EN, UNDERSTAND_SCHEMA_NO_ASK, FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
@@ -70,6 +74,7 @@ export interface LlmPlannerDeps {
   pricingSettings?: unknown;
   /** Read immediately before offering a funded quote. Null means the wallet could not be checked. */
   availablePoints?: () => Promise<number | null>;
+  fundedProbe?: (scope: FundedSchedule, endpointId: string, params: Record<string, unknown>) => Promise<GatewayCallResult>;
   /** Today, for the model's dates (Cairo calendar day, YYYY-MM-DD). */
   today: string;
   /** What the customer reads while the plan is prepared (one short Arabic line per phase). Absent: nothing is said. */
@@ -142,7 +147,7 @@ export interface Understanding {
 }
 
 export type LlmPlanResult =
-  | { kind: "plan"; plan: PricedPlan; understanding: Understanding; costUsd: number }
+  | { kind: "plan"; plan: PricedPlan; understanding: Understanding; costUsd: number; fundedSchedule?: FundedSchedule }
   | { kind: "question"; question_ar: string; options_ar: string[]; understanding: Understanding; costUsd: number; /** the question reports what the real search found (the customer chooses: take it, or widen) */ scout?: true; scoutSnapshot?: PriorScoutStepSnapshot[] }
   | { kind: "cannot"; reason_ar: string; understanding: Understanding | null; costUsd: number; detail: string };
 
@@ -312,7 +317,7 @@ export function askIsEarned(
   return standing.length > 0;
 }
 /** What code checks in the model's understanding: catalog names, keys, parents, numbers. The error text goes back to the model once. */
-export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: AccountAccess | null): { ok: true; value: Understanding } | { ok: false; error: string } {
+export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: AccountAccess | null, includeFunded = false): { ok: true; value: Understanding } | { ok: false; error: string } {
   if (!isObj(u)) return { ok: false, error: "the answer is not an object" };
   const decision = u.decision === "ask" || u.decision === "cannot" ? u.decision : "plan";
   const understanding_ar = str(u.understanding_ar);
@@ -325,7 +330,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
   if (decision === "cannot") return { ok: true, value: { ...base, cannot_ar: str(u.cannot_ar) || understanding_ar, steps: [] } };
   const raw = Array.isArray(u.steps) ? u.steps : [];
   if (raw.length === 0) return { ok: false, error: "a plan needs at least one step" };
-  const platforms = platformsOf(catalog, access);
+  const platforms = platformsOf(catalog, access, includeFunded);
   const steps: UnderstoodStep[] = [];
   const errors: string[] = [];
   raw.slice(0, 8).forEach((s, i) => {
@@ -336,7 +341,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
     if (!platforms.has(platform)) { errors.push(`step ${key}: platform "${platform}" is not in the catalog index`); return; }
     let capability = str(s.capability);
     if (capability && !capability.startsWith(`${platform}.`)) capability = `${platform}.${capability}`;
-    if (!capabilitiesOf(catalog, access, platform).has(capability)) { errors.push(`step ${key}: capability "${capability}" is not listed for ${platform}`); return; }
+    if (!capabilitiesOf(catalog, access, platform, includeFunded).has(capability)) { errors.push(`step ${key}: capability "${capability}" is not listed for ${platform}`); return; }
     const parent = str(s.parent) || null;
     if (parent && !steps.some((x) => x.key === parent)) { errors.push(`step ${key}: parent "${parent}" must be an EARLIER step's key`); return; }
     const c = isObj(s.count) ? s.count : {};
@@ -624,9 +629,9 @@ export function withKeptPeopleAsk(retry: Understanding, refused: Understanding |
 }
 
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
-export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string; understanding?: Understanding }> {
+export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log" | "fundedProbe">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string; understanding?: Understanding }> {
   const ask = asker(deps, cost);
-  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
+  const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access, Boolean(deps.fundedProbe))}${peopleOfCompanyHint(deps.catalog, deps.access) ? `\n\n${peopleOfCompanyHint(deps.catalog, deps.access)}` : ""}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
   const userPrompt = understandPrompt(input, deps.today);
   const said = customerSaidOf(input);
@@ -637,7 +642,7 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     const noAsk = attempt === 1 && refusedAsk !== null;
     const retryText = noAsk ? `${userPrompt}\n\n${DECIDE_IT_AR_EN}` : `${userPrompt}\n\nYour previous answer could not be used: ${checked && !checked.ok ? checked.error : "no answer"}. Answer again using only names from the catalog index.`;
     const answer = await ask(system, attempt === 0 ? userPrompt : retryText, noAsk ? { ...tool, schema: UNDERSTAND_SCHEMA_NO_ASK } : tool, 4000);
-    checked = answer === null ? { ok: false, error: "no answer" } : checkUnderstanding(answer, deps.catalog, deps.access);
+    checked = answer === null ? { ok: false, error: "no answer" } : checkUnderstanding(answer, deps.catalog, deps.access, Boolean(deps.fundedProbe));
     const hasSourceInModel = Boolean(
       (answer as any)?.source?.value ||
       (Array.isArray((answer as any)?.steps) && (answer as any).steps.some((s: any) => Boolean(s?.source?.value)))
@@ -739,8 +744,8 @@ export function withCheckedCompaniesCount(u: Understanding, said: ReadonlyArray<
 }
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
-export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
-  const allCandidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), hasSource: Boolean(step.source && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
+export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }, includeFunded = false): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
+  const allCandidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { includeFunded, alsoSearch: Boolean(step.source && step.topic && !step.parent), hasSource: Boolean(step.source && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
   const candidates = allCandidates.filter((c) => !needsMissingSession(c));
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample, deps.catalog), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
@@ -881,6 +886,160 @@ export function extractObservedRelatedAccounts(
   return out;
 }
 
+export function fundedEstimateNote(count: unknown): string | null {
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 1) return null;
+  const noun = count === 1 ? "شركة واحدة" : count === 2 ? "شركتان" : `${toArabicDigits(count)} ${count <= 10 ? "شركات" : "شركة"}`;
+  const line = `العدد التقريبي المتاح قبل الفحص هو ${noun}، وقد يقل العدد النهائي بعد التحقق، وتدفع فقط مقابل ما يُسلَّم لك فعلًا.`;
+  return checkCustomerText(line).issues.length === 0 ? line : null;
+}
+
+function supportedFundedFilter(value: unknown, type: string): boolean {
+  if (Array.isArray(value)) return value.length > 0 && value.length <= 40
+    && value.every((entry) => !Array.isArray(entry) && supportedFundedFilter(entry, type));
+  if (type === "string") return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "integer") return typeof value === "number" && Number.isSafeInteger(value);
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  return false;
+}
+
+/** A selected funded choice is final for this turn. No ordinary probe or alternative inherits its authority. */
+async function planFundedCompany(input: LlmPlannerInput, understanding: Understanding, deps: LlmPlannerDeps, cost: { usd: number }): Promise<LlmPlanResult | null> {
+  const step = understanding.steps[0];
+  const probe = deps.fundedProbe;
+  if (!probe || understanding.steps.length !== 1 || !step?.deliver || step.parent || understanding.people_of_companies?.asked) return null;
+  const manifest = getValidatedAdditions();
+  const eligible = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { includeFunded: true })
+    .some((endpoint) => endpoint.platform === step.platform && endpoint.capability === step.capability && manifest.byId.get(endpoint.id)?.contract.role === "delivery");
+  if (!eligible) return null;
+  const { options } = await chooseTools(step, null, deps, cost, true);
+  const selected = options[0];
+  const contract = selected && manifest.byId.get(selected.endpoint.id)?.contract;
+  if (!selected || contract?.role !== "delivery") return null;
+  const fail = (detail: string): LlmPlanResult => ({ kind: "cannot", detail, reason_ar: "", understanding, costUsd: cost.usd });
+  const request = contract.request as FundedRequestDescriptor | undefined;
+  const result = contract.result as FundedResultDescriptor | undefined;
+  if (!request || !result?.identityKey || selected.notCarried.length || step.count.all) return fail("funded_scope_invalid");
+  const sizeKey = request.pageSizeKey;
+  const offsetKey = request.positionKey;
+  const filterKey = request.filterKey;
+  const identity = result.identityKey;
+  let rows = step.count.total ?? (sizeKey ? DEFAULT_COUNT : 1);
+  if (!Number.isSafeInteger(rows) || rows < 1 || rows > AGENT_MAX_DELIVERED_ROWS) return fail("funded_scope_invalid");
+  const params: Record<string, unknown> = { ...selected.params };
+  const helpers = contract.helpers as Partial<Record<"count" | "schema", string>> | undefined;
+  if (sizeKey) {
+    if (!offsetKey || !filterKey || !isObj(params[filterKey]) || !Object.keys(params[filterKey]).length
+      || !helpers?.schema || !helpers.count || !request.filterBindings) return fail("funded_scope_invalid");
+    if (Object.keys(params).some((key) => key !== sizeKey && key !== offsetKey && key !== filterKey)) return fail("funded_scope_invalid");
+    delete params[sizeKey];
+    delete params[offsetKey];
+  } else {
+    const inputKey = result.matchInput;
+    const domain = inputKey ? canonicalFundedDomain(params[inputKey]) : null;
+    const supplied = [input.request, ...input.words, input.answer ?? ""].flatMap((wording) =>
+      Array.from(wording.matchAll(/(?:^|[^a-z0-9@.-])([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?![a-z0-9.-])/gi), (match) => match[1]));
+    if (rows !== 1 || !inputKey || !domain || Object.keys(params).length !== 1
+      || !supplied.some((candidate) => canonicalFundedDomain(candidate) === domain)) return fail("funded_scope_invalid");
+    params[inputKey] = domain;
+  }
+  const min = request.minPageSize ?? 1;
+  const max = request.maxPageSize ?? 0;
+  if (sizeKey && (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 1 || max < min)) return fail("funded_scope_invalid");
+  const pageSize = sizeKey ? Math.min(max, Math.max(min, Math.min(SAMPLE_ROWS_REQUESTED, rows))) : null;
+  let maxPages = pageSize === null ? 1 : Math.ceil(rows / pageSize);
+  const maxPerCallMicros = fundedCallMicros(selected.endpoint, deps.catalog, pageSize);
+  if (maxPerCallMicros === null || maxPages > enginePageCapFor(rows)) return fail("funded_schedule_invalid");
+  let maxTotalMicros = maxPages * maxPerCallMicros;
+  if (!Number.isSafeInteger(maxTotalMicros) || maxPerCallMicros / 1_000_000 > AGENT_PLANNING_BUDGET_CAP_USD) return fail("funded_schedule_invalid");
+  const schedule: FundedSchedule = { endpointId: selected.endpoint.id, params, pageSize, maxPages, maxPerCallMicros, maxTotalMicros };
+  const planningSchedule: FundedSchedule = { ...schedule, maxPages: 1, maxTotalMicros: maxPerCallMicros };
+  const providerCostPerDeliveredRow = () => maxTotalMicros / 1_000_000 / rows;
+  const cap = effectiveJobPointsCap();
+  const settings = normalizeMissionPricingSettings(deps.pricingSettings);
+  const priceOf = () => priceMissionByCode([{ rows, deliver: true, costPerRowUsd: providerCostPerDeliveredRow() }], { settings, capPoints: cap });
+  const preflight = priceOf();
+  const balance = await deps.availablePoints?.();
+  const funded = (price: PricedPlan["price"], points: number | null | undefined): boolean =>
+    typeof points === "number" && Number.isSafeInteger(points) && points > 0 && !price.overCap
+    && price.reservePoints <= Math.min(cap, points)
+    && executionBudgetUsd(price.reservePoints) >= maxTotalMicros / 1_000_000;
+  if (!funded(preflight, balance)) return fail("funded_wallet_or_cap");
+
+  let estimate: string | null = null;
+  if (filterKey && helpers?.schema && helpers.count && request.filterBindings) {
+    const schemaProbe = await probe(planningSchedule, helpers.schema, {});
+    const schema = schemaProbe.ok && Array.isArray(schemaProbe.funded_auxiliary) ? schemaProbe.funded_auxiliary : [];
+    const filters = params[filterKey];
+    if (!isObj(filters) || Object.entries(filters).some(([key, value]) => {
+      const type = Object.hasOwn(request.filterBindings!, key) ? request.filterBindings![key] : undefined;
+      return !type || !supportedFundedFilter(value, type) || !schema.some((column: unknown) => isObj(column)
+        && column.searchable === true && column.type === type
+        && (column.key === key || (Array.isArray(column.bindings) && column.bindings.includes(key))));
+    })) return fail("funded_filters_invalid");
+    const countMember = manifest.byId.get(helpers.count);
+    if (!countMember) return fail("funded_count_invalid");
+    const counted = await probe(planningSchedule, helpers.count, params);
+    estimate = counted.ok ? fundedEstimateNote(counted.funded_auxiliary) : null;
+  }
+
+  const firstParams = sizeKey && offsetKey ? { ...params, [sizeKey]: pageSize, [offsetKey]: 0 } : params;
+  const first = await probe(planningSchedule, schedule.endpointId, firstParams);
+  if (!first.ok) return fail("funded_sample_unavailable");
+  const page = await deps.readPage(first.call_id);
+  const seen = new Set<string>();
+  const sampleRows = isObj(page) && Array.isArray(page.rows) ? page.rows.flatMap((item: unknown) => {
+    if (!isObj(item)) return [];
+    const id = canonicalFundedDomain(item[identity]);
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    return [{ ...item, id }];
+  }) : [];
+  if (!sampleRows.length) return fail("no_step_served");
+  if ((!first.has_more || first.next_cursor === null) && sampleRows.length < rows) {
+    if (!understanding.accepts_available) {
+      return { kind: "question", question_ar: "تحب نسلّمك الموجود، ولا نوسّع البحث؟", options_ar: ["سلّمني الموجود", "وسّع البحث"], understanding, costUsd: cost.usd };
+    }
+    rows = sampleRows.length;
+    maxPages = pageSize === null ? 1 : Math.ceil(rows / pageSize);
+    maxTotalMicros = maxPages * maxPerCallMicros;
+    schedule.maxPages = maxPages;
+    schedule.maxTotalMicros = maxTotalMicros;
+  }
+
+  const description = await asker(deps, cost)(FIELD_MAP_SYSTEM, fieldMapPrompt(step, selected.endpoint, sampleRows),
+    { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
+  const map = checkFieldMap(description, sampleRows);
+  const names = new Map<string, string>([[identity, knownColumnTitleAr("domain")!]]);
+  for (const [key, path] of Object.entries(map?.fields ?? {})) {
+    const name = knownColumnTitleAr(key);
+    if (name && key !== "id" && path.length === 1 && result.fields?.includes(path[0])) names.set(path[0], name);
+  }
+  for (const extra of map?.extra ?? []) {
+    const title = checkCustomerText(extra.title_ar, { maxChars: 80 });
+    if (title.issues.length === 0 && extra.path.length === 1 && result.fields?.includes(extra.path[0])) {
+      names.set(extra.path[0], title.text);
+    }
+  }
+  const columns = [...names].map(([key, title_ar]) => ({ key, title_ar }));
+  step.title_ar = customerSafe(step.title_ar, 60, customerSaidOf(input)) ?? COMPANIES_LABEL_AR;
+  const quoteStep = { ...step, count: { ...step.count, total: rows } };
+  const option = { ...selected, params: firstParams, cursor: offsetKey ?? null, more: [] };
+  const built: BuiltStep = { step: quoteStep, option, columns, sampleRows, carryKeys: [], rowsPerPage: sampleRows.length,
+    callIds: [first.call_id], hasMore: first.has_more === true, mapCode: "" };
+  const plan = assemblePlan(understanding, [built], [], settings, customerSaidOf(input), undefined, deps.catalog);
+  const stage = plan.stages[0];
+  if (!stage?.engine || stage.planned_rows !== rows) return fail("funded_schedule_changed");
+  stage.measured_cost_per_row_usd = providerCostPerDeliveredRow();
+  stage.max_pages = maxPages;
+  stage.engine.funded_recipe_version = 1;
+  stage.engine.id_field = identity;
+  plan.price = priceMissionByCode(stagePriceInputs(plan.stages), { settings, capPoints: cap });
+  if (!funded(plan.price, await deps.availablePoints?.())) return fail("funded_wallet_or_cap");
+  if (estimate) plan.notes_ar = [...(plan.notes_ar ?? []), estimate];
+  return { kind: "plan", plan, understanding, costUsd: cost.usd, fundedSchedule: schedule };
+}
+
 export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps): Promise<LlmPlanResult> {
   const cost = { usd: 0 };
   const ask = asker(deps, cost);
@@ -893,7 +1052,10 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar, 400, said) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80, said)).filter((o): o is string => o !== null), understanding: u, costUsd };
   // a «cannot» (live: «لم يثبت أي مصدر متاح…») is not the answer when the caller's other path serves what was understood: the people of the companies the catalog can give (DT-20261118-08)
   if (u.decision === "cannot") return deps.accept && !deps.accept(u) ? { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" } : { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar, 400, said) ?? "", understanding: u, costUsd, detail: "model_cannot" };
-  if (deps.accept && !deps.accept(u)) return { kind: "cannot", reason_ar: "", understanding: u, costUsd, detail: "handed_over" };
+  if (deps.accept && !deps.accept(u)) {
+    const funded = await planFundedCompany(input, u, deps, cost);
+    return funded ?? { kind: "cannot", reason_ar: "", understanding: u, costUsd: cost.usd, detail: "handed_over" };
+  }
   deps.onUnderstanding?.(u);
   const say = async (line: string | null): Promise<void> => { if (line && deps.onProgress) await deps.onProgress(line).catch(() => undefined); };
   await say(customerSafe(`فهمنا طلبك: ${trimEdges(u.understanding_ar, isSentenceTail, "end")}.`, 400, said) ?? "فهمنا طلبك، ونختار الآن المصادر المناسبة له.");

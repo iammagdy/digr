@@ -1,3 +1,4 @@
+import { getValidatedAdditions } from "../../src/lib/treg/blockList";
 import { isCompanyStage } from "../../src/lib/agentMission/entities";
 import { getBalance } from "../../src/lib/supabase/ledger";
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
@@ -37,7 +38,7 @@ import { holdValueUsd } from "../../src/lib/server/callBudget";
 import { AcceptedCompanies, COMPANY_UNCERTAIN_KEY, qualityResultLineAr, storedCompanyEvidence } from "../../src/lib/agentMission/companyQuality";
 import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
-import { createGateway, tregCallBoundOf } from "./gateway";
+import { createGateway, paramsSignature, readFundedExposure, tregCallBoundOf, type FundedSchedule } from "./gateway";
 import { ceilToMicroUsd } from "../../src/lib/server/spendGate/bounds";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import type { WorkerSpendGate } from "./spendGateWiring";
@@ -421,6 +422,74 @@ async function executionResearchSpec(deps: RunnerDeps, store: AgentStore, missio
 const CONTACT_STEP_MIN_WALL_MS = 5 * 60_000;
 const sum = (calls: CallRow[], phase: CallRow["phase"]) => calls.filter((c) => c.phase === phase).reduce((n, c) => n + (Number(c.cost_usd) || 0), 0);
 const lastSeq = (calls: CallRow[]) => calls.reduce((n, c) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
+
+async function phaseProviderExposure(store: AgentStore, missionId: string, phase: CallRow["phase"], calls: CallRow[]) {
+  const journal = await readFundedExposure(store, missionId, phase, calls);
+  const spentUsd = sum(calls, phase) + journal.additionalMicros / 1_000_000;
+  const affected = journal.claims.length > 0 || !journal.proven;
+  const shared = affected ? createJobCallBudget({ ceilingUsd: Number.MAX_SAFE_INTEGER, spentUsd }) : null;
+  return {
+    ...journal,
+    spentUsd,
+    budget(ceilingUsd: number) {
+      if (!shared) return createJobCallBudget({ ceilingUsd, spentUsd });
+      const ceiling = journal.proven ? ceilingUsd : 0;
+      let refused = 0;
+      return {
+        ceilingUsd: ceiling,
+        reserve(usd: number) {
+          if (shared.rehold(0, usd, ceiling)) return true;
+          refused += 1;
+          return false;
+        },
+        rehold: (from: number, to: number, cap: number | null = null) => shared.rehold(from, to, Math.min(ceiling, cap ?? ceiling)),
+        leftUsd: (held = 0, cap: number | null = null) => shared.leftUsd(held, Math.min(ceiling, cap ?? ceiling)),
+        settle: shared.settle,
+        spentUsd: shared.spentUsd,
+        stopped: () => refused > 0,
+        refusals: () => refused,
+      };
+    },
+  };
+}
+
+function fundedProviderGuard(store: AgentStore, missionId: string, phase: CallRow["phase"], exposure: Awaited<ReturnType<typeof phaseProviderExposure>>) {
+  let watch = exposure.claims.length > 0 || !exposure.proven;
+  return {
+    enable: () => { watch = true; },
+    allows: async () => {
+      if (!watch) return true;
+      try {
+        const calls = await store.listCalls(missionId);
+        return (await readFundedExposure(store, missionId, phase, calls)).proven;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+function phaseRecorder(recorder: CallRecorder, allows: () => Promise<boolean>): CallRecorder {
+  return {
+    reserve: async (input) => await allows() ? recorder.reserve(input) : { allowed: false, costId: null, reason: "error" },
+    commit: (id, entry) => recorder.commit(id, entry),
+  };
+}
+
+const FUNDED_PLAN_PATH = "state/funded-plan";
+function fundedPlanScope(plan: PricedPlan, userId: string): string {
+  return paramsSignature({ userId, stages: plan.stages.map(({ key, endpoint_id, planned_rows, parent_key, deliver, columns, filters, engine, max_pages }) =>
+    ({ key, endpoint_id, planned_rows, parent_key, deliver, columns, filters, engine, max_pages })),
+    unit: plan.price.unitPricePoints, reserve: plan.price.reservePoints });
+}
+
+function ordinaryCatalog(catalog: TregCatalog): TregCatalog {
+  const managed = getValidatedAdditions().byId;
+  if (!managed.size) return catalog;
+  const endpoints = catalog.endpoints.filter(({ id }) => !managed.has(id));
+  return { ...catalog, endpoints, count: endpoints.length, byId: new Map(endpoints.map((endpoint) => [endpoint.id, endpoint])) };
+}
+
 const lastOut = async (store: AgentStore, missionId: string): Promise<number> => {
   // outputs continue their numbering after a restart: the highest number in the mission's own `out/` folder (the listing reads the database, so it is exact right after a write)
   const listed = await store.listFiles(missionId, "out").catch(() => []);
@@ -685,7 +754,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
   let calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
-  const counter = { seq: lastSeq(calls) };
+  let providerExposure = await phaseProviderExposure(store, mission.id, "planning", calls);
+  const counter = { seq: Math.max(lastSeq(calls), providerExposure.lastSequence) };
+  let phaseGuard = fundedProviderGuard(store, mission.id, "planning", providerExposure);
   // Source ranking uses the same measured calls and clock for both planning paths.
   const planningNow = Date.now();
   const sourceStats = statsFromCalls(await store.recentCalls(planningNow - AGENT_SOURCE_MEASURE_WINDOW_MS).catch(() => []));
@@ -700,7 +771,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const webForBudget = providerKey && anyWebAvailable(webAvailable)
     ? (budget: ReturnType<typeof createJobCallBudget>) => createWebGateway({
         store, missionId: mission.id, jobId: null, phase: "planning", budget,
-        recorder: deps.recorder, providerKey, webAvailable, fetchFn: deps.fetchFn, counter,
+        recorder: phaseRecorder(deps.recorder, phaseGuard.allows), providerKey, webAvailable, fetchFn: deps.fetchFn, counter,
         ...spendGateOf(deps, mission.id),
       })
     : undefined;
@@ -722,13 +793,18 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     let r: Awaited<ReturnType<typeof runLlmPlanning>> | null = null;
     try {
       // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
-      const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
+      const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: providerExposure.budget(AGENT_PLANNING_BUDGET_CAP_USD), providerExposureProven: phaseGuard.allows, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
       r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(webForBudget ? {
         webAvailable,
-        createWebForUnderstanding: (u: Understanding) => webForBudget(createJobCallBudget({
-          ceilingUsd: webPlanningCeilingUsd(u, budgetContext), spentUsd: sum(calls, "planning"),
-        })),
-      } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, availablePoints: async () => { const balance = await getBalance(deps.client, mission.user_id).catch(() => null); return typeof balance === "number" && Number.isFinite(balance) ? Math.max(0, Math.floor(balance)) : null; }, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
+        createWebForUnderstanding: (u: Understanding) => webForBudget(providerExposure.budget(webPlanningCeilingUsd(u, budgetContext))),
+      } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings,
+        ...(deps.engine !== false && getValidatedAdditions().byId.size > 0 ? {
+          fundedCaller: (schedule: FundedSchedule) => {
+            phaseGuard.enable();
+            return llmGateway.fundedCaller(schedule);
+          },
+        } : {}),
+        availablePoints: async () => { const balance = await getBalance(deps.client, mission.user_id).catch(() => null); return typeof balance === "number" && Number.isFinite(balance) ? Math.max(0, Math.floor(balance)) : null; }, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }
@@ -763,6 +839,23 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
       const priorDelivery = await priorDeliveryForPlanning({ mission, store, ...(deps.readPriorDeliveryCard ? { readCard: deps.readPriorDeliveryCard } : {}), ...(deps.readDeliveredMissions ? { readMissions: deps.readDeliveredMissions } : {}) }).catch(() => null);
       plan = await withPriorDelivery(plan, mission.id, store, priorDelivery);
+      if (r.fundedSchedule) {
+        const digest = fundedPlanScope(plan, mission.user_id);
+        const path = `${FUNDED_PLAN_PATH}/${digest}.json`;
+        const body = JSON.stringify({ version: 1, digest, schedule: r.fundedSchedule });
+        const persisted = await (async () => {
+          try {
+            const written = await store.putNewStrict(mission.id, path, body, "application/json");
+            return typeof written?.created === "boolean" && await store.getFile(mission.id, path) === body;
+          } catch { return false; }
+        })();
+        if (!persisted) {
+          const summary_ar = "تعذّر تجهيز الخطة الآن ولم يُخصم منك شيء. ابعت طلبك تاني بعد شوية.";
+          await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "unserved", summary_ar });
+          await store.addEvent(mission.id, { kind: "result", message_ar: summary_ar });
+          return;
+        }
+      }
       await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
       await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
       deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
@@ -784,15 +877,22 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     // handed over to B2B company/people path: proceeds with planning cost recorded
     await store.updateMission(mission.id, { planning_llm_usd: llmUsd }).catch(() => undefined);
   }
-  if (plannerRan) calls = await store.listCalls(mission.id);
-  const spentUsd = sum(calls, "planning");
+  if (plannerRan) {
+    calls = await store.listCalls(mission.id);
+    providerExposure = await phaseProviderExposure(store, mission.id, "planning", calls);
+    phaseGuard = fundedProviderGuard(store, mission.id, "planning", providerExposure);
+    counter.seq = Math.max(counter.seq, lastSeq(calls), providerExposure.lastSequence);
+  }
+  deps = { ...deps, catalog: ordinaryCatalog(deps.catalog) };
+  budgetContext.catalog = deps.catalog;
+  const spentUsd = providerExposure.spentUsd;
   const budgetFacts = planningBudgetFacts(plannerUnderstanding, {
     ...budgetContext, ceilToMicroUsd, defaultAdmissionUsdOf: (id) => tregCallBoundOf(id, {}, deps.catalog),
   }, spentUsd);
-  const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd });
+  const budget = providerExposure.budget(budgetFacts.budgetUsd);
   const childReserves = budgetFacts.stages.filter((stage) => stage.role === "child").map((stage) => stage.reserveUsd);
   deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: childReserves.length > 0 ? childReserves : [0] }, ...spendGateOf(deps, mission.id) });
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, providerExposureProven: phaseGuard.allows, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: childReserves.length > 0 ? childReserves : [0] }, ...spendGateOf(deps, mission.id) });
   const web = webForBudget?.(budget);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text, { semantic }).platform };
@@ -1272,6 +1372,42 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     await settleExecution(deps, mission, plan, reserve, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
     return;
   }
+  const activeAdditions = getValidatedAdditions().byId;
+  const fundedStages = plan.stages.filter((stage) => stage.engine?.funded_recipe_version === 1
+    || [stage.endpoint_id, stage.engine?.endpoint_id, ...(stage.engine?.alternatives ?? []).map((route) => route.endpoint_id)]
+      .some((id) => id && activeAdditions.has(id)));
+  let fundedRecipe: { stageKey: string; schedule: FundedSchedule } | undefined;
+  if (fundedStages.length) {
+    const stage = fundedStages[0];
+    const digest = fundedPlanScope(plan, mission.user_id);
+    const proof = await (async () => {
+      try {
+        const raw = await store.getFile(mission.id, `${FUNDED_PLAN_PATH}/${digest}.json`);
+        return raw === null ? null : JSON.parse(raw) as { version: 1; digest: string; schedule: FundedSchedule };
+      } catch { return null; }
+    })();
+    const entry = activeAdditions.get(stage.endpoint_id);
+    const recipe = stage.engine;
+    const schedule = proof?.schedule;
+    if (fundedStages.length === 1 && plan.stages.length === 1 && deps.engine !== false && deps.catalog.byId.has(stage.endpoint_id)
+      && recipe?.funded_recipe_version === 1 && recipe.endpoint_id === stage.endpoint_id && !recipe.alternatives?.length
+      && entry?.contract.role === "delivery" && proof?.version === 1 && proof.digest === digest
+      && schedule?.endpointId === recipe.endpoint_id && stage.parent_key === null && stage.deliver
+      && schedule.maxPages === stage.max_pages && Number.isSafeInteger(schedule.maxPages) && schedule.maxPages > 0
+      && Number.isSafeInteger(schedule.maxTotalMicros) && Number.isSafeInteger(schedule.maxPerCallMicros)
+      && schedule.maxPerCallMicros > 0 && schedule.maxPages * schedule.maxPerCallMicros === schedule.maxTotalMicros
+      && reserve >= plan.price.reservePoints && unit === plan.price.unitPricePoints
+      && executionBudgetUsd(reserve) >= schedule.maxTotalMicros / 1_000_000
+      && tregCallBoundOf(recipe.endpoint_id, recipe.params, deps.catalog) === schedule.maxPerCallMicros / 1_000_000) {
+      fundedRecipe = { stageKey: stage.key, schedule };
+    } else {
+      await settleExecution(deps, mission, plan, reserve, {
+        llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0),
+        summary: null, outputError: "admin: funded_scope_unavailable",
+      });
+      return;
+    }
+  }
   // PHASE 5.3: a plan approved WITH the customer's exclusion list never runs without exactly that list (whatever the switch says now): a missing or altered copy stops here, nothing is called, and the hold is released
   // whole by the existing settlement
   let exclusion: ExclusionMatcher | undefined;
@@ -1299,11 +1435,17 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   await store.addEvent(mission.id, { kind: "system", message_ar: "اعتُمدت الخطة وبدأ الوكيل التنفيذ." });
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
-  const budget = createJobCallBudget({ ceilingUsd: executionBudgetUsd(reserve), spentUsd: sum(calls, "execution") });
-  const counter = { seq: lastSeq(calls) };
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, ...spendGateOf(deps, mission.id) });
+  const [providerExposure, planningJournal] = await Promise.all([
+    phaseProviderExposure(store, mission.id, "execution", calls),
+    readFundedExposure(store, mission.id, "planning", calls),
+  ]);
+  const phaseGuard = fundedProviderGuard(store, mission.id, "execution", providerExposure);
+  if (fundedRecipe) phaseGuard.enable();
+  const budget = providerExposure.budget(executionBudgetUsd(reserve));
+  const counter = { seq: Math.max(lastSeq(calls), providerExposure.lastSequence, planningJournal.lastSequence) };
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, providerExposureProven: phaseGuard.allows, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, ...spendGateOf(deps, mission.id) });
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, webAvailable, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items), ...spendGateOf(deps, mission.id) }) : undefined;
+  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: phaseRecorder(deps.recorder, phaseGuard.allows), providerKey: deps.providerKey, webAvailable, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items), ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
@@ -1351,7 +1493,8 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun(mission.id);
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, ...(exclusion ? { exclusion } : {}), ...(priorDelivered ? { priorDelivered } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway,
+        ...(fundedRecipe ? { fundedDispatch: new Map([[fundedRecipe.stageKey, gateway.fundedCaller(fundedRecipe.schedule)]]) } : {}), ...(exclusion ? { exclusion } : {}), ...(priorDelivered ? { priorDelivered } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
