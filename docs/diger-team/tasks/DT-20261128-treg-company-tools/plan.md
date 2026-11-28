@@ -5,7 +5,7 @@
 - **Decisions:** D-0263, D-0264, D-0265, D-0267
 - **Plan Version:** v1.2 (Section "PR-1 — G1a + G1b, shared dormant catalog admission")
 - **Base Commit:** `370f2d5ec66a67dde131d930ff01534b24014b64`
-- **Implementer (PR-1):** Salem (DIGER FAWAALY-2)
+- **Implementer (PR-1):** Developer (FAWAALY-2)
 
 ## 2. Pinned Bytes and Checksums
 - `data/treg/treg_catalog_sellable.json`:
@@ -30,15 +30,15 @@
   - A custom `dir` fixture cannot mint transport authority and loads only its local base without merging runtime additions.
 
 ## 4. PR Sequence and Dormant State
-- **PR-1 (Salem):** G1a + G1b shared dormant catalog admission (exactly 6 files):
+- **PR-1 (Developer / FAWAALY-2):** G1a + G1b shared dormant catalog admission (exactly 6 files):
   1. `data/treg/sellable_additions.json` (NEW, `{"version":1,"entries":[]}`)
   2. `src/lib/treg/blockList.ts` (validateCatalogAdditions pure validator, cycle-free policy check)
   3. `src/lib/treg/dataPolicy.ts` (consults validated additions, classifies explicit public)
   4. `src/lib/treg/catalog.ts` (in-memory merge for verified bundled snapshot, contract normalization)
   5. `tests/treg-catalog-additions.test.ts` (NEW unit test suite covering validation, boundaries, and empty manifest)
   6. `docs/diger-team/tasks/DT-20261128-treg-company-tools/plan.md` (NEW task record)
-- **PR-2 (Johnny):** G2 + G3 funded worker and engine routing (12 files, manifest remains empty).
-- **PR-3 (Johnny):** A activation of the 4 approved entries (3 files).
+- **PR-2 (Senior Developer / FAWAALY):** G2 + G3 funded worker and engine routing (12 files, manifest remains empty).
+- **PR-3 (Senior Developer / FAWAALY):** A activation of the 4 approved entries (3 files).
 
 ## 5. Rollback Plan
 - Reverting additions: Emptying `data/treg/sellable_additions.json` returns effective runtime to base 3,276 endpoints immediately with zero code changes.
