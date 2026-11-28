@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { MissionPanelContent } from "@/components/mission/MissionPlanPanel";
-import { contentFromMission, contentFromPlanQuote, contentFromPlanning, panelPollDelayMs, type MissionStatusResponse, type PlanningResponse } from "@/lib/missionPanelContent";
+import { contentFromMission, contentFromPlanQuote, panelPollDelayMs, type MissionStatusResponse } from "@/lib/missionPanelContent";
 import { closePageLineAr } from "@/lib/driverMode";
 import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller";
 import { useDriverMode } from "./useDriverMode";
@@ -34,17 +34,11 @@ export function usePolled<T>(url: string | null, active: boolean): T | null {
 }
 
 /**
- * What the mission plan panel shows now, from one of three sources in this order: the mission of the open job (running or finished), else the plan card on the table (the proposed stages),
- * else the planning steps of the turn that is being answered. Null when there is nothing to show: the panel opens only when there is a plan or a mission. A reload restores it: every source is
- * read from the server again.
+ * The mission of the open job takes priority. Otherwise the panel shows a proposed plan when the chat is idle.
  */
-export function useMissionPanel(input: { jobId: string | null; jobLive: boolean; planQuote: Parameters<typeof contentFromPlanQuote>[0]; planningRequestId: string | null; planning: boolean }): MissionPanelContent | null {
+export function useMissionPanel(input: { jobId: string | null; jobLive: boolean; planQuote: Parameters<typeof contentFromPlanQuote>[0]; planning: boolean }): MissionPanelContent | null {
   const driver = useDriverMode();
   const mission = usePolled<MissionStatusResponse>(input.jobId ? `/api/jobs/${encodeURIComponent(input.jobId)}/mission` : null, input.jobLive);
-  const startedPlanningAt = useRef<number>(0);
-  if (input.planning && !startedPlanningAt.current) startedPlanningAt.current = Date.now();
-  if (!input.planning) startedPlanningAt.current = 0;
-  const planning = usePolled<PlanningResponse>(input.planning && input.planningRequestId && !input.jobId ? `/api/chat/planning-events?requestId=${encodeURIComponent(input.planningRequestId)}` : null, input.planning);
   const fromMission = contentFromMission(mission, { closePageAr: driver === "cron" ? closePageLineAr(driver) : null });
   // The mission of an approved request never disappears: a read that fails, or a request that ended in seconds, keeps the last good view of it (until a new request is being planned).
   const lastMission = useRef<{ jobId: string; content: MissionPanelContent } | null>(null);
@@ -53,5 +47,5 @@ export function useMissionPanel(input: { jobId: string | null; jobLive: boolean;
   if (input.jobId && lastMission.current?.jobId === input.jobId && !input.planning) return lastMission.current.content;
   const fromPlan = contentFromPlanQuote(input.planQuote);
   if (fromPlan && !input.planning) return fromPlan;
-  return contentFromPlanning(planning, startedPlanningAt.current || undefined);
+  return null;
 }

@@ -15,7 +15,6 @@ vi.mock("../src/lib/supabase/server", async (original) => ({
 }));
 
 import { GET as missionRoute } from "../src/app/api/jobs/[id]/mission/route";
-import { GET as planningEventsRoute } from "../src/app/api/chat/planning-events/route";
 import { MissionPlanBody, MissionPlanMobileBar, MissionPlanSheet, MissionPlanSidePanel, elapsedAr } from "../src/components/mission/MissionPlanPanel";
 import { ETA_PENDING_AR, SLOW_SOURCE_AR, currentLineAr, missionView, panelTextProblems, phaseOfJob, planningSteps, snapshotsFromEvents, type MissionStageInfo, type PlannerEvent, type ProgressSnap } from "../src/lib/missionView";
 import { PANEL_POLL_HIDDEN_MS, PANEL_POLL_VISIBLE_MS, contentFromMission, contentFromPlanQuote, contentFromPlanning, panelPollDelayMs, stagesOfPlanQuote } from "../src/lib/missionPanelContent";
@@ -23,7 +22,6 @@ import { PANEL_STATE_KEY, defaultPanelState, newPlannerRequestId, parsePanelStat
 import { completionSummaryAr, jobIdForQuote, loadMissionStatus } from "../src/lib/server/missionStatus";
 import { generateMissionWorkbook, isMissionRowSet, safeSheetName } from "../src/lib/modelPlanner/missionWorkbook";
 import { MISSION_NOTE_EVENT_TYPE, MISSION_PROGRESS_EVENT_TYPE, isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
-import { PLANNER_EVENT_ROW_ENDPOINT } from "../src/lib/modelPlanner/exploration";
 import { runPlanner } from "../src/lib/modelPlanner/planner";
 import { createScriptedTransport } from "../src/lib/modelPlanner/transport";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -256,27 +254,6 @@ describe("a reload restores the panel exactly where the mission is", () => {
   });
 });
 
-describe("the planning steps API reads the planner's own event rows, the customer's only", () => {
-  it("returns the steps built from the rows, in order, with the finish state", async () => {
-    memory.db = createMemoryDb();
-    memory.user = { id: "u1", email: "a@example.com", app_metadata: {} };
-    const row = (request_id: string, user_id: string, params_digest: any, at: number) => ({ request_id, user_id, endpoint_id: PLANNER_EVENT_ROW_ENDPOINT, params_digest, created_at: new Date(at).toISOString(), cost_usd: 0 });
-    memory.db.seed("exploration_calls", [
-      row("req_abcdefgh", "u1", { kind: "understood", at: T0 }, T0), row("req_abcdefgh", "u1", { kind: "searched", n: 4, at: T0 + 1 }, T0 + 1000), row("req_abcdefgh", "u1", { kind: "sampled", rows: 12, at: T0 + 2 }, T0 + 2000),
-      row("req_abcdefgh", "someone_else", { kind: "planned", at: T0 + 3 }, T0 + 3000), { request_id: "req_abcdefgh", user_id: "u1", endpoint_id: "anyapi.x.user.posts", params_digest: { kind: "planned" }, created_at: new Date(T0 + 4000).toISOString() },
-    ]);
-    const ask = (id: string) => planningEventsRoute(new NextRequest(`https://diger.test/api/chat/planning-events?requestId=${id}`));
-    const out = await (await ask("req_abcdefgh")).json();
-    expect(out.finished).toBeNull();
-    expect(out.steps.map((s: any) => s.state)).toEqual(["done", "done", "running", "running"]);
-    expect(out.steps[1].detailAr).toBe("لقيت ٤ مصادر مناسبة.");
-    expect(out.currentLineAr).toBe("بنجرب عينة صغيرة للتأكد من الجودة");
-    expect((await ask("x")).status).toBe(400);
-    const none = await (await ask("req_unknown1")).json();
-    expect(none.steps[0].state).toBe("running");
-  });
-});
-
 describe("the panel's drawing: check mark and strike-through, spinner, plain, stopped; RTL; light and dark by the site's tokens", () => {
   const infos = stageInfos("M4");
   const content = () => {
@@ -371,9 +348,9 @@ describe("the waiting experience around it", () => {
     expect(isCustomerVisibleJobEvent("progress")).toBe(true);
   });
 
-  it("the pages wire the panel in: the chat page (side panel, mobile bar, sheet, planner request id), «طلباتي» for every past mission, and the plan card's stages", () => {
+  it("the pages wire the panel in: the chat page (side panel, mobile bar, sheet), «طلباتي» for every past mission, and the plan card's stages", () => {
     const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    for (const part of ["useMissionPanel(", "MissionPlanSidePanel", "MissionPlanMobileBar", "MissionPlanSheet", "plannerRequestId"]) expect(chat).toContain(part);
+    for (const part of ["useMissionPanel(", "MissionPlanSidePanel", "MissionPlanMobileBar", "MissionPlanSheet"]) expect(chat).toContain(part);
     const requests = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     expect(requests).toContain("MissionPlanInline");
     expect(requests).toContain("MODEL_PLAN_SLUG");

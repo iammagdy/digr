@@ -69,7 +69,7 @@ import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 import { MissionPlanMobileBar, MissionPlanSheet, MissionPlanSidePanel } from "@/components/mission/MissionPlanPanel";
 import { useMissionPanel } from "@/hooks/useMissionPanel";
-import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestId } from "@/lib/missionPanelState";
+import { PANEL_STATE_KEY, defaultPanelState, parsePanelState } from "@/lib/missionPanelState";
 import { TURN_TIMEOUT_MS, WAIT_BASE_AR, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse } from "@/lib/customerError";
 
@@ -189,8 +189,7 @@ export default function ChatWorkspacePage() {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
-  // the mission plan panel «خطة المهمة»: the id of the planning turn in flight, and how the customer left the panel (expanded, pinned); the sheet of the mobile bar
-  const [planningRequestId, setPlanningRequestId] = useState<string | null>(null);
+  // The mission plan panel remembers how the customer left it (expanded or pinned).
   const [missionPanelState, setMissionPanelState] = useState(defaultPanelState);
   const [missionSheetOpen, setMissionSheetOpen] = useState(false);
   useEffect(() => {
@@ -707,15 +706,12 @@ export default function ChatWorkspacePage() {
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-      const plannerRequestId = newPlannerRequestId();
-      setPlanningRequestId(plannerRequestId);
 
       const res = await fetch("/api/chat", {
         method: "POST",
         headers,
         signal: controller.signal,
         body: JSON.stringify({
-          plannerRequestId,
           message: textToSend,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
@@ -827,14 +823,11 @@ export default function ChatWorkspacePage() {
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
-      const plannerRequestId = newPlannerRequestId();
-      setPlanningRequestId(plannerRequestId);
       const res = await fetch("/api/chat", {
         method: "POST",
         headers,
         signal: controller.signal,
         body: JSON.stringify({
-          plannerRequestId,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
           clarificationAnswers: { type: "clarification_answers", answers },
@@ -1618,12 +1611,11 @@ export default function ChatWorkspacePage() {
 
   // The plan lives in the results panel (a bottom sheet on mobile), never in the chat stream: the latest plan is the one to act on.
   const latestPlanQuote = [...messages].reverse().find((m) => m.planQuote)?.planQuote ?? null;
-  // The mission plan panel: the mission of the open request, else the plan on the table, else the planning steps of the turn being answered. Nothing to show: no panel.
+  // The panel shows the mission of the open request or the plan on the table.
   const missionContent = useMissionPanel({
     jobId: activeJob?.jobId ?? null,
     jobLive: Boolean(activeJob && (activeJob.status === "running" || activeJob.status === "queued")),
     planQuote: latestPlanQuote as any,
-    planningRequestId,
     planning: loading,
   });
   const missionPanelExpanded = missionPanelState.expanded && (missionPanelState.pinned || !canvasOpen);
