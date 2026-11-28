@@ -14,7 +14,6 @@ import { validatePlan, type StepSample, type ValidateContext } from "../src/lib/
 import type { RecipeRecord } from "../src/lib/modelPlanner/recipes";
 import { FILES_STEP_TITLE_AR, FINAL_STEP_LABEL_AR, missionView, REVIEW_STEP_TITLE_AR, ETA_PENDING_AR, type ProgressSnap } from "../src/lib/missionView";
 import { contentFromPlanQuote, proposedPlanSteps, stagesOfPlanQuote } from "../src/lib/missionPanelContent";
-import { resolvePlanningPending } from "../src/lib/planningClient";
 
 const stage = (over: Partial<StoredStage> = {}): StoredStage => ({ parent: null, deliver: true, effVolume: 20, perParent: 0, titleAr: "مرحلة", ...over });
 
@@ -190,37 +189,6 @@ describe("price stability: a reviewed recipe's measurement is the price basis, w
   it("a reviewed recipe that does not know the plan's fields does not set the price", () => {
     const narrow: RecipeRecord = { ...recipe("reviewed"), knownFields: ["text"] };
     expect(priceOf([15, 15], narrow).from).toBe("sample");
-  });
-});
-
-describe("the page's planning loop: it asks for the next step until the session is done", () => {
-  const first = { outputType: "planning_pending", planning: { sessionId: "session_abcdefgh" } };
-  const jsonResponse = (body: unknown) => ({ json: async () => body }) as Response;
-
-  it("a plain answer is returned as it is (no request)", async () => {
-    let calls = 0;
-    const plain = { outputType: "answer_question", contentAr: "x" };
-    expect(await resolvePlanningPending(plain as any, { headers: {}, fetchFn: (async () => { calls += 1; return jsonResponse({}); }) as any })).toBe(plain);
-    expect(calls).toBe(0);
-  });
-
-  it("steps until done, survives a step that did not arrive, and carries the final answer as if the chat route had given it", async () => {
-    const answers = [{ status: "running" }, "throw", { status: "running" }, { status: "done", response: { outputType: "propose_plan", planQuote: { quoteId: "q1" } } }];
-    const urls: string[] = [];
-    const out = await resolvePlanningPending(first as any, {
-      headers: { authorization: "Bearer t" },
-      sleep: async () => undefined,
-      fetchFn: (async (url: string) => { urls.push(String(url)); const a = answers.shift(); if (a === "throw") throw new Error("network"); return jsonResponse(a); }) as any,
-    });
-    expect(out.outputType).toBe("propose_plan");
-    expect((out as any).planQuote.quoteId).toBe("q1");
-    expect(urls).toEqual(Array(4).fill("/api/chat/planning/session_abcdefgh/step"));
-  });
-
-  it("a failed session and a session that never ends are reported, not looped forever", async () => {
-    await expect(resolvePlanningPending(first as any, { headers: {}, sleep: async () => undefined, fetchFn: (async () => jsonResponse({ status: "failed" })) as any })).rejects.toThrow("planning_failed");
-    let t = 0;
-    await expect(resolvePlanningPending(first as any, { headers: {}, sleep: async () => undefined, now: () => (t += 60_000), maxMs: 120_000, fetchFn: (async () => jsonResponse({ status: "running" })) as any })).rejects.toThrow("planning_timeout");
   });
 });
 

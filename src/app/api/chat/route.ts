@@ -507,7 +507,6 @@ export async function POST(req: NextRequest) {
       userId: verifiedUserId,
       ...(calculatorPlanOnly ? { calculatorPlanOnly: true as const } : {}),
       conversationId: conversationId || undefined,
-      plannerRequestId: typeof body.plannerRequestId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(body.plannerRequestId) ? body.plannerRequestId : undefined,
       message: message.trim(),
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,

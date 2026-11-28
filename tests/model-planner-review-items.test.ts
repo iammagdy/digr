@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { reserveForUnits } from "../src/lib/recordPricing";
@@ -173,75 +175,15 @@ describe("COUNTRY GATE on the model path: a named country holds company and pers
   });
 });
 
-// ---------------------------------------------------------------------------------------------------- 4. plan edit, 5. guests (through the chat, the replay-style stubbed gateway)
-describe("a model plan can be edited; a guest is asked to sign up", () => {
-  const xPage = fixturePages("real-rows_anyapi.x.user.posts")[0];
-  let seq = 0;
-  async function chat(opts: { email?: string; guest?: boolean; allow?: boolean }) {
-    const world = (await import("./helpers/replayWorld")).world;
-    world.mem.reset();
-    gateway = stubGateway({ "anyapi.x.user.posts": xPage }, { "anyapi.x.user.posts": 500 });
-    const db: any = createChatDb();
-    const handler = new ChatHandler(db);
-    (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the old model path must not run"); });
-    handler.modelPlanner = { transport: createScriptedTransport([search("x", ["user", "posts"]), describeTool("anyapi.x.user.posts"), sample("anyapi.x.user.posts", [{ name: "handle", value: "elonmusk", source: "customer_text", quote: "@elonmusk" }]), propose(xAccountPlan())]), client: world.mem, today: () => TODAY };
-    if (opts.allow) handler.modelPlannerFor = () => true;
-    const conversationId = `conv_rv_${++seq}`;
-    await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-    clearBriefCacheForTesting();
-    const r: any = await handler.handleUserMessage({ userId: "user_replay", ...(opts.email ? { userEmail: opts.email } : {}), ...(opts.guest ? { isGuest: true } : {}), conversationId, message: X_REQUEST, userBalance: 40_000 });
-    return { r, db, world };
-  }
-
-  it("EDIT: the card of a model plan offers the same edit; a volume edit validates and prices the plan AGAIN and saves a NEW quote (the hold follows the new volume); no provider call is made", async () => {
-    const { r, db, world } = await chat({ email: "magdy.saber@outlook.com" });
-    expect(r.outputType).toBe("propose_plan");
-    const item = r.planQuote.items[0];
-    const callsBefore = gateway!.calls.length;
-    const unit = item.unitPricePoints;
-    const edited = await editModelPlanQuote({ tables: db, client: world.mem, conversationId: r.conversationId, userId: "user_replay", userBalance: 40_000, quoteItem: item, summaryAr: r.planQuote.summaryAr, outputFormats: ["xlsx", "csv"], operations: [{ action: "set_limit", targetVolumeMax: 25 }, { action: "set_formats", formats: ["csv"] }], today: TODAY });
-    expect(edited.ok).toBe(true);
-    if (!edited.ok) return;
-    expect(edited.quote.quoteId).not.toBe(r.planQuote.quoteId);
-    expect(edited.quote.targetVolumeMax).toBe(25);
-    expect(edited.quote.unitPricePoints).toBe(unit); // the same plan, the same measured yield, today's catalog cost
-    expect(edited.quote.quotedPoints).toBe(reserveForUnits(25, unit));
-    expect(edited.quote.outputFormats).toEqual(["csv"]);
-    expect(edited.quote.items[0].capabilitySlug).toBe(MODEL_PLAN_SLUG);
-    expect(edited.quote.items[0].params[MODEL_PLAN_PARAM].steps[0].volume).toBe(25);
-    expect(edited.quote.summaryAr).toContain("٢٥");
-    expect(gateway!.calls.length).toBe(callsBefore); // an edit asks no source
-  });
-
-  it("EDIT re-runs code validation: a parameter whose quote is no longer the customer's words, a changed price basis, an operation the plan does not offer, a plan that is no longer allowed: each is refused or re-priced by code, never saved as is", async () => {
-    const { r, db, world } = await chat({ email: "magdy.saber@outlook.com" });
-    const item = r.planQuote.items[0];
-    const base = { tables: db, client: world.mem, conversationId: r.conversationId, userId: "user_replay", userBalance: 40_000, summaryAr: r.planQuote.summaryAr, outputFormats: ["xlsx" as const], today: TODAY };
-    const limit = [{ action: "set_limit", targetVolumeMax: 20 }];
-    // the customer's own words are checked again: a plan whose account is not in them cannot be re-approved
-    const tampered = JSON.parse(JSON.stringify(item));
-    tampered.params[MODEL_PLAN_REQUEST_PARAM] = "أريد منشورات من حساب آخر";
-    expect(await editModelPlanQuote({ ...base, quoteItem: tampered, operations: limit })).toEqual({ ok: false, messageAr: EDIT_REJECTED_AR });
-    // an endpoint that is not sellable (a write action) is refused
-    const blocked = JSON.parse(JSON.stringify(item));
-    blocked.params[MODEL_PLAN_PARAM].steps[0].endpointId = "x.x.post.create";
-    expect(await editModelPlanQuote({ ...base, quoteItem: blocked, operations: limit })).toEqual({ ok: false, messageAr: EDIT_REJECTED_AR });
-    // the price follows the measured values stored with the plan, through the shared function
-    const cheaper = JSON.parse(JSON.stringify(item));
-    cheaper.params[MODEL_PLAN_PARAM].measured[0].passRate = 0.6;
-    const repriced = await editModelPlanQuote({ ...base, quoteItem: cheaper, operations: limit });
-    expect(repriced.ok).toBe(true);
-    if (repriced.ok) expect(repriced.quote.unitPricePoints).toBeLessThan(item.unitPricePoints);
-    // only the volume and the formats are offered
-    expect(await editModelPlanQuote({ ...base, quoteItem: item, operations: [{ action: "set_param" }] })).toEqual({ ok: false, messageAr: EDIT_NOT_AVAILABLE_AR });
-    // a stored item that is not a model plan is not edited here
-    expect(await editModelPlanQuote({ ...base, quoteItem: { capabilitySlug: "social-x-posts", params: {} }, operations: limit })).toEqual({ ok: false, messageAr: EDIT_REJECTED_AR });
-  });
+// ---------------------------------------------------------------------------------------------------- 4. the stored plan is re-validated
+// UL2a-3 C-2a: the chat's model planner is gone, so the EDIT-route cases, the GUEST sign-up cases and the allowlist-on-the-handler case that went through it are retired with it (C-2b removes the writer they exercised).
+// What stays is the code validation of a stored plan: `revalidateStoredPlan` on the plan the planner stored for the X-account request (captured once from the pre-removal tree: fixtures/model-planner-stored-items.json).
+describe("a stored model plan is re-validated by code", () => {
+  const STORED_X: { stored: any; summaryAr: string } = JSON.parse(readFileSync(join(__dirname, "fixtures", "model-planner-stored-items.json"), "utf8")).reviewItemsX;
 
   it("revalidateStoredPlan: the unchanged step keeps its measured values (no new sample); a changed step gets no shortcut", async () => {
-    const { r } = await chat({ email: "magdy.saber@outlook.com" });
-    const stored = r.planQuote.items[0].params[MODEL_PLAN_PARAM];
-    const args = { stored, summaryAr: r.planQuote.summaryAr, customerText: X_REQUEST, newVolume: 40, access: nobody, today: TODAY };
+    const stored = STORED_X.stored;
+    const args = { stored, summaryAr: STORED_X.summaryAr, customerText: X_REQUEST, newVolume: 40, access: nobody, today: TODAY };
     const same = revalidateStoredPlan(args);
     expect(same.ok).toBe(true);
     if (same.ok) expect(same.plan.steps[0].price.measuredFrom).toBe("approved_plan");
@@ -252,29 +194,5 @@ describe("a model plan can be edited; a guest is asked to sign up", () => {
     // and without the approved plan the same unchanged proposal has no price at all
     const bare = validatePlan(ProposePlanSchema.parse({ summaryAr: "جمع ٤٠ منشورًا من حساب @elonmusk", steps: [{ endpointId: "anyapi.x.user.posts", volume: 40, params: stored.steps[0].params, fieldMap: stored.steps[0].fieldMap, filters: stored.steps[0].filters }] }), { customerText: X_REQUEST, access: nobody, catalog, samples: new Map(), today: TODAY });
     expect(bare.ok).toBe(false);
-  });
-
-  it("GUEST: planned like anyone (the same new path), but no quote is saved, no card is shown and nothing can be approved: the guest reads what was understood and the sign-up sentence", async () => {
-    const { r, db } = await chat({ guest: true, allow: true });
-    expect(r.outputType).toBe("answer_question");
-    expect(r.planQuote).toBeUndefined();
-    expect(r.contentAr).toContain(GUEST_SIGNUP_AR);
-    expect(r.contentAr).not.toMatch(/USD|anyapi|[٠-٩0-9]+ نقط/);
-    // no quote row of any table: nothing a guest could approve
-    expect((db.store.get("plans_quotes") ?? []).length).toBe(0);
-    const signedIn = await chat({ email: "magdy.saber@outlook.com" });
-    expect((signedIn.db.store.get("plans_quotes") ?? []).length).toBe(1);
-    expect(gateway!.calls.length).toBeGreaterThan(0); // the planner did its one tiny real check, within the exploration caps
-  });
-
-  it("a guest is NOT on the allowlist (it has no e-mail of its own): without the injected rule it stays on the old path", async () => {
-    const world = (await import("./helpers/replayWorld")).world;
-    const db: any = createChatDb();
-    const handler = new ChatHandler(db);
-    (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be asked"); });
-    const transport = createScriptedTransport([[{ type: "text", text: "x" }]]);
-    handler.modelPlanner = { transport, client: world.mem, today: () => TODAY };
-    expect(handler.modelPlannerFor({ email: "magdy.saber@outlook.com", isGuest: true })).toBe(false);
-    expect(transport.requests).toHaveLength(0);
   });
 });
