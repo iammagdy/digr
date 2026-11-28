@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { world, loadFixture, type ReplayFixture } from "./helpers/replayWorld";
 
@@ -24,19 +26,12 @@ import { describe as describeTool, propose, sample, search, xAccountPlan, X_REQU
 let seq = 0;
 let infoSpy: any;
 const plannerLog = () => infoSpy.mock.calls.map((c: any[]) => String(c[0])).filter((l: string) => l.includes("model_planner_turn")).join(" | ");
-async function chat(request: string, script: Array<ContentBlock[]>) {
-  const db: any = createChatDb();
-  const handler = new ChatHandler(db);
-  (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the old model path must not run"); });
-  const transport = createScriptedTransport(script as any, { model: "recorded" });
-  handler.modelPlanner = { transport, client: world.mem, today: () => new Date("2026-10-27T12:00:00Z") };
-  const conversationId = `conv_mp_${++seq}`;
-  await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-  clearBriefCacheForTesting();
-  const r: any = await handler.handleUserMessage({ userId: "user_replay", userEmail: "magdy.saber@outlook.com", conversationId, message: request, userBalance: 40_000 });
-  return { r, transport, db, handler };
-}
 const seedFromQuote = (item: any) => world.resetJob({ slug: item.capabilitySlug, endpointId: item.endpointId, params: item.params, target: item.targetVolumeMax, unitPrice: item.unitPricePoints, unitCostUsd: item.unitCostUsd });
+/**
+ * UL2a-3 C-2a: the chat no longer plans with the model planner (the handler's `modelPlanner` contract is removed), so a job of a model plan is seeded from the quote item the planner used to store (captured once
+ * from the pre-removal tree: fixtures/model-planner-stored-items.json). What these tests keep is the WORKER half: the interpreter runs the approved plan, the review, the charge, the recipe.
+ */
+const STORED: { x: { item: any; quotedPoints: number }; tiktok: { item: any; quotedPoints: number } } = JSON.parse(readFileSync(join(__dirname, "fixtures", "model-planner-stored-items.json"), "utf8"));
 
 describe("the model planner, end to end on the replay world (the gateway is a stub: zero real provider calls)", () => {
   beforeEach(() => {
@@ -61,30 +56,14 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(isModelPlannerAccount(null)).toBe(false);
   });
 
-  it("X account, REAL rows: chat plans it from the catalog (the model, a sample call, validation, price by code), the worker interprets the approved plan, 3 own posts delivered, the charge is ceil(delivered x unit) within the hold", async () => {
+  it("X account, REAL rows: the worker interprets the approved (stored) plan, 3 own posts delivered, the charge is ceil(delivered x unit) within the hold", async () => {
     const fixture = loadFixture("real-rows_anyapi.x.user.posts");
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 10, unitPrice: 1 });
     world.installFetch([fixture]);
-    const { r, transport } = await chat(X_REQUEST, [search("x", ["user", "posts"]), describeTool("anyapi.x.user.posts"), sample("anyapi.x.user.posts", [{ name: "handle", value: "elonmusk", source: "customer_text", quote: "@elonmusk" }]), propose(xAccountPlan())]);
-    expect(r.outputType).toBe("propose_plan");
-    expect(transport.requests).toHaveLength(4);
-    const quote = r.planQuote;
-    const item = quote.items[0];
-    expect(item.capabilitySlug).toBe(MODEL_PLAN_SLUG);
-    expect(item.endpointId).toBe("anyapi.x.user.posts");
-    expect(Object.keys(item.params).every((k) => k.startsWith("_"))).toBe(true);
-    // no period of any kind in the plan
-    expect(JSON.stringify(item.params)).not.toMatch(/dateFrom|dateTo|date_window|datePosted|since:|until:/);
-    // the price: the shared function of the cost per delivered record measured on the sample (0.0005 per call, 10 rows, 3 pass)
-    expect(item.unitPricePoints).toBe(0.916667);
-    expect(quote.quotedPoints).toBe(reserveForUnits(10, 0.916667));
-    expect(quote.modelPlanned).toBe(true);
-    expect(quote.sampleRows.rows).toHaveLength(3);
-    expect(quote.sampleRows.columns.map((c: any) => c.titleAr)).toEqual(["نص المنشور", "الحساب", "تاريخ النشر", "الإعجابات", "الرابط"]);
-    // tokens and cost of the planning turn, at the planner's own price
-    expect(r.tokensUsed.input).toBeGreaterThan(1000);
-    expect(r.tokensUsed.costUsd).toBeCloseTo((r.tokensUsed.input * 0.10 + r.tokensUsed.output * 0.50) / 1_000_000, 9);
-
+    // (the planning half — the model, the sample call, the validation, the price by code — is retired with the chat's model planner: UL2a-3 C-2a)
+    const item = STORED.x.item;
+    const holdPoints = STORED.x.quotedPoints;
+    expect(holdPoints).toBe(reserveForUnits(10, 0.916667));
     seedFromQuote(item);
     world.installFetch([fixture]);
     const out = await world.runWorker();
@@ -92,13 +71,13 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["anyapi.x.user.posts"]);
     expect(out.json.deliveredUnits).toBe(3);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(3, item.unitPricePoints));
-    expect(out.json.settle.charged_credits).toBeLessThanOrEqual(quote.quotedPoints);
+    expect(out.json.settle.charged_credits).toBeLessThanOrEqual(holdPoints);
     expect(Object.keys(world.stats.served[0].body).sort()).toEqual(["handle", "limit"]);
     // the first raw page is kept (on by default), masked
     expect(world.db.partials.has(`${world.JOB}/raw_first_page.json`)).toBe(true);
   });
 
-  it("(a) the TikTok topic request: a listing step then the comments of each listed video; NO window is added, the sources get no date parameter, comments are delivered", async () => {
+  it("(a) the TikTok topic request (stored plan): a listing step then the comments of each listed video; the sources get no date parameter, comments are delivered", async () => {
     const search1 = loadFixture("catalog-example_anyapi.tiktok.search.videos");
     const comments = loadFixture("catalog-example_tikhub.tiktok.video.comments");
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 30, unitPrice: 1 });
@@ -111,17 +90,10 @@ describe("the model planner, end to end on the replay world (the gateway is a st
         { endpointId: "tikhub.tiktok.video.comments", volume: 30, perItem: 10, params: [{ name: "aweme_id", source: "prior_step", fromStep: { step: 1, field: "id" } }], fieldMap: { columns: [{ field: "text", headerAr: "نص التعليق", role: "text" }, { field: "digg_count", headerAr: "الإعجابات", role: "likes", transform: "number" }], pagination: { kind: "single" } } },
       ],
     };
-    const { r } = await chat(request, [search("tiktok", ["comments"]), search("tiktok", ["search", "videos"]), sample("anyapi.tiktok.search.videos", [{ name: "query", value: "كرة السلة في مصر", source: "customer_text", quote: "كرة السلة في مصر" }]), sample("tikhub.tiktok.video.comments", [{ name: "aweme_id", source: "prior_step", fromStep: { step: 1, field: "id" } }]), propose(twoStep)]);
-    expect(r.outputType, `${r.contentAr} ${plannerLog()}`).toBe("propose_plan");
-    const item = r.planQuote.items[0];
-    const stored = item.params[MODEL_PLAN_PARAM];
-    expect(stored.steps).toHaveLength(2);
-    expect(JSON.stringify(stored)).not.toMatch(/dateFrom|dateTo|date_window|datePosted|آخر شهر/);
-    expect(r.planQuote.window).toBeUndefined();
-    // the two samples (each on two pages: Phase 2 (d) measures the rows one call returns on two pages) and nothing else were asked of the sources before approval
-    const planningRequests = world.stats.served.map((s) => s.endpointId);
-    expect(planningRequests).toEqual(["anyapi.tiktok.search.videos", "anyapi.tiktok.search.videos", "tikhub.tiktok.video.comments", "tikhub.tiktok.video.comments"]);
-    for (const s of world.stats.served) expect(Object.keys(s.body)).not.toEqual(expect.arrayContaining(["datePosted"]));
+    // (the planning half — the two samples, the validation, no window on the plan — is retired with the chat's model planner: UL2a-3 C-2a)
+    const item = STORED.tiktok.item;
+    const holdPoints = STORED.tiktok.quotedPoints;
+    expect(JSON.stringify(item.params[MODEL_PLAN_PARAM])).not.toMatch(/dateFrom|dateTo|date_window|datePosted|آخر شهر/);
 
     // the topic review: the reviewer gets the customer's REAL request text and confirms the rows (fail closed otherwise)
     const reviewed: any[] = [];
@@ -135,7 +107,7 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(reviewed[0].customerRequest).toBe(request);
     expect(out.json.deliveredUnits).toBeGreaterThanOrEqual(1);
     for (const s of world.stats.served) expect(JSON.stringify(s.body)).not.toMatch(/date|since|until|window/i);
-    expect(out.json.settle.charged_credits).toBeLessThanOrEqual(r.planQuote.quotedPoints);
+    expect(out.json.settle.charged_credits).toBeLessThanOrEqual(holdPoints);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(out.json.deliveredUnits, item.unitPricePoints));
   });
 
@@ -144,8 +116,8 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 10, unitPrice: 1 });
     world.installFetch([fixture]);
     world.mem.setMissing(["recipes"]);
-    const first = await chat(X_REQUEST, [sample("anyapi.x.user.posts", [{ name: "handle", value: "elonmusk", source: "customer_text", quote: "@elonmusk" }]), propose(xAccountPlan())]);
-    seedFromQuote(first.r.planQuote.items[0]);
+    const firstItem = STORED.x.item;
+    seedFromQuote(firstItem);
     world.mem.setMissing(["recipes"]);
     world.installFetch([fixture]);
     const noTable = await world.runWorker();
@@ -153,7 +125,7 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(world.mem.rows("recipes")).toHaveLength(0);
 
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 10, unitPrice: 1 });
-    seedFromQuote(first.r.planQuote.items[0]);
+    seedFromQuote(firstItem);
     world.mem.setMissing([]);
     world.installFetch([fixture]);
     const delivered = await world.runWorker();
@@ -167,23 +139,12 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(recipes[0].price_basis.measured[0]).toMatchObject({ rowsPerCall: 10, passRate: 0.3 });
     // a second job of the same plan saves nothing new
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 10, unitPrice: 1 });
-    seedFromQuote(first.r.planQuote.items[0]);
+    seedFromQuote(firstItem);
     world.installFetch([fixture]);
     await world.runWorker();
     expect(world.mem.rows("recipes")).toHaveLength(1);
 
-    // the next similar request: the model describes the endpoint, sees the recipe, and plans WITHOUT a sample call
-    world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 10, unitPrice: 1 });
-    world.mem.seed("recipes", recipes);
-    world.installFetch([fixture]);
-    const nextRequest = "اعطني ١٠ منشورات من حساب @NASA على إكس";
-    const plan2 = xAccountPlan({ summaryAr: "جمع ١٠ منشورات من حساب @NASA" });
-    (plan2.steps[0] as any).params = [{ name: "handle", value: "NASA", source: "customer_text", quote: "@NASA" }];
-    (plan2.steps[0] as any).filters = [{ kind: "author_equals", field: "authorHandle", value: "NASA", quote: "@NASA" }, { kind: "exclude_true", field: "isReply" }];
-    const second = await chat(nextRequest, [describeTool("anyapi.x.user.posts"), propose(plan2)]);
-    expect(second.r.outputType, `${second.r.contentAr} ${plannerLog()}`).toBe("propose_plan");
-    expect(world.stats.served).toHaveLength(0); // no sample call, nothing asked of any source
-    expect(second.r.planQuote.sampleRows).toBeUndefined(); // no real rows to show without a sample
+    // (the next similar request, planned by the chat WITHOUT a sample call from the saved recipe, is retired with the chat's model planner: UL2a-3 C-2a)
   });
 
   it("a reverse lookup step under FX-PRIV: runs without gating for any account and delivers rows", async () => {
@@ -199,33 +160,5 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["enrichlayer.contacts.reverse-phone"]);
     expect(res.json.deliveredUnits).toBe(1);
     expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(true);
-  });
-
-  it("BOTH SIDES of the rollout: an allowlisted account is planned by the model (transport asked); any other account is planned by the hand-coded path, byte for byte, and the planner transport is never asked", async () => {
-    const run = async (email: string | null) => {
-      const db: any = createChatDb();
-      const handler = new ChatHandler(db);
-      (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be asked"); });
-      const transport = createScriptedTransport([[{ type: "text", text: "ما اسم الحساب؟" }]], { model: "recorded" });
-      handler.modelPlanner = { transport, client: world.mem, today: () => new Date("2026-10-27T12:00:00Z") };
-      const conversationId = `conv_roll_${++seq}`;
-      await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-      clearBriefCacheForTesting();
-      const r: any = await handler.handleUserMessage({ userId: "user_replay", ...(email ? { userEmail: email } : {}), conversationId, message: X_REQUEST, userBalance: 40_000 });
-      return { r, transport };
-    };
-    const other = await run("someone.else@outlook.com");
-    expect(other.transport.requests).toHaveLength(0);
-    expect(other.r.outputType).toBe("propose_plan");
-    expect(other.r.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
-    expect(other.r.planQuote.modelPlanned).toBeUndefined();
-    const none = await run(null);
-    expect(none.transport.requests).toHaveLength(0);
-    expect(none.r.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
-    const allowed = await run("iam.magdy+1@outlook.com");
-    expect(allowed.transport.requests.length).toBeGreaterThan(0);
-    expect(allowed.r.planQuote?.items?.[0]?.capabilitySlug).not.toBe("social-x-posts");
-    // the default handler of production holds a real planner config but the allowlist decides
-    expect(new ChatHandler(createChatDb()).modelPlannerFor({ email: "other@x.com" })).toBe(false);
   });
 });

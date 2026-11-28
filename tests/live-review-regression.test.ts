@@ -1,3 +1,4 @@
+import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { world, loadFixture } from "./helpers/replayWorld";
 
@@ -40,17 +41,11 @@ const salahPlan = {
   steps: [{ endpointId: "anyapi.x.search.posts", volume: 20, params: [{ name: "query", value: TOPIC, source: "customer_text", quote: "محمد صلاح بعد انتقاله لتركيا" }], fieldMap: { columns: [{ field: "text", headerAr: "نص التغريدة", role: "text" }, { field: "authorUsername", headerAr: "الحساب", role: "author_handle" }, { field: "createdUtc", headerAr: "تاريخ النشر", role: "date", transform: "unix_s_to_iso" }, { field: "likeCount", headerAr: "الإعجابات", role: "likes", transform: "number" }, { field: "url", headerAr: "الرابط", role: "url" }], pagination: { kind: "token", param: "cursor" } }, filters: [] }],
 };
 
-let seq = 0;
-async function plan(script: Array<ContentBlock[]>, request = REQUEST) {
-  const db: any = createChatDb();
-  const handler = new ChatHandler(db);
-  (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the old model path must not run"); });
-  handler.modelPlanner = { transport: createScriptedTransport(script as any, { model: "recorded" }), client: world.mem, today: () => new Date("2026-10-28T12:00:00Z") };
-  const conversationId = `conv_lr_${++seq}`;
-  await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-  clearBriefCacheForTesting();
-  return (await handler.handleUserMessage({ userId: "user_replay", userEmail: "magdy.saber@outlook.com", conversationId, message: request, userBalance: 40_000 }) as any);
-}
+/**
+ * UL2a-3 C-2a: the chat no longer plans with the model planner, so the jobs below are seeded from the quote item the planner stored for the same request (captured once from the pre-removal tree:
+ * fixtures/model-planner-stored-items.json). What this file keeps is the WORKER half: the topic review, the fixed checks, the partial mark, the driver notice and the panel.
+ */
+const STORED: Record<"salah" | "marriage" | "natgeo", { item: any; quotedPoints: number }> = JSON.parse(readFileSync(join(__dirname, "fixtures", "model-planner-stored-items.json"), "utf8"));
 const seedFromQuote = (item: any) => world.resetJob({ slug: item.capabilitySlug, endpointId: item.endpointId, params: item.params, target: item.targetVolumeMax, unitPrice: item.unitPricePoints, unitCostUsd: item.unitCostUsd });
 
 /** A reviewer that, like the real one, can only confirm a row against the request it was GIVEN: with no request it confirms nothing (the live failure). */
@@ -75,9 +70,7 @@ afterEach(() => { setRowAdvisorForTesting(null); vi.useRealTimers(); setProvider
 const approved = async () => {
   world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 20, unitPrice: 1 });
   world.installFetch([salahFixture()]);
-  const r = await plan([sample("anyapi.x.search.posts", [{ name: "query", value: TOPIC, source: "customer_text", quote: "محمد صلاح بعد انتقاله لتركيا" }]), propose(salahPlan)]);
-  expect(r.outputType, r.contentAr).toBe("propose_plan");
-  return r.planQuote.items[0];
+  return STORED.salah.item;
 };
 
 describe("the Salah job: on-topic rows are delivered, never moved to «قيد المراجعة» by a reviewer that was given no request", () => {
@@ -183,56 +176,6 @@ const marriagePlan = {
   ],
 };
 
-describe("the card adds up by code: the stages, the card total, the price and the hold are one number", () => {
-  it("for N videos with M comments each: the card's total is the sum of the delivered stages as code counted them (never the model's declared volume), and a stage that gets fewer per parent than asked says why", async () => {
-    const search1 = loadFixture("catalog-example_anyapi.tiktok.search.videos");
-    const comments = loadFixture("catalog-example_tikhub.tiktok.video.comments");
-    world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 30, unitPrice: 1 });
-    world.installFetch([search1, comments]);
-    const r = await plan([sample("anyapi.tiktok.search.videos", [{ name: "query", value: "الجواز والطلاق في مصر", source: "customer_text", quote: "الجواز والطلاق في مصر" }]), sample("tikhub.tiktok.video.comments", [{ name: "aweme_id", source: "prior_step", fromStep: { step: 1, field: "id" } }]), propose(marriagePlan)], MARRIAGE);
-    expect(r.outputType, r.contentAr).toBe("propose_plan");
-    const item = r.planQuote.items[0];
-    const stages = stagesOfPlanQuote(r.planQuote)!;
-    expect(stages).toHaveLength(2);
-    const delivered = stages.reduce((n, s) => n + (s.deliver ? s.effVolume : 0), 0);
-    // the card total, the quote's volume and the stored plan agree; the model's own volume (50) is not what the card shows
-    expect(item.targetVolumeMax).toBe(delivered);
-    expect(r.planQuote.targetVolumeMax).toBe(delivered);
-    // stage 2 is never more than stage 1 x the rows one parent gives; when that is less than the 10 asked, the stage carries the asked number so the card can say why
-    const stored = item.params[MODEL_PLAN_PARAM];
-    expect(stages[0].effVolume).toBe(5);
-    expect(stages[1].effVolume).toBeLessThanOrEqual(stages[0].effVolume * (stored.stages[1].perParent || 10));
-    if (stored.stages[1].perParent < 10) expect(stored.stages[1].askedPerParent).toBe(10);
-    else expect(stages[1].effVolume).toBe(50);
-    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf-8");
-    for (const needle of ["mission-stages-total", "askedPerParent", "platform-choice", "found-entities"]) expect(card, needle).toContain(needle);
-  });
-});
-
-describe("which platform: stated on the card when the customer named none", () => {
-  it("the words that name a platform are read; a plan on a social platform for a customer who named none is sent back until it says which platform and why, then it is shown on the card", async () => {
-    expect(["بوستات عن الزواج على تيك توك", "فيديوهات يوتيوب", "من X", "حساب @elonmusk على اكس", "تعليقات فيسبوك", "هات ٢٠ تغريدة عن محمد صلاح"].map(customerNamesPlatform)).toEqual([true, true, true, true, true, true]);
-    expect(["هات ٥ بوستات أو فيديوهات عن ترند الجواز والطلاق في مصر", "هات ٥ شركات"].map(customerNamesPlatform)).toEqual([false, false]);
-    const request = "هات ٥ بوستات عن ترند الجواز والطلاق في مصر";
-    const onX = (extra: Record<string, unknown> = {}) => ({
-      summaryAr: "جمع ٥ بوستات عن الجواز والطلاق في مصر", topic: "الجواز والطلاق في مصر", ...extra,
-      steps: [{ endpointId: "anyapi.x.search.posts", volume: 5, params: [{ name: "query", value: "الجواز والطلاق في مصر", source: "customer_text", quote: "الجواز والطلاق في مصر" }], fieldMap: { columns: [{ field: "text", headerAr: "نص التغريدة", role: "text" }, { field: "authorUsername", headerAr: "الحساب", role: "author_handle" }], pagination: { kind: "token", param: "cursor" } }, filters: [] }],
-    });
-    world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 5, unitPrice: 1 });
-    world.installFetch([salahFixture()]);
-    const s = sample("anyapi.x.search.posts", [{ name: "query", value: "الجواز والطلاق في مصر", source: "customer_text", quote: "الجواز والطلاق في مصر" }]);
-    const withoutChoice = await plan([s, [use("propose_plan", onX())]], request);
-    expect(withoutChoice.outputType).not.toBe("propose_plan"); // refused: the script has no second try
-    world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 5, unitPrice: 1 });
-    world.installFetch([salahFixture()]);
-    const choice = "اخترنا منصة إكس لأنها الأنسب لتتبّع ما يُكتب عن موضوع رائج في مصر.";
-    const withChoice = await plan([s, [use("propose_plan", onX({ platformChoiceAr: choice }))]], request);
-    expect(withChoice.outputType, withChoice.contentAr).toBe("propose_plan");
-    expect(withChoice.planQuote.items[0].params[MODEL_PLAN_PARAM].platformChoiceAr).toBe(choice);
-    // a customer who names the platform needs none (covered by the existing plans)
-  });
-});
-
 describe("the official channel / page / account is found by the search and shown for confirmation", () => {
   it("a request for «the official …» needs a found entity whose id is in a real sample answer; it is asked for a link only when the search finds nothing", () => {
     expect(["هات ٣ فيديوهات من قناة فيفا الرسمية على يوتيوب", "القناة الرسمية لفيفا", "الصفحة الرسمية لشركة أوبر", "الحساب الرسمي لنادي الأهلي"].map(asksForOfficialEntity)).toEqual([true, true, true, true]);
@@ -300,11 +243,10 @@ describe("the other two live jobs, replayed (fixtures built from the catalog's e
     const comments = loadFixture("catalog-example_tikhub.tiktok.video.comments");
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 30, unitPrice: 1 });
     world.installFetch([search1, comments]);
-    const r = await plan([sample("anyapi.tiktok.search.videos", [{ name: "query", value: "الجواز والطلاق في مصر", source: "customer_text", quote: "الجواز والطلاق في مصر" }]), sample("tikhub.tiktok.video.comments", [{ name: "aweme_id", source: "prior_step", fromStep: { step: 1, field: "id" } }]), propose(marriagePlan)], MARRIAGE);
-    expect(r.outputType, r.contentAr).toBe("propose_plan");
+    const item = STORED.marriage.item;
     const asked: string[] = [];
     setRowAdvisorForTesting(async (input) => { asked.push(input.customerRequest); return { verdicts: new Map(input.rows.map((row) => [row.index, { verdict: String(input.customerRequest).trim() ? "match" : "no_match", reasonAr: "" }])) as any, usage: null, failure: null }; });
-    seedFromQuote(r.planQuote.items[0]);
+    seedFromQuote(item);
     world.installFetch([search1, comments]);
     const out = await world.runWorker();
     expect(asked.length).toBeGreaterThanOrEqual(1);
@@ -316,11 +258,10 @@ describe("the other two live jobs, replayed (fixtures built from the catalog's e
     const profile = { name: "inline_natgeo_profile", kind: "catalog example", endpointId: "crawl4ai.instagram.user.profile", costMicro: 900, pages: [{ username: "natgeo", full_name: "National Geographic", followers: 268273892, is_verified: true }] };
     world.resetJob({ slug: "x", endpointId: "x", params: {}, target: 1, unitPrice: 1 });
     world.installFetch([profile as any]);
-    const r = await plan([sample("crawl4ai.instagram.user.profile", [{ name: "username", value: "natgeo", source: "customer_text", quote: "@natgeo" }]), propose({ summaryAr: "بيانات حساب انستقرام natgeo", steps: [{ endpointId: "crawl4ai.instagram.user.profile", volume: 1, params: [{ name: "username", value: "natgeo", source: "customer_text", quote: "@natgeo" }], fieldMap: { columns: [{ field: "username", headerAr: "اسم المستخدم", role: "author_handle" }, { field: "followers", headerAr: "المتابعون", role: "followers", transform: "number" }], pagination: { kind: "single" } }, filters: [] }] })], "هات بيانات حساب انستقرام @natgeo");
-    expect(r.outputType, r.contentAr).toBe("propose_plan");
+    const item = STORED.natgeo.item;
     let advisorCalls = 0;
     setRowAdvisorForTesting(async () => { advisorCalls += 1; return { verdicts: new Map(), usage: null, failure: null }; });
-    seedFromQuote(r.planQuote.items[0]);
+    seedFromQuote(item);
     world.installFetch([profile as any]);
     const out = await world.runWorker();
     expect(out.json.deliveredUnits).toBe(1);

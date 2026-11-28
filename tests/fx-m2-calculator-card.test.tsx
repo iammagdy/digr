@@ -277,23 +277,16 @@ it("keeps a split summary with one unresolved part and retains existing owned ca
   noMoney(db);
 });
 
-it("never enters modelPlanner or pending session for marked calculator turns even when modelPlanner is configured", async () => {
+it("a marked calculator turn becomes an agent mission with no money (the chat has no other planner)", async () => {
   const db = world();
   const handler = new ChatHandler(db as never);
   handler.agentChat = { enabled: true };
-  const transport = vi.fn(async () => ({ stopReason: "end_turn", text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } }));
-  handler.modelPlannerFor = () => true;
-  handler.modelPlanner = {
-    transport: { model: "fixture", call: transport } as never,
-    limits: { maxSteps: 4, wallMs: 5_000, llmBudgetUsd: 0.05 },
-  } as never;
   scriptBriefs(brief("عايز ٢٠ شركة مقاولات", "ready"));
   const res = await handler.handleUserMessage({
     userId: owner, conversationId: "conv1", userBalance: 40_000,
     message: "عايز ٢٠ شركة مقاولات", calculatorPlanOnly: true,
   });
   expect(res.outputType).toBe("agent_mission");
-  expect(transport).not.toHaveBeenCalled();
   expect(db.rows("missions")).toHaveLength(1);
   noMoney(db);
 });

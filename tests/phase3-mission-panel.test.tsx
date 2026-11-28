@@ -378,7 +378,6 @@ describe("the waiting experience around it", () => {
     expect(requests).toContain("MissionPlanInline");
     expect(requests).toContain("MODEL_PLAN_SLUG");
     expect(readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8")).toContain('data-testid="mission-stages"');
-    expect(readFileSync("src/app/api/chat/route.ts", "utf8")).toContain("plannerRequestId");
   });
 });
 
