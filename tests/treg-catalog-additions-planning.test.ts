@@ -28,7 +28,7 @@ function fixture() {
     { endpoint: { ...common, id: delivery, name: "Synthetic delivery", inputs: [input], pagination: ["offset", "limit"], cost: paid },
       policy: "public", contract: { endpoint_id: delivery, role: "delivery", dispatch: "funded", helpers: { count, schema },
         request: { filterKey: "criteria", filterBindings: { country: "string" }, pageSizeKey: "limit", positionKey: "offset", minPageSize: 1, maxPageSize: 10 },
-        result: { rowsPath: "companies", identityKey: "domain", fields: ["domain", "name"], morePath: "more", positionPath: "next" } } },
+        result: { rowsPath: "companies", identityKey: "domain", fields: ["domain", "name", "city"], morePath: "more", positionPath: "next" } } },
     { endpoint: { ...common, id: count, name: "Synthetic count", inputs: [input], cost: free },
       policy: "public", contract: { endpoint_id: count, role: "count", result: { countPath: "estimatedCount" } } },
     { endpoint: { ...common, id: schema, name: "Synthetic schema", method: "GET", inputs: [], cost: free },
@@ -65,7 +65,7 @@ async function replay(options: { rows?: number; balance?: number; unavailable?: 
     const id = url.split("/").pop();
     const data = id === count ? { estimatedCount: 11 }
       : id === schema ? { columns: [{ key: "country", type: "string", searchable: true, label: "DO_NOT_FORWARD" }] }
-      : { companies: Array.from({ length: Math.min(rows, 10) }, (_, i) => ({ domain: `company-${i}.example`, name: `Company ${i}`, personal: "DO_NOT_STORE" })), more: true, next: 10 };
+      : { companies: Array.from({ length: Math.min(rows, 10) }, (_, i) => ({ domain: `company-${i}.example`, name: `Company ${i}`, city: "First city", personal: "DO_NOT_STORE" })), more: true, next: 10 };
     return new Response(JSON.stringify(data), { headers: { "x-treg-cost-micro": id === delivery ? String(Math.min(rows, 10) * 1_000) : "0" } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -81,7 +81,7 @@ async function replay(options: { rows?: number; balance?: number; unavailable?: 
           key: "companies", title_ar: "الشركات", platform: "companies", capability, deliver: true, count: { total: rows },
         }],
       } : tool.name === "tool_choice" ? { options: [{ endpoint_id: delivery, params: { criteria } }] }
-        : { fields: { id: ["domain"] }, extra: [] };
+        : { fields: { id: ["domain"] }, extra: [{ key: "city", title_ar: "المدينة", path: ["city"] }] };
       return { input, costUsd: 0 };
     },
   };
@@ -150,7 +150,7 @@ it.each([
   fetch.mockImplementation(async (_url, init) => {
     const params = JSON.parse(String(init?.body));
     const first = params.offset === 0;
-    const companies = empty ? [] : [{ domain: "same.example", name: first ? "First name" : "Changed name" }];
+    const companies = empty ? [] : [{ domain: "same.example", name: first ? "First name" : "Changed name", city: first ? "First city" : "Changed city" }];
     return new Response(JSON.stringify({ companies, more: first && !empty, next: first ? 10 : 9 }),
       { headers: { "x-treg-cost-micro": "1000" } });
   });
@@ -177,6 +177,8 @@ it.each([
     expect(store.published).toHaveLength(1);
     const csv = await store.getFile(claimed.id, "result/result.csv");
     expect(csv?.split(/\r?\n/).filter((line) => line.includes("same.example"))).toHaveLength(1);
+    expect(csv).toContain("First city");
+    expect(csv).not.toContain("Changed city");
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await store.getFileBytes(claimed.id, "result/result.xlsx") as unknown as ArrayBuffer);
     const matchedRows: number[] = [];

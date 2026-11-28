@@ -1016,7 +1016,10 @@ async function planFundedCompany(input: LlmPlannerInput, understanding: Understa
     if (name && key !== "id" && path.length === 1 && result.fields?.includes(path[0])) names.set(path[0], name);
   }
   for (const extra of map?.extra ?? []) {
-    if (extra.path.length === 1 && result.fields?.includes(extra.path[0])) names.set(extra.path[0], extra.title_ar);
+    const title = checkCustomerText(extra.title_ar, { maxChars: 80 });
+    if (title.issues.length === 0 && extra.path.length === 1 && result.fields?.includes(extra.path[0])) {
+      names.set(extra.path[0], title.text);
+    }
   }
   const columns = [...names].map(([key, title_ar]) => ({ key, title_ar }));
   step.title_ar = customerSafe(step.title_ar, 60, customerSaidOf(input)) ?? COMPANIES_LABEL_AR;
