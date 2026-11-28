@@ -155,9 +155,10 @@ export function validateCatalogAdditions(
     }
 
     if (contract.helpers) {
-      if (typeof contract.helpers !== "object") return fail(`invalid_helpers_object: ${id}`);
-      const hCount = contract.helpers.count;
-      const hSchema = contract.helpers.schema;
+      if (typeof contract.helpers !== "object" || contract.helpers === null) return fail(`invalid_helpers_object: ${id}`);
+      const helpers = contract.helpers as { count?: unknown; schema?: unknown };
+      const hCount = helpers.count;
+      const hSchema = helpers.schema;
       if (hCount !== undefined) {
         if (typeof hCount !== "string" || !hCount.trim()) return fail(`invalid_count_helper_id: ${id}`);
         if (providerOf(hCount) !== provider) return fail(`cross_source_helper: ${hCount}`);
@@ -181,20 +182,21 @@ export function validateCatalogAdditions(
   // Cross-reference checks within manifest
   for (const item of validatedEntries) {
     if (item.contract.helpers) {
-      if (item.contract.helpers.count) {
-        const h = byId.get(item.contract.helpers.count);
-        if (!h) return fail(`missing_helper: ${item.contract.helpers.count}`);
-        if (h.contract.role !== "count") return fail(`invalid_helper_role: ${item.contract.helpers.count}`);
+      const helpers = item.contract.helpers as { count?: string; schema?: string };
+      if (helpers.count) {
+        const h = byId.get(helpers.count);
+        if (!h) return fail(`missing_helper: ${helpers.count}`);
+        if (h.contract.role !== "count") return fail(`invalid_helper_role: ${helpers.count}`);
         if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
-          return fail(`paid_helper: ${item.contract.helpers.count}`);
+          return fail(`paid_helper: ${helpers.count}`);
         }
       }
-      if (item.contract.helpers.schema) {
-        const h = byId.get(item.contract.helpers.schema);
-        if (!h) return fail(`missing_helper: ${item.contract.helpers.schema}`);
-        if (h.contract.role !== "schema") return fail(`invalid_helper_role: ${item.contract.helpers.schema}`);
+      if (helpers.schema) {
+        const h = byId.get(helpers.schema);
+        if (!h) return fail(`missing_helper: ${helpers.schema}`);
+        if (h.contract.role !== "schema") return fail(`invalid_helper_role: ${helpers.schema}`);
         if (h.endpoint.cost && typeof h.endpoint.cost.usd === "number" && h.endpoint.cost.usd > 0) {
-          return fail(`paid_helper: ${item.contract.helpers.schema}`);
+          return fail(`paid_helper: ${helpers.schema}`);
         }
       }
     }
